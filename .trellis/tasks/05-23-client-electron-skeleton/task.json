@@ -3,7 +3,7 @@
   "name": "client-electron-skeleton",
   "title": "client electron skeleton",
   "description": "packages/client: electron-vite + React + Tailwind + shadcn 骨架 + hello world",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

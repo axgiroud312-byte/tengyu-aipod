@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "baseUrl": ".",
+    "jsx": "react-jsx",
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@/*": ["src/renderer/src/*"],
+      "@tengyu-aipod/shared": ["../shared/src/index.ts"],
+      "@tengyu-aipod/shared/*": ["../shared/src/*"]
+    }
+  },
+  "include": ["electron.vite.config.ts", "src/**/*.ts", "src/**/*.tsx"]
+}

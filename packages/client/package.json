@@ -1,0 +1,42 @@
+{
+  "name": "@tengyu-aipod/client",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "lint": "biome lint .",
+    "test": "vitest run --passWithNoTests",
+    "type-check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.3.0",
+    "@tengyu-aipod/shared": "workspace:*",
+    "better-sqlite3": "^12.10.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "electron": "^42.2.0",
+    "electron-vite": "^5.0.0",
+    "lucide-react": "^1.16.0",
+    "pino": "^10.3.1",
+    "radix-ui": "^1.4.3",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6",
+    "react-router-dom": "^7.15.1",
+    "tailwind-merge": "^3.6.0",
+    "tailwindcss": "^4.3.0",
+    "zustand": "^5.0.13",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/node": "^24.10.1",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.2.0",
+    "vite": "^7.3.3",
+    "vitest": "^3.2.4"
+  }
+}
