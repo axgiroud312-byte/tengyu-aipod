@@ -1,0 +1,3 @@
+{"file":"docs/spec/04-detection.md","reason":"Defines the detection module UI, IPC contract, cost estimation, and result flow for this task."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"This task spans renderer, preload, main process, and SQLite, so the sub-agent should reason across layer boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"The UI will reuse existing title-module patterns and shared constants, so the sub-agent should search before copying logic."}
