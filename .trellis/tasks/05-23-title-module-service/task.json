@@ -3,7 +3,7 @@
   "name": "title-module-service",
   "title": "title module service",
   "description": "扫批次+取第N图+并发调LLM+写xlsx",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

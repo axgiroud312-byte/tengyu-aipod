@@ -1,5 +1,6 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { TitleBatchConfig, TitleProgress } from '../main/lib/title-service'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
@@ -42,6 +43,34 @@ const api = {
       ipcRenderer.invoke('temp-file:cleanup-all') as Promise<{
         ok: true
       }>,
+  },
+  title: {
+    listPlatforms: () =>
+      ipcRenderer.invoke('title:list-platforms') as Promise<Array<{ key: string; label: string }>>,
+    listLanguages: () =>
+      ipcRenderer.invoke('title:list-languages') as Promise<Array<{ key: string; label: string }>>,
+    listModels: () =>
+      ipcRenderer.invoke('title:list-models') as Promise<Array<{ key: string; label: string }>>,
+    scanBatchDir: (input: { batchDir: string }) =>
+      ipcRenderer.invoke('title:scan-batch-dir', input) as Promise<{
+        skuCount: number
+        existingTitles: Record<string, string>
+      }>,
+    run: (input: TitleBatchConfig) => ipcRenderer.invoke('title:run', input) as Promise<string>,
+    retryFailed: (input: { task_id: string }) =>
+      ipcRenderer.invoke('title:retry-failed', input) as Promise<string>,
+    getResult: (input: { sku_code: string; batch_dir: string }) =>
+      ipcRenderer.invoke('title:get-result', input) as Promise<unknown | null>,
+    onProgress: (callback: (progress: TitleProgress) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: TitleProgress) => {
+        callback(progress)
+      }
+      ipcRenderer.on('title:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('title:progress', listener)
+      }
+    },
   },
   activation: {
     activate: (input: { code: string; device_name: string }) =>

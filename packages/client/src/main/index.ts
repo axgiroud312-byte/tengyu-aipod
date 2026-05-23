@@ -4,6 +4,7 @@ import { BrowserWindow, app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
+import { registerTitleIpc } from './lib/title-service'
 import { registerOnboardingIpc } from './onboarding'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -38,6 +39,7 @@ app.whenReady().then(() => {
   registerOnboardingIpc()
   registerSkillCacheIpc()
   registerTempFileIpc()
+  registerTitleIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
   createMainWindow()
   activationPoller.start()

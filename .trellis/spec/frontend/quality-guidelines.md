@@ -209,6 +209,95 @@ const tempDir = await tempFileManager.createTaskDir('title', taskId)
 await writeFile(join(tempDir, 'prompt-snapshot.json'), json)
 ```
 
+### Scenario: Title Module Service
+
+#### 1. Scope / Trigger
+- Trigger: Electron client title generation needs to scan a finished SKU batch, call vision LLMs, write `titles.xlsx`, and persist SKU title metadata.
+- Boundary: this is main-process orchestration only. Renderer UI calls it through IPC; renderer must not read folders, hold API keys, call Bailian, or write Excel files directly.
+
+#### 2. Signatures
+- Class: `TitleService`
+- Singleton: `titleService`
+- Config:
+  - `TitleBatchConfig.batchDir: string`
+  - `platform: string`
+  - `language: string`
+  - `model: string`
+  - `imageIndex?: number`
+  - `extraRequirement?: string`
+  - `existingStrategy?: 'skip' | 'regenerate'`
+  - `maxRetries?: number`
+  - `concurrency?: number`
+  - `preprocess?: { maxSize?: number; compression?: boolean; format?: 'jpg' | 'png'; quality?: number }`
+- Methods:
+  - `scanBatchDir(batchDir): Promise<{ skuCount: number; existingTitles: Record<string, string> }>`
+  - `runTitleBatch(config): Promise<TitleBatchResult>`
+  - `startBatch(config): string`
+  - `retryFailed(taskId): string`
+  - `getResult({ sku_code, batch_dir }): Promise<TitleResult | null>`
+- IPC:
+  - `title:list-platforms -> Array<{ key; label }>`
+  - `title:list-languages -> Array<{ key; label }>`
+  - `title:list-models -> Array<{ key; label }>`
+  - `title:scan-batch-dir({ batchDir }) -> { skuCount, existingTitles }`
+  - `title:run(TitleBatchConfig) -> taskId`
+  - `title:retry-failed({ task_id }) -> taskId`
+  - `title:get-result({ sku_code, batch_dir }) -> TitleResult | null`
+  - Event: `title:progress -> { task_id, processed, total, succeeded, failed, skipped }`
+
+#### 3. Contracts
+- Scan only first-level directories under `batchDir`; directory names are SKU codes and sort with natural ordering.
+- Pick images by natural sort over `jpg`, `jpeg`, `png`, and `webp`. `imageIndex` is 1-indexed; invalid low values normalize to 1; too-large values use the last image and produce a warning.
+- Read existing `titles.xlsx` from `{batchDir}/titles.xlsx`; header may be Chinese `货号/标题` or English `sku/title`.
+- `skip` mode skips SKUs that already have titles; if every SKU is skipped, do not require a title Skill or Bailian API key.
+- `regenerate` mode overwrites existing rows with new generated titles.
+- Fetch title Skill through `skillCacheManager` with `{ module: 'title', platform, language }`, then call `AliyunBailianAdapter.visionCompletion`.
+- Preprocess images with `SharpPreprocessPool` into `.workbench/tmp/title/{taskId}`, delete each preprocessed file after the LLM call, and clean the task temp directory in `finally`.
+- Parse model output as one title string: strip common prefixes, markdown fences, bullets, wrapping quotes, and truncate by platform fallback limit.
+- Write `titles.xlsx` with exactly A `货号` and B `标题`; generated titles override existing titles.
+- Persist generated titles into `.workbench/workbench.db` `skus` fields: title, language, platform, title skill id/version, model, and generated timestamp.
+
+#### 4. Validation & Error Matrix
+- Missing `workbench_root` -> throw before running title generation.
+- Non-directory `batchDir` -> throw before processing SKUs.
+- SKU folder has no images -> SKU result `failed` with `NO_IMAGE`; batch continues.
+- LLM returns empty title -> retry while retries remain; still empty after retry -> SKU failed.
+- Bailian retryable errors -> retry up to `maxRetries`; non-retryable errors fail that SKU.
+- `titles.xlsx` locked (`EBUSY`, `EPERM`, `EACCES`) -> `AppErrorClass('XLSX_LOCKED', retryable=false)`.
+- Early setup failure after temp dir creation -> close owned preprocess pool and cleanup title temp dir in `finally`.
+
+#### 5. Good/Base/Bad Cases
+- Good: UI calls `title:run`, listens to `title:progress`, and reads per-SKU result through `title:get-result`.
+- Base: user selects "skip", existing title rows stay unchanged, only missing SKUs are generated.
+- Bad: renderer reads local image files, sends API keys to a server, or writes `titles.xlsx` itself.
+
+#### 6. Tests Required
+- Unit test natural folder/image sorting and nth-image fallback.
+- Unit test `parseTitle` stripping prefixes/quotes and truncating by platform.
+- Unit test xlsx read/write merge behavior and `XLSX_LOCKED` mapping.
+- Unit test run orchestration with skip mode, retry after empty LLM output, progress emission, xlsx write, and `skus` registration.
+- Unit test all-skipped batch does not fetch Skill or require Bailian API key.
+- Type-check preload and renderer declarations when changing title IPC.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+// Renderer owns privileged work and leaks local/API details across layers.
+await fetch('/api/title-proxy', { body: JSON.stringify({ apiKey, imagePath }) })
+```
+
+Correct:
+```ts
+const taskId = await window.api.title.run({
+  batchDir,
+  platform,
+  language,
+  model,
+  existingStrategy: 'skip',
+})
+```
+
 ---
 
 ## Testing Requirements
