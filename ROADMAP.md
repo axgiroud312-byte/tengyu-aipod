@@ -76,52 +76,162 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 
 ---
 
-## 切片 2-8（task 待用户进入切片时再用 task.py 创建）
+## 切片 2 — 标题生成模块（9 task）
 
-### 切片 2：标题生成模块
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 15 | 服务端 Skill 派发 API | server-api-skills | P0 |
+| 16 | Admin Skill 管理 UI | admin-skills-ui | P0 |
+| 17 | 客户端 Skill 缓存 | client-skill-cache | P0 |
+| 18 | 阿里云百炼 Adapter | bailian-adapter | P0 |
+| 19 | Sharp 预处理 Worker 池 | sharp-preprocess-pool | P0 |
+| 20 | TempFileManager | temp-file-manager | P0 |
+| 21 | 标题模块业务服务 | title-module-service | P0 |
+| 22 | 标题模块 UI | title-module-ui | P0 |
+| 23 | 标题模块 E2E | title-module-e2e | P1 |
 
-业务最简单（仅依赖百炼），用来跑通"云端 skill 派发 → adapter → 模块"全套路。
+**v0.2.0 发版**
 
-预计 task：
-- bailian-adapter（百炼 OpenAI 兼容客户端）
-- skill-cache-client（客户端缓存 + 30 分钟刷新）
-- api-skills（服务端派发 skill）
-- title-module-service（业务编排）
-- title-module-ui
-- title-module-e2e
+## 切片 3 — 侵权检测（6 task）
 
-### 切片 3：侵权检测
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 24 | 阈值与 Skill 配置 UI | detection-thresholds | P0 |
+| 25 | 检测业务服务 | detection-module-service | P0 |
+| 26 | 检测前端 UI | detection-module-ui | P0 |
+| 27 | 一键加入待套版 | detection-promote-to-matting | P1 |
+| 28 | 费用预估器 | detection-cost-estimator | P1 |
+| 29 | 检测 E2E | detection-e2e | P1 |
 
-复用 bailian-adapter + skill-cache。新加：sharp 图像预处理 + worker thread + 风险分类。
+**v0.3.0 发版**
 
-### 切片 4：生图 - Grsai
+## 切片 4 — 生图 Grsai（10 task）
 
-新 adapter，4 能力 × 5 模式，UI 复杂度大。
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 30 | Provider Registry API | server-api-providers | P0 |
+| 31 | Admin Provider 管理 UI | admin-providers-ui | P0 |
+| 32 | Grsai Adapter | grsai-adapter | P0 |
+| 33 | 生图模块骨架 | generation-skeleton | P0 |
+| 34 | 提示词生成器服务 | prompt-generator-service | P0 |
+| 35 | 文生图 Grsai UI | txt2img-grsai-ui | P0 |
+| 36 | 图生图 5 模式 UI | img2img-grsai-ui | P0 |
+| 37 | 提取 Grsai UI | extract-grsai-ui | P0 |
+| 38 | 并发控制器 | generation-concurrency | P0 |
+| 39 | Grsai E2E | generation-grsai-e2e | P1 |
 
-### 切片 5：生图 - ComfyUI（晨羽）
+**v0.4.0 发版**
 
-实例管理 + 关机定时 + ComfyUI HTTP API 集成。
+## 切片 5 — 生图 ComfyUI（11 task）
 
-### 切片 6：采集
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 40 | 晨羽智云 Adapter | chenyu-cloud-adapter | P0 |
+| 41 | ComfyUI HTTP Adapter | comfyui-http-adapter | P0 |
+| 42 | 工作流派发 API | server-api-workflows | P0 |
+| 43 | Admin 工作流管理 UI | admin-workflows-ui | P0 |
+| 44 | 实例生命周期管理 | comfyui-instance-manager | P0 |
+| 45 | 工作流执行引擎 | comfyui-execution | P0 |
+| 46 | 提取 ComfyUI UI | extract-comfyui-ui | P0 |
+| 47 | 图生图 ComfyUI UI | img2img-comfyui-ui | P0 |
+| 48 | 直接抠图 | matting-comfyui-direct | P0 |
+| 49 | 混合抠图路径 | matting-mixed-pathway | P0 |
+| 50 | ComfyUI E2E | generation-comfyui-e2e | P1 |
 
-bit-browser + cdp 共享适配器（建好后切片 8 上架复用）。
+**v0.5.0 发版**
 
-### 切片 7：PS 套版
+## 切片 6 — 采集（10 task）
 
-Windows 限定。COM + JSX 动态生成。
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 51 | BitBrowser Adapter | bit-browser-adapter | P0 |
+| 52 | CDP Adapter | cdp-adapter | P0 |
+| 53 | Platform Rules API | server-api-platform-rules | P0 |
+| 54 | Admin 平台规则 UI | admin-platform-rules-ui | P1 |
+| 55 | 采集会话状态机 | collection-session-fsm | P0 |
+| 56 | 注入采集脚本 | collection-injected-script | P0 |
+| 57 | 点击采集模式 | collection-click-mode | P0 |
+| 58 | 滚动采集模式 | collection-scroll-mode | P0 |
+| 59 | 采集记录和 manifest | collection-records | P0 |
+| 60 | 采集 E2E | collection-e2e | P1 |
 
-### 切片 8：上架
+**v0.6.0 发版**
 
-⚠️ 进入前**必须**先把 `listing-automation-builder` SKILL 复制到 `.agents/skills/`。详见 ADR-0004 + spec/07。
+## 切片 7 — PS 套版（12 task，Windows-only）
 
-### v1.5
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 61 | PS 状态检测 | ps-status-checker | P0 |
+| 62 | PS COM Adapter | ps-com-adapter | P0 |
+| 63 | PSD 模板扫描 | psd-scanner | P0 |
+| 64 | JSX 生成器（路径 A）| ps-jsx-generator | P0 |
+| 65 | 任务分组 | ps-task-grouping | P0 |
+| 66 | 执行引擎 | ps-execution-engine | P0 |
+| 67 | 多模板批次 | ps-multi-batch | P0 |
+| 68 | 裁切策略 | ps-clipping | P0 |
+| 69 | 跳过已完成 | ps-skip-completed | P1 |
+| 70 | 进度和日志 | ps-progress-logs | P1 |
+| 71 | PS 模块 UI | ps-module-ui | P0 |
+| 72 | PS 手动 E2E | ps-module-e2e | P1 |
 
-- 编排引擎 + 6 个流程模板
-- electron-updater 全自动更新
-- 上架 TikTok / Temu Full / Ozon / Mercado
-- PS 套版路径 B
-- 代码签名
-- macOS / Windows 应用商店上架（可选）
+**v0.7.0 发版**
+
+## 切片 8 — 上架（20 task）
+
+⚠️ **必须先做 task #73**（导入 listing-automation-builder SKILL）。
+
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 73 | Import SKILL（强制） | listing-skill-import | P0 |
+| 74 | Profile 锁 | listing-profile-lock | P0 |
+| 75 | Port 类型 | listing-types-port | P0 |
+| 76 | Port runner 框架 | listing-runner-port | P0 |
+| 77 | Temu selectors | listing-temu-selectors | P0 |
+| 78 | Temu parser | listing-temu-parser | P0 |
+| 79 | Temu executor | listing-temu-executor | P0 |
+| 80 | Temu workflow | listing-temu-workflow | P0 |
+| 81 | Temu smoke | listing-temu-smoke | P0 |
+| 82 | Shein selectors | listing-shein-selectors | P0 |
+| 83 | Shein parser | listing-shein-parser | P0 |
+| 84 | Shein executor | listing-shein-executor | P0 |
+| 85 | Shein workflow | listing-shein-workflow | P0 |
+| 86 | Shein smoke | listing-shein-smoke | P0 |
+| 87 | 断点续传 | listing-resume | P0 |
+| 88 | 批次加载器 | listing-batch-loader | P0 |
+| 89 | 证据保存 | listing-evidence | P1 |
+| 90 | 上架模块 UI | listing-module-ui | P0 |
+| 91 | 失败重试 UI | listing-failure-retry | P1 |
+| 92 | 上架手动 E2E | listing-module-e2e | P1 |
+
+**v1.0.0 发版（v1 全功能）**
+
+## v1.5 — 增量（15 task）
+
+| # | Task | Slug | 优先级 |
+|---|---|---|---|
+| 93 | 编排流程模板 | v15-orch-templates | P2 |
+| 94 | 编排引擎执行 | v15-orch-engine | P2 |
+| 95 | 失败策略 | v15-orch-failure | P2 |
+| 96 | 编排 UI（任务中心）| v15-orch-ui | P2 |
+| 97 | electron-updater | v15-electron-updater | P2 |
+| 98 | 选择器云端派发 | v15-selectors-dispatch | P2 |
+| 99 | 服务端风控 | v15-risk-detection | P2 |
+| 100 | TikTok 上架 | v15-listing-tiktok | P2 |
+| 101 | Temu Full 上架 | v15-listing-temu-full | P2 |
+| 102 | Ozon 上架 | v15-listing-ozon | P2 |
+| 103 | Mercado 上架 | v15-listing-mercado | P2 |
+| 104 | PS 路径 B | v15-ps-path-b | P2 |
+| 105 | i18n 英文 | v15-i18n-english | P2 |
+| 106 | Windows 签名 | v15-sign-windows | P2 |
+| 107 | macOS 签名 | v15-sign-mac | P2 |
+
+**v1.5.0 发版**
+
+## 总计
+
+**108 个 task**（含 00-bootstrap）= 全部 v1 + v1.5 工作单元已就绪，每个 task 含完整 prd.md。
+
+每完成一个切片 = 一个可演示发版本。逐 task 跑、逐切片发，不要跳。
 
 ---
 
