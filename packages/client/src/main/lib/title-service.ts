@@ -4,7 +4,7 @@ import { access, readdir, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { AppErrorClass, type Skill, type SkillSummary } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { readAppConfig } from '../onboarding'
@@ -79,6 +79,10 @@ export type TitleBatchResult = {
   skipped: number
   results: TitleSkuResult[]
 }
+
+export type TitleTaskEvent =
+  | { ok: true; result: TitleBatchResult }
+  | { ok: false; taskId: string; error: string }
 
 export type TitleScanResult = {
   skuCount: number
@@ -591,18 +595,29 @@ export class TitleService {
     }
   }
 
-  startBatch(config: TitleBatchConfig, emitProgress?: (progress: TitleProgress) => void) {
+  startBatch(
+    config: TitleBatchConfig,
+    emitProgress?: (progress: TitleProgress) => void,
+    emitCompleted?: (event: TitleTaskEvent) => void,
+  ) {
     const taskId = config.taskId ?? randomUUID()
     const dependencies = emitProgress ? { emitProgress } : {}
     void this.runTitleBatch({ ...config, taskId }, dependencies)
       .then((result) => {
         this.completedTasks.set(taskId, { config: { ...config, taskId }, result })
+        emitCompleted?.({ ok: true, result })
       })
-      .catch(() => null)
+      .catch((error) => {
+        emitCompleted?.({ ok: false, taskId, error: appErrorMessage(error) })
+      })
     return taskId
   }
 
-  retryFailed(taskId: string, emitProgress?: (progress: TitleProgress) => void) {
+  retryFailed(
+    taskId: string,
+    emitProgress?: (progress: TitleProgress) => void,
+    emitCompleted?: (event: TitleTaskEvent) => void,
+  ) {
     const task = this.completedTasks.get(taskId)
     if (!task) {
       throw new AppErrorClass('HTTP_4XX', '未找到可重试的标题任务', false)
@@ -623,6 +638,7 @@ export class TitleService {
         skuCodes: failedSkuCodes,
       },
       emitProgress,
+      emitCompleted,
     )
   }
 
@@ -900,20 +916,45 @@ function emitTitleProgress(progress: TitleProgress) {
   }
 }
 
+function emitTitleCompleted(event: TitleTaskEvent) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('title:completed', event)
+  }
+}
+
+async function openPath(path: string) {
+  const error = await shell.openPath(path)
+  if (error) {
+    return { ok: false, error: { code: 'OPEN_PATH_FAILED', message: error } }
+  }
+  return { ok: true }
+}
+
 export function registerTitleIpc() {
   ipcMain.handle('title:list-platforms', () => titleService.listPlatforms())
   ipcMain.handle('title:list-languages', () => titleService.listLanguages())
   ipcMain.handle('title:list-models', () => titleService.listModels())
+  ipcMain.handle('title:choose-batch-dir', async () => {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory'],
+      title: '选择货号批次目录',
+    })
+    if (result.canceled || !result.filePaths[0]) {
+      return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
+    }
+    return { ok: true, data: { path: result.filePaths[0] } }
+  })
   ipcMain.handle('title:scan-batch-dir', (_event, input: { batchDir: string }) =>
     titleService.scanBatchDir(input.batchDir),
   )
   ipcMain.handle('title:run', (_event, input: TitleBatchConfig) =>
-    titleService.startBatch(input, emitTitleProgress),
+    titleService.startBatch(input, emitTitleProgress, emitTitleCompleted),
   )
   ipcMain.handle('title:retry-failed', (_event, input: { task_id: string }) =>
-    titleService.retryFailed(input.task_id, emitTitleProgress),
+    titleService.retryFailed(input.task_id, emitTitleProgress, emitTitleCompleted),
   )
   ipcMain.handle('title:get-result', (_event, input: { sku_code: string; batch_dir: string }) =>
     titleService.getResult(input),
   )
+  ipcMain.handle('title:open-path', (_event, input: { path: string }) => openPath(input.path))
 }

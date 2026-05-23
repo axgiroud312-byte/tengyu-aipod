@@ -87,6 +87,56 @@ const adapter = new AliyunBailianAdapter({ apiKey, region: 'cn' })
 await adapter.visionCompletion({ model, messages })
 ```
 
+### Scenario: Electron Vite Workspace Dependency Bundling
+
+#### 1. Scope / Trigger
+- Trigger: Electron main or preload imports a workspace package that ships source files instead of compiled output.
+- Boundary: runtime workspace packages used by main/preload must be bundled into the Electron output, not left for Node to resolve from source.
+
+#### 2. Signatures
+- `packages/client/electron.vite.config.ts`
+  - `main.plugins = [externalizeDepsPlugin({ exclude: ['@tengyu-aipod/shared'] })]`
+  - `preload.plugins = [externalizeDepsPlugin({ exclude: ['@tengyu-aipod/shared'] })]`
+
+#### 3. Contracts
+- `@tengyu-aipod/shared` is source-first (`packages/shared/src/index.ts`) and uses extensionless re-exports.
+- If it is externalized, Electron/Node may resolve it directly from source and fail on runtime ESM resolution.
+- Excluding it from externalization ensures main and preload bundles inline the shared code.
+- Third-party `node_modules` dependencies should still be externalized normally.
+
+#### 4. Validation & Error Matrix
+- Shared package externalized in main/preload -> Electron dev can fail with `ERR_MODULE_NOT_FOUND` for `packages/shared/src/*`.
+- Shared package excluded from externalization -> `pnpm -F @tengyu-aipod/client dev` and `build` can load the main process bundle.
+- Do not disable dependency externalization globally just to fix this one workspace package.
+
+#### 5. Good/Base/Bad Cases
+- Good: shared runtime types and helpers are bundled, and the Electron app boots cleanly.
+- Base: renderer-only code still uses Vite aliases and normal bundle splitting.
+- Bad: letting Node resolve a source-only workspace package at runtime while keeping it externalized.
+
+#### 6. Tests Required
+- `pnpm -F @tengyu-aipod/client type-check`
+- `pnpm -F @tengyu-aipod/client lint`
+- `pnpm -F @tengyu-aipod/client test`
+- `pnpm -F @tengyu-aipod/client build`
+- `pnpm -F @tengyu-aipod/client dev` smoke check should reach window creation without `ERR_MODULE_NOT_FOUND`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+main: {
+  plugins: [externalizeDepsPlugin()]
+}
+```
+
+Correct:
+```ts
+main: {
+  plugins: [externalizeDepsPlugin({ exclude: ['@tengyu-aipod/shared'] })]
+}
+```
+
 ### Scenario: Sharp Preprocess Worker Pool
 
 #### 1. Scope / Trigger

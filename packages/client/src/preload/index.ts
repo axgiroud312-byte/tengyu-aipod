@@ -1,6 +1,6 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
-import type { TitleBatchConfig, TitleProgress } from '../main/lib/title-service'
+import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
@@ -51,6 +51,11 @@ const api = {
       ipcRenderer.invoke('title:list-languages') as Promise<Array<{ key: string; label: string }>>,
     listModels: () =>
       ipcRenderer.invoke('title:list-models') as Promise<Array<{ key: string; label: string }>>,
+    chooseBatchDir: () =>
+      ipcRenderer.invoke('title:choose-batch-dir') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
     scanBatchDir: (input: { batchDir: string }) =>
       ipcRenderer.invoke('title:scan-batch-dir', input) as Promise<{
         skuCount: number
@@ -61,6 +66,10 @@ const api = {
       ipcRenderer.invoke('title:retry-failed', input) as Promise<string>,
     getResult: (input: { sku_code: string; batch_dir: string }) =>
       ipcRenderer.invoke('title:get-result', input) as Promise<unknown | null>,
+    openPath: (input: { path: string }) =>
+      ipcRenderer.invoke('title:open-path', input) as Promise<
+        { ok: true } | { ok: false; error: { code: string; message: string } }
+      >,
     onProgress: (callback: (progress: TitleProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: TitleProgress) => {
         callback(progress)
@@ -69,6 +78,16 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('title:progress', listener)
+      }
+    },
+    onCompleted: (callback: (event: TitleTaskEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: TitleTaskEvent) => {
+        callback(event)
+      }
+      ipcRenderer.on('title:completed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('title:completed', listener)
       }
     },
   },

@@ -40,6 +40,10 @@ declare global {
         listPlatforms: () => Promise<Array<{ key: string; label: string }>>
         listLanguages: () => Promise<Array<{ key: string; label: string }>>
         listModels: () => Promise<Array<{ key: string; label: string }>>
+        chooseBatchDir: () => Promise<
+          | { ok: true; data: { path: string } }
+          | { ok: false; error: { code: string; message: string } }
+        >
         scanBatchDir: (input: { batchDir: string }) => Promise<{
           skuCount: number
           existingTitles: Record<string, string>
@@ -47,8 +51,14 @@ declare global {
         run: (input: import('../../main/lib/title-service').TitleBatchConfig) => Promise<string>
         retryFailed: (input: { task_id: string }) => Promise<string>
         getResult: (input: { sku_code: string; batch_dir: string }) => Promise<unknown | null>
+        openPath: (input: { path: string }) => Promise<
+          { ok: true } | { ok: false; error: { code: string; message: string } }
+        >
         onProgress: (
           callback: (progress: import('../../main/lib/title-service').TitleProgress) => void,
+        ) => () => void
+        onCompleted: (
+          callback: (event: import('../../main/lib/title-service').TitleTaskEvent) => void,
         ) => () => void
       }
       activation: {

@@ -4,16 +4,27 @@ import type { ActivationBadgeState } from '@tengyu-aipod/shared'
 import { APP_VERSION } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
+  Calculator,
   CheckCircle2,
   FolderOpen,
   KeyRound,
+  Loader2,
   MonitorCheck,
+  Play,
   PlayCircle,
   RefreshCw,
+  RotateCcw,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import type {
+  TitleBatchConfig,
+  TitleBatchResult,
+  TitleProgress,
+  TitleTaskEvent,
+} from '../../main/lib/title-service'
 
 type OnboardingStep = 1 | 2 | 3 | 4
+type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 
 const apiKeyFields = [
   { key: 'chenyu', label: '晨羽智云 API Key', placeholder: '用于 ComfyUI 生图' },
@@ -21,6 +32,12 @@ const apiKeyFields = [
   { key: 'bailian', label: '阿里云百炼 API Key', placeholder: '用于检测和标题' },
   { key: 'bit_browser_url', label: '比特浏览器地址', placeholder: '127.0.0.1:54345' },
 ]
+
+const titleModelPrices: Record<string, { input: number; output: number }> = {
+  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
+  'qwen3-vl-plus': { input: 1, output: 10 },
+  'qwen-vl-max': { input: 1.6, output: 4 },
+}
 
 function normalizeActivationCode(value: string) {
   return value
@@ -70,6 +87,30 @@ function statusDotClassName(tone: ActivationBadgeState['tone']) {
     default:
       return 'bg-muted-foreground'
   }
+}
+
+function parsePositiveNumber(value: string, fallback: number) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseNonNegativeNumber(value: string, fallback: number) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function estimateTitleCost(imageCount: number, model: string, compression: boolean) {
+  const price = titleModelPrices[model] ?? { input: 1, output: 10 }
+  const imageTokens = compression ? 256 : 1024
+  const outputTokens = 80
+  return (imageCount * (imageTokens * price.input + outputTokens * price.output)) / 1_000_000
+}
+
+function progressPercent(progress: TitleProgress | null) {
+  if (!progress || progress.total === 0) {
+    return 0
+  }
+  return Math.round((progress.processed / progress.total) * 100)
 }
 
 function ActivationBadge({
@@ -209,13 +250,194 @@ function ActivationBadge({
 
 function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
   const status = useActivationStore((state) => state.status)
-  const [pingResult, setPingResult] = useState('未测试')
+  const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
+  const [languages, setLanguages] = useState<Array<{ key: string; label: string }>>([])
+  const [models, setModels] = useState<Array<{ key: string; label: string }>>([])
+  const [batchDir, setBatchDir] = useState('')
+  const [platform, setPlatform] = useState('temu_pop')
+  const [language, setLanguage] = useState('en')
+  const [model, setModel] = useState('qwen3-vl-plus')
+  const [imageIndex, setImageIndex] = useState('1')
+  const [extraRequirement, setExtraRequirement] = useState('')
+  const [existingStrategy, setExistingStrategy] = useState<TitleExistingStrategy>('skip')
+  const [maxRetries, setMaxRetries] = useState('2')
+  const [concurrency, setConcurrency] = useState('3')
+  const [compression, setCompression] = useState(true)
+  const [maxSize, setMaxSize] = useState('1024')
+  const [scanResult, setScanResult] = useState<{
+    skuCount: number
+    existingTitles: Record<string, string>
+  } | null>(null)
+  const [progress, setProgress] = useState<TitleProgress | null>(null)
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [result, setResult] = useState<TitleBatchResult | null>(null)
+  const [titleError, setTitleError] = useState<string | null>(null)
+  const [openMessage, setOpenMessage] = useState<string | null>(null)
+  const [isRetryingFailed, setIsRetryingFailed] = useState(false)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
 
-  const handlePing = async () => {
-    const result = await window.api.ping()
-    setPingResult(result)
+  useEffect(() => {
+    let mounted = true
+    async function loadOptions() {
+      const [nextPlatforms, nextLanguages, nextModels] = await Promise.all([
+        window.api.title.listPlatforms(),
+        window.api.title.listLanguages(),
+        window.api.title.listModels(),
+      ])
+      if (!mounted) {
+        return
+      }
+      setPlatforms(nextPlatforms)
+      setLanguages(nextLanguages)
+      setModels(nextModels)
+      setPlatform((current) => nextPlatforms[0]?.key ?? current)
+      setLanguage((current) => nextLanguages[0]?.key ?? current)
+      setModel((current) => nextModels[0]?.key ?? current)
+    }
+    void loadOptions()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    const offProgress = window.api.title.onProgress((nextProgress) => {
+      setProgress(nextProgress)
+      setTaskId(nextProgress.task_id)
+    })
+    const offCompleted = window.api.title.onCompleted((event: TitleTaskEvent) => {
+      if (event.ok) {
+        setResult(event.result)
+        setIsRetryingFailed(false)
+        setProgress({
+          task_id: event.result.taskId,
+          processed: event.result.total,
+          total: event.result.total,
+          succeeded: event.result.succeeded,
+          failed: event.result.failed,
+          skipped: event.result.skipped,
+        })
+        setTitleError(null)
+        return
+      }
+      setIsRetryingFailed(false)
+      setTitleError(event.error)
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [])
+
+  const existingTitleCount = scanResult ? Object.keys(scanResult.existingTitles).length : 0
+  const pendingEstimateCount = scanResult
+    ? existingStrategy === 'skip'
+      ? Math.max(0, scanResult.skuCount - existingTitleCount)
+      : scanResult.skuCount
+    : 0
+  const estimatedCost = estimateTitleCost(pendingEstimateCount, model, compression)
+  const percent = progressPercent(progress)
+  const isRunning = Boolean(progress && progress.processed < progress.total && !result)
+  const progressStatusText = isRetryingFailed
+    ? '失败重试中'
+    : isRunning
+      ? '处理中'
+      : result
+        ? '完成'
+        : taskId
+          ? '等待任务结果'
+          : '未开始'
+  const canRun = Boolean(batchDir.trim()) && !isRunning
+  const successRows = result?.results.filter((item) => item.status === 'success') ?? []
+  const failedRows = result?.results.filter((item) => item.status === 'failed') ?? []
+
+  async function chooseBatchDir() {
+    const selected = await window.api.title.chooseBatchDir()
+    if (!selected.ok) {
+      return
+    }
+    setBatchDir(selected.data.path)
+    setTitleError(null)
+    await scanBatchDir(selected.data.path)
+  }
+
+  async function scanBatchDir(path = batchDir) {
+    if (!path.trim()) {
+      setTitleError('请先选择货号批次目录')
+      return
+    }
+    try {
+      const nextScan = await window.api.title.scanBatchDir({ batchDir: path.trim() })
+      setScanResult(nextScan)
+      setTitleError(null)
+    } catch (error) {
+      setTitleError(error instanceof Error ? error.message : '扫描批次目录失败')
+    }
+  }
+
+  async function runTitleBatch() {
+    if (!batchDir.trim()) {
+      setTitleError('请先选择货号批次目录')
+      return
+    }
+    setResult(null)
+    setIsRetryingFailed(false)
+    setOpenMessage(null)
+    setTitleError(null)
+    const titleConfig: TitleBatchConfig = {
+      batchDir: batchDir.trim(),
+      platform,
+      language,
+      model,
+      imageIndex: parsePositiveNumber(imageIndex, 1),
+      existingStrategy,
+      maxRetries: parseNonNegativeNumber(maxRetries, 2),
+      concurrency: parsePositiveNumber(concurrency, 3),
+      preprocess: {
+        compression,
+        maxSize: parsePositiveNumber(maxSize, 1024),
+        format: 'jpg',
+      },
+    }
+    if (extraRequirement.trim()) {
+      titleConfig.extraRequirement = extraRequirement.trim()
+    }
+    const nextTaskId = await window.api.title.run(titleConfig)
+    setTaskId(nextTaskId)
+    setProgress({
+      task_id: nextTaskId,
+      processed: 0,
+      total: scanResult?.skuCount ?? 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+    })
+  }
+
+  async function retryFailed() {
+    if (!taskId) {
+      setTitleError('没有可重试的任务')
+      return
+    }
+    setResult(null)
+    setIsRetryingFailed(true)
+    setTitleError(null)
+    const nextTaskId = await window.api.title.retryFailed({ task_id: taskId })
+    setTaskId(nextTaskId)
+    setProgress({
+      task_id: nextTaskId,
+      processed: 0,
+      total: failedRows.length,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+    })
+  }
+
+  async function openPath(path: string) {
+    const response = await window.api.title.openPath({ path })
+    setOpenMessage(response.ok ? null : response.error.message)
   }
 
   return (
@@ -228,9 +450,9 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
         <ActivationBadge onEnterActivation={onEnterActivation} />
       </header>
 
-      <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center space-y-6 px-8">
+      <section className="mx-auto w-full max-w-7xl space-y-6 px-8 py-6">
         {isBlocked ? (
-          <div className="space-y-5 rounded-md border border-red-200 bg-red-50 p-6 text-red-900">
+          <div className="mt-20 max-w-xl space-y-5 rounded-md border border-red-200 bg-red-50 p-6 text-red-900">
             <div className="space-y-2">
               <h1 className="text-2xl font-semibold tracking-normal">
                 {status?.label ?? '激活状态异常'}
@@ -242,20 +464,367 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
             </Button>
           </div>
         ) : (
-          <>
-            <div className="space-y-2">
-              <h1 className="text-3xl font-semibold tracking-normal">
-                腾域 aipod - 版本 {APP_VERSION}
-              </h1>
-              <p className="text-base text-muted-foreground">软件已准备就绪</p>
+          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
+            <div className="space-y-6">
+              <div className="rounded-md border bg-background p-5 shadow-sm">
+                <div className="flex items-start justify-between gap-6">
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-muted-foreground">标题生成模块</p>
+                    <h1 className="text-2xl font-semibold text-balance">
+                      从货号成品图批量生成跨境标题
+                    </h1>
+                  </div>
+                  <div className="rounded-md border bg-muted px-3 py-2 text-right text-xs text-muted-foreground">
+                    <div>版本</div>
+                    <div className="mt-1 font-mono text-foreground">{APP_VERSION}</div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-md border bg-background p-5 shadow-sm">
+                <div className="grid gap-5">
+                  <label className="block space-y-2 text-sm font-medium">
+                    <span>货号批次目录</span>
+                    <div className="flex gap-2">
+                      <input
+                        className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setBatchDir(event.target.value)}
+                        placeholder="选择 05-货号成品 下的一个批次目录"
+                        value={batchDir}
+                      />
+                      <Button
+                        onClick={() => void chooseBatchDir()}
+                        type="button"
+                        variant="secondary"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择
+                      </Button>
+                      <Button onClick={() => void scanBatchDir()} type="button" variant="secondary">
+                        扫描
+                      </Button>
+                    </div>
+                  </label>
+
+                  <div className="grid gap-4 md:grid-cols-3">
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>平台</span>
+                      <select
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setPlatform(event.target.value)}
+                        value={platform}
+                      >
+                        {platforms.map((item) => (
+                          <option key={item.key} value={item.key}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>语言</span>
+                      <select
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setLanguage(event.target.value)}
+                        value={language}
+                      >
+                        {languages.map((item) => (
+                          <option key={item.key} value={item.key}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>模型</span>
+                      <select
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setModel(event.target.value)}
+                        value={model}
+                      >
+                        {models.map((item) => (
+                          <option key={item.key} value={item.key}>
+                            {item.label}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+
+                  <label className="block space-y-2 text-sm font-medium">
+                    <span>标题额外要求</span>
+                    <textarea
+                      className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      onChange={(event) => setExtraRequirement(event.target.value)}
+                      placeholder="例如：强调原创设计、节日主题、含 vintage 关键词"
+                      value={extraRequirement}
+                    />
+                  </label>
+
+                  <div className="grid gap-4 md:grid-cols-4">
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>取第几张图</span>
+                      <input
+                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        min={1}
+                        onChange={(event) => setImageIndex(event.target.value)}
+                        type="number"
+                        value={imageIndex}
+                      />
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>失败重试</span>
+                      <input
+                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        max={5}
+                        min={0}
+                        onChange={(event) => setMaxRetries(event.target.value)}
+                        type="number"
+                        value={maxRetries}
+                      />
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>并发数</span>
+                      <input
+                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        max={10}
+                        min={1}
+                        onChange={(event) => setConcurrency(event.target.value)}
+                        type="number"
+                        value={concurrency}
+                      />
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>最大边长</span>
+                      <input
+                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        min={256}
+                        onChange={(event) => setMaxSize(event.target.value)}
+                        type="number"
+                        value={maxSize}
+                      />
+                    </label>
+                  </div>
+
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <fieldset className="rounded-md border p-4">
+                      <legend className="px-1 text-sm font-medium">已有标题策略</legend>
+                      <div className="mt-2 flex gap-4 text-sm">
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            checked={existingStrategy === 'skip'}
+                            onChange={() => setExistingStrategy('skip')}
+                            type="radio"
+                          />
+                          跳过已有
+                        </label>
+                        <label className="inline-flex items-center gap-2">
+                          <input
+                            checked={existingStrategy === 'regenerate'}
+                            onChange={() => setExistingStrategy('regenerate')}
+                            type="radio"
+                          />
+                          重新生成
+                        </label>
+                      </div>
+                    </fieldset>
+                    <fieldset className="rounded-md border p-4">
+                      <legend className="px-1 text-sm font-medium">图像预处理</legend>
+                      <div className="mt-2 space-y-2 text-sm">
+                        <label className="inline-flex items-center gap-2 text-muted-foreground">
+                          <input checked disabled type="checkbox" />
+                          透明底自动加白
+                        </label>
+                        <label className="flex items-center gap-2">
+                          <input
+                            checked={compression}
+                            onChange={(event) => setCompression(event.target.checked)}
+                            type="checkbox"
+                          />
+                          压缩图片节省 token
+                        </label>
+                      </div>
+                    </fieldset>
+                  </div>
+
+                  {titleError ? (
+                    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      {titleError}
+                    </div>
+                  ) : null}
+
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
+                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                      <Calculator className="h-4 w-4" />
+                      预估 {pendingEstimateCount} 张图，约 ¥
+                      <span className="tabular-nums">{estimatedCost.toFixed(4)}</span>
+                    </div>
+                    <Button disabled={!canRun} onClick={() => void runTitleBatch()} type="button">
+                      {isRunning ? (
+                        <Loader2 className="mr-2 h-4 w-4" />
+                      ) : (
+                        <Play className="mr-2 h-4 w-4" />
+                      )}
+                      开始生成标题
+                    </Button>
+                  </div>
+                </div>
+              </div>
+
+              {result ? (
+                <div className="rounded-md border bg-background p-5 shadow-sm">
+                  <div className="flex items-start justify-between gap-4">
+                    <div>
+                      <h2 className="text-lg font-semibold text-balance">生成结果</h2>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        成功 {result.succeeded} 个，失败 {result.failed} 个，跳过 {result.skipped}{' '}
+                        个
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Button
+                        onClick={() => void openPath(result.xlsxPath)}
+                        type="button"
+                        variant="secondary"
+                      >
+                        打开 xlsx
+                      </Button>
+                      <Button
+                        onClick={() => void openPath(batchDir)}
+                        type="button"
+                        variant="secondary"
+                      >
+                        打开批次目录
+                      </Button>
+                    </div>
+                  </div>
+                  {openMessage ? <p className="mt-3 text-sm text-red-700">{openMessage}</p> : null}
+                  <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                    <div className="rounded-md border">
+                      <div className="border-b px-3 py-2 text-sm font-medium">
+                        成功列表（{successRows.length}）
+                      </div>
+                      <div className="max-h-56 overflow-auto p-2">
+                        {successRows.length ? (
+                          successRows.map((item) => (
+                            <div
+                              className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md px-2 py-2 text-sm"
+                              key={item.skuCode}
+                            >
+                              <span className="font-mono text-xs text-muted-foreground">
+                                {item.skuCode}
+                              </span>
+                              <span className="truncate">{item.title}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                            暂无成功项
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                    <div className="rounded-md border">
+                      <div className="flex items-center justify-between border-b px-3 py-2 text-sm font-medium">
+                        <span>失败列表（{failedRows.length}）</span>
+                        <Button
+                          className="h-8 px-2"
+                          disabled={!failedRows.length}
+                          onClick={() => void retryFailed()}
+                          type="button"
+                          variant="secondary"
+                        >
+                          <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                          重试失败
+                        </Button>
+                      </div>
+                      <div className="max-h-56 overflow-auto p-2">
+                        {failedRows.length ? (
+                          failedRows.map((item) => (
+                            <div className="rounded-md px-2 py-2 text-sm" key={item.skuCode}>
+                              <div className="font-mono text-xs text-muted-foreground">
+                                {item.skuCode}
+                              </div>
+                              <div className="mt-1 text-red-700">{item.error}</div>
+                            </div>
+                          ))
+                        ) : (
+                          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                            没有失败项
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              ) : null}
             </div>
-            <div className="flex items-center gap-3">
-              <Button type="button" onClick={handlePing}>
-                IPC Ping
-              </Button>
-              <span className="text-sm text-muted-foreground">结果：{pingResult}</span>
-            </div>
-          </>
+
+            <aside className="space-y-6">
+              <div className="rounded-md border bg-background p-5 shadow-sm">
+                <h2 className="text-lg font-semibold text-balance">批次概览</h2>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div className="rounded-md bg-muted p-3">
+                    <dt className="text-muted-foreground">货号文件夹</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {scanResult?.skuCount ?? 0}
+                    </dd>
+                  </div>
+                  <div className="rounded-md bg-muted p-3">
+                    <dt className="text-muted-foreground">已有标题</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {existingTitleCount}
+                    </dd>
+                  </div>
+                  <div className="rounded-md bg-muted p-3">
+                    <dt className="text-muted-foreground">预计生成</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {pendingEstimateCount}
+                    </dd>
+                  </div>
+                  <div className="rounded-md bg-muted p-3">
+                    <dt className="text-muted-foreground">预计费用</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      ¥{estimatedCost.toFixed(4)}
+                    </dd>
+                  </div>
+                </dl>
+              </div>
+
+              <div className="rounded-md border bg-background p-5 shadow-sm">
+                <div className="flex items-center justify-between">
+                  <h2 className="text-lg font-semibold text-balance">执行进度</h2>
+                  <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+                </div>
+                <div className="mt-4 h-2 rounded-full bg-muted">
+                  <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
+                </div>
+                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                  <div>
+                    <dt className="text-muted-foreground">处理中</dt>
+                    <dd className="mt-1 font-medium tabular-nums">
+                      {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">跳过</dt>
+                    <dd className="mt-1 font-medium tabular-nums">{progress?.skipped ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">成功</dt>
+                    <dd className="mt-1 font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-muted-foreground">失败</dt>
+                    <dd className="mt-1 font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+                  </div>
+                </dl>
+                <div className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                  {progressStatusText}
+                </div>
+              </div>
+            </aside>
+          </div>
         )}
       </section>
     </main>
