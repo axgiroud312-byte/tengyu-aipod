@@ -9,7 +9,8 @@
     "lint": "biome check .",
     "test": "echo no tests yet",
     "type-check": "tsc --noEmit",
-    "prisma:generate": "prisma generate"
+    "prisma:generate": "prisma generate",
+    "prisma-seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.19.3",
@@ -33,6 +34,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "prisma": "^6.19.3",
+    "tsx": "^4.8.1",
     "vitest": "^3.2.4"
   }
 }

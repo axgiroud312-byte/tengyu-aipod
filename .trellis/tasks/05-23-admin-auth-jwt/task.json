@@ -3,7 +3,7 @@
   "name": "admin-auth-jwt",
   "title": "admin auth jwt",
   "description": "/admin/login + 邮箱密码 + JWT + middleware 路由保护",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
