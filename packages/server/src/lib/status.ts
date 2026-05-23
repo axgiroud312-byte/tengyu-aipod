@@ -1,5 +1,7 @@
 import { db } from '@/lib/db'
-import { verifyClientJwt } from '@/lib/jwt'
+import { ClientAuthError, getBearerToken, requireClientAuth } from './client-auth'
+
+export { getBearerToken } from './client-auth'
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
@@ -14,23 +16,11 @@ export interface StatusResult {
   customer: { name?: string; has_contact: boolean } | null
 }
 
-export class StatusAuthError extends Error {
-  code: 'UNAUTHORIZED' | 'INVALID_TOKEN' | 'DEVICE_UNBOUND'
-
+export class StatusAuthError extends ClientAuthError {
   constructor(code: StatusAuthError['code']) {
     super(code)
     this.name = 'StatusAuthError'
-    this.code = code
   }
-}
-
-export function getBearerToken(authorization: string | null) {
-  if (!authorization?.startsWith('Bearer ')) {
-    return null
-  }
-
-  const token = authorization.slice('Bearer '.length).trim()
-  return token || null
 }
 
 export function calculateDaysRemaining(expires_at: Date | null, now: Date) {
@@ -45,34 +35,25 @@ export async function getActivationStatus(
   authorization: string | null,
   options: { now?: Date } = {},
 ): Promise<StatusResult> {
-  const token = getBearerToken(authorization)
-  if (!token) {
+  const now = options.now ?? new Date()
+  let auth: Awaited<ReturnType<typeof requireClientAuth>>
+  try {
+    auth = await requireClientAuth(authorization, { now })
+  } catch (error) {
+    if (error instanceof ClientAuthError) {
+      throw new StatusAuthError(error.code)
+    }
+    throw error
+  }
+  if (!auth) {
     throw new StatusAuthError('UNAUTHORIZED')
   }
 
-  const payload = await verifyClientJwt(token)
-  if (!payload) {
-    throw new StatusAuthError('INVALID_TOKEN')
-  }
-
-  const now = options.now ?? new Date()
   const device = await db.deviceActivation.findUnique({
-    where: { id: payload.sub },
-    include: {
-      code: {
-        include: {
-          customer: true,
-          devices: true,
-        },
-      },
-    },
+    where: { id: auth.device.id },
+    include: { code: { include: { customer: true, devices: true } } },
   })
-
-  if (
-    !device ||
-    device.code_id !== payload.code ||
-    device.device_fingerprint !== payload.device_fp
-  ) {
+  if (!device) {
     throw new StatusAuthError('DEVICE_UNBOUND')
   }
 

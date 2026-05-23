@@ -64,7 +64,8 @@ enum SkillModule {
 }
 
 model Skill {
-  id                String      @id
+  row_id            String      @id @default(cuid())
+  id                String
   module            SkillModule
   category          String?
   platform          String?

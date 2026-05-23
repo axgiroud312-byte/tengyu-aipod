@@ -3,7 +3,7 @@
   "name": "server-api-skills",
   "title": "server api skills",
   "description": "GET /api/skills + GET /api/skills/:id 派发接口",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

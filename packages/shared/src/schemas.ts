@@ -20,6 +20,8 @@ export const ProviderApiStyleSchema = z.enum([
   'openai-chat',
   'dashscope-native',
 ])
+export const SkillModuleSchema = z.enum(['generation', 'detection', 'title'])
+export const SkillVariableTypeSchema = z.enum(['select', 'number', 'text', 'textarea', 'checkbox'])
 
 export const ProviderSchema = z.object({
   id: ProviderIdSchema,
@@ -32,20 +34,34 @@ export const ProviderSchema = z.object({
 })
 
 export const SkillVariableSchema = z.object({
-  name: z.string().min(1),
+  key: z.string().min(1),
   label: z.string().min(1),
-  required: z.boolean(),
-  defaultValue: z.string().optional(),
+  type: SkillVariableTypeSchema,
+  options: z.array(z.object({ value: z.string().min(1), label: z.string().min(1) })).optional(),
+  default: z.unknown().optional(),
+  min: z.number().optional(),
+  max: z.number().optional(),
+  required: z.boolean().optional(),
+  placeholder: z.string().optional(),
+  help: z.string().optional(),
+})
+
+export const SkillSummarySchema = z.object({
+  id: z.string().min(1),
+  module: SkillModuleSchema,
+  category: z.string().nullable(),
+  platform: z.string().nullable(),
+  language: z.string().nullable(),
+  version: z.string().min(1),
+  enabled: z.boolean(),
+  recommendedModel: z.string().nullable(),
+  notes: z.string().nullable().optional(),
 })
 
 export const SkillSchema = z.object({
-  id: z.string().min(1),
-  version: z.string().min(1),
-  name: z.string().min(1),
-  module: z.enum(['generation', 'detection', 'title']),
+  ...SkillSummarySchema.shape,
   systemPrompt: z.string().min(1),
   variables: z.array(SkillVariableSchema),
-  recommendedModel: z.string().min(1),
 })
 
 export const ComfyuiWorkflowSlotSchema = z.object({

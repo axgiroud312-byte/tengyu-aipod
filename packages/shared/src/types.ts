@@ -13,6 +13,8 @@ export type GenerationCapability = 'txt2img' | 'img2img' | 'extract' | 'matting'
 
 export type ProviderId = 'comfyui-chenyu' | 'grsai' | 'aliyun-bailian'
 export type ProviderApiStyle = 'grsai-native' | 'openai-images' | 'openai-chat' | 'dashscope-native'
+export type SkillModule = 'generation' | 'detection' | 'title'
+export type SkillVariableType = 'select' | 'number' | 'text' | 'textarea' | 'checkbox'
 
 export interface Provider {
   id: ProviderId
@@ -25,20 +27,33 @@ export interface Provider {
 }
 
 export interface SkillVariable {
-  name: string
+  key: string
   label: string
-  required: boolean
-  defaultValue?: string
+  type: SkillVariableType
+  options?: Array<{ value: string; label: string }>
+  default?: unknown
+  min?: number
+  max?: number
+  required?: boolean
+  placeholder?: string
+  help?: string
 }
 
-export interface Skill {
+export interface SkillSummary {
   id: string
+  module: SkillModule
+  category: string | null
+  platform: string | null
+  language: string | null
   version: string
-  name: string
-  module: 'generation' | 'detection' | 'title'
+  enabled: boolean
+  recommendedModel: string | null
+  notes?: string | null
+}
+
+export interface Skill extends SkillSummary {
   systemPrompt: string
   variables: SkillVariable[]
-  recommendedModel: string
 }
 
 export interface ComfyuiWorkflowSlot {
