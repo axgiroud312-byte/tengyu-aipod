@@ -3,7 +3,7 @@
   "name": "sharp-preprocess-pool",
   "title": "sharp preprocess pool",
   "description": "Worker Thread 池 + 透明底加白 + 压缩",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

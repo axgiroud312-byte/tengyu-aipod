@@ -87,6 +87,64 @@ const adapter = new AliyunBailianAdapter({ apiKey, region: 'cn' })
 await adapter.visionCompletion({ model, messages })
 ```
 
+### Scenario: Sharp Preprocess Worker Pool
+
+#### 1. Scope / Trigger
+- Trigger: title generation and detection need local images converted before sending to vision models.
+- Boundary: preprocessing runs in Electron client worker threads to avoid blocking the main process.
+
+#### 2. Signatures
+- Class: `SharpPreprocessPool`
+- Constructor: `new SharpPreprocessPool(workerCount = defaultPreprocessWorkerCount())`
+- Methods:
+  - `process(options: PreprocessOptions): Promise<PreprocessResult>`
+  - `processAll(options: PreprocessOptions[]): Promise<PreprocessResult[]>`
+  - `close(): Promise<void>`
+- Default worker count:
+  - User override clamps to 1-8.
+  - Low-end machines (`cpu < 4` or `ram < 4GB`) use 1 worker.
+  - Otherwise use `min(floor(cpus / 2), 4)`.
+
+#### 3. Contracts
+- Input supports either a file path or `Buffer`.
+- Pipeline order:
+  1. `flatten({ background: '#ffffff' })`
+  2. optional `resize({ width, fit: 'inside', withoutEnlargement: true })`
+  3. encode as `jpeg({ quality: 85 })` by default or PNG when requested
+- Output path must be under `.workbench/tmp/{module}/{taskId}/{hash}_preprocessed.{ext}`.
+- Result shape: `{ outputPath, mimeType, sizeBytes, dataUrl }`.
+
+#### 4. Validation & Error Matrix
+- Missing path input -> `PreprocessError.kind = 'INPUT_NOT_FOUND'`
+- Sharp decode failure -> `PreprocessError.kind = 'SHARP_DECODE_FAILED'`
+- Disk full / ENOSPC -> `PreprocessError.kind = 'DISK_FULL'`
+- All preprocess errors are non-retryable by default.
+
+#### 5. Good/Base/Bad Cases
+- Good: transparent PNG buffer -> white-flattened JPEG data URL for Bailian.
+- Base: file path PNG -> PNG output when `format: 'png'`.
+- Bad: running sharp transformations directly on the Electron main thread loop.
+
+#### 6. Tests Required
+- Generate a transparent PNG with sharp and assert JPEG output metadata, resize limit, path, MIME type, and data URL.
+- Test both Buffer input and file path input.
+- Test queueing with a worker count of 1.
+- Test missing input and decode failure classification.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+// Blocks the Electron main process during large batch preprocessing.
+await sharp(inputPath).flatten({ background: '#ffffff' }).jpeg({ quality: 85 }).toFile(output)
+```
+
+Correct:
+```ts
+const pool = new SharpPreprocessPool()
+const result = await pool.process({ module: 'title', taskId, workbenchRoot, input })
+```
+
 ---
 
 ## Testing Requirements
