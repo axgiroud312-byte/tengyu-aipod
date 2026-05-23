@@ -247,6 +247,91 @@ await db.$transaction(async (tx) => {
 
 ---
 
+## Scenario: Client Activation API
+
+### 1. Scope / Trigger
+
+- Trigger: `/api/activate`, client JWT signing/verification, activation-code expiry checks, or device binding rules.
+- Applies to: `packages/server/src/app/api/activate/**`, `packages/server/src/lib/activate.ts`, and `packages/server/src/lib/jwt.ts`.
+
+### 2. Signatures
+
+- `POST /api/activate`
+  - Body: `{ code: string, device_fingerprint: string, device_name?: string }`
+  - Success: `{ ok: true, data: { activation_token, expires_at, max_devices, used_devices, device_name } }`
+- `signClientJwt(payload: { sub, code, device_fp, exp }): Promise<string>`
+- `verifyClientJwt(token): Promise<ClientJwtPayload | null>`
+
+### 3. Contracts
+
+- Activation code format is `POD-XXXX-YYYY-ZZZZ`.
+- Device fingerprints are 64-character strings.
+- First activation sets `ActivationCode.activated_at` and `ActivationCode.expires_at`.
+- Existing same-code devices may re-activate and update `device_name` plus `last_active_at`.
+- A device fingerprint already bound to another code must be rejected.
+- New devices cannot exceed `ActivationCode.max_devices`.
+- Client JWT payload must include `sub`, `code`, `device_fp`, `iss`, `iat`, and `exp`.
+- Client JWT issuer is `tengyu-pod-server`, signed with `JWT_SECRET_CLIENT`.
+- `/api/activate` rate limits by request IP at 10 attempts per minute.
+
+### 4. Validation & Error Matrix
+
+- Invalid JSON or payload shape -> HTTP 400 with `INVALID_INPUT`.
+- Unknown code -> HTTP 404 with `INVALID_CODE`.
+- Banned code -> HTTP 403 with `CODE_BANNED`.
+- Banned customer -> HTTP 403 with `CUSTOMER_BANNED`.
+- Expired activated code -> HTTP 403 with `CODE_EXPIRED`.
+- Device fingerprint already bound to another code -> HTTP 403 with `ALREADY_ACTIVATED_BY_OTHER`.
+- Device count exceeded -> HTTP 403 with `DEVICE_LIMIT_REACHED`.
+- Rate limit exceeded -> HTTP 429 with `RATE_LIMITED`.
+- Unexpected database/runtime error -> HTTP 500 with `INTERNAL_ERROR`; do not expose internals.
+
+### 5. Good/Base/Bad Cases
+
+- Good: first activation creates a `DeviceActivation`, sets code dates, and returns a client JWT.
+- Good: reactivating the same device/code returns success and does not consume another device slot.
+- Good: adding a second device succeeds when `used_devices < max_devices`.
+- Bad: accepting a valid-looking code for an inactive customer.
+- Bad: signing client tokens with the admin JWT issuer or secret.
+
+### 6. Tests Required
+
+- `pnpm -F @tengyu-aipod/server test`
+- `pnpm -F @tengyu-aipod/server lint`
+- `pnpm -F @tengyu-aipod/server type-check`
+- `pnpm -F @tengyu-aipod/server build`
+- `pnpm lint`
+- `pnpm type-check`
+- `pnpm test`
+- Manual HTTP checks against local Docker Postgres:
+  - Successful first activation.
+  - Same-device reactivation.
+  - Second-device activation within limit.
+  - `DEVICE_LIMIT_REACHED`.
+  - `ALREADY_ACTIVATED_BY_OTHER`.
+  - `INVALID_CODE`, `CODE_BANNED`, `CUSTOMER_BANNED`, `CODE_EXPIRED`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await signAdminJwt({ sub: device.id, role: 'client' })
+```
+
+#### Correct
+
+```ts
+await signClientJwt({
+  sub: device.id,
+  code: activationCode.code,
+  device_fp: input.device_fingerprint,
+  exp,
+})
+```
+
+---
+
 ## Error Types
 
 <!-- Custom error classes/types -->

@@ -7,7 +7,7 @@
     "dev": "next dev",
     "build": "next build",
     "lint": "biome check .",
-    "test": "echo no tests yet",
+    "test": "vitest run",
     "type-check": "tsc --noEmit",
     "prisma:generate": "prisma generate",
     "prisma-seed": "tsx prisma/seed.ts"

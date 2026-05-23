@@ -3,7 +3,7 @@
   "name": "api-activate",
   "title": "api activate endpoint",
   "description": "POST /api/activate：验码 + 设备指纹绑定 + JWT 签发 + max_devices 检查",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
