@@ -1,6 +1,16 @@
 import { Button } from '@/components/ui/button'
+import { initializeActivationStore, useActivationStore } from '@/store/activation'
+import type { ActivationBadgeState } from '@tengyu-aipod/shared'
 import { APP_VERSION } from '@tengyu-aipod/shared'
-import { CheckCircle2, FolderOpen, KeyRound, MonitorCheck, PlayCircle } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FolderOpen,
+  KeyRound,
+  MonitorCheck,
+  PlayCircle,
+  RefreshCw,
+} from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
 type OnboardingStep = 1 | 2 | 3 | 4
@@ -24,8 +34,184 @@ function defaultDeviceName() {
   return `我的${navigator.platform.includes('Mac') ? 'Mac' : '工作电脑'}`
 }
 
-function MainWorkbench() {
+function formatStatusTime(timestamp: number | null) {
+  if (!timestamp) {
+    return '未同步'
+  }
+
+  const date = new Date(timestamp)
+  return `${date.toLocaleDateString('zh-CN')} ${date.toLocaleTimeString('zh-CN', {
+    hour: '2-digit',
+    minute: '2-digit',
+  })}`
+}
+
+function statusToneClassName(tone: ActivationBadgeState['tone']) {
+  switch (tone) {
+    case 'green':
+      return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+    case 'yellow':
+      return 'border-amber-200 bg-amber-50 text-amber-900'
+    case 'red':
+      return 'border-red-200 bg-red-50 text-red-800'
+    default:
+      return 'border-border bg-muted text-muted-foreground'
+  }
+}
+
+function statusDotClassName(tone: ActivationBadgeState['tone']) {
+  switch (tone) {
+    case 'green':
+      return 'bg-emerald-500'
+    case 'yellow':
+      return 'bg-amber-500'
+    case 'red':
+      return 'bg-red-500'
+    default:
+      return 'bg-muted-foreground'
+  }
+}
+
+function ActivationBadge({
+  onEnterActivation,
+}: {
+  onEnterActivation: () => void
+}) {
+  const status = useActivationStore((state) => state.status)
+  const refresh = useActivationStore((state) => state.refresh)
+  const [open, setOpen] = useState(false)
+  const [syncing, setSyncing] = useState(false)
+  const displayStatus =
+    status ??
+    ({
+      kind: 'inactive',
+      tone: 'muted',
+      label: '读取中',
+      detail: '正在读取激活状态',
+      daysRemaining: null,
+      maxDevices: null,
+      usedDevices: null,
+      deviceName: null,
+      customerName: null,
+      customerHasContact: false,
+      codeSuffix: null,
+      lastServerCheck: null,
+      localBlockReason: null,
+      localBlockMessage: null,
+      cachedStatus: null,
+    } satisfies ActivationBadgeState)
+
+  async function syncStatus() {
+    setSyncing(true)
+    try {
+      await refresh()
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  return (
+    <div className="relative">
+      <button
+        className={`inline-flex h-10 min-w-40 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium shadow-sm transition-colors ${statusToneClassName(
+          displayStatus.tone,
+        )}`}
+        onClick={() => setOpen((current) => !current)}
+        type="button"
+      >
+        <span className={`h-2.5 w-2.5 rounded-full ${statusDotClassName(displayStatus.tone)}`} />
+        <span>{displayStatus.label}</span>
+      </button>
+
+      {open ? (
+        <div className="absolute right-0 top-12 z-20 w-80 rounded-md border bg-background p-4 text-sm shadow-lg">
+          <div className="space-y-1">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="font-semibold text-foreground">{displayStatus.label}</p>
+                <p className="text-muted-foreground">{displayStatus.detail}</p>
+              </div>
+              {displayStatus.tone === 'red' ? (
+                <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
+              ) : null}
+            </div>
+          </div>
+
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <dt className="text-muted-foreground">本机名称</dt>
+              <dd className="mt-1 font-medium">{displayStatus.deviceName ?? '-'}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">绑定设备</dt>
+              <dd className="mt-1 font-medium">
+                {displayStatus.usedDevices !== null && displayStatus.maxDevices !== null
+                  ? `${displayStatus.usedDevices}/${displayStatus.maxDevices}`
+                  : '-'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">激活码后 4 位</dt>
+              <dd className="mt-1 font-mono font-medium">{displayStatus.codeSuffix ?? '-'}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">上次联网</dt>
+              <dd className="mt-1 font-medium">
+                {formatStatusTime(displayStatus.lastServerCheck)}
+              </dd>
+            </div>
+          </dl>
+
+          {displayStatus.localBlockMessage ? (
+            <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
+              {displayStatus.localBlockMessage}
+            </div>
+          ) : null}
+
+          <div className="mt-4 flex items-center justify-between gap-2">
+            <Button
+              className="h-9 px-3"
+              disabled
+              title="服务端解绑接口尚未接入"
+              type="button"
+              variant="secondary"
+            >
+              解绑本机
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                className="h-9 px-3"
+                disabled={syncing}
+                onClick={() => void syncStatus()}
+                type="button"
+                variant="secondary"
+              >
+                <RefreshCw className="mr-2 h-3.5 w-3.5" />
+                同步
+              </Button>
+              <Button
+                className="h-9 px-3"
+                onClick={() => {
+                  setOpen(false)
+                  onEnterActivation()
+                }}
+                type="button"
+              >
+                输入新激活码
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
+  const status = useActivationStore((state) => state.status)
   const [pingResult, setPingResult] = useState('未测试')
+  const isBlocked =
+    status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
 
   const handlePing = async () => {
     const result = await window.api.ping()
@@ -33,21 +219,44 @@ function MainWorkbench() {
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-background px-8 text-foreground">
-      <section className="w-full max-w-xl space-y-6">
-        <div className="space-y-2">
+    <main className="min-h-screen bg-background text-foreground">
+      <header className="flex h-16 items-center justify-between border-b px-8">
+        <div>
           <p className="text-sm font-medium text-muted-foreground">Workbench</p>
-          <h1 className="text-3xl font-semibold tracking-normal">
-            腾域 aipod - 版本 {APP_VERSION}
-          </h1>
-          <p className="text-base text-muted-foreground">软件已准备就绪</p>
+          <h1 className="text-lg font-semibold tracking-normal">腾域 aipod</h1>
         </div>
-        <div className="flex items-center gap-3">
-          <Button type="button" onClick={handlePing}>
-            IPC Ping
-          </Button>
-          <span className="text-sm text-muted-foreground">结果：{pingResult}</span>
-        </div>
+        <ActivationBadge onEnterActivation={onEnterActivation} />
+      </header>
+
+      <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-xl flex-col justify-center space-y-6 px-8">
+        {isBlocked ? (
+          <div className="space-y-5 rounded-md border border-red-200 bg-red-50 p-6 text-red-900">
+            <div className="space-y-2">
+              <h1 className="text-2xl font-semibold tracking-normal">
+                {status?.label ?? '激活状态异常'}
+              </h1>
+              <p className="text-sm">{status?.localBlockMessage ?? status?.detail}</p>
+            </div>
+            <Button onClick={onEnterActivation} type="button">
+              输入新激活码
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="space-y-2">
+              <h1 className="text-3xl font-semibold tracking-normal">
+                腾域 aipod - 版本 {APP_VERSION}
+              </h1>
+              <p className="text-base text-muted-foreground">软件已准备就绪</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <Button type="button" onClick={handlePing}>
+                IPC Ping
+              </Button>
+              <span className="text-sm text-muted-foreground">结果：{pingResult}</span>
+            </div>
+          </>
+        )}
       </section>
     </main>
   )
@@ -100,6 +309,11 @@ function Onboarding() {
     bit_browser_url: '127.0.0.1:54345',
   })
   const [ready, setReady] = useState(false)
+
+  function enterActivation() {
+    setReady(false)
+    setStep(1)
+  }
 
   useEffect(() => {
     async function loadState() {
@@ -164,11 +378,14 @@ function Onboarding() {
   }
 
   if (ready) {
-    return <MainWorkbench />
+    return <MainWorkbench onEnterActivation={enterActivation} />
   }
 
   return (
     <main className="min-h-screen bg-background px-8 py-10 text-foreground">
+      <div className="fixed right-8 top-6 z-20">
+        <ActivationBadge onEnterActivation={enterActivation} />
+      </div>
       <section className="mx-auto max-w-5xl space-y-6">
         <div className="space-y-2">
           <p className="text-sm font-medium text-muted-foreground">首次启动</p>
@@ -327,5 +544,17 @@ function Onboarding() {
 }
 
 export function App() {
+  useEffect(() => {
+    let cleanup: (() => void) | null = null
+
+    void initializeActivationStore().then((nextCleanup) => {
+      cleanup = nextCleanup
+    })
+
+    return () => {
+      cleanup?.()
+    }
+  }, [])
+
   return <Onboarding />
 }

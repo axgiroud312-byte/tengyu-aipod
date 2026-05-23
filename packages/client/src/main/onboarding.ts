@@ -3,11 +3,17 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { app, dialog, ipcMain } from 'electron'
+import { activationPoller } from './lib/activation-poller'
+import {
+  extractActivationCodeSuffix,
+  markOnboardingComplete,
+  readActivationStateFile,
+  saveActivationSnapshot,
+} from './lib/activation-state'
 import { hasSecret, setSecret } from './lib/keychain'
 
 const MATERIAL_DIR_NAME = '腾域aipod素材'
 const CONFIG_FILE_NAME = 'app-config.json'
-const ACTIVATION_STATE_FILE_NAME = 'activation-state.json'
 const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
 
 const workbenchSubdirectories = [
@@ -54,10 +60,6 @@ function configPath() {
   return join(app.getPath('userData'), CONFIG_FILE_NAME)
 }
 
-function activationStatePath() {
-  return join(app.getPath('userData'), ACTIVATION_STATE_FILE_NAME)
-}
-
 function defaultWorkbenchRoot() {
   return join(app.getPath('documents'), MATERIAL_DIR_NAME)
 }
@@ -96,21 +98,13 @@ function generateDeviceFingerprint() {
   return createHash('sha256').update(seed).digest('hex')
 }
 
-async function readActivationState() {
-  try {
-    return JSON.parse(await readFile(activationStatePath(), 'utf8')) as { completed_at?: string }
-  } catch {
-    return null
-  }
-}
-
 export function registerOnboardingIpc() {
   ipcMain.handle('onboarding:get-state', async () => {
     const config = await readConfig()
-    const activationState = await readActivationState()
+    const activationState = await readActivationStateFile()
 
     return {
-      needs_onboarding: !activationState,
+      needs_onboarding: !activationState.completed_at,
       default_workbench_root: config.workbench_root ?? defaultWorkbenchRoot(),
     }
   })
@@ -141,7 +135,25 @@ export function registerOnboardingIpc() {
 
       const config = await readConfig()
       await setSecret('activation_token', result.data.activation_token)
+      await saveActivationSnapshot(
+        {
+          status: 'active',
+          days_remaining: Math.max(
+            0,
+            Math.ceil((result.data.expires_at - Date.now()) / (24 * 60 * 60 * 1000)),
+          ),
+          max_devices: result.data.max_devices,
+          used_devices: result.data.used_devices,
+          device_name: result.data.device_name,
+          customer: { has_contact: false },
+        },
+        {
+          lastServerCheck: Date.now(),
+          tokenCodeSuffix: extractActivationCodeSuffix(result.data.activation_token),
+        },
+      )
       await writeConfig(config)
+      void activationPoller.poll()
 
       return { ok: true, data: result.data }
     },
@@ -178,12 +190,8 @@ export function registerOnboardingIpc() {
   })
 
   ipcMain.handle('onboarding:complete', async () => {
-    await mkdir(dirname(activationStatePath()), { recursive: true })
-    await writeFile(
-      activationStatePath(),
-      JSON.stringify({ completed_at: new Date().toISOString() }, null, 2),
-      'utf8',
-    )
+    await markOnboardingComplete()
+    void activationPoller.poll()
 
     return { ok: true }
   })

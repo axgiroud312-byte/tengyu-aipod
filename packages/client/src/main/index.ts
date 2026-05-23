@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
+import { activationPoller } from './lib/activation-poller'
 import { registerOnboardingIpc } from './onboarding'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -18,6 +19,7 @@ function createMainWindow(): void {
       nodeIntegration: false,
     },
   })
+  activationPoller.bindWindow(mainWindow)
 
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
@@ -29,8 +31,11 @@ function createMainWindow(): void {
 
 app.whenReady().then(() => {
   ipcMain.handle('app:ping', () => 'pong')
+  ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
+  ipcMain.handle('activation:sync-status', () => activationPoller.poll())
   registerOnboardingIpc()
   createMainWindow()
+  activationPoller.start()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -40,6 +45,7 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  activationPoller.stop()
   if (process.platform !== 'darwin') {
     app.quit()
   }

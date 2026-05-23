@@ -1,3 +1,4 @@
+import type { ActivationBadgeState } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
@@ -40,6 +41,18 @@ const api = {
           }
         | { ok: false; error: { code: string; message: string } }
       >,
+    getStatus: () => ipcRenderer.invoke('activation:get-status') as Promise<ActivationBadgeState>,
+    syncStatus: () => ipcRenderer.invoke('activation:sync-status') as Promise<ActivationBadgeState>,
+    onStatusChanged: (callback: (status: ActivationBadgeState) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: ActivationBadgeState) => {
+        callback(status)
+      }
+      ipcRenderer.on('activation:status-changed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('activation:status-changed', listener)
+      }
+    },
   },
 }
 

@@ -3,7 +3,7 @@
   "name": "client-status-badge",
   "title": "client status badge polling",
   "description": "客户端右上角状态徽章 + 30 分钟轮询 /api/status + 时钟回拨检测",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
