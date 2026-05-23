@@ -3,7 +3,7 @@
   "name": "ci-activation",
   "title": "ci activation",
   "description": "切片 0 完成后启用真实的 lint/typecheck/test（去掉 continue-on-error）",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

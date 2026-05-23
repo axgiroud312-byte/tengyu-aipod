@@ -12,11 +12,7 @@ export type RiskLevel = 'pass' | 'review' | 'block'
 export type GenerationCapability = 'txt2img' | 'img2img' | 'extract' | 'matting'
 
 export type ProviderId = 'comfyui-chenyu' | 'grsai' | 'aliyun-bailian'
-export type ProviderApiStyle =
-  | 'grsai-native'
-  | 'openai-images'
-  | 'openai-chat'
-  | 'dashscope-native'
+export type ProviderApiStyle = 'grsai-native' | 'openai-images' | 'openai-chat' | 'dashscope-native'
 
 export interface Provider {
   id: ProviderId

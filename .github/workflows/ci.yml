@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [main]
 
-# 工程未建（无 package.json）时跑占位；切片 0 完成后会自动启用真实的 lint/typecheck/test。
+# [![CI](https://github.com/axgiroud312-byte/tengyu-aipod/actions/workflows/ci.yml/badge.svg)](https://github.com/axgiroud312-byte/tengyu-aipod/actions/workflows/ci.yml)
 jobs:
   check:
     name: Lint / Typecheck / Test
@@ -17,54 +17,25 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Detect monorepo
-        id: detect
-        run: |
-          if [ -f "package.json" ]; then
-            echo "has_pkg=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::package.json detected — running full checks."
-          else
-            echo "has_pkg=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::No package.json yet — running placeholder. Will activate after task-01 (monorepo setup)."
-          fi
-
       - name: Setup pnpm
-        if: steps.detect.outputs.has_pkg == 'true'
         uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 10.33.0
 
       - name: Setup Node
-        if: steps.detect.outputs.has_pkg == 'true'
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '24'
           cache: 'pnpm'
 
       - name: Install
-        if: steps.detect.outputs.has_pkg == 'true'
         run: pnpm install --frozen-lockfile
 
-      # 切片 0 完成后，去掉下面三个 step 的 continue-on-error，让 CI 真正阻塞
-      - name: Type check
-        if: steps.detect.outputs.has_pkg == 'true'
-        run: pnpm run -r type-check
-        continue-on-error: true
-
       - name: Lint
-        if: steps.detect.outputs.has_pkg == 'true'
-        run: pnpm run -r lint
-        continue-on-error: true
+        run: pnpm lint
+
+      - name: Type check
+        run: pnpm type-check
 
       - name: Test
-        if: steps.detect.outputs.has_pkg == 'true'
-        run: pnpm run -r test
-        continue-on-error: true
-
-      - name: Summary
-        run: |
-          if [ "${{ steps.detect.outputs.has_pkg }}" = "true" ]; then
-            echo "✓ Monorepo checks ran. Adjust continue-on-error after task-01 to enforce."
-          else
-            echo "✓ Placeholder ran. Monorepo not yet initialized."
-          fi
+        run: pnpm test

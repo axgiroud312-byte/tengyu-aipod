@@ -1,6 +1,6 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { BrowserWindow, app, ipcMain } from 'electron'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 

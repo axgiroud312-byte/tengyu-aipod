@@ -1,6 +1,6 @@
+import { Button } from '@/components/ui/button'
 import { APP_VERSION } from '@tengyu-aipod/shared'
 import { useState } from 'react'
-import { Button } from '@/components/ui/button'
 
 export function App() {
   const [pingResult, setPingResult] = useState('未测试')

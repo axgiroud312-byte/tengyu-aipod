@@ -1,7 +1,10 @@
 import { z } from 'zod'
 
 export const SkuCodeSchema = z.string().min(1).brand<'SkuCode'>()
-export const PrintIdSchema = z.string().regex(/^pri_[A-Za-z0-9_-]+$/).brand<'PrintId'>()
+export const PrintIdSchema = z
+  .string()
+  .regex(/^pri_[A-Za-z0-9_-]+$/)
+  .brand<'PrintId'>()
 export const TaskIdSchema = z.string().min(1).brand<'TaskId'>()
 
 export const TaskStatusSchema = z.enum(['running', 'completed', 'failed', 'interrupted'])

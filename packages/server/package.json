@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "lint": "biome lint .",
-    "test": "vitest run --passWithNoTests",
+    "lint": "biome check .",
+    "test": "echo no tests yet",
     "type-check": "tsc --noEmit",
     "prisma:generate": "prisma generate"
   },

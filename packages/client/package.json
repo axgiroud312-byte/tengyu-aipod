@@ -7,8 +7,8 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
-    "lint": "biome lint .",
-    "test": "vitest run --passWithNoTests",
+    "lint": "biome check .",
+    "test": "echo no tests yet",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

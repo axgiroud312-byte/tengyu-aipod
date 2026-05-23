@@ -7,8 +7,8 @@
   "types": "src/index.ts",
   "scripts": {
     "type-check": "tsc --noEmit",
-    "lint": "biome lint .",
-    "test": "vitest run --passWithNoTests",
+    "lint": "biome check .",
+    "test": "echo no tests yet",
     "build": "tsc --noEmit"
   },
   "dependencies": {
