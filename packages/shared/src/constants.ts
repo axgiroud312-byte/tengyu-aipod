@@ -24,3 +24,27 @@ export const WORKBENCH_DIRECTORIES = {
   productImages: '05-货号成品',
   metadata: '.workbench',
 } as const
+
+export const DETECTION_MODEL_PRICES = {
+  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
+  'qwen3-vl-plus': { input: 1, output: 10 },
+  'qwen-vl-max': { input: 1.6, output: 4 },
+} as const
+
+export type DetectionModel = keyof typeof DETECTION_MODEL_PRICES
+
+export function estimateDetectionCost(
+  imageCount: number,
+  model: DetectionModel | string,
+  withCompression: boolean,
+): { yuan: number; tokensPerImage: number } {
+  const safeImageCount = Number.isFinite(imageCount) ? Math.max(0, Math.floor(imageCount)) : 0
+  const price =
+    DETECTION_MODEL_PRICES[model as DetectionModel] ?? DETECTION_MODEL_PRICES['qwen3-vl-flash']
+  const tokensPerImagePixels = withCompression ? 256 : 1024
+  const tokensOutput = 100
+  const yuan =
+    (safeImageCount * tokensPerImagePixels * price.input) / 1_000_000 +
+    (safeImageCount * tokensOutput * price.output) / 1_000_000
+  return { yuan, tokensPerImage: tokensPerImagePixels + tokensOutput }
+}

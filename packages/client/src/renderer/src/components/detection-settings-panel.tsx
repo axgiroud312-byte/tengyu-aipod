@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
+import { type Skill, type SkillSummary, estimateDetectionCost } from '@tengyu-aipod/shared'
 import { Loader2, Save, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { DetectionConfig, DetectionThresholdConfig } from '../../../main/lib/detection-config'
@@ -76,6 +76,9 @@ export function DetectionSettingsPanel() {
   const [threshold, setThreshold] = useState<DetectionThresholdConfig>(DEFAULT_THRESHOLD)
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [variables, setVariables] = useState<Record<string, unknown>>({})
+  const [previewImageCount, setPreviewImageCount] = useState(42)
+  const [previewBalance, setPreviewBalance] = useState('')
+  const [withCompression, setWithCompression] = useState(true)
 
   useEffect(() => {
     let mounted = true
@@ -176,6 +179,15 @@ export function DetectionSettingsPanel() {
     }
     return `${selectedSkill.id} @ ${selectedSkill.version}`
   }, [selectedSkill])
+
+  const estimatedCost = useMemo(
+    () => estimateDetectionCost(previewImageCount, model, withCompression),
+    [model, previewImageCount, withCompression],
+  )
+  const balanceValue = previewBalance.trim() ? Number(previewBalance) : null
+  const hasBalance = balanceValue !== null && Number.isFinite(balanceValue)
+  const balanceLow =
+    hasBalance && balanceValue !== null ? balanceValue < estimatedCost.yuan * 1.5 : false
 
   async function saveConfig() {
     if (!selectedSkill) {
@@ -506,6 +518,63 @@ export function DetectionSettingsPanel() {
             <p className="font-medium">变量数</p>
             <p className="mt-1 text-muted-foreground">{Object.keys(variables).length}</p>
           </div>
+        </div>
+
+        <div className="space-y-4 rounded-md border bg-background p-4 text-sm">
+          <div>
+            <p className="font-medium">预估费用</p>
+            <p className="mt-1 text-muted-foreground">
+              {previewImageCount} 张图，约 ¥{estimatedCost.yuan.toFixed(4)}（
+              {withCompression ? '启用压缩' : '未压缩'}）
+            </p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="block space-y-2 text-sm font-medium">
+              <span>图数</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                min={1}
+                onChange={(event) =>
+                  setPreviewImageCount(Math.max(1, Number(event.target.value) || 1))
+                }
+                type="number"
+                value={previewImageCount}
+              />
+            </label>
+            <label className="block space-y-2 text-sm font-medium">
+              <span>余额</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                min={0}
+                onChange={(event) => setPreviewBalance(event.target.value)}
+                placeholder="手动输入余额"
+                step="0.01"
+                type="number"
+                value={previewBalance}
+              />
+            </label>
+          </div>
+          <label className="inline-flex items-center gap-2 text-sm font-medium">
+            <input
+              checked={withCompression}
+              onChange={(event) => setWithCompression(event.target.checked)}
+              type="checkbox"
+            />
+            压缩图片
+          </label>
+          {hasBalance ? (
+            balanceLow ? (
+              <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                余额不足，建议至少 ¥{(estimatedCost.yuan * 1.5).toFixed(4)}
+              </div>
+            ) : (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+                余额充足
+              </div>
+            )
+          ) : (
+            <p className="text-xs text-muted-foreground">填写余额后会显示是否低于安全线。</p>
+          )}
         </div>
       </div>
     </div>
