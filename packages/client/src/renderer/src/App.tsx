@@ -22,6 +22,7 @@ import type {
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
+import { DetectionSettingsPanel } from './components/detection-settings-panel'
 
 type OnboardingStep = 1 | 2 | 3 | 4
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
@@ -670,6 +671,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                   </div>
                 </div>
               </div>
+
+              <DetectionSettingsPanel />
 
               {result ? (
                 <div className="rounded-md border bg-background p-5 shadow-sm">

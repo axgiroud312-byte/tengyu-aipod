@@ -450,9 +450,30 @@ CREATE INDEX idx_detection_artifact ON detection_results(artifact_id);
 CREATE INDEX idx_detection_level ON detection_results(risk_level);
 ```
 
+### 10.1 检测配置
+
+```sql
+CREATE TABLE detection_config (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  pass_max INTEGER NOT NULL,
+  review_max INTEGER NOT NULL,
+  skill_id TEXT NOT NULL,
+  skill_version TEXT NOT NULL,
+  model TEXT NOT NULL,
+  variables_json TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+```
+
+- 单行配置，`id = 1`
+- `pass_max` / `review_max` 只保存 0-100 的整数，并保持 `pass <= review`
+- `variables_json` 保存 `skill.variables` 的实际值，UI 负责按变量定义回填
+
 ## 11. IPC 接口
 
 ```ts
+'detection:get-config'               → DetectionConfig | null
+'detection:save-config'              → DetectionConfig → DetectionConfig
 'detection:list-input-sources'        → { dirs: string[], counts: Record<string, number> }
 'detection:scan-folder'               → { folder } → ImageInfo[]
 'detection:list-skills'               → DetectionSkill[]

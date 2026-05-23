@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
+import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
@@ -49,6 +50,7 @@ app.whenReady().then(() => {
   registerSkillCacheIpc()
   registerTempFileIpc()
   registerTitleIpc()
+  registerDetectionConfigIpc()
   registerDetectionIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
   createMainWindow()

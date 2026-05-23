@@ -1,5 +1,6 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
   DetectionBatchConfig,
   DetectionProgress,
@@ -50,6 +51,9 @@ const api = {
       }>,
   },
   detection: {
+    getConfig: () => ipcRenderer.invoke('detection:get-config') as Promise<DetectionConfig | null>,
+    saveConfig: (input: DetectionConfig) =>
+      ipcRenderer.invoke('detection:save-config', input) as Promise<DetectionConfig>,
     listModels: () => ipcRenderer.invoke('detection:list-models') as Promise<string[]>,
     run: (input: DetectionBatchConfig) =>
       ipcRenderer.invoke('detection:run', input) as Promise<string>,

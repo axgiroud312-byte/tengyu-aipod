@@ -37,6 +37,10 @@ declare global {
         cleanupAll: () => Promise<{ ok: true }>
       }
       detection: {
+        getConfig: () => Promise<import('../../main/lib/detection-config').DetectionConfig | null>
+        saveConfig: (
+          input: import('../../main/lib/detection-config').DetectionConfig,
+        ) => Promise<import('../../main/lib/detection-config').DetectionConfig>
         listModels: () => Promise<string[]>
         run: (
           input: import('../../main/lib/detection-service').DetectionBatchConfig,
