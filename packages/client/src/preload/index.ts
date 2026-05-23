@@ -1,4 +1,4 @@
-import type { ActivationBadgeState } from '@tengyu-aipod/shared'
+import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
@@ -25,6 +25,16 @@ const api = {
   },
   keychain: {
     has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,
+  },
+  skill: {
+    list: (filter?: {
+      module?: 'generation' | 'detection' | 'title'
+      category?: string
+      platform?: string
+      language?: string
+    }) => ipcRenderer.invoke('skill:list', filter) as Promise<SkillSummary[]>,
+    get: (input: { id: string; version?: string }) =>
+      ipcRenderer.invoke('skill:get', input) as Promise<Skill>,
   },
   activation: {
     activate: (input: { code: string; device_name: string }) =>

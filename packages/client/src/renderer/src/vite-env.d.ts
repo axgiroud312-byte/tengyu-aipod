@@ -20,6 +20,18 @@ declare global {
       keychain: {
         has: (key: string) => Promise<boolean>
       }
+      skill: {
+        list: (filter?: {
+          module?: 'generation' | 'detection' | 'title'
+          category?: string
+          platform?: string
+          language?: string
+        }) => Promise<import('@tengyu-aipod/shared').SkillSummary[]>
+        get: (input: {
+          id: string
+          version?: string
+        }) => Promise<import('@tengyu-aipod/shared').Skill>
+      }
       activation: {
         activate: (input: { code: string; device_name: string }) => Promise<
           | {

@@ -72,6 +72,10 @@ async function readConfig(): Promise<AppConfig> {
   }
 }
 
+export async function readAppConfig() {
+  return readConfig()
+}
+
 async function writeConfig(config: AppConfig) {
   await mkdir(dirname(configPath()), { recursive: true })
   await writeFile(configPath(), JSON.stringify(config, null, 2), 'utf8')

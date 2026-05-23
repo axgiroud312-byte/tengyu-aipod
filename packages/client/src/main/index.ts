@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
+import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerOnboardingIpc } from './onboarding'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
@@ -34,8 +35,10 @@ app.whenReady().then(() => {
   ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
   ipcMain.handle('activation:sync-status', () => activationPoller.poll())
   registerOnboardingIpc()
+  registerSkillCacheIpc()
   createMainWindow()
   activationPoller.start()
+  skillCacheManager.start()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -46,6 +49,7 @@ app.whenReady().then(() => {
 
 app.on('window-all-closed', () => {
   activationPoller.stop()
+  skillCacheManager.stop()
   if (process.platform !== 'darwin') {
     app.quit()
   }
