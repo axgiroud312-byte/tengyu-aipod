@@ -36,6 +36,20 @@ declare global {
         getUsage: () => Promise<Record<string, number>>
         cleanupAll: () => Promise<{ ok: true }>
       }
+      detection: {
+        listModels: () => Promise<string[]>
+        run: (
+          input: import('../../main/lib/detection-service').DetectionBatchConfig,
+        ) => Promise<string>
+        onProgress: (
+          callback: (
+            progress: import('../../main/lib/detection-service').DetectionProgress,
+          ) => void,
+        ) => () => void
+        onCompleted: (
+          callback: (event: import('../../main/lib/detection-service').DetectionTaskEvent) => void,
+        ) => () => void
+      }
       title: {
         listPlatforms: () => Promise<Array<{ key: string; label: string }>>
         listLanguages: () => Promise<Array<{ key: string; label: string }>>

@@ -349,6 +349,86 @@ const taskId = await window.api.title.run({
 })
 ```
 
+### Scenario: Detection Module Service
+
+#### 1. Scope / Trigger
+- Trigger: Electron client needs to batch-run infringement detection on local image paths, call Aliyun Bailian vision models, classify by threshold, and persist results for later UI queries.
+- Boundary: this is main-process orchestration only. Renderer UI calls it through IPC; renderer must not read images, hold API keys, call Bailian, or write detection results directly.
+
+#### 2. Signatures
+- Class: `DetectionService`
+- Singleton: `detectionService`
+- Config:
+  - `DetectionBatchConfig.imagePaths: string[]`
+  - `skillId: string`
+  - `skillVersion?: string`
+  - `model: string`
+  - `variables?: Record<string, unknown>`
+  - `threshold?: { passMax?: number; reviewMax?: number }`
+  - `preprocess?: { compress?: boolean; maxSize?: number; format?: 'jpg' | 'png'; quality?: number }`
+  - `concurrency?: number`
+  - `maxRetries?: number`
+  - `forceRetest?: boolean`
+- Methods:
+  - `runDetectionBatch(config): Promise<DetectionBatchResult>`
+  - `startBatch(config): string`
+  - `listModels(): string[]`
+- IPC:
+  - `detection:list-models -> string[]`
+  - `detection:run(DetectionBatchConfig) -> taskId`
+  - Event: `detection:progress -> { task_id, processed, total, succeeded, failed, skipped, current_image? }`
+  - Event: `detection:completed -> { ok: true, result } | { ok: false, taskId, error }`
+
+#### 3. Contracts
+- Source images are passed in as absolute local paths. The service hashes file content with SHA-256 and derives the local cache key from that hash.
+- `skillId` is required. `skillVersion` is optional; when omitted, the selected skill version from `skillCacheManager.getSkill()` is used.
+- `model` defaults to the skill's `recommendedModel` or `qwen3-vl-flash` when empty.
+- Preprocessing uses `SharpPreprocessPool` with white flattening always enabled; optional compression is controlled by `preprocess.compress`.
+- Model calls must use `AliyunBailianAdapter.visionCompletion` with OpenAI-compatible `image_url` content and `response_format: { type: 'json_object' }`.
+- Result parsing accepts JSON, fenced JSON, or fallback regex extraction for `risk_score` / `reason`.
+- Cache key is `artifact_id + model + skill_id + skill_version`; a cache hit skips preprocessing and Bailian calls and returns a `skipped` result.
+- Successful results are copied to `03-检测/{level}/{printId}.{ext}` and stored in `detection_results`.
+- Temporary files live in `.workbench/tmp/detection/{taskId}` and are cleaned in `finally`; failed batches may keep the temp directory briefly so retries can reuse artifacts.
+
+#### 4. Validation & Error Matrix
+- Missing `workbench_root` -> throw before batch execution.
+- Missing or unreadable image path -> return `failed` with `preprocess_failed`.
+- Sharp decode / preprocess failure -> `failed` with `preprocess_failed`.
+- Model output that cannot be parsed -> retry while attempts remain; after retries -> `failed` with `llm_parse_failed`.
+- Bailian retryable errors -> retry up to `maxRetries`; non-retryable errors fail that image.
+- Cache hit -> return `skipped`, do not copy the file again, do not call Bailian again.
+- Database write failure -> fail the image and let the batch finish other images.
+
+#### 5. Good/Base/Bad Cases
+- Good: `runDetectionBatch` processes three images, emits progress, copies outputs into `03-检测/pass|review|block`, and stores result rows.
+- Base: repeated detection on the same file with the same model and skill version returns the cached result and skips the expensive pipeline.
+- Bad: renderer sending local file bytes and API keys to a server just to reach the model.
+
+#### 6. Tests Required
+- Unit test `parseDetectionResponse` against JSON, fenced JSON, regex fallback, and invalid text.
+- Unit test threshold classification boundaries.
+- Unit test batch orchestration with fake skill / fake Bailian / fake preprocess / fake DB.
+- Unit test cache hit behavior skips preprocessing and model calls.
+- Unit test failure classification for preprocess failure and parse failure.
+- Type-check preload and renderer declarations when adding detection IPC surface.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+await fetch('/api/detection-proxy', { body: JSON.stringify({ apiKey, imagePath }) })
+```
+
+Correct:
+```ts
+await window.api.detection.run({
+  imagePaths,
+  skillId,
+  model,
+  threshold: { passMax: 39, reviewMax: 69 },
+})
+```
+
 ---
 
 ## Testing Requirements

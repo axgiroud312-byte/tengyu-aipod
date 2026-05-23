@@ -1,5 +1,10 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type {
+  DetectionBatchConfig,
+  DetectionProgress,
+  DetectionTaskEvent,
+} from '../main/lib/detection-service'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 
 const api = {
@@ -43,6 +48,31 @@ const api = {
       ipcRenderer.invoke('temp-file:cleanup-all') as Promise<{
         ok: true
       }>,
+  },
+  detection: {
+    listModels: () => ipcRenderer.invoke('detection:list-models') as Promise<string[]>,
+    run: (input: DetectionBatchConfig) =>
+      ipcRenderer.invoke('detection:run', input) as Promise<string>,
+    onProgress: (callback: (progress: DetectionProgress) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: DetectionProgress) => {
+        callback(progress)
+      }
+      ipcRenderer.on('detection:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('detection:progress', listener)
+      }
+    },
+    onCompleted: (callback: (event: DetectionTaskEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: DetectionTaskEvent) => {
+        callback(event)
+      }
+      ipcRenderer.on('detection:completed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('detection:completed', listener)
+      }
+    },
   },
   title: {
     listPlatforms: () =>
