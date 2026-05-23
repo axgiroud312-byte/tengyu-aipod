@@ -104,6 +104,24 @@ export default function AdminCodesPage() {
   const [message, setMessage] = useState<string | null>(null)
   const [csvPreview, setCsvPreview] = useState<Array<{ name: string; phone: string }>>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [prefilledCustomer, setPrefilledCustomer] = useState({
+    name: '',
+    phone: '',
+    email: '',
+    wechat: '',
+    notes: '',
+  })
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    setPrefilledCustomer({
+      name: params.get('name') ?? '',
+      phone: params.get('phone') ?? '',
+      email: params.get('email') ?? '',
+      wechat: params.get('wechat') ?? '',
+      notes: params.get('notes') ?? '',
+    })
+  }, [])
 
   const query = useMemo(() => {
     const params = new URLSearchParams({
@@ -295,7 +313,11 @@ export default function AdminCodesPage() {
                 </Button>
               ))}
             </div>
-            <form className="grid gap-4 md:grid-cols-4" onSubmit={handleCreate}>
+            <form
+              className="grid gap-4 md:grid-cols-4"
+              key={`${prefilledCustomer.phone}:${prefilledCustomer.name}`}
+              onSubmit={handleCreate}
+            >
               <label className="space-y-1 text-sm">
                 <span>天数</span>
                 <input
@@ -318,27 +340,46 @@ export default function AdminCodesPage() {
                 <>
                   <label className="space-y-1 text-sm">
                     <span>客户姓名</span>
-                    <input className="h-10 w-full rounded-md border px-3" name="name" required />
+                    <input
+                      className="h-10 w-full rounded-md border px-3"
+                      defaultValue={prefilledCustomer.name}
+                      name="name"
+                      required
+                    />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>手机号</span>
-                    <input className="h-10 w-full rounded-md border px-3" name="phone" required />
+                    <input
+                      className="h-10 w-full rounded-md border px-3"
+                      defaultValue={prefilledCustomer.phone}
+                      name="phone"
+                      required
+                    />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>邮箱</span>
                     <input
                       className="h-10 w-full rounded-md border px-3"
+                      defaultValue={prefilledCustomer.email}
                       name="email"
                       type="email"
                     />
                   </label>
                   <label className="space-y-1 text-sm">
                     <span>微信</span>
-                    <input className="h-10 w-full rounded-md border px-3" name="wechat" />
+                    <input
+                      className="h-10 w-full rounded-md border px-3"
+                      defaultValue={prefilledCustomer.wechat}
+                      name="wechat"
+                    />
                   </label>
                   <label className="space-y-1 text-sm md:col-span-2">
                     <span>备注</span>
-                    <input className="h-10 w-full rounded-md border px-3" name="notes" />
+                    <input
+                      className="h-10 w-full rounded-md border px-3"
+                      defaultValue={prefilledCustomer.notes}
+                      name="notes"
+                    />
                   </label>
                   <label className="flex items-center gap-2 text-sm">
                     <input defaultChecked name="reuse_existing" type="checkbox" />

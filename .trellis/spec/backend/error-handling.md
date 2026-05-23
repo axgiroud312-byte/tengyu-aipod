@@ -165,6 +165,88 @@ data: {
 
 ---
 
+## Scenario: Admin Customer Management
+
+### 1. Scope / Trigger
+
+- Trigger: `/admin/customers` UI, `/admin/customers/:id` UI, customer admin APIs, customer editing, or customer banning.
+- Applies to: `packages/server/src/app/admin/api/customers/**`, `packages/server/src/app/admin/customers/**`, and `packages/server/src/lib/customers.ts`.
+
+### 2. Signatures
+
+- `GET /admin/api/customers`
+  - Query: `search?`, `sort?`
+  - Response: `{ ok: true, data: { items, server_time } }`
+- `GET /admin/api/customers/:id`
+  - Response: `{ ok: true, data: { customer, server_time } }`
+- `PATCH /admin/api/customers/:id`
+  - Body: `{ name?, phone?, email?, wechat?, notes? }`
+- `POST /admin/api/customers/:id/ban`
+  - Success: `{ ok: true, data: { customer_id, affected_codes } }`
+
+### 3. Contracts
+
+- Customer list search matches `name`, `phone`, and `wechat`.
+- Customer list summaries include code count, max remaining days, current devices / total slots, latest device activity, active/banned status, and created time.
+- Customer detail includes the same summary plus all activation codes and all devices under those codes.
+- Customer banning must set `Customer.is_active = false` and set all of that customer's `ActivationCode.is_active = false`.
+- Nullable customer fields must receive `null`, not `undefined`, because TypeScript uses `exactOptionalPropertyTypes`.
+- `/admin/codes/new` is a compatibility redirect to `/admin/codes` with prefilled single-customer query parameters.
+
+### 4. Validation & Error Matrix
+
+- Invalid customer update payload -> HTTP 400 with `INVALID_CUSTOMER_UPDATE`.
+- Unknown customer -> HTTP 404 with `CUSTOMER_NOT_FOUND`.
+- Updating phone to an existing customer's phone -> HTTP 409 with `CUSTOMER_PHONE_TAKEN`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: create a customer-bound activation code, then find that customer through `/admin/api/customers?search=<phone>`.
+- Good: customer detail returns the customer's codes and devices, and device unbind through the code API is reflected in the customer detail response.
+- Good: customer ban returns `affected_codes` and all customer codes become banned.
+- Base: customer with no devices has `recent_active_at = null` and displays `-`.
+- Bad: banning only the customer row while leaving their activation codes usable.
+
+### 6. Tests Required
+
+- `pnpm -F @tengyu-aipod/server lint`
+- `pnpm -F @tengyu-aipod/server type-check`
+- `pnpm -F @tengyu-aipod/server build`
+- `pnpm lint`
+- `pnpm type-check`
+- `pnpm test`
+- Manual route checks with an admin cookie:
+  - `GET /admin/api/customers` with search and sort.
+  - `GET /admin/api/customers/:id`.
+  - `PATCH /admin/api/customers/:id`.
+  - `POST /admin/api/customers/:id/ban`.
+  - `POST /admin/api/codes/:code/unbind-device` and confirm customer detail updates.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await db.customer.update({
+  where: { id },
+  data: { is_active: false },
+})
+```
+
+#### Correct
+
+```ts
+await db.$transaction(async (tx) => {
+  await tx.customer.update({ where: { id }, data: { is_active: false } })
+  await tx.activationCode.updateMany({
+    where: { customer_id: id },
+    data: { is_active: false },
+  })
+})
+```
+
+---
+
 ## Error Types
 
 <!-- Custom error classes/types -->

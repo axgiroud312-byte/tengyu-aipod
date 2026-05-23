@@ -3,7 +3,7 @@
   "name": "admin-customers-ui",
   "title": "admin customers management ui",
   "description": "/admin/customers + /admin/customers/:id 客户列表和详情",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
