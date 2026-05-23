@@ -1,0 +1,281 @@
+# 腾域 aipod — Context
+
+这里定义腾域 aipod 项目的统一领域语言。所有 PRD、Spec、ADR、代码命名、UI 文案都必须遵守这套术语，避免不同人/不同 AI 用不同的词说同一个东西。
+
+---
+
+## Language
+
+### 任务与业务标识
+
+**Workbench**：
+腾域 aipod 桌面客户端的整体称呼。
+_Avoid_: 软件、客户端、App、Electron 应用
+
+**货号 / SKU**：
+一个最终在跨境电商平台上架的商品标识；同时是该商品在文件系统中的文件夹名。一个货号 = 一条 listing。
+_Avoid_: 商品 ID、产品 ID、任务 ID
+
+**任务 / Task**：
+一个货号在一次端到端或局部流程中的工作执行单元。任务记录尝试次数、失败原因、产物路径等。
+_Avoid_: Job、Process、Workflow Run（Workflow Run 是 ComfyUI 内部概念，不混用）
+
+**完整任务**：
+跨多个模块、由编排引擎驱动的任务。
+_Avoid_: 大任务、串联任务（"串联"是动词，不做名词）
+
+**轻量任务 / Lightweight Task**：
+单个模块独立运行产生的任务，只有一个 Workflow Step。所有独立模块运行都会创建轻量任务用于追踪。
+_Avoid_: 测试运行、临时任务、未跟踪运行
+
+**Workflow Step**：
+任务内的一个阶段，对应某个模块的执行。状态：未开始 / 进行中 / 等待人工 / 完成 / 失败 / 跳过。
+_Avoid_: Stage、Phase、子任务
+
+### 印花和产物
+
+**印花 / Print**：
+一张可以被套版的图，可能来自提取、文生图、图生图。在数据库里有唯一印花 ID（`pri_xxx`）。
+_Avoid_: 设计图、图案、Pattern
+
+**印花 ID**：
+全局唯一的印花标识，跨 provider 共享同一 ID 空间。
+_Avoid_: print_uuid、design_id
+
+**原图**：
+01-采集 目录下的产品图，由用户从跨境电商平台采集而来。原图不是印花，必须经过"提取"才能成为印花。
+_Avoid_: source、原始素材
+
+**成品图 / Product Image**：
+05-货号成品 下、套版完成后的最终展示图，会送上架程序。
+_Avoid_: 输出图、上架图、模特图
+
+**Artifact**：
+任何由模块产生的本地文件（图片、JSX、临时遮罩、xlsx 等）。每个 artifact 在数据库里登记血缘。
+_Avoid_: 输出文件、结果
+
+### 模块
+
+**模块 / Module**：
+腾域 workbench 内的一个业务单元，拥有独立面板，可单独使用。
+_Avoid_: 功能、组件、Plugin
+
+**生图模块**：
+负责产生印花的统一模块；按"能力"分 4 个 Tab（文生图 / 图生图 / 提取 / 抠图），每个 Tab 内用户选用 comfyui 或付费模型实现。
+_Avoid_: ComfyUI 模块、付费生图模块（不分两个模块，分两个 Tab 内的实现方式）
+
+**生图能力**：
+文生图、图生图、提取、抠图，四种业务能力，与具体 provider 解耦。
+_Avoid_: 子模块、子能力（指代时用"能力"或"子工具"，不混用）
+
+**Provider / 服务商**：
+某个生图能力的实现源。`comfyui-chenyu`（晨羽智云 ComfyUI）、`grsai`（付费生图）、`aliyun-bailian`（视觉/LLM）。
+_Avoid_: Backend、Vendor、引擎
+
+**Adapter / 适配器**：
+腾域客户端连接外部 provider 的代码层。每种 API 风格（grsai-native / openai-images / openai-chat / dashscope-native）一个 adapter。
+_Avoid_: Client、SDK 封装
+
+**Skill**：
+云端服务器派发的提示词模板，用于指导 LLM 完成具体业务（生图提示词生成、侵权判定、标题写作）。一个 skill 包含 systemPrompt、用户在 UI 填的变量定义、推荐模型。
+_Avoid_: Prompt 模板、规则、System Message
+
+**ComfyUI 工作流包 / Workflow Pack**：
+云端派发的 ComfyUI 工作流定义，含 workflow_json、输入槽、输出槽、依赖模型。客户端拉取后注入素材图调用。
+_Avoid_: Pipeline、Graph
+
+### 编排
+
+**编排引擎 / Orchestrator**：
+驱动完整任务跨模块执行的调度器。v1.5 加入；v1 不包含。
+_Avoid_: 调度器、工作流引擎（这两个词指代 ComfyUI 内部）
+
+**流程模板 / Pipeline Template**：
+编排引擎用的内置模板（完整链路 / 从印花开始 / 套版加上架 / 标题加上架等）。
+_Avoid_: 流水线、Workflow
+
+**模板批次 / Batch**：
+PS 套版输出域 `05-货号成品/` 下的一级目录，对应一个 PSD 模板的输出。一个上架批次 = 一个模板批次。上架程序的扫描单位。
+_Avoid_: 批次、Output Folder
+
+### 采集
+
+**采集会话 / Collection Session**：
+用户明确开始的一次采集过程；监听比特浏览器中的图片下载和点击。同一时刻 workbench 内最多一个采集会话。
+_Avoid_: 爬虫任务、Spider Job
+
+**浏览器环境 / Browser Profile**：
+比特浏览器中的一个独立 profile（含登录态、cookie、代理、指纹）。腾域通过 CDP 连接。
+_Avoid_: 浏览器实例、账号
+
+**比特浏览器适配器 / BitBrowser Adapter**：
+工作台级别的共享适配器（adapters/bit-browser.ts），采集和上架模块都通过它连接 profile。
+_Avoid_: 比特客户端
+
+**Profile 锁**：
+跨模块互斥机制。同一个浏览器 profile 同时只能被一个模块占用（采集或上架），由 BrowserProfileLock 协调。
+
+### 套版
+
+**模板 / Mockup**：
+PSD 或 PSB 文件，包含智能对象图层，用于套印花。
+_Avoid_: Template（与"流程模板"冲突）、PSD 文件（指文件类型时可用）
+
+**智能对象 / Smart Object / SO**：
+PSD 中可被替换内容的特殊图层。
+_Avoid_: 替换图层
+
+**代表智能对象数**：
+PSD 模板中决定"一组任务需要消耗多少张印花"的数字。`independent`、`shared` 等模式由扫描结果决定。
+_Avoid_: SO 数量
+
+**裁切区域 / Clip Area**：
+模板自动识别或由参考线推导出的导出区域。一个模板可能输出多张裁切图。
+_Avoid_: 切片、Crop Region
+
+### 检测
+
+**风险值 / Risk Score**：
+侵权检测模型输出的 0-100 数值。
+_Avoid_: 分数、得分
+
+**风险等级 / Risk Level**：
+按风险值划分的三档：`pass`（低）/ `review`（中）/ `block`（高）。
+_Avoid_: 通过/复核/拦截（用英文等级名作为 enum 值，UI 上展示中文）
+
+### 上架
+
+**上架程序 / Listing Bot**：
+腾域中的店小秘自动化模块；通过 Playwright + 比特浏览器 CDP 操作店小秘网页后台。
+_Avoid_: 上架机器人、爬虫
+
+**草稿模板 ID / Draft Template ID**：
+店小秘后台预先创建的"草稿模板"的唯一标识；模板里预存价格、类目、规格、运费等字段。腾域只覆写标题、SKU、图片。
+_Avoid_: 模板（与 Mockup 冲突）、Template
+
+**工作区 / Workspace**：
+一个店铺账号对应的比特浏览器 profile；多 workspace 跨账号并行上架。
+_Avoid_: 店铺账号、Profile（Profile 指代浏览器环境而非店铺）
+
+**Listing 状态 / Listing Status**：
+单个 SKU 在上架流程中的状态：`pending` / `uploading` / `success` / `failed`。用于断点续传。
+_Avoid_: Upload Status
+
+### 账号与许可
+
+**激活码 / Activation Code**：
+腾域 v1 的唯一授权凭证。用户付费后由管理员后台创建并发放。
+_Avoid_: License Key、序列号、订阅
+
+**客户 / Customer**：
+激活码的购买方；后台记录其姓名、手机号、备注。一个客户可以拥有多个激活码（多次购买）。
+_Avoid_: 用户（"用户"指代客户端使用者，可能是客户也可能不是）
+
+**设备激活记录 / Device Activation**：
+某个激活码在某台具体设备上的激活记录；含设备指纹和用户起的名字。
+_Avoid_: Login、Session
+
+**设备指纹 / Device Fingerprint**：
+基于 CPU + 主板 + 网卡的 SHA256 哈希，用于绑定设备。
+_Avoid_: 设备 ID、机器码
+
+**批量匿名码 / Batch Anonymous Code**：
+不绑客户、批量生成的试用码或推广码。激活时用户也不填信息。
+_Avoid_: 试用码（不是所有匿名码都用于试用）
+
+**批次 / Code Batch**：
+批量生成的一组激活码共享的 `batch_id` 标签，用于后台过滤和转化率统计。
+
+### 服务器与配置
+
+**云端 / Server**：
+腾域的中央服务器（Next.js + Postgres）。**只派发配置和验证授权，不接触图片、不代理生图、不存用户业务数据**。
+_Avoid_: 后端、Cloud
+
+**Provider Registry**：
+云端派发的 provider 配置（base_url、apiStyle、endpoints、modelOptions），客户端启动时拉取并缓存。**云端不持有用户的 API Key**。
+_Avoid_: 服务商列表（指代时统一用 Provider Registry）
+
+**激活码后台 / Admin**：
+管理员浏览器界面（Next.js 中的 /admin），用于管理客户、激活码、Skill、Provider、ComfyUI 工作流包、公告、版本。
+_Avoid_: Dashboard、CMS
+
+### 文件与目录
+
+**素材总目录 / Workbench Root**：
+用户首次启动时指定的根目录，腾域在其下创建 5 大类子目录和 `.workbench/` 黑盒。
+_Avoid_: 工作目录、Output Folder
+
+**临时文件管理器 / TempFileManager**：
+全局单例，管理 `.workbench/tmp/{module}/{taskId}/` 下的临时文件生命周期。任务完成自动清理、启动清理 24h+ 孤儿。
+_Avoid_: 缓存管理器
+
+---
+
+## Relationships
+
+### 业务对象
+
+- 一个 **货号** 对应一条上架 listing。
+- 一个 **货号** 可能有多个历史 **任务**（重做、补做）；同时刻只有一个"进行中"任务。
+- 一个 **任务** 包含一个或多个 **Workflow Step**（轻量任务只含一个）。
+- 一个 **任务** 始终绑定唯一货号；一个 **轻量任务** 可能由独立模块运行创建。
+- 一个 **印花** 在不同 **模板** 下套版后生成多个 **货号**（分散在多个**模板批次**目录里）。
+- 一个 **原图** 经"提取"产生一个或多个 **印花**；原图不是印花。
+- 一个 **印花** 可用于多个货号（跨模板）。
+
+### 模块和 Provider
+
+- **生图模块** 提供 4 个 **生图能力**（文生图 / 图生图 / 提取 / 抠图）。
+- 每个生图能力可通过两种 **Provider 路径** 实现：comfyui-chenyu 或 grsai。
+- **侵权检测模块** 和 **标题生成模块** 共享 **aliyun-bailian** provider。
+- **抠图能力** 没有"纯付费"路径；只能 comfyui 工作流 或 "付费生黑白图 + comfyui 转遮罩+混合" 的混合路径。
+- 同一时刻一个 **浏览器 profile** 只能被一个模块占用（采集 或 上架）。
+
+### 服务器边界
+
+- **云端 / Server** 派发：Skill / Provider Registry / ComfyUI 工作流包 / 公告 / 版本。
+- **云端 / Server** 不接触：用户图片、生图调用、LLM 调用、用户 API Key、任务记录、货号、标题。
+- 客户端用用户**本地存的 API Key** 直连晨羽、Grsai、阿里云百炼；云端只描述能力，不代理。
+
+### 文件系统
+
+- **素材总目录** 下分 5 个一级子目录（01-采集 / 02-生图 / 03-检测 / 04-待套版印花 / 05-货号成品）+ `.workbench/`。
+- 5 大类目录里**只放最终图片**；元数据、血缘、状态全部在 `.workbench/workbench.db`。
+- **05-货号成品** 下按 **模板批次** 分一级目录，每个批次内按 **货号** 分二级目录，含成品图 + `titles.xlsx`。
+- **05 是上架程序唯一读取域**；其他模块不能往里写文件。
+- **04-待套版印花** 是"真正投入生产"的关键节点，支持三种入图方式（上游流转 / 生图模块送入 / 用户外部拖入）。
+
+### 激活和设备
+
+- 一个 **客户** 可以拥有多个 **激活码**（多次购买/续费）。
+- 一个 **激活码** 可以激活到多台 **设备**（最多 `max_devices` 台）。
+- **设备激活记录** 通过 **设备指纹** 绑定到一台具体机器。
+- **批量匿名码** 没有客户关联；激活后用户也不填信息；批次维度统计。
+- 管理员可以**封号**：码级（仅该码失效）或客户级（该客户所有码失效）。
+
+---
+
+## Example dialogue
+
+> **产品经理**：用户在生图模块的"图生图" Tab 选了 comfyui 实现，他点开始后会发生什么？
+> **架构师**：系统先创建一个**轻量任务**（绑定临时货号），编排到 **comfyui-chenyu provider** 的 adapter，调用晨羽智云 API 启动实例，拉取最新 ComfyUI **工作流包**（图生图类别），按 input_slots 注入用户的源印花，提交执行。完成的印花产物落到 02-生图/03-图生图 下，**印花 ID** 写数据库。
+
+> **产品经理**：用户把同一批印花套到 3 个 PSD 模板上，会产生几个货号？
+> **架构师**：3 个模板批次，每个批次内每个印花一个货号。所以 N 个印花 × 3 模板 = 3N 个 listing。每个 **模板批次** 是一个独立的上架批次，对应一个 titles.xlsx。
+
+> **产品经理**：客户买了 1 个码 + 2 个子账号，最多能装在几台机器上？
+> **架构师**：1 个激活码，`max_devices=3`（1 主 + 2 子），所以最多 3 台。子账号在这里不是独立登录，只是设备槽位的扩展。换机找你后台解绑老设备就行。
+
+---
+
+## Flagged ambiguities
+
+- "中转站"曾指代 LLM 和生图两类服务商；现在明确**只指代付费生图（Grsai）**，**视觉/LLM 走阿里云百炼**，两者归属不同 provider 类目。
+- "图生图"曾被理解为"参考图喂给生图模型作为种子图"；现在明确**默认是"参考图给视觉 LLM 看 + 写提示词 + 文生图"**（4 种生成依据：none / layout / art-style / both）；"真 img2img"代码层支持但 v1 不开 UI。
+- "提取"在付费模型路径下**本质是图生图**（参考图+提取 skill），在 comfyui 路径下是专门的提取工作流。
+- "模板"在不同上下文有不同含义：PSD 模板（Mockup）、流程模板（Pipeline Template）、店小秘草稿模板（Draft Template）；行文必须明确前缀。
+- "用户"曾混指激活码购买方和软件使用者；明确购买方叫**客户 / Customer**，软件使用者叫**用户 / User**。
+- "任务"曾混指模块面板单次操作和跨模块串联运行；明确两层抽象：**轻量任务**（独立模块运行）和**完整任务**（编排引擎驱动）。
+- "Skill"在云端服务器上下文指代"模块提示词模板"；不与开源项目中"Claude Skill"等其他概念混用。
+- "Provider"在 Q8 重新定义后仅指代外部 API 提供方（晨羽 / Grsai / 阿里云百炼），不再用作 ComfyUI / 付费 的二分。
