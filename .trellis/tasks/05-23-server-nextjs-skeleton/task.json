@@ -3,7 +3,7 @@
   "name": "server-nextjs-skeleton",
   "title": "server nextjs skeleton",
   "description": "packages/server: Next.js 15 + Prisma + Postgres + /api/health",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
