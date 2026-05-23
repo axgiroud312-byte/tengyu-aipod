@@ -23,14 +23,8 @@ project_doc_fallback_filenames = ["AGENTS.md"]
 # `wait` tool — parent must block on terminal status before acting,
 # instead of cancelling / re-spawning. Incompatible with
 # [agents].max_threads (codex will reject the combination).
-# `enabled = true` is required inside the table — the table form does
-# NOT auto-enable the feature without it.
-# - max_concurrent_threads_per_session: bumps default 4 → 6.
-# - min_wait_timeout_ms: 480000 ms = 8 min. Codex default is 10 s, too
-#   short for Trellis subagents that routinely take 2-10 min. Hard
-#   ceiling is 3,600,000 (1 h).
-[features.multi_agent_v2]
-enabled = true
-max_concurrent_threads_per_session = 6
-min_wait_timeout_ms = 480000
-default_wait_timeout_ms = 480000
+# Use the simple boolean form for compatibility with older codex-acp
+# adapters such as Zed. Detailed multi_agent_v2 timeout tuning is left
+# to newer Codex entrypoints and should not be placed in project config.
+[features]
+multi_agent_v2 = true
