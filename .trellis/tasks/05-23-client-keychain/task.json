@@ -3,7 +3,7 @@
   "name": "client-keychain",
   "title": "client keychain token storage",
   "description": "OS keychain 加密存储 activation_token + 设备指纹生成",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

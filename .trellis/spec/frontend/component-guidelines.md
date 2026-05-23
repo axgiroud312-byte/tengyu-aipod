@@ -75,6 +75,8 @@ Questions to answer:
 - Main process generates the device fingerprint and posts to `${TENGYU_SERVER_URL ?? 'http://localhost:3000'}/api/activate`.
 - Workbench root setup creates `01-采集`, `02-生图`, `03-检测`, `04-待套版印花`, `05-货号成品`, and `.workbench`.
 - Task 12 stores activation token and entered API keys in local config only as a temporary placeholder. Task 13 must replace those secret values with OS keychain storage.
+- After Task 13, activation tokens and API keys must be stored through `packages/client/src/main/lib/keychain.ts`, not `app-config.json`.
+- Renderer code may call `window.api.keychain.has(key)`, but must not receive secret plaintext through IPC.
 
 ### 3. Validation & Error Matrix
 
@@ -84,6 +86,35 @@ Questions to answer:
 
 ### 4. Tests Required
 
+- `pnpm -F @tengyu-aipod/client lint`
+- `pnpm -F @tengyu-aipod/client type-check`
+- `pnpm -F @tengyu-aipod/client build`
+- `pnpm lint`
+- `pnpm type-check`
+- `pnpm test`
+
+---
+
+## Scenario: Client Keychain Storage
+
+### 1. Scope / Trigger
+
+- Trigger: activation token storage, API key storage, secret existence checks, or Electron safeStorage changes.
+- Applies to: `packages/client/src/main/lib/keychain.ts`, `packages/client/src/main/onboarding.ts`, and preload API types.
+
+### 2. Contracts
+
+- `setSecret`, `getSecret`, `deleteSecret`, and `hasSecret` live in the main process only.
+- Secrets are persisted in `app.getPath('userData')/secrets.json`.
+- Encrypted values are base64 encoded and prefixed with `safe:`.
+- If `safeStorage.isEncryptionAvailable()` is false, plain base64 fallback is allowed only outside production and must warn.
+- Production must throw if safeStorage encryption is unavailable.
+- Renderer may set secrets indirectly via business IPC such as onboarding save, and may check existence through `keychain:has`.
+- Renderer must never have a `keychain:get` IPC or any API returning plaintext secrets.
+
+### 3. Tests Required
+
+- `pnpm -F @tengyu-aipod/client test`
 - `pnpm -F @tengyu-aipod/client lint`
 - `pnpm -F @tengyu-aipod/client type-check`
 - `pnpm -F @tengyu-aipod/client build`

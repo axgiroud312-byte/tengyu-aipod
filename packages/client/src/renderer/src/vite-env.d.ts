@@ -16,6 +16,9 @@ interface Window {
       saveApiKeys: (apiKeys: Record<string, string>) => Promise<{ ok: true }>
       complete: () => Promise<{ ok: true }>
     }
+    keychain: {
+      has: (key: string) => Promise<boolean>
+    }
     activation: {
       activate: (input: { code: string; device_name: string }) => Promise<
         | {

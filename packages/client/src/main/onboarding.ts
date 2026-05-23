@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import { dirname, join } from 'node:path'
 import { app, dialog, ipcMain } from 'electron'
+import { hasSecret, setSecret } from './lib/keychain'
 
 const MATERIAL_DIR_NAME = '腾域aipod素材'
 const CONFIG_FILE_NAME = 'app-config.json'
@@ -35,7 +36,6 @@ interface ActivateResponse {
 
 interface AppConfig {
   workbench_root?: string
-  api_keys?: Record<string, string>
 }
 
 const activationErrorMessages: Record<string, string> = {
@@ -140,11 +140,8 @@ export function registerOnboardingIpc() {
       }
 
       const config = await readConfig()
-      await writeConfig({
-        ...config,
-        // Task 13 replaces this local placeholder with OS keychain storage.
-        api_keys: { ...config.api_keys, activation_token: result.data.activation_token },
-      })
+      await setSecret('activation_token', result.data.activation_token)
+      await writeConfig(config)
 
       return { ok: true, data: result.data }
     },
@@ -171,12 +168,11 @@ export function registerOnboardingIpc() {
   })
 
   ipcMain.handle('onboarding:save-api-keys', async (_event, apiKeys: Record<string, string>) => {
-    const config = await readConfig()
-    await writeConfig({
-      ...config,
-      // Task 13 replaces entered secrets with OS keychain storage.
-      api_keys: { ...config.api_keys, ...apiKeys },
-    })
+    await Promise.all(
+      Object.entries(apiKeys)
+        .filter(([, value]) => value.trim())
+        .map(([key, value]) => setSecret(key, value.trim())),
+    )
 
     return { ok: true }
   })
@@ -191,4 +187,6 @@ export function registerOnboardingIpc() {
 
     return { ok: true }
   })
+
+  ipcMain.handle('keychain:has', async (_event, input: { key: string }) => hasSecret(input.key))
 }

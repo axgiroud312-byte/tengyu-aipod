@@ -8,7 +8,7 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "lint": "biome check .",
-    "test": "echo no tests yet",
+    "test": "vitest run",
     "type-check": "tsc --noEmit"
   },
   "dependencies": {

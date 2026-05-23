@@ -22,6 +22,9 @@ const api = {
       ipcRenderer.invoke('onboarding:save-api-keys', apiKeys) as Promise<{ ok: true }>,
     complete: () => ipcRenderer.invoke('onboarding:complete') as Promise<{ ok: true }>,
   },
+  keychain: {
+    has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,
+  },
   activation: {
     activate: (input: { code: string; device_name: string }) =>
       ipcRenderer.invoke('activation:activate', input) as Promise<
