@@ -115,6 +115,33 @@ describe('AliyunBailianAdapter', () => {
     })
   })
 
+  it('allows an explicit base URL for local E2E mocks', async () => {
+    let requestBody: unknown = null
+    server.use(
+      http.post(
+        'http://127.0.0.1:41234/compatible-mode/v1/chat/completions',
+        async ({ request }) => {
+          requestBody = await request.json()
+          return HttpResponse.json(completionResponse)
+        },
+      ),
+    )
+    const adapter = new AliyunBailianAdapter({
+      apiKey: 'sk-test',
+      region: 'cn',
+      baseURL: 'http://127.0.0.1:41234/compatible-mode/v1',
+      maxRetries: 0,
+    })
+
+    await expect(
+      adapter.chatCompletion({
+        model: 'qwen3-vl-plus',
+        messages: [{ role: 'user', content: 'Write a title' }],
+      }),
+    ).resolves.toMatchObject({ text: 'Vintage Floral T-Shirt' })
+    expect(requestBody).toMatchObject({ model: 'qwen3-vl-plus' })
+  })
+
   it('maps 401 errors to non-retryable AppError', async () => {
     server.use(
       http.post(`${bailianBaseUrl('cn')}/chat/completions`, () =>

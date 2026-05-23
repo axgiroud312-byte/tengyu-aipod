@@ -306,6 +306,7 @@ await writeFile(join(tempDir, 'prompt-snapshot.json'), json)
 - Parse model output as one title string: strip common prefixes, markdown fences, bullets, wrapping quotes, and truncate by platform fallback limit.
 - Write `titles.xlsx` with exactly A `货号` and B `标题`; generated titles override existing titles.
 - Persist generated titles into `.workbench/workbench.db` `skus` fields: title, language, platform, title skill id/version, model, and generated timestamp.
+- Electron E2E may set `TENGYU_SKIP_TITLE_DB_REGISTER=1` to avoid native `better-sqlite3` binding issues while still verifying `titles.xlsx`, progress, skip, and retry behavior. Production and unit tests must not rely on this flag.
 
 #### 4. Validation & Error Matrix
 - Missing `workbench_root` -> throw before running title generation.

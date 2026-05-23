@@ -35,6 +35,7 @@ export type AliyunBailianAdapterOptions = {
   region: BailianRegion
   maxRetries?: number
   timeoutMs?: number
+  baseURL?: string
 }
 
 const BAILIAN_BASE_URLS: Record<BailianRegion, string> = {
@@ -53,7 +54,8 @@ export class AliyunBailianAdapter {
   constructor(options: AliyunBailianAdapterOptions) {
     this.client = new OpenAI({
       apiKey: options.apiKey,
-      baseURL: bailianBaseUrl(options.region),
+      baseURL:
+        options.baseURL ?? process.env.TENGYU_BAILIAN_BASE_URL ?? bailianBaseUrl(options.region),
       maxRetries: options.maxRetries ?? 2,
       timeout: options.timeoutMs ?? 30_000,
     })

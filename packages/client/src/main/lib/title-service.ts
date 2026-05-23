@@ -790,7 +790,7 @@ export class TitleService {
       )
       await writeTitlesXlsx(xlsxPath, orderedGeneratedTitles, existingTitles)
 
-      if (orderedGeneratedTitles.size > 0) {
+      if (orderedGeneratedTitles.size > 0 && process.env.TENGYU_SKIP_TITLE_DB_REGISTER !== '1') {
         const db = resolved.openDatabase(workbenchConfig.workbench_root)
         try {
           registerSkuTitles(db, {

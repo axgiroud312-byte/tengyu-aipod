@@ -9,6 +9,10 @@ import { registerOnboardingIpc } from './onboarding'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
+if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
+  app.setPath('userData', process.env.TENGYU_ELECTRON_USER_DATA_DIR)
+}
+
 function createMainWindow(): void {
   const mainWindow = new BrowserWindow({
     width: 1400,
@@ -17,10 +21,14 @@ function createMainWindow(): void {
     minHeight: 700,
     title: '腾域 aipod',
     webPreferences: {
-      preload: join(currentDir, '../preload/index.js'),
+      preload: join(currentDir, '../preload/index.mjs'),
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
+  })
+  mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
+    console.error(`Preload failed: ${preloadPath}`, error)
   })
   activationPoller.bindWindow(mainWindow)
 

@@ -42,3 +42,9 @@ jobs:
 
       - name: Test
         run: pnpm test
+
+      - name: Build client for Electron E2E
+        run: pnpm -F @tengyu-aipod/client build
+
+      - name: Electron E2E
+        run: xvfb-run --auto-servernum pnpm -F @tengyu-aipod/client e2e

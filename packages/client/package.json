@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
+    "e2e": "playwright test -c playwright.e2e.config.ts",
     "lint": "biome check .",
     "test": "vitest run",
     "type-check": "tsc --noEmit"
@@ -34,6 +35,7 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.7",

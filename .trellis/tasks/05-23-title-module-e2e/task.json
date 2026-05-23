@@ -3,7 +3,7 @@
   "name": "title-module-e2e",
   "title": "title module e2e",
   "description": "Playwright E2E 标题生成",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
