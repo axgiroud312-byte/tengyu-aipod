@@ -3,7 +3,7 @@
   "name": "admin-skills-ui",
   "title": "admin skills ui",
   "description": "/admin/skills CRUD + 版本管理",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

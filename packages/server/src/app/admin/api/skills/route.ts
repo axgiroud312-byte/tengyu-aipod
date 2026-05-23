@@ -1,0 +1,43 @@
+import { createSkillVersion, listAdminSkills } from '@/lib/skills'
+import { NextResponse } from 'next/server'
+import { nullableText, skillInputSchema, validateVariablesJson } from './schema'
+
+function errorResponse(code: string, message: string, status: number) {
+  return NextResponse.json({ ok: false, error: { code, message } }, { status })
+}
+
+export async function GET(request: Request) {
+  const url = new URL(request.url)
+  const module = url.searchParams.get('module')
+  const data = await listAdminSkills(
+    module === 'generation' || module === 'detection' || module === 'title' ? { module } : {},
+  )
+
+  return NextResponse.json({ ok: true, data: { items: data } })
+}
+
+export async function POST(request: Request) {
+  const parsed = skillInputSchema.safeParse(await request.json().catch(() => null))
+  if (!parsed.success || !validateVariablesJson(parsed.data.variables_json)) {
+    return errorResponse('INVALID_SKILL_INPUT', 'Skill 参数不正确', 400)
+  }
+
+  const data = await createSkillVersion({
+    id: parsed.data.id.trim(),
+    module: parsed.data.module,
+    category: nullableText(parsed.data.category),
+    platform: nullableText(parsed.data.platform),
+    language: nullableText(parsed.data.language),
+    version: parsed.data.version.trim(),
+    enabled: parsed.data.enabled,
+    system_prompt: parsed.data.system_prompt,
+    variables_json: parsed.data.variables_json,
+    recommended_model: nullableText(parsed.data.recommended_model),
+    notes: nullableText(parsed.data.notes),
+  })
+  if (!data) {
+    return errorResponse('SKILL_VERSION_EXISTS', 'Skill 版本已存在', 409)
+  }
+
+  return NextResponse.json({ ok: true, data })
+}

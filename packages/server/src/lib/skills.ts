@@ -1,5 +1,5 @@
 import { db } from '@/lib/db'
-import type { Skill as PrismaSkill, SkillModule } from '@prisma/client'
+import type { Prisma, Skill as PrismaSkill, SkillModule } from '@prisma/client'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
 
 export type SkillFilter = {
@@ -7,6 +7,20 @@ export type SkillFilter = {
   category?: string
   platform?: string
   language?: string
+}
+
+export type SkillUpsertInput = {
+  id: string
+  module: SkillModule
+  category: string | null
+  platform: string | null
+  language: string | null
+  version: string
+  enabled: boolean
+  system_prompt: string
+  variables_json: string
+  recommended_model: string | null
+  notes: string | null
 }
 
 function parseVariables(value: string) {
@@ -58,7 +72,16 @@ export function compareVersions(a: string, b: string) {
   return a.localeCompare(b)
 }
 
-function latestById(skills: PrismaSkill[]) {
+export function nextPatchVersion(version: string) {
+  const parts = version.split('.').map((part) => Number(part))
+  const normalized =
+    parts.length >= 3 ? parts : [...parts, ...Array.from({ length: 3 - parts.length }, () => 0)]
+  const patch = normalized[2] ?? 0
+  normalized[2] = Number.isFinite(patch) ? patch + 1 : 1
+  return normalized.map((part) => (Number.isFinite(part) ? part : 0)).join('.')
+}
+
+export function latestById(skills: PrismaSkill[]) {
   const latest = new Map<string, PrismaSkill>()
 
   for (const skill of skills) {
@@ -114,6 +137,28 @@ export async function listSkills(filter: SkillFilter) {
   return []
 }
 
+export async function listAdminSkills(filter: { module?: SkillModule } = {}) {
+  const skills = await db.skill.findMany({
+    where: {
+      ...(filter.module ? { module: filter.module } : {}),
+    },
+    orderBy: [{ id: 'asc' }, { updated_at: 'desc' }],
+  })
+
+  return latestById(skills).map(serializeSkillSummary)
+}
+
+export async function listSkillVersions(id: string) {
+  const skills = await db.skill.findMany({
+    where: { id },
+    orderBy: [{ updated_at: 'desc' }],
+  })
+
+  return skills
+    .sort((left, right) => compareVersions(right.version, left.version))
+    .map(serializeSkillSummary)
+}
+
 export async function getSkill(id: string, version?: string) {
   const skill = await db.skill.findFirst({
     where: {
@@ -140,4 +185,79 @@ export async function getSkill(id: string, version?: string) {
   )
 
   return latest ? serializeSkill(latest) : null
+}
+
+export async function getAdminSkill(id: string, version?: string) {
+  const skill = version
+    ? await db.skill.findFirst({ where: { id, version } })
+    : latestById(await db.skill.findMany({ where: { id }, orderBy: [{ updated_at: 'desc' }] }))[0]
+
+  return skill ? serializeSkill(skill) : null
+}
+
+export async function createSkillVersion(input: SkillUpsertInput) {
+  const existing = await db.skill.findUnique({
+    where: {
+      id_version: {
+        id: input.id,
+        version: input.version,
+      },
+    },
+  })
+  if (existing) {
+    return null
+  }
+
+  const data: Prisma.SkillUncheckedCreateInput = {
+    id: input.id,
+    module: input.module,
+    category: input.category,
+    platform: input.platform,
+    language: input.language,
+    version: input.version,
+    enabled: input.enabled,
+    system_prompt: input.system_prompt,
+    variables_json: input.variables_json,
+    recommended_model: input.recommended_model,
+    notes: input.notes,
+  }
+
+  const skill = await db.skill.create({ data })
+
+  return serializeSkill(skill)
+}
+
+export async function updateExistingSkillVersion(
+  id: string,
+  version: string,
+  input: SkillUpsertInput,
+) {
+  const existing = await db.skill.findUnique({
+    where: {
+      id_version: {
+        id,
+        version,
+      },
+    },
+  })
+  if (!existing) {
+    return null
+  }
+
+  const skill = await db.skill.update({
+    where: { row_id: existing.row_id },
+    data: {
+      module: input.module,
+      category: input.category,
+      platform: input.platform,
+      language: input.language,
+      enabled: input.enabled,
+      system_prompt: input.system_prompt,
+      variables_json: input.variables_json,
+      recommended_model: input.recommended_model,
+      notes: input.notes,
+    },
+  })
+
+  return serializeSkill(skill)
 }
