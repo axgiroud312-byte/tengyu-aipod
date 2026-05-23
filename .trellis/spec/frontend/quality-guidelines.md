@@ -145,6 +145,70 @@ const pool = new SharpPreprocessPool()
 const result = await pool.process({ module: 'title', taskId, workbenchRoot, input })
 ```
 
+### Scenario: TempFileManager
+
+#### 1. Scope / Trigger
+- Trigger: any Electron client module needs temporary files or intermediate artifacts.
+- Boundary: all task-scoped temporary files live under the configured workbench root at `.workbench/tmp/{module}/{taskId}`. User-facing material folders must not receive JSON, JSX, CSV, snapshots, masks, or other intermediate files.
+
+#### 2. Signatures
+- Class: `TempFileManager`
+- Singleton: `tempFileManager`
+- Module names: `collection`, `generation`, `detection`, `photoshop`, `matting`, `title`, `listing`
+- Methods:
+  - `createTaskDir(module: TempModule, taskId: string): Promise<string>`
+  - `getTaskDir(module: TempModule, taskId: string): Promise<string>`
+  - `cleanupTask(module: TempModule, taskId: string, options?: { keepIfFailed?: boolean }): Promise<void>`
+  - `cleanupOrphans(): Promise<void>`
+  - `cleanupSession(): Promise<void>`
+  - `cleanupAll(): Promise<void>`
+  - `getDiskUsage(): Promise<Record<string, number>>`
+  - `clearTimers(): void`
+- IPC:
+  - `temp-file:get-usage -> Promise<Record<string, number>>`
+  - `temp-file:cleanup-all -> Promise<{ ok: true }>`
+
+#### 3. Contracts
+- Root path comes from `readAppConfig().workbench_root`; missing workbench root is a setup error.
+- `createTaskDir` must create `.workbench/tmp/{module}/{taskId}` recursively and track it as part of the current session.
+- `cleanupTask(..., { keepIfFailed: false })` deletes the task directory immediately.
+- `cleanupTask(..., { keepIfFailed: true })` keeps the task directory for one hour, then deletes it with `setTimeout`.
+- `cleanupOrphans` runs on app startup and removes task directories older than 24 hours, using `mtimeMs` first and `ctimeMs` only as a fallback.
+- `before-quit` must best-effort clean current-session temp directories and clear delayed cleanup timers.
+- `getDiskUsage` returns bytes grouped by module directory.
+
+#### 4. Validation & Error Matrix
+- Missing `workbench_root` -> throw an error before creating or reading temp files.
+- Missing root/module/task directory during cleanup -> no-op via forceful deletion or guarded reads.
+- App exits before delayed failed cleanup fires -> next startup `cleanupOrphans` is the fallback.
+- Non-directory entries under `.workbench/tmp` -> ignored by orphan cleanup and disk usage grouping.
+
+#### 5. Good/Base/Bad Cases
+- Good: title generation writes preprocessed images to `.workbench/tmp/title/{taskId}` and calls `cleanupTask` after success.
+- Base: a failed detection task calls `cleanupTask('detection', taskId, { keepIfFailed: true })` so retry can reuse artifacts briefly.
+- Bad: writing `prompt-snapshot.json`, JSX, DOM snapshots, or masks into `01-` through `05-` material folders.
+
+#### 6. Tests Required
+- Unit test task directory creation under `.workbench/tmp/{module}/{taskId}`.
+- Unit test immediate cleanup and failed delayed cleanup.
+- Unit test orphan cleanup removes only directories older than 24 hours.
+- Unit test disk usage reports bytes grouped by module.
+- Type-check preload and renderer declarations when adding IPC surface.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+// Pollutes a user-facing material folder with an intermediate file.
+await writeFile(join(workbenchRoot, '05-货号成品', 'prompt-snapshot.json'), json)
+```
+
+Correct:
+```ts
+const tempDir = await tempFileManager.createTaskDir('title', taskId)
+await writeFile(join(tempDir, 'prompt-snapshot.json'), json)
+```
+
 ---
 
 ## Testing Requirements

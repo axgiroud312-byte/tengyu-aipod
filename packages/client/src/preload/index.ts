@@ -36,6 +36,13 @@ const api = {
     get: (input: { id: string; version?: string }) =>
       ipcRenderer.invoke('skill:get', input) as Promise<Skill>,
   },
+  tempFile: {
+    getUsage: () => ipcRenderer.invoke('temp-file:get-usage') as Promise<Record<string, number>>,
+    cleanupAll: () =>
+      ipcRenderer.invoke('temp-file:cleanup-all') as Promise<{
+        ok: true
+      }>,
+  },
   activation: {
     activate: (input: { code: string; device_name: string }) =>
       ipcRenderer.invoke('activation:activate', input) as Promise<

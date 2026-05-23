@@ -32,6 +32,10 @@ declare global {
           version?: string
         }) => Promise<import('@tengyu-aipod/shared').Skill>
       }
+      tempFile: {
+        getUsage: () => Promise<Record<string, number>>
+        cleanupAll: () => Promise<{ ok: true }>
+      }
       activation: {
         activate: (input: { code: string; device_name: string }) => Promise<
           | {
