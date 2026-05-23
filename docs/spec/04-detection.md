@@ -492,10 +492,34 @@ CREATE TABLE detection_config (
 'detection:list-results'              → { task_id, risk_level? } → DetectionResult[]
 'detection:retest'                    → { artifact_ids } → TaskId
 'detection:promote-to-matting'        → { artifact_ids, mode: 'copy' | 'move' } → number
+'detection:delete-result'             → { artifact_id } → number
 
 // 事件
 'detection:progress'                  → { task_id, processed, total, current_image }
 ```
+
+### 11.1 输入源补充字段
+
+`detection:list-input-sources` 除了 `dirs` / `counts` 外，还返回前端直接可用的 `sources`：
+
+```ts
+type DetectionInputSource = {
+  key: string        // generation-extract | generation-matting
+  label: string      // UI 显示名
+  folder: string     // 绝对路径
+  count: number      // 当前图片数
+}
+
+type DetectionInputSources = {
+  dirs: string[]
+  counts: Record<string, number>
+  sources: DetectionInputSource[]
+}
+```
+
+### 11.2 结果列表补充字段
+
+`detection:list-results` / `detection:get-result` 返回的结果对象可带 `thumbnailUrl` 和 `imagePath`，方便前端直接渲染缩略图。`delete-result` 会删除该条检测结果记录，并清理其检测输出文件，供结果列表里的“删除”按钮使用。
 
 ## 12. 成本估算
 

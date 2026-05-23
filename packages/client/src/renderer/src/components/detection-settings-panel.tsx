@@ -4,6 +4,12 @@ import { Loader2, Save, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { DetectionConfig, DetectionThresholdConfig } from '../../../main/lib/detection-config'
 
+type DetectionSettingsPanelProps = {
+  previewImageCount?: number
+  onConfigChange?: (config: DetectionConfig | null) => void
+  onCompressionChange?: (enabled: boolean) => void
+}
+
 const DEFAULT_THRESHOLD: DetectionThresholdConfig = { passMax: 39, reviewMax: 69 }
 const DEFAULT_MODEL = 'qwen3-vl-flash'
 
@@ -63,7 +69,11 @@ function displayThreshold(threshold: DetectionThresholdConfig) {
   return `Pass: 0-${threshold.passMax} | Review: ${threshold.passMax + 1}-${threshold.reviewMax} | Block: ${threshold.reviewMax + 1}-100`
 }
 
-export function DetectionSettingsPanel() {
+export function DetectionSettingsPanel({
+  previewImageCount,
+  onConfigChange,
+  onCompressionChange,
+}: DetectionSettingsPanelProps = {}) {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState<string | null>(null)
@@ -76,7 +86,7 @@ export function DetectionSettingsPanel() {
   const [threshold, setThreshold] = useState<DetectionThresholdConfig>(DEFAULT_THRESHOLD)
   const [model, setModel] = useState(DEFAULT_MODEL)
   const [variables, setVariables] = useState<Record<string, unknown>>({})
-  const [previewImageCount, setPreviewImageCount] = useState(42)
+  const [localPreviewImageCount, setLocalPreviewImageCount] = useState(42)
   const [previewBalance, setPreviewBalance] = useState('')
   const [withCompression, setWithCompression] = useState(true)
 
@@ -173,6 +183,24 @@ export function DetectionSettingsPanel() {
     }
   }, [savedConfig, selectedSkill])
 
+  useEffect(() => {
+    if (!selectedSkill) {
+      onConfigChange?.(null)
+      return
+    }
+    onConfigChange?.({
+      threshold,
+      skillId: selectedSkill.id,
+      skillVersion: selectedSkill.version,
+      model,
+      variables,
+    })
+  }, [model, onConfigChange, selectedSkill, threshold, variables])
+
+  useEffect(() => {
+    onCompressionChange?.(withCompression)
+  }, [onCompressionChange, withCompression])
+
   const selectedSkillLabel = useMemo(() => {
     if (!selectedSkill) {
       return '未选择'
@@ -181,8 +209,9 @@ export function DetectionSettingsPanel() {
   }, [selectedSkill])
 
   const estimatedCost = useMemo(
-    () => estimateDetectionCost(previewImageCount, model, withCompression),
-    [model, previewImageCount, withCompression],
+    () =>
+      estimateDetectionCost(previewImageCount ?? localPreviewImageCount, model, withCompression),
+    [localPreviewImageCount, model, previewImageCount, withCompression],
   )
   const balanceValue = previewBalance.trim() ? Number(previewBalance) : null
   const hasBalance = balanceValue !== null && Number.isFinite(balanceValue)
@@ -524,23 +553,29 @@ export function DetectionSettingsPanel() {
           <div>
             <p className="font-medium">预估费用</p>
             <p className="mt-1 text-muted-foreground">
-              {previewImageCount} 张图，约 ¥{estimatedCost.yuan.toFixed(4)}（
-              {withCompression ? '启用压缩' : '未压缩'}）
+              {previewImageCount ?? localPreviewImageCount} 张图，约 ¥
+              {estimatedCost.yuan.toFixed(4)}（{withCompression ? '启用压缩' : '未压缩'}）
             </p>
           </div>
           <div className="grid gap-3 md:grid-cols-2">
-            <label className="block space-y-2 text-sm font-medium">
-              <span>图数</span>
-              <input
-                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                min={1}
-                onChange={(event) =>
-                  setPreviewImageCount(Math.max(1, Number(event.target.value) || 1))
-                }
-                type="number"
-                value={previewImageCount}
-              />
-            </label>
+            {previewImageCount === undefined ? (
+              <label className="block space-y-2 text-sm font-medium">
+                <span>图数</span>
+                <input
+                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  min={1}
+                  onChange={(event) =>
+                    setLocalPreviewImageCount(Math.max(1, Number(event.target.value) || 1))
+                  }
+                  type="number"
+                  value={localPreviewImageCount}
+                />
+              </label>
+            ) : (
+              <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm">
+                当前选图 {previewImageCount} 张
+              </div>
+            )}
             <label className="block space-y-2 text-sm font-medium">
               <span>余额</span>
               <input

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdir, readFile, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, extname, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
   type RiskLevel,
@@ -13,6 +14,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { readAppConfig } from '../onboarding'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
+import { getDetectionConfig } from './detection-config'
 import { getSecret } from './keychain'
 import {
   PreprocessError,
@@ -54,7 +56,47 @@ export type DetectionProgress = {
   succeeded: number
   failed: number
   skipped: number
+  concurrency?: number
   current_image?: string
+}
+
+export type DetectionInputSource = {
+  key: string
+  label: string
+  folder: string
+  count: number
+}
+
+export type DetectionInputSources = {
+  dirs: string[]
+  counts: Record<string, number>
+  sources: DetectionInputSource[]
+}
+
+export type DetectionImageInfo = {
+  id: string
+  path: string
+  name: string
+  sizeBytes: number
+  modifiedAt: number
+  thumbnailUrl: string
+}
+
+export type DetectionStoredResult = {
+  id: string
+  artifactId: string
+  taskId: string
+  printId: string | null
+  riskScore: number
+  riskLevel: RiskLevel
+  reason: string
+  model: string
+  skillId: string
+  skillVersion: string
+  outputPath: string
+  imagePath: string
+  thumbnailUrl: string
+  createdAt: number
 }
 
 export type DetectionErrorCode = 'preprocess_failed' | 'llm_parse_failed' | 'llm_failed'
@@ -62,6 +104,7 @@ export type DetectionErrorCode = 'preprocess_failed' | 'llm_parse_failed' | 'llm
 export type DetectionImageResult =
   | {
       imagePath: string
+      thumbnailUrl: string
       artifactId: string
       printId: string
       status: 'success'
@@ -73,6 +116,7 @@ export type DetectionImageResult =
     }
   | {
       imagePath: string
+      thumbnailUrl: string
       artifactId: string
       printId: string
       status: 'skipped'
@@ -84,6 +128,7 @@ export type DetectionImageResult =
     }
   | {
       imagePath: string
+      thumbnailUrl: string
       artifactId?: string
       printId?: string
       status: 'failed'
@@ -138,6 +183,23 @@ type CachedDetectionRow = {
 const DEFAULT_MODEL = 'qwen3-vl-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const MODEL_OPTIONS = ['qwen3-vl-flash', 'qwen3-vl-plus', 'qwen-vl-max'] as const
+const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+const DETECTION_INPUT_SOURCE_DEFS = [
+  {
+    key: 'generation-extract',
+    label: '02-生图 / 03-提取',
+    parts: [WORKBENCH_DIRECTORIES.generation, '03-提取'],
+  },
+  {
+    key: 'generation-matting',
+    label: '02-生图 / 04-抠图',
+    parts: [WORKBENCH_DIRECTORIES.generation, '04-抠图'],
+  },
+] as const
+
+function naturalCompare(left: string, right: string) {
+  return left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })
+}
 
 function clampInt(value: number | undefined, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) {
@@ -226,6 +288,10 @@ function parseDetectionJson(text: string) {
 async function hashFile(path: string) {
   const buffer = await readFile(path)
   return createHash('sha256').update(buffer).digest('hex')
+}
+
+function fileUrl(path: string) {
+  return pathToFileURL(path).toString()
 }
 
 async function imageIdentity(imagePath: string): Promise<ImageIdentity> {
@@ -350,6 +416,39 @@ function ensureDetectionTables(db: Pick<Database.Database, 'exec'>) {
     CREATE INDEX IF NOT EXISTS idx_detection_artifact ON detection_results(artifact_id);
     CREATE INDEX IF NOT EXISTS idx_detection_level ON detection_results(risk_level);
   `)
+}
+
+async function readWorkbenchRoot(readConfig: typeof readAppConfig = readAppConfig) {
+  const workbenchConfig = await readConfig()
+  if (!workbenchConfig.workbench_root) {
+    throw new Error('workbench_root is required before detection can run')
+  }
+  return workbenchConfig.workbench_root
+}
+
+async function scanImageFolder(folder: string): Promise<DetectionImageInfo[]> {
+  const entries = await readdir(folder, { withFileTypes: true }).catch(() => [])
+  const files = entries
+    .filter((entry) => entry.isFile() && IMAGE_EXTENSIONS.test(entry.name))
+    .map((entry) => entry.name)
+    .sort(naturalCompare)
+
+  const images = await Promise.all(
+    files.map(async (name) => {
+      const imagePath = join(folder, name)
+      const info = await stat(imagePath)
+      const id = createHash('sha256').update(imagePath).digest('hex').slice(0, 16)
+      return {
+        id,
+        path: imagePath,
+        name,
+        sizeBytes: info.size,
+        modifiedAt: info.mtimeMs,
+        thumbnailUrl: fileUrl(imagePath),
+      } satisfies DetectionImageInfo
+    }),
+  )
+  return images
 }
 
 function registerSourceArtifact(
@@ -478,6 +577,59 @@ function registerDetectionResult(
   )
 }
 
+async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
+  const safeBaseName = (baseName || 'print').replace(/[\\/:*?"<>|]/g, '_')
+  let index = 0
+  while (true) {
+    const suffix = index === 0 ? '' : `_${index + 1}`
+    const candidate = join(folder, `${safeBaseName}${suffix}${ext}`)
+    try {
+      await stat(candidate)
+      index += 1
+    } catch {
+      return candidate
+    }
+  }
+}
+
+async function registerPromotedArtifact(
+  db: Pick<Database.Database, 'prepare'>,
+  input: {
+    targetPath: string
+    taskId: string
+    sourceArtifactId: string
+    printId: string
+  },
+) {
+  const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
+  db.prepare(`
+    INSERT INTO artifacts (
+      id,
+      task_id,
+      print_id,
+      step,
+      provider,
+      source_artifact_ids,
+      file_path,
+      file_size,
+      file_hash,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    randomUUID(),
+    input.taskId,
+    input.printId,
+    'matting',
+    'detection-promote',
+    JSON.stringify([input.sourceArtifactId]),
+    input.targetPath,
+    info.size,
+    fileHash,
+    Date.now(),
+  )
+}
+
 function buildDetectionUserPrompt(variables?: Record<string, unknown>) {
   const entries = Object.entries(variables ?? {})
   if (entries.length === 0) {
@@ -530,9 +682,293 @@ type IndexedImage = {
   imagePath: string
 }
 
+type DetectionResultRow = {
+  id: string
+  artifactId: string
+  taskId: string
+  printId: string | null
+  riskScore: number
+  riskLevel: RiskLevel
+  reason: string | null
+  model: string
+  skillId: string
+  skillVersion: string
+  outputPath: string
+  sourcePath: string | null
+  createdAt: number
+}
+
+type ArtifactImageRow = {
+  artifactId: string
+  printId: string | null
+  filePath: string
+}
+
+function mapStoredResult(row: DetectionResultRow): DetectionStoredResult {
+  const imagePath = row.outputPath || row.sourcePath || ''
+  return {
+    id: row.id,
+    artifactId: row.artifactId,
+    taskId: row.taskId,
+    printId: row.printId,
+    riskScore: row.riskScore,
+    riskLevel: row.riskLevel,
+    reason: row.reason ?? '',
+    model: row.model,
+    skillId: row.skillId,
+    skillVersion: row.skillVersion,
+    outputPath: row.outputPath,
+    imagePath,
+    thumbnailUrl: imagePath ? fileUrl(imagePath) : '',
+    createdAt: row.createdAt,
+  }
+}
+
+function resultSelectSql(whereSql: string) {
+  return `
+    SELECT
+      dr.id,
+      dr.artifact_id AS artifactId,
+      dr.task_id AS taskId,
+      dr.risk_score AS riskScore,
+      dr.risk_level AS riskLevel,
+      dr.reason,
+      dr.model,
+      dr.skill_id AS skillId,
+      dr.skill_version AS skillVersion,
+      dr.output_path AS outputPath,
+      dr.created_at AS createdAt,
+      a.print_id AS printId,
+      a.file_path AS sourcePath
+    FROM detection_results dr
+    LEFT JOIN artifacts a ON a.id = dr.artifact_id
+    ${whereSql}
+    ORDER BY dr.risk_score DESC, dr.created_at DESC
+  `
+}
+
 export class DetectionService {
   listModels() {
     return MODEL_OPTIONS
+  }
+
+  async listInputSources(
+    dependencies: Pick<DetectionServiceDependencies, 'readConfig'> = {},
+  ): Promise<DetectionInputSources> {
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const sources = await Promise.all(
+      DETECTION_INPUT_SOURCE_DEFS.map(async (source) => {
+        const folder = join(workbenchRoot, ...source.parts)
+        const count = (await scanImageFolder(folder)).length
+        return {
+          key: source.key,
+          label: source.label,
+          folder,
+          count,
+        } satisfies DetectionInputSource
+      }),
+    )
+    return {
+      dirs: sources.map((source) => source.folder),
+      counts: Object.fromEntries(sources.map((source) => [source.folder, source.count])),
+      sources,
+    }
+  }
+
+  async scanFolder(input: { folder: string }): Promise<DetectionImageInfo[]> {
+    return scanImageFolder(input.folder)
+  }
+
+  async listResults(
+    input: { task_id?: string | null; risk_level?: RiskLevel | null } = {},
+    dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
+  ): Promise<DetectionStoredResult[]> {
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    try {
+      ensureDetectionTables(db)
+      const conditions: string[] = []
+      const params: unknown[] = []
+      if (input.task_id) {
+        conditions.push('dr.task_id = ?')
+        params.push(input.task_id)
+      }
+      if (input.risk_level) {
+        conditions.push('dr.risk_level = ?')
+        params.push(input.risk_level)
+      }
+      const whereSql = conditions.length ? `WHERE ${conditions.join(' AND ')}` : ''
+      const rows = db.prepare(resultSelectSql(whereSql)).all(...params) as DetectionResultRow[]
+      return rows.map(mapStoredResult)
+    } finally {
+      db.close()
+    }
+  }
+
+  async getResult(
+    input: { artifact_id: string },
+    dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
+  ): Promise<DetectionStoredResult | null> {
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    try {
+      ensureDetectionTables(db)
+      const row = db
+        .prepare(`${resultSelectSql('WHERE dr.artifact_id = ?')} LIMIT 1`)
+        .get(input.artifact_id) as DetectionResultRow | undefined
+      return row ? mapStoredResult(row) : null
+    } finally {
+      db.close()
+    }
+  }
+
+  async retest(
+    input: { artifact_ids: string[] },
+    emitProgress?: (progress: DetectionProgress) => void,
+    emitCompleted?: (event: DetectionTaskEvent) => void,
+  ) {
+    const workbenchRoot = await readWorkbenchRoot()
+    const artifactIds = Array.from(new Set(input.artifact_ids.filter(Boolean)))
+    if (artifactIds.length === 0) {
+      throw new Error('请选择需要重测的图片')
+    }
+
+    const db = openWorkbenchDatabase(workbenchRoot)
+    let rows: ArtifactImageRow[]
+    try {
+      ensureDetectionTables(db)
+      const placeholders = artifactIds.map(() => '?').join(',')
+      rows = db
+        .prepare(
+          `
+            SELECT
+              id AS artifactId,
+              print_id AS printId,
+              file_path AS filePath
+            FROM artifacts
+            WHERE id IN (${placeholders})
+          `,
+        )
+        .all(...artifactIds) as ArtifactImageRow[]
+    } finally {
+      db.close()
+    }
+
+    const imagePaths = rows.map((row) => row.filePath).filter(Boolean)
+    if (imagePaths.length === 0) {
+      throw new Error('没有找到可重测的原始图片')
+    }
+
+    const config = await getDetectionConfig()
+    if (!config?.skillId) {
+      throw new Error('请先保存检测 Skill 配置')
+    }
+
+    return this.startBatch(
+      {
+        imagePaths,
+        skillId: config.skillId,
+        skillVersion: config.skillVersion,
+        model: config.model,
+        variables: config.variables,
+        threshold: config.threshold,
+        forceRetest: true,
+      },
+      emitProgress,
+      emitCompleted,
+    )
+  }
+
+  async promoteToMatting(
+    input: { artifact_ids: string[]; mode?: 'copy' | 'move' },
+    dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
+  ) {
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const artifactIds = Array.from(new Set(input.artifact_ids.filter(Boolean)))
+    if (artifactIds.length === 0) {
+      return 0
+    }
+
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    try {
+      ensureDetectionTables(db)
+      const placeholders = artifactIds.map(() => '?').join(',')
+      const rows = db
+        .prepare(
+          `
+            SELECT
+              dr.artifact_id AS artifactId,
+              dr.task_id AS taskId,
+              dr.output_path AS outputPath,
+              a.print_id AS printId
+            FROM detection_results dr
+            LEFT JOIN artifacts a ON a.id = dr.artifact_id
+            WHERE dr.artifact_id IN (${placeholders})
+            ORDER BY dr.created_at DESC
+          `,
+        )
+        .all(...artifactIds) as Array<{
+        artifactId: string
+        taskId: string
+        outputPath: string
+        printId: string | null
+      }>
+
+      const seen = new Set<string>()
+      let promoted = 0
+      await mkdir(join(workbenchRoot, WORKBENCH_DIRECTORIES.mattingInput), { recursive: true })
+      for (const row of rows) {
+        if (seen.has(row.artifactId)) {
+          continue
+        }
+        seen.add(row.artifactId)
+
+        const sourcePath = row.outputPath
+        const targetPath = await uniqueTargetPath(
+          join(workbenchRoot, WORKBENCH_DIRECTORIES.mattingInput),
+          row.printId ?? basename(sourcePath, extname(sourcePath)),
+          extname(sourcePath) || '.png',
+        )
+        if (input.mode === 'move') {
+          await rename(sourcePath, targetPath)
+        } else {
+          await copyFile(sourcePath, targetPath)
+        }
+        await registerPromotedArtifact(db, {
+          targetPath,
+          taskId: row.taskId,
+          sourceArtifactId: row.artifactId,
+          printId: row.printId ?? basename(targetPath, extname(targetPath)),
+        })
+        promoted += 1
+      }
+      return promoted
+    } finally {
+      db.close()
+    }
+  }
+
+  async deleteResult(
+    input: { artifact_id: string },
+    dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
+  ) {
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    try {
+      ensureDetectionTables(db)
+      const rows = db
+        .prepare('SELECT output_path AS outputPath FROM detection_results WHERE artifact_id = ?')
+        .all(input.artifact_id) as Array<{ outputPath: string }>
+      for (const row of rows) {
+        await rm(row.outputPath, { force: true }).catch(() => null)
+      }
+      const info = db
+        .prepare('DELETE FROM detection_results WHERE artifact_id = ?')
+        .run(input.artifact_id) as { changes: number }
+      return info.changes
+    } finally {
+      db.close()
+    }
   }
 
   async runDetectionBatch(
@@ -593,6 +1029,7 @@ export class DetectionService {
         succeeded: 0,
         failed: 0,
         skipped: 0,
+        concurrency,
       }
       const results: Array<DetectionImageResult | undefined> = Array.from({
         length: config.imagePaths.length,
@@ -689,6 +1126,7 @@ export class DetectionService {
     } catch (error) {
       return {
         imagePath: input.item.imagePath,
+        thumbnailUrl: fileUrl(input.item.imagePath),
         status: 'failed',
         errorCode: 'preprocess_failed',
         error: appErrorMessage(error),
@@ -713,6 +1151,7 @@ export class DetectionService {
         if (cached) {
           return {
             imagePath: input.item.imagePath,
+            thumbnailUrl: fileUrl(input.item.imagePath),
             artifactId: identity.artifactId,
             printId: identity.printId,
             status: 'skipped',
@@ -794,6 +1233,7 @@ export class DetectionService {
 
       return {
         imagePath: input.item.imagePath,
+        thumbnailUrl: fileUrl(input.item.imagePath),
         artifactId: identity.artifactId,
         printId: identity.printId,
         status: 'success',
@@ -806,6 +1246,7 @@ export class DetectionService {
     } catch (error) {
       return {
         imagePath: input.item.imagePath,
+        thumbnailUrl: fileUrl(input.item.imagePath),
         artifactId: identity.artifactId,
         printId: identity.printId,
         status: 'failed',
@@ -833,8 +1274,31 @@ function emitDetectionCompleted(event: DetectionTaskEvent) {
 }
 
 export function registerDetectionIpc() {
+  ipcMain.handle('detection:list-input-sources', () => detectionService.listInputSources())
+  ipcMain.handle('detection:scan-folder', (_event, input: { folder: string }) =>
+    detectionService.scanFolder(input),
+  )
   ipcMain.handle('detection:list-models', () => detectionService.listModels())
   ipcMain.handle('detection:run', (_event, input: DetectionBatchConfig) =>
     detectionService.startBatch(input, emitDetectionProgress, emitDetectionCompleted),
+  )
+  ipcMain.handle(
+    'detection:list-results',
+    (_event, input?: { task_id?: string | null; risk_level?: RiskLevel | null }) =>
+      detectionService.listResults(input),
+  )
+  ipcMain.handle('detection:get-result', (_event, input: { artifact_id: string }) =>
+    detectionService.getResult(input),
+  )
+  ipcMain.handle('detection:retest', (_event, input: { artifact_ids: string[] }) =>
+    detectionService.retest(input, emitDetectionProgress, emitDetectionCompleted),
+  )
+  ipcMain.handle(
+    'detection:promote-to-matting',
+    (_event, input: { artifact_ids: string[]; mode?: 'copy' | 'move' }) =>
+      detectionService.promoteToMatting(input),
+  )
+  ipcMain.handle('detection:delete-result', (_event, input: { artifact_id: string }) =>
+    detectionService.deleteResult(input),
   )
 }

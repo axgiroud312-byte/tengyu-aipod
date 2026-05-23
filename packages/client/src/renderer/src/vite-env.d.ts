@@ -41,10 +41,29 @@ declare global {
         saveConfig: (
           input: import('../../main/lib/detection-config').DetectionConfig,
         ) => Promise<import('../../main/lib/detection-config').DetectionConfig>
+        listInputSources: () => Promise<
+          import('../../main/lib/detection-service').DetectionInputSources
+        >
+        scanFolder: (input: { folder: string }) => Promise<
+          import('../../main/lib/detection-service').DetectionImageInfo[]
+        >
         listModels: () => Promise<string[]>
         run: (
           input: import('../../main/lib/detection-service').DetectionBatchConfig,
         ) => Promise<string>
+        listResults: (input?: {
+          task_id?: string | null
+          risk_level?: import('@tengyu-aipod/shared').RiskLevel | null
+        }) => Promise<import('../../main/lib/detection-service').DetectionStoredResult[]>
+        getResult: (input: { artifact_id: string }) => Promise<
+          import('../../main/lib/detection-service').DetectionStoredResult | null
+        >
+        retest: (input: { artifact_ids: string[] }) => Promise<string>
+        promoteToMatting: (input: {
+          artifact_ids: string[]
+          mode?: 'copy' | 'move'
+        }) => Promise<number>
+        deleteResult: (input: { artifact_id: string }) => Promise<number>
         onProgress: (
           callback: (
             progress: import('../../main/lib/detection-service').DetectionProgress,

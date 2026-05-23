@@ -22,9 +22,10 @@ import type {
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
-import { DetectionSettingsPanel } from './components/detection-settings-panel'
+import { DetectionWorkbench } from './components/detection-workbench'
 
 type OnboardingStep = 1 | 2 | 3 | 4
+type WorkbenchModule = 'title' | 'detection'
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 
 const apiKeyFields = [
@@ -251,6 +252,7 @@ function ActivationBadge({
 
 function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
   const status = useActivationStore((state) => state.status)
+  const [activeModule, setActiveModule] = useState<WorkbenchModule>('title')
   const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
   const [languages, setLanguages] = useState<Array<{ key: string; label: string }>>([])
   const [models, setModels] = useState<Array<{ key: string; label: string }>>([])
@@ -470,9 +472,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               <div className="rounded-md border bg-background p-5 shadow-sm">
                 <div className="flex items-start justify-between gap-6">
                   <div className="space-y-1">
-                    <p className="text-sm font-medium text-muted-foreground">标题生成模块</p>
+                    <p className="text-sm font-medium text-muted-foreground">
+                      {activeModule === 'title' ? '标题生成模块' : '侵权检测模块'}
+                    </p>
                     <h1 className="text-2xl font-semibold text-balance">
-                      从货号成品图批量生成跨境标题
+                      {activeModule === 'title'
+                        ? '从货号成品图批量生成跨境标题'
+                        : '批量检测印花风险并流转结果'}
                     </h1>
                   </div>
                   <div className="rounded-md border bg-muted px-3 py-2 text-right text-xs text-muted-foreground">
@@ -480,353 +486,383 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                     <div className="mt-1 font-mono text-foreground">{APP_VERSION}</div>
                   </div>
                 </div>
-              </div>
-
-              <div className="rounded-md border bg-background p-5 shadow-sm">
-                <div className="grid gap-5">
-                  <label className="block space-y-2 text-sm font-medium">
-                    <span>货号批次目录</span>
-                    <div className="flex gap-2">
-                      <input
-                        className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setBatchDir(event.target.value)}
-                        placeholder="选择 05-货号成品 下的一个批次目录"
-                        value={batchDir}
-                      />
-                      <Button
-                        onClick={() => void chooseBatchDir()}
-                        type="button"
-                        variant="secondary"
-                      >
-                        <FolderOpen className="mr-2 h-4 w-4" />
-                        选择
-                      </Button>
-                      <Button onClick={() => void scanBatchDir()} type="button" variant="secondary">
-                        扫描
-                      </Button>
-                    </div>
-                  </label>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>平台</span>
-                      <select
-                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setPlatform(event.target.value)}
-                        value={platform}
-                      >
-                        {platforms.map((item) => (
-                          <option key={item.key} value={item.key}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>语言</span>
-                      <select
-                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setLanguage(event.target.value)}
-                        value={language}
-                      >
-                        {languages.map((item) => (
-                          <option key={item.key} value={item.key}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>模型</span>
-                      <select
-                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setModel(event.target.value)}
-                        value={model}
-                      >
-                        {models.map((item) => (
-                          <option key={item.key} value={item.key}>
-                            {item.label}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                  </div>
-
-                  <label className="block space-y-2 text-sm font-medium">
-                    <span>标题额外要求</span>
-                    <textarea
-                      className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      onChange={(event) => setExtraRequirement(event.target.value)}
-                      placeholder="例如：强调原创设计、节日主题、含 vintage 关键词"
-                      value={extraRequirement}
-                    />
-                  </label>
-
-                  <div className="grid gap-4 md:grid-cols-4">
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>取第几张图</span>
-                      <input
-                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        min={1}
-                        onChange={(event) => setImageIndex(event.target.value)}
-                        type="number"
-                        value={imageIndex}
-                      />
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>失败重试</span>
-                      <input
-                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        max={5}
-                        min={0}
-                        onChange={(event) => setMaxRetries(event.target.value)}
-                        type="number"
-                        value={maxRetries}
-                      />
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>并发数</span>
-                      <input
-                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        max={10}
-                        min={1}
-                        onChange={(event) => setConcurrency(event.target.value)}
-                        type="number"
-                        value={concurrency}
-                      />
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>最大边长</span>
-                      <input
-                        className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        min={256}
-                        onChange={(event) => setMaxSize(event.target.value)}
-                        type="number"
-                        value={maxSize}
-                      />
-                    </label>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <fieldset className="rounded-md border p-4">
-                      <legend className="px-1 text-sm font-medium">已有标题策略</legend>
-                      <div className="mt-2 flex gap-4 text-sm">
-                        <label className="inline-flex items-center gap-2">
-                          <input
-                            checked={existingStrategy === 'skip'}
-                            onChange={() => setExistingStrategy('skip')}
-                            type="radio"
-                          />
-                          跳过已有
-                        </label>
-                        <label className="inline-flex items-center gap-2">
-                          <input
-                            checked={existingStrategy === 'regenerate'}
-                            onChange={() => setExistingStrategy('regenerate')}
-                            type="radio"
-                          />
-                          重新生成
-                        </label>
-                      </div>
-                    </fieldset>
-                    <fieldset className="rounded-md border p-4">
-                      <legend className="px-1 text-sm font-medium">图像预处理</legend>
-                      <div className="mt-2 space-y-2 text-sm">
-                        <label className="inline-flex items-center gap-2 text-muted-foreground">
-                          <input checked disabled type="checkbox" />
-                          透明底自动加白
-                        </label>
-                        <label className="flex items-center gap-2">
-                          <input
-                            checked={compression}
-                            onChange={(event) => setCompression(event.target.checked)}
-                            type="checkbox"
-                          />
-                          压缩图片节省 token
-                        </label>
-                      </div>
-                    </fieldset>
-                  </div>
-
-                  {titleError ? (
-                    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                      {titleError}
-                    </div>
-                  ) : null}
-
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
-                    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                      <Calculator className="h-4 w-4" />
-                      预估 {pendingEstimateCount} 张图，约 ¥
-                      <span className="tabular-nums">{estimatedCost.toFixed(4)}</span>
-                    </div>
-                    <Button disabled={!canRun} onClick={() => void runTitleBatch()} type="button">
-                      {isRunning ? (
-                        <Loader2 className="mr-2 h-4 w-4" />
-                      ) : (
-                        <Play className="mr-2 h-4 w-4" />
-                      )}
-                      开始生成标题
-                    </Button>
-                  </div>
+                <div className="mt-4 flex gap-2">
+                  <Button
+                    onClick={() => setActiveModule('title')}
+                    type="button"
+                    variant={activeModule === 'title' ? 'default' : 'secondary'}
+                  >
+                    标题生成
+                  </Button>
+                  <Button
+                    onClick={() => setActiveModule('detection')}
+                    type="button"
+                    variant={activeModule === 'detection' ? 'default' : 'secondary'}
+                  >
+                    侵权检测
+                  </Button>
                 </div>
               </div>
 
-              <DetectionSettingsPanel />
-
-              {result ? (
+              {activeModule === 'title' ? (
                 <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="text-lg font-semibold text-balance">生成结果</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        成功 {result.succeeded} 个，失败 {result.failed} 个，跳过 {result.skipped}{' '}
-                        个
-                      </p>
-                    </div>
-                    <div className="flex gap-2">
-                      <Button
-                        onClick={() => void openPath(result.xlsxPath)}
-                        type="button"
-                        variant="secondary"
-                      >
-                        打开 xlsx
-                      </Button>
-                      <Button
-                        onClick={() => void openPath(batchDir)}
-                        type="button"
-                        variant="secondary"
-                      >
-                        打开批次目录
-                      </Button>
-                    </div>
-                  </div>
-                  {openMessage ? <p className="mt-3 text-sm text-red-700">{openMessage}</p> : null}
-                  <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                    <div className="rounded-md border">
-                      <div className="border-b px-3 py-2 text-sm font-medium">
-                        成功列表（{successRows.length}）
-                      </div>
-                      <div className="max-h-56 overflow-auto p-2">
-                        {successRows.length ? (
-                          successRows.map((item) => (
-                            <div
-                              className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md px-2 py-2 text-sm"
-                              key={item.skuCode}
-                            >
-                              <span className="font-mono text-xs text-muted-foreground">
-                                {item.skuCode}
-                              </span>
-                              <span className="truncate">{item.title}</span>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                            暂无成功项
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    <div className="rounded-md border">
-                      <div className="flex items-center justify-between border-b px-3 py-2 text-sm font-medium">
-                        <span>失败列表（{failedRows.length}）</span>
+                  <div className="grid gap-5">
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>货号批次目录</span>
+                      <div className="flex gap-2">
+                        <input
+                          className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          onChange={(event) => setBatchDir(event.target.value)}
+                          placeholder="选择 05-货号成品 下的一个批次目录"
+                          value={batchDir}
+                        />
                         <Button
-                          className="h-8 px-2"
-                          disabled={!failedRows.length}
-                          onClick={() => void retryFailed()}
+                          onClick={() => void chooseBatchDir()}
                           type="button"
                           variant="secondary"
                         >
-                          <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                          重试失败
+                          <FolderOpen className="mr-2 h-4 w-4" />
+                          选择
+                        </Button>
+                        <Button
+                          onClick={() => void scanBatchDir()}
+                          type="button"
+                          variant="secondary"
+                        >
+                          扫描
                         </Button>
                       </div>
-                      <div className="max-h-56 overflow-auto p-2">
-                        {failedRows.length ? (
-                          failedRows.map((item) => (
-                            <div className="rounded-md px-2 py-2 text-sm" key={item.skuCode}>
-                              <div className="font-mono text-xs text-muted-foreground">
-                                {item.skuCode}
-                              </div>
-                              <div className="mt-1 text-red-700">{item.error}</div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                            没有失败项
-                          </div>
-                        )}
+                    </label>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>平台</span>
+                        <select
+                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          onChange={(event) => setPlatform(event.target.value)}
+                          value={platform}
+                        >
+                          {platforms.map((item) => (
+                            <option key={item.key} value={item.key}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>语言</span>
+                        <select
+                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          onChange={(event) => setLanguage(event.target.value)}
+                          value={language}
+                        >
+                          {languages.map((item) => (
+                            <option key={item.key} value={item.key}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>模型</span>
+                        <select
+                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          onChange={(event) => setModel(event.target.value)}
+                          value={model}
+                        >
+                          {models.map((item) => (
+                            <option key={item.key} value={item.key}>
+                              {item.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </div>
+
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>标题额外要求</span>
+                      <textarea
+                        className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setExtraRequirement(event.target.value)}
+                        placeholder="例如：强调原创设计、节日主题、含 vintage 关键词"
+                        value={extraRequirement}
+                      />
+                    </label>
+
+                    <div className="grid gap-4 md:grid-cols-4">
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>取第几张图</span>
+                        <input
+                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          min={1}
+                          onChange={(event) => setImageIndex(event.target.value)}
+                          type="number"
+                          value={imageIndex}
+                        />
+                      </label>
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>失败重试</span>
+                        <input
+                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          max={5}
+                          min={0}
+                          onChange={(event) => setMaxRetries(event.target.value)}
+                          type="number"
+                          value={maxRetries}
+                        />
+                      </label>
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>并发数</span>
+                        <input
+                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          max={10}
+                          min={1}
+                          onChange={(event) => setConcurrency(event.target.value)}
+                          type="number"
+                          value={concurrency}
+                        />
+                      </label>
+                      <label className="block space-y-2 text-sm font-medium">
+                        <span>最大边长</span>
+                        <input
+                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          min={256}
+                          onChange={(event) => setMaxSize(event.target.value)}
+                          type="number"
+                          value={maxSize}
+                        />
+                      </label>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <fieldset className="rounded-md border p-4">
+                        <legend className="px-1 text-sm font-medium">已有标题策略</legend>
+                        <div className="mt-2 flex gap-4 text-sm">
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              checked={existingStrategy === 'skip'}
+                              onChange={() => setExistingStrategy('skip')}
+                              type="radio"
+                            />
+                            跳过已有
+                          </label>
+                          <label className="inline-flex items-center gap-2">
+                            <input
+                              checked={existingStrategy === 'regenerate'}
+                              onChange={() => setExistingStrategy('regenerate')}
+                              type="radio"
+                            />
+                            重新生成
+                          </label>
+                        </div>
+                      </fieldset>
+                      <fieldset className="rounded-md border p-4">
+                        <legend className="px-1 text-sm font-medium">图像预处理</legend>
+                        <div className="mt-2 space-y-2 text-sm">
+                          <label className="inline-flex items-center gap-2 text-muted-foreground">
+                            <input checked disabled type="checkbox" />
+                            透明底自动加白
+                          </label>
+                          <label className="flex items-center gap-2">
+                            <input
+                              checked={compression}
+                              onChange={(event) => setCompression(event.target.checked)}
+                              type="checkbox"
+                            />
+                            压缩图片节省 token
+                          </label>
+                        </div>
+                      </fieldset>
+                    </div>
+
+                    {titleError ? (
+                      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                        {titleError}
                       </div>
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
+                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <Calculator className="h-4 w-4" />
+                        预估 {pendingEstimateCount} 张图，约 ¥
+                        <span className="tabular-nums">{estimatedCost.toFixed(4)}</span>
+                      </div>
+                      <Button disabled={!canRun} onClick={() => void runTitleBatch()} type="button">
+                        {isRunning ? (
+                          <Loader2 className="mr-2 h-4 w-4" />
+                        ) : (
+                          <Play className="mr-2 h-4 w-4" />
+                        )}
+                        开始生成标题
+                      </Button>
                     </div>
                   </div>
                 </div>
+              ) : (
+                <DetectionWorkbench />
+              )}
+
+              {activeModule === 'title' ? (
+                <>
+                  {result ? (
+                    <div className="rounded-md border bg-background p-5 shadow-sm">
+                      <div className="flex items-start justify-between gap-4">
+                        <div>
+                          <h2 className="text-lg font-semibold text-balance">生成结果</h2>
+                          <p className="mt-1 text-sm text-muted-foreground">
+                            成功 {result.succeeded} 个，失败 {result.failed} 个，跳过{' '}
+                            {result.skipped} 个
+                          </p>
+                        </div>
+                        <div className="flex gap-2">
+                          <Button
+                            onClick={() => void openPath(result.xlsxPath)}
+                            type="button"
+                            variant="secondary"
+                          >
+                            打开 xlsx
+                          </Button>
+                          <Button
+                            onClick={() => void openPath(batchDir)}
+                            type="button"
+                            variant="secondary"
+                          >
+                            打开批次目录
+                          </Button>
+                        </div>
+                      </div>
+                      {openMessage ? (
+                        <p className="mt-3 text-sm text-red-700">{openMessage}</p>
+                      ) : null}
+                      <div className="mt-5 grid gap-4 lg:grid-cols-2">
+                        <div className="rounded-md border">
+                          <div className="border-b px-3 py-2 text-sm font-medium">
+                            成功列表（{successRows.length}）
+                          </div>
+                          <div className="max-h-56 overflow-auto p-2">
+                            {successRows.length ? (
+                              successRows.map((item) => (
+                                <div
+                                  className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md px-2 py-2 text-sm"
+                                  key={item.skuCode}
+                                >
+                                  <span className="font-mono text-xs text-muted-foreground">
+                                    {item.skuCode}
+                                  </span>
+                                  <span className="truncate">{item.title}</span>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                                暂无成功项
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                        <div className="rounded-md border">
+                          <div className="flex items-center justify-between border-b px-3 py-2 text-sm font-medium">
+                            <span>失败列表（{failedRows.length}）</span>
+                            <Button
+                              className="h-8 px-2"
+                              disabled={!failedRows.length}
+                              onClick={() => void retryFailed()}
+                              type="button"
+                              variant="secondary"
+                            >
+                              <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                              重试失败
+                            </Button>
+                          </div>
+                          <div className="max-h-56 overflow-auto p-2">
+                            {failedRows.length ? (
+                              failedRows.map((item) => (
+                                <div className="rounded-md px-2 py-2 text-sm" key={item.skuCode}>
+                                  <div className="font-mono text-xs text-muted-foreground">
+                                    {item.skuCode}
+                                  </div>
+                                  <div className="mt-1 text-red-700">{item.error}</div>
+                                </div>
+                              ))
+                            ) : (
+                              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
+                                没有失败项
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
               ) : null}
             </div>
 
-            <aside className="space-y-6">
-              <div className="rounded-md border bg-background p-5 shadow-sm">
-                <h2 className="text-lg font-semibold text-balance">批次概览</h2>
-                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div className="rounded-md bg-muted p-3">
-                    <dt className="text-muted-foreground">货号文件夹</dt>
-                    <dd className="mt-1 text-xl font-semibold tabular-nums">
-                      {scanResult?.skuCount ?? 0}
-                    </dd>
-                  </div>
-                  <div className="rounded-md bg-muted p-3">
-                    <dt className="text-muted-foreground">已有标题</dt>
-                    <dd className="mt-1 text-xl font-semibold tabular-nums">
-                      {existingTitleCount}
-                    </dd>
-                  </div>
-                  <div className="rounded-md bg-muted p-3">
-                    <dt className="text-muted-foreground">预计生成</dt>
-                    <dd className="mt-1 text-xl font-semibold tabular-nums">
-                      {pendingEstimateCount}
-                    </dd>
-                  </div>
-                  <div className="rounded-md bg-muted p-3">
-                    <dt className="text-muted-foreground">预计费用</dt>
-                    <dd className="mt-1 text-xl font-semibold tabular-nums">
-                      ¥{estimatedCost.toFixed(4)}
-                    </dd>
-                  </div>
-                </dl>
-              </div>
+            {activeModule === 'title' ? (
+              <aside className="space-y-6">
+                <div className="rounded-md border bg-background p-5 shadow-sm">
+                  <h2 className="text-lg font-semibold text-balance">批次概览</h2>
+                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div className="rounded-md bg-muted p-3">
+                      <dt className="text-muted-foreground">货号文件夹</dt>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums">
+                        {scanResult?.skuCount ?? 0}
+                      </dd>
+                    </div>
+                    <div className="rounded-md bg-muted p-3">
+                      <dt className="text-muted-foreground">已有标题</dt>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums">
+                        {existingTitleCount}
+                      </dd>
+                    </div>
+                    <div className="rounded-md bg-muted p-3">
+                      <dt className="text-muted-foreground">预计生成</dt>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums">
+                        {pendingEstimateCount}
+                      </dd>
+                    </div>
+                    <div className="rounded-md bg-muted p-3">
+                      <dt className="text-muted-foreground">预计费用</dt>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums">
+                        ¥{estimatedCost.toFixed(4)}
+                      </dd>
+                    </div>
+                  </dl>
+                </div>
 
-              <div className="rounded-md border bg-background p-5 shadow-sm">
-                <div className="flex items-center justify-between">
-                  <h2 className="text-lg font-semibold text-balance">执行进度</h2>
-                  <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+                <div className="rounded-md border bg-background p-5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <h2 className="text-lg font-semibold text-balance">执行进度</h2>
+                    <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+                  </div>
+                  <div className="mt-4 h-2 rounded-full bg-muted">
+                    <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
+                  </div>
+                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    <div>
+                      <dt className="text-muted-foreground">处理中</dt>
+                      <dd className="mt-1 font-medium tabular-nums">
+                        {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">跳过</dt>
+                      <dd className="mt-1 font-medium tabular-nums">{progress?.skipped ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">成功</dt>
+                      <dd className="mt-1 font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+                    </div>
+                    <div>
+                      <dt className="text-muted-foreground">失败</dt>
+                      <dd className="mt-1 font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+                    </div>
+                  </dl>
+                  <div className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                    {progressStatusText}
+                  </div>
                 </div>
-                <div className="mt-4 h-2 rounded-full bg-muted">
-                  <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-                </div>
-                <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                  <div>
-                    <dt className="text-muted-foreground">处理中</dt>
-                    <dd className="mt-1 font-medium tabular-nums">
-                      {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">跳过</dt>
-                    <dd className="mt-1 font-medium tabular-nums">{progress?.skipped ?? 0}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">成功</dt>
-                    <dd className="mt-1 font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-                  </div>
-                  <div>
-                    <dt className="text-muted-foreground">失败</dt>
-                    <dd className="mt-1 font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-                  </div>
-                </dl>
-                <div className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                  {progressStatusText}
-                </div>
-              </div>
-            </aside>
+              </aside>
+            ) : null}
           </div>
         )}
       </section>

@@ -3,7 +3,10 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
   DetectionBatchConfig,
+  DetectionImageInfo,
+  DetectionInputSources,
   DetectionProgress,
+  DetectionStoredResult,
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
@@ -54,9 +57,25 @@ const api = {
     getConfig: () => ipcRenderer.invoke('detection:get-config') as Promise<DetectionConfig | null>,
     saveConfig: (input: DetectionConfig) =>
       ipcRenderer.invoke('detection:save-config', input) as Promise<DetectionConfig>,
+    listInputSources: () =>
+      ipcRenderer.invoke('detection:list-input-sources') as Promise<DetectionInputSources>,
+    scanFolder: (input: { folder: string }) =>
+      ipcRenderer.invoke('detection:scan-folder', input) as Promise<DetectionImageInfo[]>,
     listModels: () => ipcRenderer.invoke('detection:list-models') as Promise<string[]>,
     run: (input: DetectionBatchConfig) =>
       ipcRenderer.invoke('detection:run', input) as Promise<string>,
+    listResults: (input?: {
+      task_id?: string | null
+      risk_level?: 'pass' | 'review' | 'block' | null
+    }) => ipcRenderer.invoke('detection:list-results', input) as Promise<DetectionStoredResult[]>,
+    getResult: (input: { artifact_id: string }) =>
+      ipcRenderer.invoke('detection:get-result', input) as Promise<DetectionStoredResult | null>,
+    retest: (input: { artifact_ids: string[] }) =>
+      ipcRenderer.invoke('detection:retest', input) as Promise<string>,
+    promoteToMatting: (input: { artifact_ids: string[]; mode?: 'copy' | 'move' }) =>
+      ipcRenderer.invoke('detection:promote-to-matting', input) as Promise<number>,
+    deleteResult: (input: { artifact_id: string }) =>
+      ipcRenderer.invoke('detection:delete-result', input) as Promise<number>,
     onProgress: (callback: (progress: DetectionProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: DetectionProgress) => {
         callback(progress)
