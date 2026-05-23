@@ -1,0 +1,98 @@
+# ─── Node / pnpm / npm ─────────────────────
+node_modules/
+.pnpm-store/
+.npm/
+.pnp.*
+package-lock.json
+yarn.lock
+.yarn/
+
+# ─── Build outputs ──────────────────────────
+dist/
+build/
+out/
+release/
+.next/
+.turbo/
+.vite/
+.cache/
+
+# ─── TypeScript ─────────────────────────────
+*.tsbuildinfo
+.tsbuildinfo
+
+# ─── Test ──────────────────────────────────
+coverage/
+.nyc_output/
+
+# ─── Logs ──────────────────────────────────
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# ─── OS ─────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ─── Editor ─────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ─── Environment ────────────────────────────
+.env
+.env.local
+.env.*.local
+.env.development
+.env.production
+
+# ─── Electron build ─────────────────────────
+electron-builder.env
+*.dmg
+*.exe
+*.app
+*.deb
+*.rpm
+*.AppImage
+
+# ─── 腾域 aipod 客户端运行时数据（用户本地的）─
+# 这是用户素材总目录下的隐藏目录，绝不入库
+.workbench/
+**/workbench.db
+**/workbench.db-journal
+**/workbench.db-wal
+**/workbench.db-shm
+
+# ─── Playwright ─────────────────────────────
+.playwright-mcp/
+test-results/
+playwright-report/
+playwright/.cache/
+
+# ─── Prisma ─────────────────────────────────
+prisma/generated/
+*.db
+*.db-journal
+
+# ─── 临时和缓存 ──────────────────────────────
+tmp/
+temp/
+.tmp/
+
+# ─── Trellis 工作目录（per-user，不入库）─────
+# 若 Trellis 配置为入库，可移除此行
+.trellis/workspace/
+
+# ─── Sentry ─────────────────────────────────
+.sentryclirc
+
+# ─── 个人笔记 / 不想入库的本地文件 ──────────
+NOTES.local.md
+scratch/
+.scratch/
