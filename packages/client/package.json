@@ -20,6 +20,7 @@
     "electron": "^42.2.0",
     "electron-vite": "^5.0.0",
     "lucide-react": "^1.16.0",
+    "openai": "^6.39.0",
     "pino": "^10.3.1",
     "radix-ui": "^1.4.3",
     "react": "^19.2.6",
@@ -27,8 +28,8 @@
     "react-router-dom": "^7.15.1",
     "tailwind-merge": "^3.6.0",
     "tailwindcss": "^4.3.0",
-    "zustand": "^5.0.13",
-    "zod": "^3.25.0"
+    "zod": "^3.25.0",
+    "zustand": "^5.0.13"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -36,6 +37,7 @@
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^5.2.0",
+    "msw": "^2.14.6",
     "vite": "^7.3.3",
     "vitest": "^3.2.4"
   }

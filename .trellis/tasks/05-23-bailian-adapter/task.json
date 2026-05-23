@@ -3,7 +3,7 @@
   "name": "bailian-adapter",
   "title": "bailian adapter",
   "description": "百炼 OpenAI 兼容客户端 + 视觉理解",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
