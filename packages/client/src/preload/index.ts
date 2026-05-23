@@ -2,6 +2,42 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
+  onboarding: {
+    getState: () =>
+      ipcRenderer.invoke('onboarding:get-state') as Promise<{
+        needs_onboarding: boolean
+        default_workbench_root: string
+      }>,
+    chooseWorkbenchRoot: () =>
+      ipcRenderer.invoke('onboarding:choose-workbench-root') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    saveWorkbenchRoot: (path: string) =>
+      ipcRenderer.invoke('onboarding:save-workbench-root', path) as Promise<{
+        ok: true
+        data: { path: string }
+      }>,
+    saveApiKeys: (apiKeys: Record<string, string>) =>
+      ipcRenderer.invoke('onboarding:save-api-keys', apiKeys) as Promise<{ ok: true }>,
+    complete: () => ipcRenderer.invoke('onboarding:complete') as Promise<{ ok: true }>,
+  },
+  activation: {
+    activate: (input: { code: string; device_name: string }) =>
+      ipcRenderer.invoke('activation:activate', input) as Promise<
+        | {
+            ok: true
+            data: {
+              activation_token: string
+              expires_at: number
+              max_devices: number
+              used_devices: number
+              device_name: string
+            }
+          }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+  },
 }
 
 contextBridge.exposeInMainWorld('api', api)

@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
+import { registerOnboardingIpc } from './onboarding'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
@@ -28,6 +29,7 @@ function createMainWindow(): void {
 
 app.whenReady().then(() => {
   ipcMain.handle('app:ping', () => 'pong')
+  registerOnboardingIpc()
   createMainWindow()
 
   app.on('activate', () => {
