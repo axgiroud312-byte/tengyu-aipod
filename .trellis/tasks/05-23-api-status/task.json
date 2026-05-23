@@ -3,7 +3,7 @@
   "name": "api-status",
   "title": "api status endpoint",
   "description": "GET /api/status：返回激活状态 + 剩余天数 + 设备列表",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

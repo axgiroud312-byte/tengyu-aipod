@@ -332,6 +332,81 @@ await signClientJwt({
 
 ---
 
+## Scenario: Client Status API
+
+### 1. Scope / Trigger
+
+- Trigger: `/api/status`, client JWT verification, device unbind checks, or active/expired/banned status calculation.
+- Applies to: `packages/server/src/app/api/status/**`, `packages/server/src/lib/status.ts`, and `packages/server/src/lib/jwt.ts`.
+
+### 2. Signatures
+
+- `GET /api/status`
+  - Header: `Authorization: Bearer <activation_token>`
+  - Success: `{ ok: true, data: { status, days_remaining, max_devices, used_devices, device_name, customer } }`
+- `getActivationStatus(authorization: string | null): Promise<StatusResult>`
+
+### 3. Contracts
+
+- Missing Bearer token returns `UNAUTHORIZED`.
+- Invalid/expired JWT returns `INVALID_TOKEN`.
+- Missing `DeviceActivation`, code mismatch, or device fingerprint mismatch returns `DEVICE_UNBOUND`.
+- Banned code or banned customer returns success with `status = 'banned'`, not a 401.
+- Expired code returns success with `status = 'expired'`.
+- Successful status checks update `DeviceActivation.last_active_at`.
+- Customer payload may include customer name and `has_contact`, but must not expose phone, email, or wechat.
+- `/api/status` rate limits by activation token at 60 requests per minute.
+
+### 4. Validation & Error Matrix
+
+- Missing bearer token -> HTTP 401 with `UNAUTHORIZED`.
+- Invalid token -> HTTP 401 with `INVALID_TOKEN`.
+- Unbound/tampered device token -> HTTP 401 with `DEVICE_UNBOUND`.
+- Rate limit exceeded -> HTTP 429 with `RATE_LIMITED`.
+- Unexpected database/runtime error -> HTTP 500 with `INTERNAL_ERROR`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: active device returns `status = active`, current device count, and masked customer contact state.
+- Good: deleting the device row after token issuance makes the same token return `DEVICE_UNBOUND`.
+- Good: banning an activation code after token issuance makes status return `banned`.
+- Good: an expired code with an existing device row returns `expired`.
+- Bad: returning full customer phone/email/wechat to the client status endpoint.
+
+### 6. Tests Required
+
+- `pnpm -F @tengyu-aipod/server test`
+- `pnpm -F @tengyu-aipod/server lint`
+- `pnpm -F @tengyu-aipod/server type-check`
+- `pnpm -F @tengyu-aipod/server build`
+- `pnpm lint`
+- `pnpm type-check`
+- `pnpm test`
+- Manual HTTP checks against local Docker Postgres:
+  - Active status with a token from `/api/activate`.
+  - Missing token -> `UNAUTHORIZED`.
+  - Deleted device -> `DEVICE_UNBOUND`.
+  - Banned code/customer -> `status = banned`.
+  - Expired code -> `status = expired`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+customer: device.code.customer
+```
+
+#### Correct
+
+```ts
+customer: device.code.customer
+  ? { name: device.code.customer.name, has_contact: Boolean(...) }
+  : null
+```
+
+---
+
 ## Error Types
 
 <!-- Custom error classes/types -->
