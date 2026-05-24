@@ -3,7 +3,7 @@
   "name": "listing-types-port",
   "title": "listing types port",
   "description": "Port 一键pod shared 类型+错误码",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
