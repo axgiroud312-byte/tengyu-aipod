@@ -40,9 +40,15 @@ declare global {
         generatePrompts: (
           input: import('../../main/lib/generation-service').GenerationPromptInput,
         ) => Promise<import('../../main/lib/generation-service').Txt2imgPromptDraft[]>
+        listExtractSources: () => Promise<
+          import('../../main/lib/generation-service').ExtractSourcesResult
+        >
         parseManualPrompts: (text: string) => Promise<string[]>
         runTxt2img: (
           input: import('../../main/lib/generation-service').Txt2imgRunInput,
+        ) => Promise<string>
+        runExtract: (
+          input: import('../../main/lib/generation-service').ExtractRunInput,
         ) => Promise<string>
         onProgress: (
           callback: (

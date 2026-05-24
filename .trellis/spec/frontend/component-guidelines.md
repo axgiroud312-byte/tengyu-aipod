@@ -196,3 +196,71 @@ await fetch('/api/status', { headers: { Authorization: `Bearer ${token}` } })
 const status = await window.api.activation.syncStatus()
 useActivationStore.getState().setStatus(status)
 ```
+
+---
+
+## Scenario: Client Grsai Extract UI
+
+### 1. Scope / Trigger
+
+- Trigger: generation extract tab, Grsai extract IPC, source image selection from the workbench, or artifact writes for extract outputs.
+- Applies to: `packages/client/src/main/lib/generation-service.ts`, `packages/client/src/preload/index.ts`, `packages/client/src/renderer/src/components/generation-workbench.tsx`, and renderer preload types.
+
+### 2. Signatures
+
+- `window.api.generation.listExtractSources(): Promise<{ folder: string; images: GenerationImageSource[] }>`
+- `window.api.generation.runExtract(input: ExtractRunInput): Promise<string>`
+- `ExtractRunInput.sourceImagePaths: string[]`
+- `ExtractRunInput.skillId: string`
+- `ExtractRunInput.promptCount: number`
+- `ExtractRunInput.variables?: Record<string, unknown>`
+- `GenerationProgress.capability` includes `'extract'`.
+
+### 3. Contracts
+
+- Extract sources must be read from `{workbench_root}/01-采集` only.
+- Renderer must list only `module=generation&category=extract` skills for the extract tab.
+- The main process passes the selected source image to `prompt-generator-service` as a vision reference image.
+- Each generated prompt is sent to `GrsaiAdapter.generate({ capability: 'extract', reference_images: [...] })`.
+- Successful outputs are written to `{workbench_root}/02-生图/03-提取/{printId}.png`.
+- `artifacts` rows for extract outputs must set `step='extract'`, `provider='grsai'`, `source_artifact_ids` to a JSON array containing the source artifact id, and `prompt_snapshot` to the prompt sent to Grsai.
+
+### 4. Validation & Error Matrix
+
+- Missing `workbench_root` -> Chinese renderer-safe setup error.
+- Empty `sourceImagePaths` -> "please select source image" error before launching work.
+- Source image outside `01-采集` -> reject in the main process, not only in the UI.
+- Missing `skillId` -> reject before prompt generation.
+- Missing Grsai key -> reject before prompt generation or image generation.
+- Grsai failed/empty result -> record a failed prompt and continue other prompts.
+
+### 5. Good/Base/Bad Cases
+
+- Good: one source image generates one prompt, calls Grsai with the source as `reference_images`, saves a PNG, and writes source plus extract artifact rows.
+- Base: no collection images returns an empty list and the UI keeps the extract action disabled by validation.
+- Bad: accepting arbitrary local image paths from renderer or writing extract outputs without `source_artifact_ids`.
+
+### 6. Tests Required
+
+- Unit test source scanning with nested `01-采集` image folders.
+- Unit test extract orchestration with fake DB, fake prompt generator, fake Grsai adapter, and real filesystem output.
+- Run `pnpm -F @tengyu-aipod/client test`, `type-check`, `lint`, and `build`, plus root `pnpm test`, `type-check`, and `lint`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await window.api.generation.runExtract({ sourceImagePaths: ['/tmp/random.png'], skillId })
+```
+
+#### Correct
+
+```ts
+const sources = await window.api.generation.listExtractSources()
+await window.api.generation.runExtract({
+  sourceImagePaths: sources.images.filter((image) => selected.has(image.path)).map((image) => image.path),
+  skillId,
+  promptCount: 1,
+})
+```

@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import type { GenerationCapability } from '@tengyu-aipod/shared'
+import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CircleDashed,
   ImagePlus,
@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type {
+  GenerationImageSource,
   GenerationProgress,
   GenerationRunResult,
   GenerationTaskEvent,
@@ -34,6 +35,7 @@ type ReferenceImageDraft = {
   base64: string
   mime_type: string
 }
+type SkillVariablesState = Record<string, string | boolean>
 
 const capabilityIcons: Record<GenerationCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
@@ -129,6 +131,35 @@ function readFileAsDataUrl(file: File) {
     reader.addEventListener('error', () => reject(reader.error ?? new Error('读取参考图失败')))
     reader.readAsDataURL(file)
   })
+}
+
+function skillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
+  return `${skill.id}@${skill.version}`
+}
+
+function parseSkillOptionKey(value: string) {
+  const [id = '', version = ''] = value.split('@')
+  return { id, version }
+}
+
+function defaultVariableValue(variable: SkillVariable): string | boolean {
+  if (variable.type === 'checkbox') {
+    return Boolean(variable.default)
+  }
+  return String(variable.default ?? '')
+}
+
+function variablePayload(variables: SkillVariable[], values: SkillVariablesState) {
+  return Object.fromEntries(
+    variables.map((variable) => {
+      const value = values[variable.key] ?? defaultVariableValue(variable)
+      if (variable.type === 'number') {
+        const parsed = Number(value)
+        return [variable.key, Number.isFinite(parsed) ? parsed : value]
+      }
+      return [variable.key, value]
+    }),
+  )
 }
 
 function capabilityCopy(capability: GenerationCapability, provider: GenerationProvider) {
@@ -651,6 +682,482 @@ function GrsaiPromptGenerationPanel({
   )
 }
 
+function GrsaiExtractPanel() {
+  const [sources, setSources] = useState<GenerationImageSource[]>([])
+  const [sourceFolder, setSourceFolder] = useState('')
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([])
+  const [skills, setSkills] = useState<SkillSummary[]>([])
+  const [selectedSkillKey, setSelectedSkillKey] = useState('')
+  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
+  const [variables, setVariables] = useState<SkillVariablesState>({})
+  const [promptCount, setPromptCount] = useState('1')
+  const [llmModel, setLlmModel] = useState('qwen3-vl-plus')
+  const [generationModel, setGenerationModel] = useState('nano-banana-2')
+  const [aspectRatio, setAspectRatio] = useState('1:1')
+  const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K')
+  const [concurrency, setConcurrency] = useState('3')
+  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [result, setResult] = useState<GenerationRunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loadingSources, setLoadingSources] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  useEffect(() => {
+    void loadSources()
+    void loadSkills()
+  }, [])
+
+  useEffect(() => {
+    if (!selectedSkillKey) {
+      setSelectedSkill(null)
+      return
+    }
+    const { id, version } = parseSkillOptionKey(selectedSkillKey)
+    window.api.skill
+      .get({ id, version })
+      .then((skill) => {
+        setSelectedSkill(skill)
+        setVariables(
+          Object.fromEntries(
+            skill.variables.map((variable) => [variable.key, defaultVariableValue(variable)]),
+          ),
+        )
+        setLlmModel(skill.recommendedModel ?? 'qwen3-vl-plus')
+      })
+      .catch((nextError) => {
+        setError(nextError instanceof Error ? nextError.message : '读取提取 Skill 失败')
+      })
+  }, [selectedSkillKey])
+
+  useEffect(() => {
+    const offProgress = window.api.generation.onProgress((nextProgress) => {
+      if (nextProgress.capability !== 'extract') {
+        return
+      }
+      setProgress(nextProgress)
+    })
+    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
+      if (event.ok && event.result.taskId !== progress?.task_id) {
+        return
+      }
+      setRunning(false)
+      if (event.ok) {
+        setResult(event.result)
+        setError(null)
+        return
+      }
+      setError(event.error)
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [progress?.task_id])
+
+  const selectedCount = selectedPaths.length
+  const percent = progressPercent(progress)
+
+  async function loadSources() {
+    setLoadingSources(true)
+    setError(null)
+    try {
+      const nextSources = await window.api.generation.listExtractSources()
+      setSourceFolder(nextSources.folder)
+      setSources(nextSources.images)
+      setSelectedPaths((current) =>
+        current.filter((path) => nextSources.images.some((image) => image.path === path)),
+      )
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取采集源图失败')
+    } finally {
+      setLoadingSources(false)
+    }
+  }
+
+  async function loadSkills() {
+    try {
+      const nextSkills = await window.api.skill.list({ module: 'generation', category: 'extract' })
+      setSkills(nextSkills)
+      const first = nextSkills[0]
+      if (first) {
+        setSelectedSkillKey(skillOptionKey(first))
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取提取 Skill 列表失败')
+    }
+  }
+
+  function toggleSource(path: string, checked: boolean) {
+    setSelectedPaths((current) =>
+      checked ? Array.from(new Set([...current, path])) : current.filter((item) => item !== path),
+    )
+  }
+
+  function selectAllSources() {
+    setSelectedPaths(sources.map((source) => source.path))
+  }
+
+  function clearSources() {
+    setSelectedPaths([])
+  }
+
+  function setVariable(key: string, value: string | boolean) {
+    setVariables((current) => ({ ...current, [key]: value }))
+  }
+
+  async function startExtract() {
+    setError(null)
+    if (!selectedSkill) {
+      setError('请选择提取 Skill')
+      return
+    }
+    if (selectedPaths.length === 0) {
+      setError('请先选择 01-采集 下的源图')
+      return
+    }
+
+    setResult(null)
+    setRunning(true)
+    const taskId = await window.api.generation.runExtract({
+      sourceImagePaths: selectedPaths,
+      skillId: selectedSkill.id,
+      skillVersion: selectedSkill.version,
+      variables: variablePayload(selectedSkill.variables, variables),
+      promptCount: clampNumber(promptCount, 1, 20, 1),
+      llmModel,
+      model: generationModel,
+      aspectRatio,
+      imageSize,
+      concurrency: clampNumber(concurrency, 1, 10, 3),
+    })
+    setProgress({
+      task_id: taskId,
+      capability: 'extract',
+      processed: 0,
+      total: selectedPaths.length * clampNumber(promptCount, 1, 20, 1),
+      succeeded: 0,
+      failed: 0,
+    })
+  }
+
+  return (
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="space-y-5">
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="font-semibold">采集源图</h4>
+              <p className="mt-1 text-sm text-muted-foreground">{sourceFolder || '01-采集'}</p>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => void loadSources()} type="button" variant="secondary">
+                {loadingSources ? (
+                  <Loader2 className="mr-2 h-4 w-4" />
+                ) : (
+                  <ImagePlus className="mr-2 h-4 w-4" />
+                )}
+                刷新
+              </Button>
+              <Button onClick={selectAllSources} type="button" variant="secondary">
+                全选
+              </Button>
+              <Button onClick={clearSources} type="button" variant="secondary">
+                清空
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid max-h-[420px] gap-3 overflow-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+            {sources.length ? (
+              sources.map((source) => (
+                <label
+                  className="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-md border bg-muted/30 p-2 text-sm"
+                  key={source.path}
+                >
+                  <input
+                    checked={selectedPaths.includes(source.path)}
+                    className="mt-1"
+                    onChange={(event) => toggleSource(source.path, event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="min-w-0">
+                    <img
+                      alt={source.name}
+                      className="h-28 w-full rounded-sm object-cover"
+                      src={source.thumbnailUrl}
+                    />
+                    <span className="mt-2 block truncate font-medium">{source.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {source.relativePath}
+                    </span>
+                  </span>
+                </label>
+              ))
+            ) : (
+              <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground sm:col-span-2 lg:col-span-3">
+                暂无采集源图
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-background p-4">
+          <h4 className="font-semibold">提取 Skill</h4>
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <label className="block space-y-2 text-sm font-medium md:col-span-2">
+              <span>Skill</span>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(event) => setSelectedSkillKey(event.target.value)}
+                value={selectedSkillKey}
+              >
+                {skills.map((skill) => (
+                  <option key={skillOptionKey(skill)} value={skillOptionKey(skill)}>
+                    {skill.id} · {skill.version}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-2 text-sm font-medium">
+              <span>每张提示词数</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                max={20}
+                min={1}
+                onChange={(event) => setPromptCount(event.target.value)}
+                type="number"
+                value={promptCount}
+              />
+            </label>
+          </div>
+
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            {selectedSkill?.variables.length ? (
+              selectedSkill.variables.map((variable) => (
+                <SkillVariableControl
+                  key={variable.key}
+                  onChange={(value) => setVariable(variable.key, value)}
+                  value={variables[variable.key] ?? defaultVariableValue(variable)}
+                  variable={variable}
+                />
+              ))
+            ) : (
+              <>
+                <label className="block space-y-2 text-sm font-medium">
+                  <span>印花区域偏好</span>
+                  <select
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onChange={(event) => setVariable('printAreaPreference', event.target.value)}
+                    value={String(variables.printAreaPreference ?? 'auto')}
+                  >
+                    <option value="auto">自动识别</option>
+                    <option value="front">优先正面</option>
+                    <option value="largest">最大印花</option>
+                  </select>
+                </label>
+                <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium">
+                  <input
+                    checked={Boolean(variables.allowMultiplePrints)}
+                    onChange={(event) => setVariable('allowMultiplePrints', event.target.checked)}
+                    type="checkbox"
+                  />
+                  允许多印花
+                </label>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <aside className="space-y-5">
+        <div className="rounded-md border bg-background p-4">
+          <h4 className="font-semibold">执行设置</h4>
+          <div className="mt-4 grid gap-3">
+            <label className="block space-y-2 text-sm font-medium">
+              <span>LLM 模型</span>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(event) => setLlmModel(event.target.value)}
+                value={llmModel}
+              >
+                <option value="qwen3-vl-plus">qwen3-vl-plus</option>
+                <option value="qwen3-vl-flash">qwen3-vl-flash</option>
+                <option value="qwen-vl-max">qwen-vl-max</option>
+              </select>
+            </label>
+            <label className="block space-y-2 text-sm font-medium">
+              <span>Grsai 模型</span>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(event) => setGenerationModel(event.target.value)}
+                value={generationModel}
+              >
+                {grsaiModels.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-2 text-sm font-medium">
+                <span>比例</span>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  onChange={(event) => setAspectRatio(event.target.value)}
+                  value={aspectRatio}
+                >
+                  {aspectRatios.map((ratio) => (
+                    <option key={ratio} value={ratio}>
+                      {ratio}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-2 text-sm font-medium">
+                <span>分辨率</span>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  onChange={(event) => setImageSize(event.target.value as '1K' | '2K' | '4K')}
+                  value={imageSize}
+                >
+                  <option value="1K">1K</option>
+                  <option value="2K">2K</option>
+                  <option value="4K">4K</option>
+                </select>
+              </label>
+            </div>
+            <label className="block space-y-2 text-sm font-medium">
+              <span>并发</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                max={10}
+                min={1}
+                onChange={(event) => setConcurrency(event.target.value)}
+                type="number"
+                value={concurrency}
+              />
+            </label>
+            <Button disabled={running} onClick={() => void startExtract()} type="button">
+              {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+              开始提取
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex items-center justify-between">
+            <h4 className="font-semibold">进度</h4>
+            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+          </div>
+          <div className="mt-4 h-2 rounded-full bg-muted">
+            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-muted-foreground">源图</dt>
+              <dd className="font-medium tabular-nums">{selectedCount}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">处理</dt>
+              <dd className="font-medium tabular-nums">
+                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">成功</dt>
+              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">失败</dt>
+              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+            </div>
+          </dl>
+          {error ? (
+            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+          ) : null}
+          {result ? (
+            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
+              完成：成功 {result.succeeded}，失败 {result.failed}
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
+function SkillVariableControl({
+  variable,
+  value,
+  onChange,
+}: {
+  variable: SkillVariable
+  value: string | boolean
+  onChange: (value: string | boolean) => void
+}) {
+  if (variable.type === 'checkbox') {
+    return (
+      <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium">
+        <input
+          checked={Boolean(value)}
+          onChange={(event) => onChange(event.target.checked)}
+          type="checkbox"
+        />
+        {variable.label}
+      </label>
+    )
+  }
+
+  if (variable.type === 'select') {
+    return (
+      <label className="block space-y-2 text-sm font-medium">
+        <span>{variable.label}</span>
+        <select
+          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          onChange={(event) => onChange(event.target.value)}
+          value={String(value)}
+        >
+          {(variable.options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+
+  if (variable.type === 'textarea') {
+    return (
+      <label className="block space-y-2 text-sm font-medium md:col-span-2">
+        <span>{variable.label}</span>
+        <textarea
+          className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          onChange={(event) => onChange(event.target.value)}
+          placeholder={variable.placeholder}
+          value={String(value)}
+        />
+      </label>
+    )
+  }
+
+  return (
+    <label className="block space-y-2 text-sm font-medium">
+      <span>{variable.label}</span>
+      <input
+        className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        max={variable.max}
+        min={variable.min}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={variable.placeholder}
+        type={variable.type === 'number' ? 'number' : 'text'}
+        value={String(value)}
+      />
+    </label>
+  )
+}
+
 export function GenerationWorkbench() {
   const activeCapability = useGenerationStore((state) => state.activeCapability)
   const tabs = useGenerationStore((state) => state.tabs)
@@ -726,8 +1233,10 @@ export function GenerationWorkbench() {
           </div>
         </div>
 
-        {(activeCapability === 'txt2img' || activeCapability === 'img2img') &&
-        activeProvider === 'grsai' ? (
+        {activeCapability === 'extract' && activeProvider === 'grsai' ? (
+          <GrsaiExtractPanel />
+        ) : (activeCapability === 'txt2img' || activeCapability === 'img2img') &&
+          activeProvider === 'grsai' ? (
           <GrsaiPromptGenerationPanel capability={activeCapability} />
         ) : (
           <div

@@ -10,6 +10,8 @@ import type {
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
 import type {
+  ExtractRunInput,
+  ExtractSourcesResult,
   GenerationProgress,
   GenerationPromptInput,
   GenerationRunResult,
@@ -64,10 +66,14 @@ const api = {
   generation: {
     generatePrompts: (input: GenerationPromptInput) =>
       ipcRenderer.invoke('generation:generate-prompts', input) as Promise<Txt2imgPromptDraft[]>,
+    listExtractSources: () =>
+      ipcRenderer.invoke('generation:list-extract-sources') as Promise<ExtractSourcesResult>,
     parseManualPrompts: (text: string) =>
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
       ipcRenderer.invoke('generation:run-txt2img', input) as Promise<string>,
+    runExtract: (input: ExtractRunInput) =>
+      ipcRenderer.invoke('generation:run-extract', input) as Promise<string>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: GenerationProgress) => {
         callback(progress)
