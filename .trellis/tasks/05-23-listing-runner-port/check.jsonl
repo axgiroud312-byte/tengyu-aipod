@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Verify runner keeps spec §7/§9/§11 behavior without crossing into platform DOM logic."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Check that no source DOM action code was ported."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Check four-layer platform boundary remains intact."}
+{"file":".trellis/tasks/05-23-listing-runner-port/research/listing-runner-source-map.md","reason":"Confirm tests cover the intended framework subset and avoid forbidden source files."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Check runner placement and backend-side conventions."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check DB/status/progress-event boundary consistency."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality review should enforce backend standards."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Check retry/failure handling semantics."}

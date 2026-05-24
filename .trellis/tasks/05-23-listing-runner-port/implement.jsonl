@@ -1,1 +1,9 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Runner framework, listing_status resume table, progress event contracts, and v1 DOM boundary."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Confirm runner can port framework while DOM actions must be rewritten in four platform layers."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Ensure runner exposes workflow injection instead of embedding selector/parser/executor logic."}
+{"file":".trellis/tasks/05-23-listing-runner-port/research/listing-runner-source-map.md","reason":"Source map for runner framework files, target ownership, and forbidden DOM port scope."}
+{"file":".trellis/tasks/archive/2026-05/05-23-listing-types-port/research/listing-types-source-map.md","reason":"Reuse the shared listing type contract established by the previous task."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Runner sends progress events and touches DB/status boundaries."}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Runner orchestration includes retries and failure propagation."}
+{"file": ".trellis/spec/backend/index.md", "reason": "Runner lives in the Electron/main-process side and must follow backend module quality rules."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Implementation should match project backend quality expectations."}

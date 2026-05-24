@@ -1,6 +1,7 @@
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
+import { registerListingRunnerIpc } from '../modules/listing/runner'
 import { activationPoller } from './lib/activation-poller'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
@@ -60,6 +61,7 @@ app.whenReady().then(() => {
   registerDetectionConfigIpc()
   registerDetectionIpc()
   registerGenerationIpc()
+  registerListingRunnerIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
   createMainWindow()
   activationPoller.start()

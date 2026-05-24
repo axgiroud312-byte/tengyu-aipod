@@ -3,7 +3,7 @@
   "name": "listing-runner-port",
   "title": "listing runner port",
   "description": "Port runner.ts 编排框架",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
