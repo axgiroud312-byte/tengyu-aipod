@@ -36,6 +36,20 @@ declare global {
         getUsage: () => Promise<Record<string, number>>
         cleanupAll: () => Promise<{ ok: true }>
       }
+      collection: {
+        setSku: (input: { goods_link: string; sku_code: string }) => Promise<{
+          ok: true
+          results: import('../../main/lib/collection-click-service').CollectionClickResult[]
+        }>
+        getActiveSession: () => Promise<
+          import('../../main/lib/collection-session-manager').CollectionSession | null
+        >
+        onEvent: (
+          callback: (
+            event: import('../../main/lib/collection-session-manager').CollectionSessionEvent,
+          ) => void,
+        ) => () => void
+      }
       generation: {
         generatePrompts: (
           input: import('../../main/lib/generation-service').GenerationPromptInput,

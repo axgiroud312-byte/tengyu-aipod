@@ -16,6 +16,7 @@ import {
   RotateCcw,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import type { CollectionSessionEvent } from '../../main/lib/collection-session-manager'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
@@ -28,6 +29,7 @@ import { GenerationWorkbench } from './components/generation-workbench'
 type OnboardingStep = 1 | 2 | 3 | 4
 type WorkbenchModule = 'title' | 'generation' | 'detection'
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
+type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
 
 const apiKeyFields = [
   { key: 'chenyu', label: '晨羽智云 API Key', placeholder: '用于 ComfyUI 生图' },
@@ -41,6 +43,8 @@ const titleModelPrices: Record<string, { input: number; output: number }> = {
   'qwen3-vl-plus': { input: 1, output: 10 },
   'qwen-vl-max': { input: 1.6, output: 4 },
 }
+
+const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
 
 function normalizeActivationCode(value: string) {
   return value
@@ -300,6 +304,12 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [titleError, setTitleError] = useState<string | null>(null)
   const [openMessage, setOpenMessage] = useState<string | null>(null)
   const [isRetryingFailed, setIsRetryingFailed] = useState(false)
+  const [pendingCollectionSku, setPendingCollectionSku] = useState<PendingCollectionSku | null>(
+    null,
+  )
+  const [collectionSkuCode, setCollectionSkuCode] = useState('')
+  const [collectionSkuError, setCollectionSkuError] = useState<string | null>(null)
+  const [isCollectionSkuPromptExpanded, setIsCollectionSkuPromptExpanded] = useState(false)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
 
@@ -326,6 +336,32 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    const offCollectionEvent = window.api.collection.onEvent((event) => {
+      if (event.type === 'sku-required') {
+        setPendingCollectionSku(event)
+        setCollectionSkuCode('')
+        setCollectionSkuError(null)
+        setIsCollectionSkuPromptExpanded(true)
+      }
+    })
+    return () => {
+      offCollectionEvent()
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!pendingCollectionSku || !isCollectionSkuPromptExpanded) {
+      return
+    }
+    const timeout = window.setTimeout(() => {
+      setIsCollectionSkuPromptExpanded(false)
+    }, COLLECTION_SKU_PROMPT_COLLAPSE_MS)
+    return () => {
+      window.clearTimeout(timeout)
+    }
+  }, [isCollectionSkuPromptExpanded, pendingCollectionSku])
 
   useEffect(() => {
     const offProgress = window.api.title.onProgress((nextProgress) => {
@@ -464,6 +500,29 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   async function openPath(path: string) {
     const response = await window.api.title.openPath({ path })
     setOpenMessage(response.ok ? null : response.error.message)
+  }
+
+  async function submitCollectionSku() {
+    if (!pendingCollectionSku) {
+      return
+    }
+    const skuCode = collectionSkuCode.trim()
+    if (!skuCode) {
+      setCollectionSkuError('请填写货号')
+      return
+    }
+    try {
+      await window.api.collection.setSku({
+        goods_link: pendingCollectionSku.goods_link,
+        sku_code: skuCode,
+      })
+      setPendingCollectionSku(null)
+      setCollectionSkuCode('')
+      setCollectionSkuError(null)
+      setIsCollectionSkuPromptExpanded(false)
+    } catch (error) {
+      setCollectionSkuError(error instanceof Error ? error.message : '保存货号失败')
+    }
   }
 
   return (
@@ -896,6 +955,48 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           </div>
         )}
       </section>
+      {pendingCollectionSku && isCollectionSkuPromptExpanded ? (
+        <div className="fixed bottom-5 right-5 z-40 w-96 rounded-md border bg-background p-4 text-sm shadow-xl">
+          <div className="space-y-1">
+            <p className="font-semibold">填写采集货号</p>
+            <p className="break-all text-xs text-muted-foreground">
+              {pendingCollectionSku.goods_link}
+            </p>
+          </div>
+          <div className="mt-3 flex gap-2">
+            <input
+              className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              onChange={(event) => setCollectionSkuCode(event.target.value)}
+              placeholder="例如 SKU-001"
+              value={collectionSkuCode}
+            />
+            <Button onClick={() => void submitCollectionSku()} type="button">
+              保存
+            </Button>
+          </div>
+          {collectionSkuError ? (
+            <p className="mt-2 text-xs text-red-700">{collectionSkuError}</p>
+          ) : null}
+          <button
+            className="mt-3 text-xs text-muted-foreground underline"
+            onClick={() => setIsCollectionSkuPromptExpanded(false)}
+            type="button"
+          >
+            稍后填写
+          </button>
+        </div>
+      ) : pendingCollectionSku ? (
+        <button
+          className="fixed bottom-5 right-5 z-40 rounded-md border bg-background px-4 py-3 text-left text-sm shadow-xl"
+          onClick={() => setIsCollectionSkuPromptExpanded(true)}
+          type="button"
+        >
+          <span className="block font-semibold">待填写采集货号</span>
+          <span className="mt-1 block max-w-72 truncate text-xs text-muted-foreground">
+            {pendingCollectionSku.goods_link}
+          </span>
+        </button>
+      ) : null}
     </main>
   )
 }

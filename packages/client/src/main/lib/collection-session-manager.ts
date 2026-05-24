@@ -40,6 +40,8 @@ export type CollectionSessionEvent =
   | { type: 'session-paused'; session: CollectionSession; reason: CollectionPauseReason }
   | { type: 'session-resumed'; session: CollectionSession }
   | { type: 'session-stopped'; session: CollectionSession }
+  | { type: 'sku-required'; session: CollectionSession; goods_link: string; image_url: string }
+  | { type: 'image-saved'; record: unknown }
 
 type CollectionDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 
@@ -57,6 +59,7 @@ type SessionRuntime = {
   session: CollectionSession
   lock: BrowserProfileLockHandle
   workbenchRoot: string
+  goodsSku: Map<string, string>
 }
 
 const CollectionSessionConfigSchema = z
@@ -115,7 +118,7 @@ export class CollectionSessionManager {
       started_at: this.now(),
     }
     const lock = this.locks.acquire(config.profile_id, 'collection', session.id)
-    this.active = { session, lock, workbenchRoot }
+    this.active = { session, lock, workbenchRoot, goodsSku: new Map() }
 
     try {
       writeSession(workbenchRoot, this.openDatabase, session)
@@ -154,6 +157,34 @@ export class CollectionSessionManager {
       return null
     }
     return this.active.session
+  }
+
+  assignSessionSku(goodsLink: string, skuCode: string) {
+    if (!this.active) {
+      throw new AppErrorClass('HTTP_4XX', '当前没有采集会话', false, { kind: 'state_conflict' })
+    }
+    if (!goodsLink.trim() || !skuCode.trim()) {
+      throw new AppErrorClass('HTTP_4XX', '商品链接和货号不能为空', false, {
+        kind: 'validation',
+      })
+    }
+    this.active.goodsSku.set(goodsLink, skuCode)
+  }
+
+  getSessionSku(goodsLink: string) {
+    return this.active?.goodsSku.get(goodsLink) ?? null
+  }
+
+  requestSku(goodsLink: string, imageUrl: string) {
+    if (!this.active) {
+      return
+    }
+    this.emit({
+      type: 'sku-required',
+      session: this.active.session,
+      goods_link: goodsLink,
+      image_url: imageUrl,
+    })
   }
 
   pause(reason: CollectionPauseReason): CollectionSession | null {

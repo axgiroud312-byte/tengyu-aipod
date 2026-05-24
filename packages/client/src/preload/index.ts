@@ -1,5 +1,10 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { CollectionClickResult } from '../main/lib/collection-click-service'
+import type {
+  CollectionSession,
+  CollectionSessionEvent,
+} from '../main/lib/collection-session-manager'
 import type { ComfyuiWorkflowSummary } from '../main/lib/comfyui-workflow-cache'
 import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
@@ -68,6 +73,25 @@ const api = {
       ipcRenderer.invoke('temp-file:cleanup-all') as Promise<{
         ok: true
       }>,
+  },
+  collection: {
+    setSku: (input: { goods_link: string; sku_code: string }) =>
+      ipcRenderer.invoke('collection:set-sku', input) as Promise<{
+        ok: true
+        results: CollectionClickResult[]
+      }>,
+    onEvent: (callback: (event: CollectionSessionEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: CollectionSessionEvent) => {
+        callback(event)
+      }
+      ipcRenderer.on('collection:event', listener)
+
+      return () => {
+        ipcRenderer.removeListener('collection:event', listener)
+      }
+    },
+    getActiveSession: () =>
+      ipcRenderer.invoke('collection:get-active-session') as Promise<CollectionSession | null>,
   },
   generation: {
     generatePrompts: (input: GenerationPromptInput) =>

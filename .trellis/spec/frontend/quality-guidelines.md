@@ -318,6 +318,71 @@ for (const [key, value] of Object.entries(apiKeys)) {
 }
 ```
 
+### Scenario: Collection Click IPC and Records
+
+#### 1. Scope / Trigger
+- Trigger: Electron collection click-mode code handles injected page callbacks, asks the renderer for a SKU, saves local images, or writes `collection_records`.
+- Boundary: browser events and image bytes stay in the Electron client. The server must not receive user images, product page URLs, SKUs, browser credentials, or local saved paths.
+
+#### 2. Signatures
+- IPC:
+  - `collection:handle-click({ event, platformRule }) -> CollectionClickResult`
+  - `collection:set-sku({ goods_link, sku_code }) -> { ok: true, results: CollectionClickResult[] }`
+  - `collection:get-active-session() -> CollectionSession | null`
+  - Event: `collection:event -> { type: 'sku-required', session, goods_link, image_url } | { type: 'image-saved', record } | session events`
+- Service methods:
+  - `CollectionClickService.handleClick(event, platformRule): Promise<CollectionClickResult>`
+  - `CollectionClickService.assignSkuAndSavePending(goodsLink, skuCode): Promise<{ ok: true; results: CollectionClickResult[] }>`
+- DB table: `{workbenchRoot}/.workbench/workbench.db`, table `collection_records`.
+
+#### 3. Contracts
+- Click events come from the injected script shape `{ kind: 'click', img, goodsLink?, page, platform? }` and must be zod-validated at the IPC boundary.
+- `platformRule.goods_url_patterns` decides whether `event.page` is a product page.
+- Product page without a known SKU must emit `sku-required`, cache the pending click in the main process, and return `pending_sku`; after `collection:set-sku`, the same pending image must be saved without requiring another browser click.
+- Product page with a known SKU saves to `01-采集/{sku}/{sku}-{seq}.ext`.
+- Non-product page saves to `01-采集/散图池/{platform}-{YYYYMMDD-HHmmss}-{seq}.ext`.
+- Deduplication is scoped to the target folder by image hash. Matching hash returns `skipped` and still writes a `collection_records` row.
+- Renderer displays the SKU prompt as a non-modal bottom-right surface and may collapse it to a toast; renderer must not download images, write files, or insert DB rows.
+
+#### 4. Validation & Error Matrix
+- No active collection session -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='state_conflict')`.
+- Active session mode is not `click` -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='state_conflict')`.
+- Bad click payload or bad SKU payload -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='validation')`.
+- Image download failure -> return `failed` and insert a failed `collection_records` row with the error reason.
+- File sequence exhausted -> `AppErrorClass('HTTP_4XX', retryable=false)`.
+- Optional IPC fields must be normalized before assigning to exact optional TypeScript types; omit undefined fields instead of passing `{ field: undefined }`.
+
+#### 5. Good/Base/Bad Cases
+- Good: first click on a product page emits `sku-required`; user enters `SKU-001`; the original pending image is saved to `01-采集/SKU-001/SKU-001-001.jpg` and a success record is inserted.
+- Base: click on a listing/search page saves to `散图池` and records `reason='not_goods_page'`.
+- Bad: storing only the SKU and requiring the user to click the same image again after filling the prompt.
+
+#### 6. Tests Required
+- Unit test first product-page click returns `pending_sku` and writes no file or DB row.
+- Unit test `assignSkuAndSavePending` saves the cached click and inserts `collection_records`.
+- Unit test existing SKU saves into the SKU folder.
+- Unit test non-product page saves into `散图池`.
+- Unit test same-folder hash dedup returns `skipped`.
+- Unit test download failure writes a failed record.
+- Run `pnpm -F @tengyu-aipod/client build`, `test`, `type-check`, and `lint` when main/preload/renderer collection IPC changes.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+// The pending click is lost; user has to click the browser image again.
+collectionSessionManager.assignSessionSku(goodsLink, skuCode)
+return { ok: true }
+```
+
+Correct:
+```ts
+const result = await collectionClickService.assignSkuAndSavePending(goodsLink, skuCode)
+for (const item of result.results) {
+  if ('record' in item) emitCollectionEvent({ type: 'image-saved', record: item.record })
+}
+```
+
 ### Scenario: Title Module Service
 
 #### 1. Scope / Trigger
