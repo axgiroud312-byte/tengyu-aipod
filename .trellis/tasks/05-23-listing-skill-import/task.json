@@ -3,7 +3,7 @@
   "name": "listing-skill-import",
   "title": "listing automation builder skill import",
   "description": "把 listing-automation-builder SKILL 复制到 .agents/skills/",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

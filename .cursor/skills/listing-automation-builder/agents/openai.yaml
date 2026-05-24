@@ -1,0 +1,4 @@
+interface:
+  display_name: "网页自动化构建器"
+  short_description: "把真实网页流程转成可复用自动化"
+  default_prompt: "使用 $listing-automation-builder 侦察这个真实网页流程，对齐批量流程和变量模型，并构建可真实验证的自动化程序。"

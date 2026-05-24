@@ -1,5 +1,7 @@
 # 腾域 aipod — Claude / AI 协作指南
 
+> **上架模块强制规则**：任何实现、测试或修改上架模块的任务，必须先加载 `.agents/skills/listing-automation-builder/SKILL.md`，并按 ADR-0004 的 selectors / page-parser / action-executor / workflow 四层结构落地。
+
 > 这是项目级 AI 协作指南。Claude Code / Codex / Cursor 等 AI 工具开始任何任务前**必须先读**：
 > 1. 本文件
 > 2. `docs/CONTEXT.md`（领域语言）
