@@ -36,6 +36,25 @@ declare global {
         getUsage: () => Promise<Record<string, number>>
         cleanupAll: () => Promise<{ ok: true }>
       }
+      generation: {
+        generatePrompts: (
+          input: import('../../main/lib/generation-service').GenerationPromptInput,
+        ) => Promise<import('../../main/lib/generation-service').Txt2imgPromptDraft[]>
+        parseManualPrompts: (text: string) => Promise<string[]>
+        runTxt2img: (
+          input: import('../../main/lib/generation-service').Txt2imgRunInput,
+        ) => Promise<string>
+        onProgress: (
+          callback: (
+            progress: import('../../main/lib/generation-service').GenerationProgress,
+          ) => void,
+        ) => () => void
+        onCompleted: (
+          callback: (
+            event: import('../../main/lib/generation-service').GenerationTaskEvent,
+          ) => void,
+        ) => () => void
+      }
       detection: {
         getConfig: () => Promise<import('../../main/lib/detection-config').DetectionConfig | null>
         saveConfig: (

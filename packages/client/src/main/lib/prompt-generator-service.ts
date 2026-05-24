@@ -36,7 +36,7 @@ export class PromptGeneratorService {
     dependencies: PromptGeneratorDependencies = {},
   ): Promise<string[]> {
     const skill = await this.resolveSkill(input, dependencies.skillCache ?? skillCacheManager)
-    const apiKey = await (dependencies.getSecret ?? getSecret)('bailian_api_key')
+    const apiKey = await (dependencies.getSecret ?? getSecret)('bailian')
     if (!apiKey) {
       throw new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key', false, {
         provider: 'aliyun-bailian',

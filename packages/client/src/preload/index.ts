@@ -9,6 +9,14 @@ import type {
   DetectionStoredResult,
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
+import type {
+  GenerationProgress,
+  GenerationPromptInput,
+  GenerationRunResult,
+  GenerationTaskEvent,
+  Txt2imgPromptDraft,
+  Txt2imgRunInput,
+} from '../main/lib/generation-service'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 
 const api = {
@@ -52,6 +60,34 @@ const api = {
       ipcRenderer.invoke('temp-file:cleanup-all') as Promise<{
         ok: true
       }>,
+  },
+  generation: {
+    generatePrompts: (input: GenerationPromptInput) =>
+      ipcRenderer.invoke('generation:generate-prompts', input) as Promise<Txt2imgPromptDraft[]>,
+    parseManualPrompts: (text: string) =>
+      ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
+    runTxt2img: (input: Txt2imgRunInput) =>
+      ipcRenderer.invoke('generation:run-txt2img', input) as Promise<string>,
+    onProgress: (callback: (progress: GenerationProgress) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: GenerationProgress) => {
+        callback(progress)
+      }
+      ipcRenderer.on('generation:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('generation:progress', listener)
+      }
+    },
+    onCompleted: (callback: (event: GenerationTaskEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: GenerationTaskEvent) => {
+        callback(event)
+      }
+      ipcRenderer.on('generation:completed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('generation:completed', listener)
+      }
+    },
   },
   detection: {
     getConfig: () => ipcRenderer.invoke('detection:get-config') as Promise<DetectionConfig | null>,
