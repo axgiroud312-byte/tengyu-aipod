@@ -3,7 +3,7 @@
   "name": "generation-comfyui-e2e",
   "title": "generation comfyui e2e",
   "description": "Playwright E2E ComfyUI 4 能力",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
