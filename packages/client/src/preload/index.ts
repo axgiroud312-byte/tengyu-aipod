@@ -1,5 +1,6 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ComfyuiWorkflowSummary } from '../main/lib/comfyui-workflow-cache'
 import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
   DetectionBatchConfig,
@@ -10,12 +11,14 @@ import type {
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
 import type {
+  ComfyuiImg2imgRunInput,
   ExtractRunInput,
   ExtractSourcesResult,
   GenerationProgress,
   GenerationPromptInput,
   GenerationRunResult,
   GenerationTaskEvent,
+  Img2imgSourcesResult,
   Txt2imgPromptDraft,
   Txt2imgRunInput,
 } from '../main/lib/generation-service'
@@ -68,12 +71,20 @@ const api = {
       ipcRenderer.invoke('generation:generate-prompts', input) as Promise<Txt2imgPromptDraft[]>,
     listExtractSources: () =>
       ipcRenderer.invoke('generation:list-extract-sources') as Promise<ExtractSourcesResult>,
+    listImg2imgSources: () =>
+      ipcRenderer.invoke('generation:list-img2img-sources') as Promise<Img2imgSourcesResult>,
+    listComfyuiImg2imgWorkflows: () =>
+      ipcRenderer.invoke('generation:list-comfyui-img2img-workflows') as Promise<
+        ComfyuiWorkflowSummary[]
+      >,
     parseManualPrompts: (text: string) =>
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
       ipcRenderer.invoke('generation:run-txt2img', input) as Promise<string>,
     runExtract: (input: ExtractRunInput) =>
       ipcRenderer.invoke('generation:run-extract', input) as Promise<string>,
+    runComfyuiImg2img: (input: ComfyuiImg2imgRunInput) =>
+      ipcRenderer.invoke('generation:run-comfyui-img2img', input) as Promise<string>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: GenerationProgress) => {
         callback(progress)

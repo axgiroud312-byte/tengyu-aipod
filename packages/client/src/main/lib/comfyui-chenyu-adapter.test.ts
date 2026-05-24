@@ -36,9 +36,15 @@ vi.mock('node:fs/promises', async (importOriginal) => {
       files.set(path, buffer)
     }),
     readFile: vi.fn(async (path: string) => files.get(path) ?? Buffer.from('')),
-    stat: vi.fn(async (path: string) => ({
-      size: files.get(path)?.byteLength ?? 0,
-    })),
+    stat: vi.fn(async (path: string) => {
+      const buffer = files.get(path)
+      if (!buffer) {
+        const error = new Error('ENOENT') as NodeJS.ErrnoException
+        error.code = 'ENOENT'
+        throw error
+      }
+      return { size: buffer.byteLength }
+    }),
   }
 })
 
@@ -113,6 +119,63 @@ describe('ComfyuiChenyuAdapter', () => {
         'extract-v3',
         JSON.stringify(['source-artifact']),
         'extract the floral print',
+      ]),
+    )
+  })
+
+  it('writes img2img outputs with source print id version names', async () => {
+    const img2imgWorkflow: ComfyuiWorkflow = {
+      ...workflow,
+      id: 'img2img-v1',
+      capability: 'img2img',
+    }
+    const db = createDb()
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage: vi.fn().mockResolvedValue('uploaded.png'),
+        queuePrompt: vi.fn().mockResolvedValue('prompt-1'),
+        getHistory: vi.fn().mockResolvedValue({
+          status: { completed: true },
+          outputs: { '9': { images: [{ filename: 'result.png' }] } },
+        }),
+        viewImage: vi.fn().mockResolvedValue(Buffer.from('result-bytes')),
+      },
+      workflowCache: { get: vi.fn().mockResolvedValue(img2imgWorkflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+    })
+
+    const response = await adapter.generate({
+      capability: 'img2img',
+      prompt: 'variation',
+      workflow_id: 'img2img-v1',
+      reference_images: [
+        { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+      ],
+      output: { format: 'png' },
+      options: {
+        taskId: 'img2img-task',
+        sourceArtifactIds: ['source-artifact'],
+        printId: 'pri_print',
+      },
+    })
+
+    expect(response.images[0]?.local_path).toBe('/workbench/02-生图/02-图生图/pri_print_v1.png')
+    expect(db.rows[0]).toEqual(
+      expect.arrayContaining([
+        'img2img-task',
+        'pri_print',
+        'img2img',
+        'comfyui-chenyu',
+        'img2img-v1',
+        JSON.stringify(['source-artifact']),
       ]),
     )
   })

@@ -43,12 +43,21 @@ declare global {
         listExtractSources: () => Promise<
           import('../../main/lib/generation-service').ExtractSourcesResult
         >
+        listImg2imgSources: () => Promise<
+          import('../../main/lib/generation-service').Img2imgSourcesResult
+        >
+        listComfyuiImg2imgWorkflows: () => Promise<
+          import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]
+        >
         parseManualPrompts: (text: string) => Promise<string[]>
         runTxt2img: (
           input: import('../../main/lib/generation-service').Txt2imgRunInput,
         ) => Promise<string>
         runExtract: (
           input: import('../../main/lib/generation-service').ExtractRunInput,
+        ) => Promise<string>
+        runComfyuiImg2img: (
+          input: import('../../main/lib/generation-service').ComfyuiImg2imgRunInput,
         ) => Promise<string>
         onProgress: (
           callback: (

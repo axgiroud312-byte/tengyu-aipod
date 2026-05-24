@@ -14,7 +14,11 @@ import type { ComfyuiInstanceSummary } from './comfyui-instance-manager'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
 
 export type ComfyuiWorkflowCache = {
-  get(workflowId: string, capability: GenerateRequest['capability']): Promise<ComfyuiWorkflow>
+  get(
+    workflowId: string,
+    capability: GenerateRequest['capability'],
+    version?: string,
+  ): Promise<ComfyuiWorkflow>
 }
 
 export type ComfyuiExecutionDatabase = Pick<Database.Database, 'exec' | 'prepare'>
@@ -70,7 +74,11 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       })
     }
 
-    const workflow = await this.options.workflowCache.get(req.workflow_id, req.capability)
+    const workflow = await this.options.workflowCache.get(
+      req.workflow_id,
+      req.capability,
+      workflowVersionFromRequest(req),
+    )
     const uploadedImages = await this.uploadReferenceImages(req)
     const injectedWorkflow = injectComfyuiInputs(workflow.workflowJson, workflow.inputSlots, req, {
       uploadedImages,
@@ -130,8 +138,11 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       }
 
       const buffer = await this.options.comfyHttp.viewImage(output.filename)
-      const printId = newPrintId()
-      const targetPath = join(outputFolder, `${printId}${extensionFromFilename(output.filename)}`)
+      const printId = printIdFromRequest(input.req) ?? newPrintId()
+      const targetPath =
+        input.req.capability === 'img2img'
+          ? await uniqueVersionedTargetPath(outputFolder, printId, '.png')
+          : join(outputFolder, `${printId}${extensionFromFilename(output.filename)}`)
       await writeFile(targetPath, buffer)
       const artifactId = await registerComfyuiArtifact(db, {
         taskId: taskIdFromRequest(input.req),
@@ -307,8 +318,29 @@ function taskIdFromRequest(req: GenerateRequest) {
   return typeof req.options?.taskId === 'string' ? req.options.taskId : `comfy_${randomUUID()}`
 }
 
+function printIdFromRequest(req: GenerateRequest) {
+  return typeof req.options?.printId === 'string' ? req.options.printId : null
+}
+
+function workflowVersionFromRequest(req: GenerateRequest) {
+  return typeof req.options?.workflowVersion === 'string' ? req.options.workflowVersion : undefined
+}
+
 function newPrintId() {
   return `pri_${randomUUID().replaceAll('-', '').slice(0, 16)}`
+}
+
+async function uniqueVersionedTargetPath(folder: string, printId: string, ext: string) {
+  let version = 1
+  while (true) {
+    const candidate = join(folder, `${printId}_v${version}${ext}`)
+    try {
+      await stat(candidate)
+      version += 1
+    } catch {
+      return candidate
+    }
+  }
 }
 
 function hashFile(path: string) {

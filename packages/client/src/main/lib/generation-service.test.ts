@@ -4,7 +4,13 @@ import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { listExtractSources, runExtractBatch } from './generation-service'
+import {
+  listComfyuiImg2imgWorkflows,
+  listExtractSources,
+  listImg2imgSources,
+  runComfyuiImg2imgBatch,
+  runExtractBatch,
+} from './generation-service'
 
 type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 
@@ -57,6 +63,7 @@ function extractSkill(overrides: Partial<Skill> = {}): Skill {
 
 function createFakeDb() {
   const artifacts: unknown[][] = []
+  const rowsBySql = new Map<string, unknown[]>()
   const db = {
     exec: vi.fn(),
     prepare: vi.fn((sql: string) => {
@@ -67,6 +74,18 @@ function createFakeDb() {
           },
         }
       }
+      if (sql.includes('FROM artifacts')) {
+        return {
+          all: () => rowsBySql.get('artifacts') ?? [],
+          get: (id?: string) =>
+            (rowsBySql.get('artifacts') ?? []).find((row) => {
+              return typeof row === 'object' && row !== null && 'id' in row && row.id === id
+            }),
+        }
+      }
+      if (sql.includes('FROM comfyui_instances')) {
+        return { get: () => ({ comfyui_url: 'https://comfy.example' }) }
+      }
       return { run: vi.fn() }
     }),
     close: vi.fn(),
@@ -74,9 +93,37 @@ function createFakeDb() {
 
   return {
     artifacts,
+    rowsBySql,
     db,
     openDatabase: () => db as unknown as TestDatabase,
   }
+}
+
+function createDbWithoutComfyuiInstance() {
+  const fakeDb = createFakeDb()
+  fakeDb.db.prepare = vi.fn((sql: string) => {
+    if (sql.includes('INSERT INTO artifacts')) {
+      return {
+        run: (...values: unknown[]) => {
+          fakeDb.artifacts.push(values)
+        },
+      }
+    }
+    if (sql.includes('FROM artifacts')) {
+      return {
+        all: () => fakeDb.rowsBySql.get('artifacts') ?? [],
+        get: (id?: string) =>
+          (fakeDb.rowsBySql.get('artifacts') ?? []).find((row) => {
+            return typeof row === 'object' && row !== null && 'id' in row && row.id === id
+          }),
+      }
+    }
+    if (sql.includes('FROM comfyui_instances')) {
+      throw new Error('no such table: comfyui_instances')
+    }
+    return { run: vi.fn() }
+  })
+  return fakeDb
 }
 
 async function createImage(path: string, content: string) {
@@ -178,5 +225,157 @@ describe('generation extract service', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'extract-task', capability: 'extract', processed: 1 }),
     )
+  })
+})
+
+describe('generation comfyui img2img service', () => {
+  it('lists only registered print artifacts and filters raw collection paths', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const rawPath = join(workbenchRoot, '01-采集', 'sku-a', 'raw.png')
+    await createImage(printPath, 'print-image')
+    await createImage(rawPath, 'raw-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+      {
+        id: 'raw-artifact',
+        print_id: 'pri_raw',
+        step: 'manual-import',
+        file_path: rawPath,
+      },
+    ])
+
+    const result = await listImg2imgSources({
+      readConfig: async () => ({ workbench_root: workbenchRoot }),
+      openDatabase: fakeDb.openDatabase,
+    })
+
+    expect(result.images.map((image) => image.artifactId)).toEqual(['print-artifact'])
+    expect(result.folders).toContain(join(workbenchRoot, '02-生图', '03-提取'))
+  })
+
+  it('registers eligible generation folder images as img2img sources', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '01-文生图', 'folder-print.png')
+    await createImage(printPath, 'folder-print-image')
+    const fakeDb = createFakeDb()
+
+    await listImg2imgSources({
+      readConfig: async () => ({ workbench_root: workbenchRoot }),
+      openDatabase: fakeDb.openDatabase,
+    })
+
+    expect(fakeDb.artifacts).toHaveLength(1)
+    expect(fakeDb.artifacts[0]?.[3]).toBe('txt2img')
+    expect(fakeDb.artifacts[0]?.[6]).toBe(printPath)
+  })
+
+  it('lists only img2img ComfyUI workflows', async () => {
+    const result = await listComfyuiImg2imgWorkflows({
+      workflowCache: {
+        listWorkflows: vi.fn().mockResolvedValue([
+          {
+            id: 'img2img-v1',
+            version: '1.0.0',
+            name: 'Image Variation',
+            capability: 'img2img',
+            requiredModels: [],
+          },
+          {
+            id: 'extract-v1',
+            version: '1.0.0',
+            name: 'Extract',
+            capability: 'extract',
+            requiredModels: [],
+          },
+        ]),
+      },
+    })
+
+    expect(result.map((workflow) => workflow.id)).toEqual(['img2img-v1'])
+  })
+
+  it('runs ComfyUI img2img with selected print artifact lineage', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiImg2imgBatch(
+      {
+        sourceArtifactIds: ['print-artifact'],
+        workflowId: 'img2img-v1',
+        prompt: 'make a new floral print',
+        taskId: 'img2img-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'img2img-task', total: 1, succeeded: 1, failed: 0 })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'img2img',
+        workflow_id: 'img2img-v1',
+        reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
+        options: expect.objectContaining({
+          taskId: 'img2img-task',
+          sourceArtifactIds: ['print-artifact'],
+          printId: 'pri_print',
+        }),
+      }),
+    )
+  })
+
+  it('returns a setup error when no ComfyUI instance is registered', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createDbWithoutComfyuiInstance()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+
+    await expect(
+      runComfyuiImg2imgBatch(
+        {
+          sourceArtifactIds: ['print-artifact'],
+          workflowId: 'img2img-v1',
+          prompt: 'make a new floral print',
+          taskId: 'img2img-task',
+        },
+        {
+          readConfig: async () => ({ workbench_root: workbenchRoot }),
+          getSecret: async () => 'cy-key',
+          openDatabase: fakeDb.openDatabase,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'CHENYU_INSTANCE_DOWN',
+      message: '请先创建并启动 ComfyUI 实例',
+    })
   })
 })
