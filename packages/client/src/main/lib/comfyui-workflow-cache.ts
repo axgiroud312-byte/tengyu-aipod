@@ -15,8 +15,12 @@ const REFRESH_INTERVAL_MS = CACHE_REFRESH_INTERVAL_MINUTES * 60 * 1000
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const INDEX_FILE_NAME = 'index.json'
 
+export type ComfyuiWorkflowCategory = GenerationCapability | 'matting-mixed'
+export type CachedComfyuiWorkflow = Omit<ComfyuiWorkflow, 'capability'> & {
+  capability: ComfyuiWorkflowCategory
+}
 export type ComfyuiWorkflowSummary = Pick<
-  ComfyuiWorkflow,
+  CachedComfyuiWorkflow,
   'id' | 'version' | 'name' | 'capability' | 'requiredModels'
 >
 
@@ -68,8 +72,11 @@ function stringArrayValue(value: unknown) {
     : []
 }
 
-function normalizeCapability(value: unknown): GenerationCapability {
+function normalizeCapability(value: unknown): ComfyuiWorkflowCategory {
   if (value === 'txt2img' || value === 'img2img' || value === 'extract' || value === 'matting') {
+    return value
+  }
+  if (value === 'matting-mixed') {
     return value
   }
   return 'img2img'
@@ -82,10 +89,15 @@ function normalizeSlot(raw: unknown) {
     name: stringValue(record.name, stringValue(record.label, field)),
     nodeId: stringValue(record.nodeId, stringValue(record.node_id)),
     field,
+    ...(typeof record.imageIndex === 'number'
+      ? { imageIndex: record.imageIndex }
+      : typeof record.image_index === 'number'
+        ? { imageIndex: record.image_index }
+        : {}),
   }
 }
 
-function normalizeWorkflow(raw: unknown): ComfyuiWorkflow {
+function normalizeWorkflow(raw: unknown): CachedComfyuiWorkflow {
   const record = isRecord(raw) ? raw : {}
   return {
     id: stringValue(record.id),
@@ -129,11 +141,11 @@ function normalizeSummary(raw: unknown): ComfyuiWorkflowSummary | null {
   }
 }
 
-function matchesCategory(workflow: ComfyuiWorkflowSummary, category?: GenerationCapability) {
+function matchesCategory(workflow: ComfyuiWorkflowSummary, category?: ComfyuiWorkflowCategory) {
   return !category || workflow.capability === category
 }
 
-function ensureCapability(workflow: ComfyuiWorkflow, capability?: GenerationCapability) {
+function ensureCapability(workflow: CachedComfyuiWorkflow, capability?: ComfyuiWorkflowCategory) {
   if (capability && workflow.capability !== capability) {
     throw new Error(
       `workflow capability mismatch: expected ${capability}, got ${workflow.capability}`,
@@ -155,7 +167,7 @@ function unwrapApiData<T>(raw: unknown): T {
 export class ComfyuiWorkflowCacheManager {
   private lastRefreshAt = 0
 
-  async listWorkflows(category?: GenerationCapability): Promise<ComfyuiWorkflowSummary[]> {
+  async listWorkflows(category?: ComfyuiWorkflowCategory): Promise<ComfyuiWorkflowSummary[]> {
     if (Date.now() - this.lastRefreshAt > REFRESH_INTERVAL_MS) {
       await this.refresh(category).catch(() => null)
     }
@@ -171,9 +183,9 @@ export class ComfyuiWorkflowCacheManager {
 
   async get(
     id: string,
-    capability?: GenerationCapability,
+    capability?: ComfyuiWorkflowCategory,
     version?: string,
-  ): Promise<ComfyuiWorkflow> {
+  ): Promise<CachedComfyuiWorkflow> {
     if (version) {
       const cached = await this.readCachedWorkflow(id, version)
       if (cached) {
@@ -199,7 +211,7 @@ export class ComfyuiWorkflowCacheManager {
     }
   }
 
-  async refresh(category?: GenerationCapability) {
+  async refresh(category?: ComfyuiWorkflowCategory) {
     const summaries = await this.fetchWorkflowSummaries(category)
     await this.saveIndex(summaries)
     this.lastRefreshAt = Date.now()
@@ -210,7 +222,7 @@ export class ComfyuiWorkflowCacheManager {
     return workflowCacheDir()
   }
 
-  private async fetchWorkflowSummaries(category?: GenerationCapability) {
+  private async fetchWorkflowSummaries(category?: ComfyuiWorkflowCategory) {
     const searchParams = new URLSearchParams()
     if (category) {
       searchParams.set('category', category)
@@ -259,11 +271,11 @@ export class ComfyuiWorkflowCacheManager {
     } satisfies WorkflowIndexFile)
   }
 
-  private async saveWorkflow(workflow: ComfyuiWorkflow) {
+  private async saveWorkflow(workflow: CachedComfyuiWorkflow) {
     await writeJson(workflowFilePath(await this.rootDir(), workflow.id, workflow.version), workflow)
   }
 
-  private async readCachedSummaries(category?: GenerationCapability) {
+  private async readCachedSummaries(category?: ComfyuiWorkflowCategory) {
     try {
       const index = await readJson<WorkflowIndexFile>(indexFilePath(await this.rootDir()))
       if (Date.now() - index.refreshed_at > CACHE_MAX_AGE_MS) {
@@ -296,7 +308,7 @@ export class ComfyuiWorkflowCacheManager {
       )
       return (
         workflows
-          .filter((workflow): workflow is ComfyuiWorkflow => Boolean(workflow))
+          .filter((workflow): workflow is CachedComfyuiWorkflow => Boolean(workflow))
           .sort((left, right) =>
             right.version.localeCompare(left.version, undefined, { numeric: true }),
           )[0] ?? null

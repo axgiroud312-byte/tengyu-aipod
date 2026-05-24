@@ -242,7 +242,7 @@ class GrsaiAdapter implements ImageGenerationAdapter {
 interface PaidSkill {
   id: string                          // "extract-prompt-v3"
   module: 'generation'                // 模块名
-  category: GenerationCapability      // "txt2img" | "img2img" | "extract" | "matting"
+  category: string                    // "txt2img" | "img2img" | "extract" | "matting" | "matting-mask"
   version: string                     // "3.0.1"
   enabled: boolean
   system_prompt: string               // LLM 的 systemMessage
@@ -489,6 +489,13 @@ ComfyUI 工作流"黑白图转 alpha + 与原图混合"
 ```
 
 详见 spec/04-detection 关于临时文件管理的策略（同样的 TempFileManager）。
+
+本地执行合同：
+- 黑白图 skill：`module='generation'`，`category='matting-mask'`，由后台配置；客户端默认取该分类下第一个 skill，并用该 skill 的 `system_prompt` 调 Grsai。
+- 混合工作流：从 `generation:list-comfyui-mixed-matting-workflows` 读取，服务端分类为 `matting-mixed`；本地执行时仍登记 `step='matting'`。
+- ComfyUI 输入图顺序：`reference_images[0]` 是原印花，`reference_images[1]` 是临时 `mask.png`。`ComfyuiWorkflowSlot.imageIndex` 和 `options.imageSlotIndexes` 都是 **0-based**，所以原图=0、mask=1；未配置时 slot 名含 `mask` 自动取 1，其它 image slot 取 0。
+- 临时文件：`mask.png` 只能写到 `.workbench/tmp/matting/{taskId}/mask.png`；单张完成后删文件，任务完成后 `TempFileManager.cleanupTask('matting', taskId)` 清目录。
+- artifact provider：混合路径输出登记 `provider='grsai+comfyui-mask'`，直接 ComfyUI 抠图仍登记 `provider='comfyui-chenyu'`。
 
 UI 上让用户选哪种路径：
 ```
@@ -763,6 +770,17 @@ CREATE TABLE comfyui_instances (
 'generation:run-img2img'              → { prompts, reference_images, mode, params } → TaskId
 'generation:run-extract'              → { source_images, provider, workflow_id?, params } → TaskId
 'generation:run-matting'              → { source_images, mode: 'comfyui' | 'mixed' } → TaskId
+'generation:list-comfyui-mixed-matting-workflows'
+                                      → ComfyuiWorkflowSummary[] where category='matting-mixed'
+'generation:run-mixed-matting'        → {
+                                          sourceArtifactIds,
+                                          workflowId,
+                                          workflowVersion?,
+                                          maskSkillId?,
+                                          maskSkillVersion?,
+                                          maskModel?,
+                                          prompt?,
+                                        } → TaskId
 
 // 晨羽实例管理
 'chenyu:list-pods'                    → ChenyuPod[]

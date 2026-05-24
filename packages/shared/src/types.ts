@@ -60,6 +60,7 @@ export interface ComfyuiWorkflowSlot {
   name: string
   nodeId: string
   field: string
+  imageIndex?: number
 }
 
 export interface ComfyuiWorkflow {

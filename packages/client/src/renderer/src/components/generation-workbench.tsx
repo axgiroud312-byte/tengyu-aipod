@@ -30,6 +30,7 @@ import {
 
 type Txt2imgMode = 'ai' | 'manual'
 type Img2imgMode = 'text' | 'layout' | 'style' | 'layout-style' | 'manual'
+type MattingMode = 'comfyui' | 'mixed'
 type ReferenceImageDraft = {
   id: string
   name: string
@@ -1624,11 +1625,14 @@ function ComfyuiExtractPanel() {
 }
 
 function ComfyuiMattingPanel() {
+  const [mode, setMode] = useState<MattingMode>('comfyui')
   const [sources, setSources] = useState<Img2imgPrintSource[]>([])
   const [folders, setFolders] = useState<string[]>([])
   const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([])
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [workflowKey, setWorkflowKey] = useState('')
+  const [mixedWorkflows, setMixedWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
+  const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [prompt, setPrompt] = useState('')
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -1667,8 +1671,11 @@ function ComfyuiMattingPanel() {
   }, [progress?.task_id])
 
   const percent = progressPercent(progress)
-  const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
-
+  const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows
+  const activeWorkflowKey = mode === 'mixed' ? mixedWorkflowKey : workflowKey
+  const selectedWorkflow = activeWorkflows.find(
+    (workflow) => workflowOptionKey(workflow) === activeWorkflowKey,
+  )
   async function loadSources() {
     setLoadingSources(true)
     setError(null)
@@ -1688,10 +1695,18 @@ function ComfyuiMattingPanel() {
 
   async function loadWorkflows() {
     try {
-      const nextWorkflows = await window.api.generation.listComfyuiMattingWorkflows()
+      const [nextWorkflows, nextMixedWorkflows] = await Promise.all([
+        window.api.generation.listComfyuiMattingWorkflows(),
+        window.api.generation.listComfyuiMixedMattingWorkflows(),
+      ])
       setWorkflows(nextWorkflows)
+      setMixedWorkflows(nextMixedWorkflows)
       setWorkflowKey(
         (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      )
+      setMixedWorkflowKey(
+        (current) =>
+          current || (nextMixedWorkflows[0] ? workflowOptionKey(nextMixedWorkflows[0]) : ''),
       )
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 抠图工作流失败')
@@ -1713,18 +1728,28 @@ function ComfyuiMattingPanel() {
       return
     }
     if (!selectedWorkflow) {
-      setError('请选择 ComfyUI 抠图工作流')
+      setError(mode === 'mixed' ? '请选择 ComfyUI 混合抠图工作流' : '请选择 ComfyUI 抠图工作流')
       return
     }
-
     setResult(null)
     setRunning(true)
-    const taskId = await window.api.generation.runComfyuiMatting({
-      sourceArtifactIds: selectedArtifactIds,
-      workflowId: selectedWorkflow.id,
-      workflowVersion: selectedWorkflow.version,
-      prompt,
-    })
+    const workflowVersion = selectedWorkflow.version
+    let taskId: string
+    if (mode === 'mixed') {
+      taskId = await window.api.generation.runMixedMatting({
+        sourceArtifactIds: selectedArtifactIds,
+        workflowId: selectedWorkflow.id,
+        prompt,
+        ...(workflowVersion ? { workflowVersion } : {}),
+      })
+    } else {
+      taskId = await window.api.generation.runComfyuiMatting({
+        sourceArtifactIds: selectedArtifactIds,
+        workflowId: selectedWorkflow.id,
+        prompt,
+        ...(workflowVersion ? { workflowVersion } : {}),
+      })
+    }
     setProgress({
       task_id: taskId,
       capability: 'matting',
@@ -1791,16 +1816,46 @@ function ComfyuiMattingPanel() {
         </div>
 
         <div className="rounded-md border bg-background p-4">
-          <h4 className="font-semibold">ComfyUI 抠图工作流</h4>
+          <h4 className="font-semibold">抠图方式</h4>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            {[
+              { key: 'comfyui' as const, label: 'ComfyUI 直接抠图', note: '推荐，单步完成。' },
+              {
+                key: 'mixed' as const,
+                label: '付费黑白图 + 混合',
+                note: '质量更高，速度更慢。',
+              },
+            ].map((item) => (
+              <label
+                className="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-md border bg-muted/30 p-3 text-sm"
+                key={item.key}
+              >
+                <input
+                  checked={mode === item.key}
+                  className="mt-1"
+                  onChange={() => setMode(item.key)}
+                  type="radio"
+                />
+                <span>
+                  <span className="block font-medium">{item.label}</span>
+                  <span className="mt-1 block text-xs text-muted-foreground">{item.note}</span>
+                </span>
+              </label>
+            ))}
+          </div>
           <div className="mt-4 grid gap-4 md:grid-cols-2">
             <label className="block space-y-2 text-sm font-medium">
               <span>工作流</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setWorkflowKey(event.target.value)}
-                value={workflowKey}
+                onChange={(event) =>
+                  mode === 'mixed'
+                    ? setMixedWorkflowKey(event.target.value)
+                    : setWorkflowKey(event.target.value)
+                }
+                value={activeWorkflowKey}
               >
-                {workflows.map((workflow) => (
+                {activeWorkflows.map((workflow) => (
                   <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
                     {workflow.name} · {workflow.version}
                   </option>
@@ -1812,7 +1867,11 @@ function ComfyuiMattingPanel() {
               <input
                 className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 onChange={(event) => setPrompt(event.target.value)}
-                placeholder="可留空，使用工作流默认抠图逻辑"
+                placeholder={
+                  mode === 'mixed'
+                    ? '可留空，使用混合工作流默认逻辑'
+                    : '可留空，使用工作流默认抠图逻辑'
+                }
                 value={prompt}
               />
             </label>
@@ -1831,6 +1890,10 @@ function ComfyuiMattingPanel() {
             <div>
               <dt className="text-muted-foreground">工作流</dt>
               <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">路径</dt>
+              <dd className="truncate font-medium">{mode === 'mixed' ? '混合路径' : '直接抠图'}</dd>
             </div>
           </dl>
           <Button

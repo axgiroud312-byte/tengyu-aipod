@@ -55,6 +55,9 @@ declare global {
         listComfyuiMattingWorkflows: () => Promise<
           import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]
         >
+        listComfyuiMixedMattingWorkflows: () => Promise<
+          import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]
+        >
         parseManualPrompts: (text: string) => Promise<string[]>
         runTxt2img: (
           input: import('../../main/lib/generation-service').Txt2imgRunInput,
@@ -67,6 +70,9 @@ declare global {
         ) => Promise<string>
         runComfyuiMatting: (
           input: import('../../main/lib/generation-service').ComfyuiMattingRunInput,
+        ) => Promise<string>
+        runMixedMatting: (
+          input: import('../../main/lib/generation-service').MixedMattingRunInput,
         ) => Promise<string>
         runComfyuiImg2img: (
           input: import('../../main/lib/generation-service').ComfyuiImg2imgRunInput,

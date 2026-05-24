@@ -21,6 +21,7 @@ import type {
   GenerationRunResult,
   GenerationTaskEvent,
   Img2imgSourcesResult,
+  MixedMattingRunInput,
   Txt2imgPromptDraft,
   Txt2imgRunInput,
 } from '../main/lib/generation-service'
@@ -87,6 +88,10 @@ const api = {
       ipcRenderer.invoke('generation:list-comfyui-matting-workflows') as Promise<
         ComfyuiWorkflowSummary[]
       >,
+    listComfyuiMixedMattingWorkflows: () =>
+      ipcRenderer.invoke('generation:list-comfyui-mixed-matting-workflows') as Promise<
+        ComfyuiWorkflowSummary[]
+      >,
     parseManualPrompts: (text: string) =>
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
@@ -97,6 +102,8 @@ const api = {
       ipcRenderer.invoke('generation:run-comfyui-extract', input) as Promise<string>,
     runComfyuiMatting: (input: ComfyuiMattingRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-matting', input) as Promise<string>,
+    runMixedMatting: (input: MixedMattingRunInput) =>
+      ipcRenderer.invoke('generation:run-mixed-matting', input) as Promise<string>,
     runComfyuiImg2img: (input: ComfyuiImg2imgRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-img2img', input) as Promise<string>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -31,6 +31,7 @@ import {
   promptGeneratorService,
 } from './prompt-generator-service'
 import { skillCacheManager } from './skill-cache'
+import { type TempFileManager, tempFileManager } from './temp-file-manager'
 
 export type Txt2imgPromptDraft = {
   id: string
@@ -153,6 +154,13 @@ export type ComfyuiMattingRunInput = {
   taskId?: string
 }
 
+export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & {
+  workflowId: string
+  maskSkillId: string
+  maskSkillVersion?: string
+  maskModel: string
+}
+
 type GenerationDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 type Img2imgReference = {
   artifactId: string
@@ -175,6 +183,7 @@ type GenerationServiceDependencies = {
   }) => Pick<ComfyuiChenyuAdapter, 'generate'>
   downloadImage?: (url: string) => Promise<Buffer>
   emitProgress?: (progress: GenerationProgress) => void
+  tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
 
 const DEFAULT_GENERATION_MODEL: GrsaiModel = 'nano-banana-2'
@@ -741,6 +750,16 @@ export async function listComfyuiMattingWorkflows(
   return workflows.filter((workflow) => workflow.capability === 'matting')
 }
 
+export async function listComfyuiMixedMattingWorkflows(
+  dependencies: {
+    workflowCache?: Pick<typeof comfyuiWorkflowCacheManager, 'listWorkflows'>
+  } = {},
+): Promise<ComfyuiWorkflowSummary[]> {
+  const workflowCache = dependencies.workflowCache ?? comfyuiWorkflowCacheManager
+  const workflows = await workflowCache.listWorkflows('matting-mixed')
+  return workflows.filter((workflow) => workflow.capability === 'matting-mixed')
+}
+
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
   const count = clampInt(input.count, 1, 20, 5)
   const capability = input.capability ?? 'txt2img'
@@ -923,6 +942,55 @@ export async function runComfyuiMatting(
     {
       ...dependencies,
       getSecret: async () => apiKey,
+    },
+  )
+    .then((result) => {
+      emitCompleted({ ok: true, result })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
+  return taskId
+}
+
+export async function runMixedMatting(
+  input: MixedMattingRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const sourceArtifactIds = Array.from(
+    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
+  )
+  if (sourceArtifactIds.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
+  }
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 混合抠图工作流', false)
+  }
+  const grsaiKey = await (dependencies.getSecret ?? getSecret)('grsai')
+  if (!grsaiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少 Grsai API Key', false, { provider: 'grsai' })
+  }
+  const chenyuKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!chenyuKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = input.taskId ?? `matting_mixed_${randomUUID()}`
+  void runMixedMattingBatch(
+    { ...input, taskId, sourceArtifactIds },
+    {
+      ...dependencies,
+      getSecret: async (key: string) => {
+        if (key === 'grsai') {
+          return grsaiKey
+        }
+        if (key === 'chenyu') {
+          return chenyuKey
+        }
+        return ''
+      },
     },
   )
     .then((result) => {
@@ -1369,6 +1437,176 @@ export async function runComfyuiMattingBatch(
   }
 }
 
+export async function runMixedMattingBatch(
+  input: MixedMattingRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const sourceArtifactIds = Array.from(
+    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
+  )
+  if (sourceArtifactIds.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
+  }
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 混合抠图工作流', false)
+  }
+  const grsaiKey = await (dependencies.getSecret ?? getSecret)('grsai')
+  if (!grsaiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少 Grsai API Key', false, { provider: 'grsai' })
+  }
+  const chenyuKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!chenyuKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = input.taskId ?? `matting_mixed_${randomUUID()}`
+  const result: GenerationRunResult = {
+    taskId,
+    total: sourceArtifactIds.length,
+    succeeded: 0,
+    failed: 0,
+    images: [],
+    failures: [],
+  }
+  const emit = dependencies.emitProgress ?? emitProgress
+  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+  const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
+  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+  const tempFiles = dependencies.tempFiles ?? tempFileManager
+  let createdTempDir = false
+
+  try {
+    ensureGenerationTables(db)
+    await tempFiles.createTaskDir('matting', taskId)
+    createdTempDir = true
+    const skill = await resolveMixedMattingMaskSkill(
+      input,
+      dependencies.skillCache ?? skillCacheManager,
+    )
+    const grsai = dependencies.createGrsaiAdapter?.(grsaiKey) ?? new GrsaiAdapter(grsaiKey)
+    const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
+    const comfyui =
+      dependencies.createComfyuiAdapter?.({ apiKey: chenyuKey, workbenchRoot }) ??
+      new ComfyuiChenyuAdapter({
+        instanceManager: new ComfyuiInstanceManager({
+          chenyu: new ChenyuCloudClient(chenyuKey),
+        }),
+        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+        workbenchRoot,
+        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      })
+
+    for (const artifactId of sourceArtifactIds) {
+      emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+      let maskPath: string | null = null
+      try {
+        const source = await readReferenceForArtifact(
+          db,
+          workbenchRoot,
+          collectionFolder,
+          artifactId,
+        )
+        maskPath = join(await tempFiles.createTaskDir('matting', taskId), 'mask.png')
+        const maskModel = normalizeModel(input.maskModel ?? DEFAULT_GENERATION_MODEL)
+        const maskResponse = await grsai.generate({
+          capability: 'img2img',
+          prompt: skill.systemPrompt,
+          reference_images: [source.reference],
+          output: {
+            aspect_ratio: '1:1',
+            image_size_label: '1K',
+            format: 'png',
+          },
+          model: maskModel,
+          options: {
+            replyType: 'async',
+            skillId: skill.id,
+            skillVersion: skill.version,
+          },
+        } satisfies GenerateRequest)
+        if (maskResponse.status !== 'succeeded') {
+          throw (
+            maskResponse.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 黑白图生成失败', true)
+          )
+        }
+        const maskImage = maskResponse.images[0]
+        if (!maskImage) {
+          throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回黑白图', true)
+        }
+        const maskBuffer = maskImage.local_path
+          ? await readFile(maskImage.local_path)
+          : await downloadImage(maskImage.url)
+        await writeFile(maskPath, maskBuffer)
+
+        const response = await comfyui.generate({
+          capability: 'matting',
+          prompt:
+            input.prompt?.trim() ||
+            'Convert the black and white mask to alpha and composite it with the original print.',
+          workflow_id: input.workflowId.trim(),
+          reference_images: [source.reference, await imageReference(maskPath)],
+          output: { format: 'png' },
+          options: {
+            taskId,
+            sourceArtifactIds: [artifactId],
+            printId: source.printId,
+            workflowCategory: 'matting-mixed',
+            artifactProvider: 'grsai+comfyui-mask',
+            maskSkillId: skill.id,
+            maskSkillVersion: skill.version,
+            maskModel,
+            imageSlotIndexes: {
+              sourceImage: 0,
+              originalImage: 0,
+              image: 0,
+              maskImage: 1,
+              mask: 1,
+              alpha: 1,
+            },
+            ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+          },
+        } satisfies GenerateRequest)
+        if (response.status !== 'succeeded') {
+          throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 混合抠图失败', true)
+        }
+        result.succeeded += response.images.length
+        result.images.push(
+          ...response.images.map((image) => ({
+            prompt: input.prompt ?? '',
+            url: image.url,
+            ...(image.local_path ? { localPath: image.local_path } : {}),
+            sourcePath: source.imagePath,
+            artifactId,
+            printId: source.printId,
+          })),
+        )
+      } catch (error) {
+        result.failed += 1
+        result.failures.push({
+          prompt: input.prompt ?? '',
+          error: appErrorMessage(error),
+          sourcePath: artifactId,
+        })
+      } finally {
+        if (maskPath) {
+          await rm(maskPath, { force: true })
+        }
+        emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+      }
+    }
+
+    return result
+  } finally {
+    db.close()
+    if (createdTempDir) {
+      await tempFiles.cleanupTask('matting', taskId)
+    }
+  }
+}
+
 export async function runComfyuiImg2imgBatch(
   input: ComfyuiImg2imgRunInput,
   dependencies: GenerationServiceDependencies = {},
@@ -1550,6 +1788,9 @@ export function registerGenerationIpc() {
   ipcMain.handle('generation:list-comfyui-img2img-workflows', () => listComfyuiImg2imgWorkflows())
   ipcMain.handle('generation:list-comfyui-extract-workflows', () => listComfyuiExtractWorkflows())
   ipcMain.handle('generation:list-comfyui-matting-workflows', () => listComfyuiMattingWorkflows())
+  ipcMain.handle('generation:list-comfyui-mixed-matting-workflows', () =>
+    listComfyuiMixedMattingWorkflows(),
+  )
   ipcMain.handle('generation:parse-manual-prompts', (_event, text: string) =>
     parseManualPrompts(text),
   )
@@ -1560,6 +1801,9 @@ export function registerGenerationIpc() {
   )
   ipcMain.handle('generation:run-comfyui-matting', (_event, input: ComfyuiMattingRunInput) =>
     runComfyuiMatting(input),
+  )
+  ipcMain.handle('generation:run-mixed-matting', (_event, input: MixedMattingRunInput) =>
+    runMixedMatting(input),
   )
   ipcMain.handle('generation:run-comfyui-img2img', (_event, input: ComfyuiImg2imgRunInput) =>
     runComfyuiImg2img(input),

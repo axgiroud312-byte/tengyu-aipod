@@ -6,6 +6,7 @@ import {
   injectComfyuiInputs,
   outputsFromHistory,
 } from './comfyui-chenyu-adapter'
+import type { CachedComfyuiWorkflow } from './comfyui-workflow-cache'
 
 const workflow: ComfyuiWorkflow = {
   id: 'extract-v3',
@@ -235,6 +236,93 @@ describe('ComfyuiChenyuAdapter', () => {
         JSON.stringify(['source-artifact']),
       ]),
     )
+  })
+
+  it('registers mixed matting outputs with the mixed provider', async () => {
+    const mixedWorkflow: CachedComfyuiWorkflow = {
+      ...workflow,
+      id: 'matting-mixed-v1',
+      capability: 'matting-mixed',
+    }
+    const db = createDb()
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage: vi.fn().mockResolvedValue('uploaded.png'),
+        queuePrompt: vi.fn().mockResolvedValue('prompt-1'),
+        getHistory: vi.fn().mockResolvedValue({
+          status: { completed: true },
+          outputs: { '9': { images: [{ filename: 'result.png' }] } },
+        }),
+        viewImage: vi.fn().mockResolvedValue(Buffer.from('result-bytes')),
+      },
+      workflowCache: { get: vi.fn().mockResolvedValue(mixedWorkflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+    })
+
+    await adapter.generate({
+      capability: 'matting',
+      prompt: 'composite',
+      workflow_id: 'matting-mixed-v1',
+      reference_images: [
+        { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+        { base64: Buffer.from('mask').toString('base64'), mime_type: 'image/png' },
+      ],
+      output: { format: 'png' },
+      options: {
+        taskId: 'mixed-task',
+        sourceArtifactIds: ['source-artifact'],
+        printId: 'pri_print',
+        workflowCategory: 'matting-mixed',
+        artifactProvider: 'grsai+comfyui-mask',
+      },
+    })
+
+    expect(db.rows[0]).toEqual(
+      expect.arrayContaining([
+        'mixed-task',
+        'pri_print',
+        'matting',
+        'grsai+comfyui-mask',
+        'matting-mixed-v1',
+      ]),
+    )
+  })
+
+  it('injects mixed matting source and mask images into separate workflow slots', () => {
+    const injected = injectComfyuiInputs(
+      {
+        '1': { inputs: { image: '' } },
+        '2': { inputs: { image: '' } },
+      },
+      [
+        { name: 'sourceImage', nodeId: '1', field: 'image', imageIndex: 0 },
+        { name: 'maskImage', nodeId: '2', field: 'image', imageIndex: 1 },
+      ],
+      {
+        capability: 'matting',
+        prompt: 'mix',
+        workflow_id: 'matting-mixed-v1',
+        reference_images: [
+          { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+          { base64: Buffer.from('mask').toString('base64'), mime_type: 'image/png' },
+        ],
+        output: { format: 'png' },
+      },
+      { uploadedImages: ['source.png', 'mask.png'] },
+    )
+
+    expect(injected).toEqual({
+      '1': { inputs: { image: 'source.png' } },
+      '2': { inputs: { image: 'mask.png' } },
+    })
   })
 
   it('throws CHENYU_INSTANCE_DOWN when no running instance is available', async () => {

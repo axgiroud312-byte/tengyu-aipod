@@ -4,21 +4,21 @@ import { extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
-  type ComfyuiWorkflow,
   type ComfyuiWorkflowSlot,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
 import type { ComfyHistoryEntry, ComfyHttpClient } from './comfy-http-client'
 import type { ComfyuiInstanceSummary } from './comfyui-instance-manager'
+import type { CachedComfyuiWorkflow, ComfyuiWorkflowCategory } from './comfyui-workflow-cache'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
 
 export type ComfyuiWorkflowCache = {
   get(
     workflowId: string,
-    capability: GenerateRequest['capability'],
+    capability: ComfyuiWorkflowCategory,
     version?: string,
-  ): Promise<ComfyuiWorkflow>
+  ): Promise<CachedComfyuiWorkflow>
 }
 
 export type ComfyuiExecutionDatabase = Pick<Database.Database, 'exec' | 'prepare'>
@@ -76,7 +76,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
 
     const workflow = await this.options.workflowCache.get(
       req.workflow_id,
-      req.capability,
+      workflowCategoryFromRequest(req),
       workflowVersionFromRequest(req),
     )
     const uploadedImages = await this.uploadReferenceImages(req)
@@ -115,7 +115,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
 
   private async downloadAndPersistOutputs(input: {
     req: GenerateRequest
-    workflow: ComfyuiWorkflow
+    workflow: CachedComfyuiWorkflow
     outputs: ComfyImageOutput[]
     promptId: string
   }) {
@@ -223,7 +223,7 @@ function valueForSlot(
   }
 
   if (slot.name.toLowerCase().includes('image') || slot.field.toLowerCase().includes('image')) {
-    const filename = context.uploadedImages[0]
+    const filename = context.uploadedImages[imageIndexForSlot(slot, req)]
     if (!filename) {
       throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流需要参考图', false, {
         provider: 'comfyui-chenyu',
@@ -234,6 +234,37 @@ function valueForSlot(
   }
 
   return req.prompt
+}
+
+function imageIndexForSlot(slot: ComfyuiWorkflowSlot, req: GenerateRequest) {
+  if (typeof slot.imageIndex === 'number' && Number.isInteger(slot.imageIndex)) {
+    return Math.max(0, slot.imageIndex)
+  }
+
+  const explicitValue =
+    req.options?.[`${slot.name}ImageIndex`] ??
+    req.options?.[`${slot.field}ImageIndex`] ??
+    req.options?.imageSlotIndexes
+  if (typeof explicitValue === 'number' && Number.isInteger(explicitValue) && explicitValue >= 0) {
+    return explicitValue
+  }
+  if (explicitValue && typeof explicitValue === 'object' && !Array.isArray(explicitValue)) {
+    const indexes = explicitValue as Record<string, unknown>
+    const indexValue = indexes[slot.name] ?? indexes[slot.field]
+    if (typeof indexValue === 'number' && Number.isInteger(indexValue) && indexValue >= 0) {
+      return indexValue
+    }
+  }
+
+  const normalizedName = `${slot.name} ${slot.field}`.toLowerCase()
+  if (normalizedName.includes('mask')) {
+    return 1
+  }
+  return 0
+}
+
+function providerFromParams(params: Record<string, unknown>) {
+  return params.artifactProvider === 'grsai+comfyui-mask' ? 'grsai+comfyui-mask' : 'comfyui-chenyu'
 }
 
 function ensureArtifactsTable(db: Pick<Database.Database, 'exec'>) {
@@ -266,7 +297,7 @@ async function registerComfyuiArtifact(
     printId: string
     targetPath: string
     capability: GenerateRequest['capability']
-    workflow: ComfyuiWorkflow
+    workflow: CachedComfyuiWorkflow
     prompt: string
     params: Record<string, unknown>
     sourceArtifactIds: string[]
@@ -297,7 +328,7 @@ async function registerComfyuiArtifact(
     input.taskId,
     input.printId,
     input.capability,
-    'comfyui-chenyu',
+    providerFromParams(input.params),
     input.workflow.id,
     JSON.stringify(input.sourceArtifactIds),
     input.targetPath,
@@ -327,6 +358,10 @@ function printIdFromRequest(req: GenerateRequest) {
 
 function workflowVersionFromRequest(req: GenerateRequest) {
   return typeof req.options?.workflowVersion === 'string' ? req.options.workflowVersion : undefined
+}
+
+function workflowCategoryFromRequest(req: GenerateRequest): ComfyuiWorkflowCategory {
+  return req.options?.workflowCategory === 'matting-mixed' ? 'matting-mixed' : req.capability
 }
 
 function newPrintId() {

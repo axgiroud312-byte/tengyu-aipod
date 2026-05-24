@@ -68,6 +68,7 @@ export const ComfyuiWorkflowSlotSchema = z.object({
   name: z.string().min(1),
   nodeId: z.string().min(1),
   field: z.string().min(1),
+  imageIndex: z.number().int().min(0).optional(),
 })
 
 export const ComfyuiWorkflowSchema = z.object({

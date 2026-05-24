@@ -8,12 +8,14 @@ import {
   listComfyuiExtractWorkflows,
   listComfyuiImg2imgWorkflows,
   listComfyuiMattingWorkflows,
+  listComfyuiMixedMattingWorkflows,
   listExtractSources,
   listImg2imgSources,
   runComfyuiExtractBatch,
   runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
   runExtractBatch,
+  runMixedMattingBatch,
 } from './generation-service'
 
 type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
@@ -196,7 +198,10 @@ describe('generation extract service', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-grsai',
         openDatabase: fakeDb.openDatabase,
-        skillCache: { getSkill: vi.fn().mockResolvedValue(extractSkill()) },
+        skillCache: {
+          getSkill: vi.fn().mockResolvedValue(extractSkill()),
+          listSkills: vi.fn(),
+        },
         promptGenerator: { generatePrompts },
         createGrsaiAdapter: () => ({ generate }),
         downloadImage,
@@ -547,6 +552,31 @@ describe('generation comfyui matting service', () => {
     expect(result.map((workflow) => workflow.id)).toEqual(['matting-v1'])
   })
 
+  it('lists only mixed matting ComfyUI workflows', async () => {
+    const result = await listComfyuiMixedMattingWorkflows({
+      workflowCache: {
+        listWorkflows: vi.fn().mockResolvedValue([
+          {
+            id: 'matting-mixed-v1',
+            version: '1.0.0',
+            name: 'Mask Composite',
+            capability: 'matting-mixed',
+            requiredModels: [],
+          },
+          {
+            id: 'matting-v1',
+            version: '1.0.0',
+            name: 'BiRefNet',
+            capability: 'matting',
+            requiredModels: [],
+          },
+        ]),
+      },
+    })
+
+    expect(result.map((workflow) => workflow.id)).toEqual(['matting-mixed-v1'])
+  })
+
   it('runs ComfyUI matting with selected print source lineage', async () => {
     const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
     await createImage(printPath, 'print-image')
@@ -631,5 +661,119 @@ describe('generation comfyui matting service', () => {
 
     expect(result).toMatchObject({ taskId: 'matting-task', total: 1, succeeded: 0, failed: 1 })
     expect(result.failures[0]?.error).toBe('图生图不能直接选择 01-采集 原图，请先提取成印花')
+  })
+
+  it('runs mixed matting through Grsai mask generation and ComfyUI compositing', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+    const progress: unknown[] = []
+    const generateMask = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'https://example.test/mask.png' }],
+    })
+    const generateComposite = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///matting.png', local_path: '/matting.png' }],
+    })
+    const createTaskDir = vi.fn(async () => {
+      const dir = join(workbenchRoot, '.workbench', 'tmp', 'matting', 'mixed-task')
+      await mkdir(dir, { recursive: true })
+      return dir
+    })
+    const cleanupTask = vi.fn()
+    const downloadImage = vi.fn().mockResolvedValue(Buffer.from('mask-image'))
+    const listSkills = vi.fn().mockResolvedValue([
+      {
+        id: 'matting-mask-v1',
+        module: 'generation',
+        category: 'matting-mask',
+        platform: null,
+        language: null,
+        version: '1.0.0',
+        enabled: true,
+        recommendedModel: 'nano-banana-2',
+        notes: null,
+      },
+    ])
+    const getSkill = vi.fn().mockResolvedValue(
+      extractSkill({
+        id: 'matting-mask-v1',
+        category: 'matting-mask',
+        version: '1.0.0',
+        systemPrompt: 'Make a white background black print mask.',
+      }),
+    )
+
+    const result = await runMixedMattingBatch(
+      {
+        sourceArtifactIds: ['print-artifact'],
+        workflowId: 'matting-mixed-v1',
+        workflowVersion: '1.0.0',
+        prompt: 'composite alpha',
+        taskId: 'mixed-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async (key) => (key === 'grsai' ? 'sk-grsai' : 'cy-key'),
+        openDatabase: fakeDb.openDatabase,
+        skillCache: {
+          getSkill,
+          listSkills,
+        },
+        createGrsaiAdapter: () => ({ generate: generateMask }),
+        createComfyuiAdapter: () => ({ generate: generateComposite }),
+        downloadImage,
+        emitProgress: (item) => progress.push(item),
+        tempFiles: { createTaskDir, cleanupTask },
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'mixed-task', total: 1, succeeded: 1, failed: 0 })
+    expect(listSkills).toHaveBeenCalledWith({ module: 'generation', category: 'matting-mask' })
+    expect(getSkill).toHaveBeenCalledWith('matting-mask-v1', '1.0.0')
+    expect(generateMask).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'img2img',
+        prompt: 'Make a white background black print mask.',
+        reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
+        options: expect.objectContaining({
+          replyType: 'async',
+          skillId: 'matting-mask-v1',
+          skillVersion: '1.0.0',
+        }),
+      }),
+    )
+    expect(downloadImage).toHaveBeenCalledWith('https://example.test/mask.png')
+    expect(generateComposite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'matting',
+        workflow_id: 'matting-mixed-v1',
+        reference_images: [
+          expect.objectContaining({ mime_type: 'image/png' }),
+          expect.objectContaining({ mime_type: 'image/png' }),
+        ],
+        options: expect.objectContaining({
+          taskId: 'mixed-task',
+          sourceArtifactIds: ['print-artifact'],
+          printId: 'pri_print',
+          workflowCategory: 'matting-mixed',
+          artifactProvider: 'grsai+comfyui-mask',
+          maskSkillId: 'matting-mask-v1',
+        }),
+      }),
+    )
+    expect(cleanupTask).toHaveBeenCalledWith('matting', 'mixed-task')
+    expect(progress).toContainEqual(
+      expect.objectContaining({ task_id: 'mixed-task', capability: 'matting', processed: 1 }),
+    )
   })
 })
