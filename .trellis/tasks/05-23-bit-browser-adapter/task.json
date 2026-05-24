@@ -3,7 +3,7 @@
   "name": "bit-browser-adapter",
   "title": "bit browser adapter",
   "description": "比特浏览器 HTTP API 客户端",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
