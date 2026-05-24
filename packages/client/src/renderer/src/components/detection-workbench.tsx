@@ -252,6 +252,9 @@ export function DetectionWorkbench() {
   const [message, setMessage] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const [balance, setBalance] = useState('')
+  const [isPromoteDialogOpen, setIsPromoteDialogOpen] = useState(false)
+  const [promoteMode, setPromoteMode] = useState<'copy' | 'move'>('copy')
+  const [isPromoting, setIsPromoting] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -369,6 +372,17 @@ export function DetectionWorkbench() {
     }
     return next
   }, [results])
+  const passPromotionIds = useMemo(
+    () =>
+      resultsSorted.reduce<string[]>((acc, result) => {
+        if (result.status === 'failed' || result.riskLevel !== 'pass' || !result.artifactId) {
+          return acc
+        }
+        acc.push(result.artifactId)
+        return acc
+      }, []),
+    [resultsSorted],
+  )
 
   const isRunning = Boolean(progress && progress.processed < progress.total)
   const canRun = Boolean(config?.skillId) && selectedImages.length > 0 && !isRunning
@@ -479,23 +493,40 @@ export function DetectionWorkbench() {
     URL.revokeObjectURL(url)
   }
 
-  async function promotePassImages() {
-    const passIds = resultsSorted.reduce<string[]>((acc, result) => {
-      if (result.status === 'failed' || result.riskLevel !== 'pass' || !result.artifactId) {
-        return acc
-      }
-      acc.push(result.artifactId)
-      return acc
-    }, [])
-    if (!passIds.length) {
+  function openPromoteDialog() {
+    if (!passPromotionIds.length) {
       setError('没有可加入待套版的 pass 图')
       return
     }
-    const count = await window.api.detection.promoteToMatting({
-      artifact_ids: passIds,
-      mode: 'copy',
-    })
-    setMessage(`已复制 ${count} 张 pass 图到待套版`)
+    setPromoteMode('copy')
+    setIsPromoteDialogOpen(true)
+  }
+
+  async function promotePassImages() {
+    if (!passPromotionIds.length) {
+      setError('没有可加入待套版的 pass 图')
+      setIsPromoteDialogOpen(false)
+      return
+    }
+    setIsPromoting(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const count = await window.api.detection.promoteToMatting({
+        artifact_ids: passPromotionIds,
+        mode: promoteMode,
+      })
+      setMessage(
+        promoteMode === 'move'
+          ? `已移动 ${count} 张 pass 图到待套版`
+          : `已复制 ${count} 张 pass 图到待套版`,
+      )
+      setIsPromoteDialogOpen(false)
+    } catch (promoteError) {
+      setError(promoteError instanceof Error ? promoteError.message : '加入待套版失败')
+    } finally {
+      setIsPromoting(false)
+    }
   }
 
   async function retestRow(result: DetectionImageResult) {
@@ -771,8 +802,8 @@ export function DetectionWorkbench() {
               </div>
               <div className="flex gap-2">
                 <Button
-                  disabled={!resultsSorted.length}
-                  onClick={() => void promotePassImages()}
+                  disabled={!passPromotionIds.length}
+                  onClick={openPromoteDialog}
                   type="button"
                   variant="secondary"
                 >
@@ -936,6 +967,77 @@ export function DetectionWorkbench() {
           </div>
         </aside>
       </div>
+      {isPromoteDialogOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/35 px-4">
+          <div className="w-full max-w-md rounded-md border bg-background p-5 shadow-xl">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-md border border-emerald-200 bg-emerald-50 p-2 text-emerald-700">
+                <AlertTriangle className="h-4 w-4" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">一键加入待套版</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  发现 {passPromotionIds.length} 张 pass 印花，将流转到 04-待套版印花。
+                </p>
+              </div>
+            </div>
+
+            <div className="mt-5 space-y-3">
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
+                  promoteMode === 'copy' ? 'border-primary bg-primary/5' : 'bg-background'
+                }`}
+              >
+                <input
+                  checked={promoteMode === 'copy'}
+                  className="mt-1"
+                  onChange={() => setPromoteMode('copy')}
+                  type="radio"
+                />
+                <span>
+                  <span className="block font-medium">复制（推荐）</span>
+                  <span className="mt-1 block text-muted-foreground">
+                    保留 03-检测/pass 副本，同时复制到 04-待套版印花。
+                  </span>
+                </span>
+              </label>
+              <label
+                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
+                  promoteMode === 'move' ? 'border-primary bg-primary/5' : 'bg-background'
+                }`}
+              >
+                <input
+                  checked={promoteMode === 'move'}
+                  className="mt-1"
+                  onChange={() => setPromoteMode('move')}
+                  type="radio"
+                />
+                <span>
+                  <span className="block font-medium">移动</span>
+                  <span className="mt-1 block text-muted-foreground">
+                    将 pass 图移入 04-待套版印花，不保留 03-检测/pass 副本。
+                  </span>
+                </span>
+              </label>
+            </div>
+
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                disabled={isPromoting}
+                onClick={() => setIsPromoteDialogOpen(false)}
+                type="button"
+                variant="secondary"
+              >
+                取消
+              </Button>
+              <Button disabled={isPromoting} onClick={() => void promotePassImages()} type="button">
+                {isPromoting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                确认
+              </Button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }

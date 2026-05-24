@@ -3,7 +3,7 @@
   "name": "detection-promote-to-matting",
   "title": "detection promote to matting",
   "description": "一键流转 pass 到 04-待套版印花",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

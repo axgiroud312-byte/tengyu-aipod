@@ -2,7 +2,7 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
+import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   type DetectionBatchConfig,
@@ -26,6 +26,17 @@ type FakeDetectionRow = {
   thresholdSnapshot: string
   outputPath: string
   createdAt: number
+}
+
+type MattingArtifactRow = {
+  task_id: string
+  print_id: string
+  step: string
+  provider: string
+  source_artifact_ids: string
+  file_path: string
+  file_size: number
+  file_hash: string
 }
 
 let workbenchRoot = ''
@@ -127,6 +138,117 @@ function createFakeDb() {
 async function createImage(path: string, content: string) {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, content)
+}
+
+function createSqliteDependencies() {
+  return {
+    readConfig: async () => ({ workbench_root: workbenchRoot }),
+    openDatabase: (_workbenchRoot: string) =>
+      new Database(join(workbenchRoot, '.workbench', 'workbench.db')),
+  }
+}
+
+async function initializeDetectionSqlite(
+  service: DetectionService,
+  dependencies: ReturnType<typeof createSqliteDependencies>,
+) {
+  await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
+  await service.listResults({}, dependencies)
+}
+
+function seedDetectionResult(
+  db: Database.Database,
+  input: {
+    artifactId: string
+    detectionId: string
+    taskId: string
+    printId: string
+    sourcePath: string
+  },
+) {
+  db.prepare(`
+    INSERT INTO artifacts (
+      id,
+      task_id,
+      print_id,
+      step,
+      provider,
+      source_artifact_ids,
+      file_path,
+      file_size,
+      file_hash,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.artifactId,
+    input.taskId,
+    input.printId,
+    'manual-import',
+    'manual-import',
+    '[]',
+    input.sourcePath,
+    10,
+    'seed-hash',
+    1000,
+  )
+  db.prepare(`
+    INSERT INTO detection_results (
+      id,
+      artifact_id,
+      task_id,
+      risk_score,
+      risk_level,
+      reason,
+      model,
+      skill_id,
+      skill_version,
+      threshold_snapshot,
+      output_path,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    input.detectionId,
+    input.artifactId,
+    input.taskId,
+    12,
+    'pass',
+    '原创图案',
+    'qwen3-vl-flash',
+    'infringement-v2',
+    '2.0.0',
+    '{"passMax":39,"reviewMax":69}',
+    input.sourcePath,
+    1001,
+  )
+}
+
+function readMattingArtifacts(
+  openDatabase: ReturnType<typeof createSqliteDependencies>['openDatabase'],
+) {
+  const db = openDatabase(workbenchRoot)
+  try {
+    return db
+      .prepare(
+        `
+          SELECT
+            task_id,
+            print_id,
+            step,
+            provider,
+            source_artifact_ids,
+            file_path,
+            file_size,
+            file_hash
+          FROM artifacts
+          WHERE step = ?
+        `,
+      )
+      .all('matting') as MattingArtifactRow[]
+  } finally {
+    db.close()
+  }
 }
 
 beforeEach(async () => {
@@ -366,5 +488,112 @@ describe('DetectionService', () => {
     })
     expect(fakeDb.detectionRows).toHaveLength(0)
     await expect(stat(join(workbenchRoot, '03-检测'))).rejects.toThrow()
+  })
+
+  it('copies detected pass images to matting and records artifact rows in sqlite', async () => {
+    const sourcePath = join(workbenchRoot, '03-检测', 'pass', 'pri-pass.png')
+    await createImage(sourcePath, 'pass-image')
+    const service = new DetectionService()
+    const dependencies = createSqliteDependencies()
+
+    await initializeDetectionSqlite(service, dependencies)
+    const db = dependencies.openDatabase(workbenchRoot)
+    try {
+      seedDetectionResult(db, {
+        artifactId: 'art-pass',
+        detectionId: 'det-pass',
+        taskId: 'task-pass',
+        printId: 'pri-pass',
+        sourcePath,
+      })
+    } finally {
+      db.close()
+    }
+
+    const promoted = await service.promoteToMatting(
+      { artifact_ids: ['art-pass'], mode: 'copy' },
+      dependencies,
+    )
+
+    const targetPath = join(workbenchRoot, '04-待套版印花', 'pri-pass.png')
+    expect(promoted).toBe(1)
+    await expect(stat(sourcePath)).resolves.toBeTruthy()
+    await expect(stat(targetPath)).resolves.toBeTruthy()
+
+    const mattingRows = readMattingArtifacts(dependencies.openDatabase)
+    expect(mattingRows).toHaveLength(1)
+    const mattingRow = mattingRows[0]
+    if (!mattingRow) {
+      throw new Error('Expected promoted matting artifact row')
+    }
+    expect(mattingRow).toMatchObject({
+      task_id: 'task-pass',
+      print_id: 'pri-pass',
+      step: 'matting',
+      provider: 'detection-promote',
+      file_path: targetPath,
+      file_size: 10,
+    })
+    expect(JSON.parse(mattingRow.source_artifact_ids)).toEqual(['art-pass'])
+    expect(mattingRow.file_hash).toMatch(/^[a-f0-9]{64}$/)
+
+    const verifyDb = dependencies.openDatabase(workbenchRoot)
+    try {
+      const detectionRows = verifyDb
+        .prepare(
+          `
+            SELECT risk_level, output_path
+            FROM detection_results
+            WHERE artifact_id = ?
+          `,
+        )
+        .all('art-pass')
+      expect(detectionRows).toEqual([{ risk_level: 'pass', output_path: sourcePath }])
+    } finally {
+      verifyDb.close()
+    }
+  })
+
+  it('moves detected pass images to matting when requested', async () => {
+    const sourcePath = join(workbenchRoot, '03-检测', 'pass', 'pri-move.png')
+    await createImage(sourcePath, 'pass-image')
+    const service = new DetectionService()
+    const dependencies = createSqliteDependencies()
+
+    await initializeDetectionSqlite(service, dependencies)
+    const db = dependencies.openDatabase(workbenchRoot)
+    try {
+      seedDetectionResult(db, {
+        artifactId: 'art-move',
+        detectionId: 'det-move',
+        taskId: 'task-move',
+        printId: 'pri-move',
+        sourcePath,
+      })
+    } finally {
+      db.close()
+    }
+
+    const promoted = await service.promoteToMatting(
+      { artifact_ids: ['art-move'], mode: 'move' },
+      dependencies,
+    )
+
+    const targetPath = join(workbenchRoot, '04-待套版印花', 'pri-move.png')
+    expect(promoted).toBe(1)
+    await expect(stat(sourcePath)).rejects.toThrow()
+    await expect(stat(targetPath)).resolves.toBeTruthy()
+
+    const mattingRows = readMattingArtifacts(dependencies.openDatabase)
+    expect(mattingRows).toHaveLength(1)
+    expect(mattingRows[0]).toMatchObject({
+      task_id: 'task-move',
+      print_id: 'pri-move',
+      step: 'matting',
+      provider: 'detection-promote',
+      file_path: targetPath,
+      file_size: 10,
+    })
+    expect(JSON.parse(mattingRows[0]?.source_artifact_ids ?? '[]')).toEqual(['art-move'])
   })
 })
