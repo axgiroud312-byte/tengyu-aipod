@@ -534,6 +534,71 @@ throw new AppErrorClass('HTTP_5XX', 'ComfyUI 服务暂时不可用', true, {
 })
 ```
 
+### Scenario: Client Chenyu Cloud Adapter
+
+#### 1. Scope / Trigger
+
+- Trigger: Chenyu Cloud open API calls from the Electron main process.
+- Applies to: `packages/client/src/main/lib/*chenyu*` cloud resource adapters.
+
+#### 2. Signatures
+
+- `new ChenyuCloudClient(apiKey, options?)`
+- `listPods(params?)`, `listGpus(params?)`, `listImages(params?)`
+- `createByPod(input)`, `getInstanceInfo(instance_uuid)`, `listInstances(params?)`
+- `startup(input)`, `shutdown(instance_uuid)`, `restart(instance_uuid)`, `destroy(instance_uuid)`
+- `setShutdownTimer({ instance_uuid, enable, shutdown_time })`
+- `getBalance()`
+
+#### 3. Contracts
+
+- Base URL defaults to `https://www.chenyu.cn/api/open/v2`.
+- Every request sends `Authorization: Bearer <apiKey>`.
+- JSON responses use the Chenyu envelope `{ code, msg, data }`.
+- `code === 0` is success. Any non-zero business `code` throws `AppErrorClass`.
+- Instance status values are stable: `1=initializing`, `2=running`, `21=shutting_down`, `22=stopped`.
+- `shutdown_timer.shutdown_time` must be a Unix timestamp in seconds, matching `docs/spec/03-generation.md §9.2`.
+- Do not call `set_idle_close` or Chenyu workflow/run APIs in v1.
+
+#### 4. Validation & Error Matrix
+
+- Request abort/timeout -> `NETWORK_TIMEOUT`, retryable, `details.kind = 'network'`.
+- Network connection failure -> `NETWORK_OFFLINE`, retryable.
+- HTTP 401/403 -> `HTTP_4XX`, non-retryable, user must update Chenyu API key.
+- HTTP 429 -> `HTTP_429`, retryable; honor `Retry-After` when present.
+- HTTP 5xx -> `HTTP_5XX`, retryable.
+- Other HTTP 4xx -> `HTTP_4XX`, non-retryable.
+- Non-zero Chenyu envelope code -> `HTTP_4XX` by default, with `details.chenyuCode` and `details.message`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: list Pod/GPU options, create an instance, set shutdown timer immediately, poll instance info until status `2`.
+- Base: list endpoints return empty arrays when Chenyu omits list fields.
+- Bad: treating HTTP 200 with `code !== 0` as success, or sending shutdown timer minutes instead of a timestamp.
+
+#### 6. Tests Required
+
+- Unit tests with MSW for auth/query params, resource lists, create/lifecycle methods, balance, non-zero envelope code, HTTP 429 retry, HTTP 401, HTTP 5xx, and status mapping.
+- Run root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```ts
+await chenyu.setShutdownTimer({ instance_uuid, enable: true, shutdown_time: 60 })
+```
+
+##### Correct
+
+```ts
+await chenyu.setShutdownTimer({
+  instance_uuid,
+  enable: true,
+  shutdown_time: Math.floor(Date.now() / 1000) + autoShutdownMinutes * 60,
+})
+```
+
 ---
 
 ## Error Handling Patterns

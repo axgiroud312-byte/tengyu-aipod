@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Primary Chenyu Cloud API reference for endpoints, auth, response envelope, status codes, and shutdown timer notes."}
+{"file":"docs/spec/03-generation.md","reason":"Defines Tengyu's ComfyUI provider flow, shutdown timer timestamp policy, IPC shape, and instance status expectations."}
+{"file":".trellis/tasks/05-23-chenyu-cloud-adapter/research/chenyu-cloud-api.md","reason":"Task-specific API notes and boundaries for ChenyuCloudClient."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for main-process adapter code."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Adapter must map Chenyu transport and business errors into AppErrorClass consistently."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality expectations and tests for backend code."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Required to reuse existing adapter patterns and avoid rewriting generation services."}

@@ -3,7 +3,7 @@
   "name": "chenyu-cloud-adapter",
   "title": "chenyu cloud adapter",
   "description": "晨羽智云 API（Pod/GPU/实例/计费）",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
