@@ -3,7 +3,7 @@
   "name": "collection-injected-script",
   "title": "collection injected script",
   "description": "注入到比特浏览器的页面脚本",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
