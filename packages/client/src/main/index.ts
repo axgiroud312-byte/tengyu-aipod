@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
+import { registerCollectionSessionIpc } from './lib/collection-session-manager'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
 import { registerGenerationIpc } from './lib/generation-service'
@@ -50,6 +51,7 @@ app.whenReady().then(() => {
   registerOnboardingIpc()
   registerSkillCacheIpc()
   registerTempFileIpc()
+  registerCollectionSessionIpc()
   registerTitleIpc()
   registerDetectionConfigIpc()
   registerDetectionIpc()

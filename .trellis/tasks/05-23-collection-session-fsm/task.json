@@ -3,7 +3,7 @@
   "name": "collection-session-fsm",
   "title": "collection session fsm",
   "description": "采集会话状态机+资源锁",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
