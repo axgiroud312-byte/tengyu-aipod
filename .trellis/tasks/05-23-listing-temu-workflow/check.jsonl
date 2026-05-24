@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Verify workflow stage responsibilities, evidence, and four-layer boundaries."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Verify no forbidden source DOM logic was ported."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Check state-transition and layer separation requirements."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend package guideline index for quality review."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Verify action executor contract remains respected by workflow."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared review triggers for reuse and cross-layer concerns."}
+{"file":".trellis/tasks/05-23-listing-temu-workflow/research/temu-workflow-contract.md","reason":"Verify task-specific workflow and real test baseline are met."}

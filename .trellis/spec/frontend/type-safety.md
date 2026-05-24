@@ -296,6 +296,63 @@ if (after.carousel_images.count <= before.carousel_images.count) {
 }
 ```
 
+### Scenario: Listing Platform Workflow Contract
+
+#### 1. Scope / Trigger
+- Trigger: a listing platform adds a `workflow.ts` file that orchestrates selectors, parser, and action executor into runner-facing listing results.
+- Boundary: workflow owns business sequencing, stage evidence, and `ListingResult` assembly. It must not introduce scattered selectors, direct low-level DOM click/upload logic, or fake-DOM tests.
+
+#### 2. Signatures
+- Platform workflow file: `packages/client/src/modules/listing/platforms/<platform>/workflow.ts`
+- Runner entry: `runListingItem(page, item, config): Promise<ListingResult>`
+- Optional test seam: `runListingItem(page, item, config, dependencies?)` may inject action functions and `now()` for pure contract tests, but real DOM behavior must be covered by `*.real.test.ts`.
+- Stage constants must use shared `ListingStage` values from `@tengyu-aipod/shared`.
+
+#### 3. Contracts
+- Every workflow stage records `observed_state`, `target_state`, `transition`, and `success_evidence` in `StageResult.details`.
+- Every stage saves screenshot and compact DOM evidence under `config.evidenceDir/<stage>/`.
+- Workflow failures must throw a serializable `ListingFailure` so `ListingRunner` can preserve the failing stage and decide retry behavior.
+- Mutating actions such as image upload, video upload, one-click SKU, shop switching, saving, and publishing must stay guarded by explicit options and be skipped or rejected by default.
+- `submit_publish` and `publish_result` must not publish real goods in `save-draft` mode.
+- Real workflow tests must use the existing Bit Browser profile through `listProfiles()` plus `connectOverCDP`; do not create a new profile and do not mock CDP.
+
+#### 4. Validation & Error Matrix
+- Parser never reaches editable state before timeout -> `PAGE_NOT_READY`.
+- Login page -> `LOGIN_REQUIRED`.
+- Missing local image/video when mutation is explicitly enabled -> `MATERIAL_FILE_MISSING`.
+- Action executor failure -> convert to `ListingFailure` with action selector/url/evidence when available.
+- Workflow stage returns without evidence -> test failure.
+- Default CI run executes only non-real tests; `REAL_LISTING=1` enables real DOM tests; `REAL_LISTING_MUTATE=1` is required for real draft mutation.
+
+#### 5. Good/Base/Bad Cases
+- Good: workflow stage calls parser, delegates action to executor, reparses through executor or parser, saves evidence, and returns typed `StageResult`.
+- Base: default real workflow test performs low-risk same-value field actions and records guarded skips for upload/SKU mutation.
+- Bad: workflow test uses fixture HTML or a fake Playwright page to claim end-to-end workflow success.
+
+#### 6. Tests Required
+- Pure tests may cover stage constants and deterministic helper functions using real material paths.
+- Guarded real tests must run the workflow against every task-required real template and assert all stage details/evidence on the real page DOM.
+- Quality gates: client build/test/type-check/lint, root test/type-check/lint, and `git diff --check`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+it('runs workflow', async () => {
+  const page = fakePageFromHtml('<input name="title">')
+  await runListingItem(page, item, config)
+})
+```
+
+Correct:
+```ts
+const browser = await chromium.connectOverCDP(endpoint.http)
+const page = await browser.contexts()[0].newPage()
+await page.goto(template.editUrl)
+const result = await runListingItem(page, item, config)
+expect(result.stages.every((stage) => stage.screenshotPath)).toBe(true)
+```
+
 ---
 
 ## Validation

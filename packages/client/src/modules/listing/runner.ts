@@ -25,6 +25,7 @@ import {
   browserProfileLocks,
 } from '../../main/lib/browser-profile-lock'
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
+import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
 
 const nodeRequire = createRequire(import.meta.url)
 type ElectronBrowserWindowConstructor = typeof import('electron').BrowserWindow
@@ -765,6 +766,9 @@ function failureFromUnknown(error: unknown, stage: ListingStage): ListingFailure
   if (error instanceof AppErrorClass) {
     return listingFailureFromAppError(error, stage)
   }
+  if (isListingFailureLike(error)) {
+    return error
+  }
   if (isRecord(error) && typeof error.message === 'string' && typeof error.code === 'string') {
     return createListingFailure({
       code: error.code === 'SELECTOR_NOT_FOUND' ? 'SELECTOR_NOT_FOUND' : 'UNKNOWN',
@@ -893,6 +897,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
+function isListingFailureLike(error: unknown): error is ListingFailure {
+  if (!isRecord(error)) {
+    return false
+  }
+  return (
+    typeof error.code === 'string' &&
+    typeof error.appErrorCode === 'string' &&
+    typeof error.message === 'string' &&
+    typeof error.retryable === 'boolean' &&
+    typeof error.stage === 'string'
+  )
+}
+
 function electronIpcMain() {
   return (nodeRequire('electron') as typeof import('electron')).ipcMain
 }
@@ -909,4 +926,7 @@ function electronBrowserWindow(): ElectronBrowserWindowConstructor {
 
 export const listingRunner = new ListingRunner({
   emitProgress: emitListingProgress,
+  workflows: {
+    'temu-pop': temuPopWorkflow,
+  },
 })

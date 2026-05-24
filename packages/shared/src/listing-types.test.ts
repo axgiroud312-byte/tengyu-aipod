@@ -41,6 +41,25 @@ describe('listing shared types', () => {
     expect(LISTING_ERROR_CODE_TO_APP_ERROR_CODE.SELECTOR_NOT_FOUND).toBe('SELECTOR_NOT_FOUND')
   })
 
+  it('supports the Temu workflow stage sequence used by platform workflows', () => {
+    const stages: StageResult['stage'][] = [
+      'enter_page',
+      'page_ready',
+      'confirm_shop_context',
+      'fill_title_and_sku',
+      'upload_material_images',
+      'upload_video',
+      'process_color_skc',
+      'reuse_size_chart',
+      'generate_sku_code',
+      'process_description',
+      'submit_publish',
+      'publish_result',
+    ]
+
+    expect(stages).toHaveLength(12)
+  })
+
   it('creates serializable listing failures with evidence paths', () => {
     const failure = createListingFailure({
       code: 'SELECTOR_NOT_FOUND',
