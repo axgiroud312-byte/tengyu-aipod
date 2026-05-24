@@ -662,6 +662,66 @@ const latest = await chenyu.getInstanceInfo(instance.instance_uuid)
 saveLocalState({ status: stateFromChenyuStatus(latest.status) })
 ```
 
+### Scenario: Client ComfyUI Chenyu Execution Adapter
+
+#### 1. Scope / Trigger
+
+- Trigger: running Tengyu-dispatched ComfyUI workflows through a Chenyu-hosted ComfyUI instance.
+- Applies to: `packages/client/src/main/lib/*comfyui-chenyu*` execution adapters.
+
+#### 2. Signatures
+
+- `new ComfyuiChenyuAdapter({ instanceManager, comfyHttp, workflowCache, workbenchRoot, openDatabase })`
+- `generate(req: GenerateRequest): Promise<GenerateResponse>`
+- `injectComfyuiInputs(workflowJson, slots, req, { uploadedImages })`
+- `outputsFromHistory(history, outputSlots)`
+
+#### 3. Contracts
+
+- The adapter implements the existing `ImageGenerationAdapter` interface.
+- Instance status must be `running` before workflow execution.
+- Workflows are loaded by `(workflow_id, capability)` from a workflow cache.
+- Reference images are uploaded through `ComfyHttpClient.uploadImage`.
+- Workflow JSON is cloned before slot injection.
+- Image slots use the uploaded ComfyUI filename; string slots use `req.prompt`; option values may override by slot name or field.
+- Completed history outputs are read from `history.outputs[slot.nodeId].images[]`.
+- Outputs are saved under `02-生图/{capability folder}` and registered in `artifacts` with `provider = "comfyui-chenyu"` and `model_or_workflow = workflow.id`.
+
+#### 4. Validation & Error Matrix
+
+- No running instance -> `CHENYU_INSTANCE_DOWN`, non-retryable.
+- Missing `workflow_id` -> `HTTP_4XX`, non-retryable.
+- Missing workflow input node -> `HTTP_4XX`, non-retryable.
+- Required image slot without an uploaded reference image -> `HTTP_4XX`, non-retryable.
+- Missing output images or missing output filename -> `HTTP_5XX`, retryable.
+- ComfyUI transport errors propagate from `ComfyHttpClient`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: upload source, inject workflow slots, queue prompt, poll history, download outputs, save files, and insert artifacts.
+- Base: option values override non-image slot values for workflow tuning.
+- Bad: mutating cached workflow JSON directly, or returning generated files without artifact lineage.
+
+#### 6. Tests Required
+
+- Unit tests for instance guard, upload/injection/queue/history/download/artifact flow, option slot injection, and missing output validation.
+- Run root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```ts
+workflow[slot.nodeId].inputs[slot.field] = req.prompt
+```
+
+##### Correct
+
+```ts
+const cloned = structuredClone(workflow.workflowJson)
+cloned[slot.nodeId].inputs[slot.field] = uploadedFilename
+```
+
 ---
 
 ## Error Handling Patterns

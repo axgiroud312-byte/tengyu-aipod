@@ -3,7 +3,7 @@
   "name": "comfyui-execution",
   "title": "comfyui execution",
   "description": "注入 input_slots+提交+轮询+下载",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
