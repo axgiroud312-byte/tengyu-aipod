@@ -41,6 +41,14 @@ declare global {
           ok: true
           results: import('../../main/lib/collection-click-service').CollectionClickResult[]
         }>
+        listRecords: (input: {
+          session_id: string
+          status?: import('../../main/lib/collection-record-store').CollectionRecordStatus
+          limit?: number
+        }) => Promise<import('../../main/lib/collection-record-store').CollectionRecordRow[]>
+        retryRecord: (input: { record_id: string }) => Promise<
+          import('../../main/lib/collection-click-service').CollectionScrollResult
+        >
         getActiveSession: () => Promise<
           import('../../main/lib/collection-session-manager').CollectionSession | null
         >

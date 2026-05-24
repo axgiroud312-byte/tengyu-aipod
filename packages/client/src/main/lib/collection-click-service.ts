@@ -8,8 +8,12 @@ import { z } from 'zod'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
   type CollectionRecordInput,
+  type CollectionRecordRow,
+  getCollectionRecord,
   insertCollectionRecord,
+  listCollectionRecords,
   openCollectionDatabase,
+  updateCollectionRecord,
 } from './collection-record-store'
 import {
   type CollectionSession,
@@ -192,6 +196,56 @@ export class CollectionClickService {
     })
   }
 
+  listRecords(input: {
+    sessionId: string
+    status?: 'success' | 'skipped' | 'failed'
+    limit?: number
+  }) {
+    const session = this.sessionManager.getActiveSession()
+    const workbenchRoot = session ? workbenchRootFromOutput(session.output_dir) : null
+    if (!workbenchRoot) {
+      throw new AppErrorClass('HTTP_4XX', '当前没有活动采集会话', false, {
+        kind: 'state_conflict',
+      })
+    }
+    if (session?.id !== input.sessionId) {
+      throw new AppErrorClass('HTTP_4XX', '只能查看当前采集会话记录', false, {
+        kind: 'state_conflict',
+      })
+    }
+    const db = this.openDatabase(workbenchRoot)
+    try {
+      return listCollectionRecords(db, input)
+    } finally {
+      db.close()
+    }
+  }
+
+  async retryRecord(recordId: string): Promise<CollectionSavedResult> {
+    const session = this.sessionManager.getActiveSession()
+    if (!session || session.status !== 'active') {
+      throw new AppErrorClass('HTTP_4XX', '当前没有活动采集会话', false, {
+        kind: 'state_conflict',
+      })
+    }
+    const workbenchRoot = workbenchRootFromOutput(session.output_dir)
+    const db = this.openDatabase(workbenchRoot)
+    try {
+      const record = getCollectionRecord(db, recordId)
+      if (!record || record.sessionId !== session.id) {
+        throw new AppErrorClass('HTTP_4XX', '采集记录不存在', false, {
+          kind: 'not_found',
+          recordId,
+        })
+      }
+      const result = await this.retryStoredRecord(session, record)
+      updateCollectionRecord(db, result.record)
+      return result
+    } finally {
+      db.close()
+    }
+  }
+
   private async saveImage(input: {
     session: CollectionSession
     event: CollectionImageEvent
@@ -259,6 +313,59 @@ export class CollectionClickService {
     }
   }
 
+  private async retryStoredRecord(
+    session: CollectionSession,
+    record: CollectionRecordRow,
+  ): Promise<CollectionSavedResult> {
+    const target = targetForStoredRecord(session, record, this.now())
+    try {
+      const buffer = await this.downloadImage(record.sourceUrl)
+      const hash = sha256(buffer)
+      await this.mkdir(target.targetDir, { recursive: true })
+      const existing = await findExistingImageByHash(
+        target.targetDir,
+        hash,
+        this.readdir,
+        this.readFile,
+      )
+      if (existing) {
+        const updated = replaceRecord(record, {
+          savedPath: existing,
+          status: 'skipped',
+          reason: 'dedup',
+          fileSize: buffer.byteLength,
+          createdAt: this.now(),
+        })
+        return { status: 'skipped', record: updated, savedPath: existing, reason: 'dedup' }
+      }
+      const savedPath = await nextImagePath(
+        target.targetDir,
+        target.fileBase,
+        imageExtension(record.sourceUrl),
+        this.stat,
+      )
+      await this.writeFile(savedPath, buffer)
+      const info = await this.stat(savedPath)
+      const updated = replaceRecord(record, {
+        savedPath,
+        status: 'success',
+        reason: null,
+        fileSize: info.size,
+        createdAt: this.now(),
+      })
+      return { status: 'success', record: updated, savedPath }
+    } catch (error) {
+      const updated = replaceRecord(record, {
+        savedPath: null,
+        status: 'failed',
+        reason: appErrorMessage(error),
+        fileSize: null,
+        createdAt: this.now(),
+      })
+      return { status: 'failed', record: updated, error: appErrorMessage(error) }
+    }
+  }
+
   private record(input: {
     session: CollectionSession
     event: CollectionImageEvent
@@ -312,6 +419,43 @@ function targetForClick(input: {
     targetDir: join(input.session.output_dir, '散图池'),
     fileBase: `${input.platformRule.key}-${timestampSlug(input.createdAt)}`,
     reason: input.isGoodsPage ? 'sku_required' : 'not_goods_page',
+  }
+}
+
+function targetForStoredRecord(
+  session: CollectionSession,
+  record: CollectionRecordRow,
+  createdAt: number,
+) {
+  if (record.skuCode) {
+    return {
+      targetDir: join(session.output_dir, record.skuCode),
+      fileBase: record.skuCode,
+    }
+  }
+  return {
+    targetDir: join(session.output_dir, '散图池'),
+    fileBase: `${session.platform}-${timestampSlug(createdAt)}`,
+  }
+}
+
+function replaceRecord(
+  record: CollectionRecordRow,
+  patch: {
+    savedPath: string | null
+    status: 'success' | 'skipped' | 'failed'
+    reason?: string | null
+    fileSize?: number | null
+    createdAt: number
+  },
+): CollectionRecordInput {
+  return {
+    ...record,
+    savedPath: patch.savedPath,
+    status: patch.status,
+    reason: patch.reason ?? null,
+    fileSize: patch.fileSize ?? null,
+    createdAt: patch.createdAt,
   }
 }
 
@@ -464,6 +608,16 @@ const CollectionSkuInputSchema = z.object({
   sku_code: z.string().min(1),
 })
 
+const CollectionRecordListInputSchema = z.object({
+  session_id: z.string().min(1),
+  status: z.enum(['success', 'skipped', 'failed']).optional(),
+  limit: z.number().int().positive().max(200).optional(),
+})
+
+const CollectionRetryRecordInputSchema = z.object({
+  record_id: z.string().min(1),
+})
+
 export function registerCollectionClickIpc() {
   ipcMain.handle('collection:set-sku', async (_event, input: unknown) => {
     const parsed = CollectionSkuInputSchema.safeParse(input)
@@ -535,6 +689,34 @@ export function registerCollectionClickIpc() {
       },
       platformRule,
     )
+    emitCollectionEvent({ type: 'image-saved', record: result.record })
+    return result
+  })
+
+  ipcMain.handle('collection:list-records', (_event, input: unknown) => {
+    const parsed = CollectionRecordListInputSchema.safeParse(input)
+    if (!parsed.success) {
+      throw new AppErrorClass('HTTP_4XX', '采集记录查询参数不正确', false, {
+        kind: 'validation',
+        issues: parsed.error.issues,
+      })
+    }
+    return collectionClickService.listRecords({
+      sessionId: parsed.data.session_id,
+      ...(parsed.data.status ? { status: parsed.data.status } : {}),
+      ...(parsed.data.limit ? { limit: parsed.data.limit } : {}),
+    })
+  })
+
+  ipcMain.handle('collection:retry-record', async (_event, input: unknown) => {
+    const parsed = CollectionRetryRecordInputSchema.safeParse(input)
+    if (!parsed.success) {
+      throw new AppErrorClass('HTTP_4XX', '采集重试参数不正确', false, {
+        kind: 'validation',
+        issues: parsed.error.issues,
+      })
+    }
+    const result = await collectionClickService.retryRecord(parsed.data.record_id)
     emitCollectionEvent({ type: 'image-saved', record: result.record })
     return result
   })

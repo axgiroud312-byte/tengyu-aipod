@@ -1,8 +1,15 @@
 import { createHash } from 'node:crypto'
+import { mkdir, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { CollectionClickService } from './collection-click-service'
 import type { CollectionPlatformRule } from './collection-injected-script'
+import {
+  exportCollectionManifest,
+  insertCollectionRecord,
+  openCollectionDatabase,
+} from './collection-record-store'
 import type { CollectionSession } from './collection-session-manager'
 
 const platformRule: CollectionPlatformRule = {
@@ -29,11 +36,25 @@ function activeSession(overrides: Partial<CollectionSession> = {}): CollectionSe
 }
 
 class FakeStatement {
-  constructor(private readonly runFn: (...values: unknown[]) => void) {}
+  constructor(
+    private readonly options: {
+      run?: (...values: unknown[]) => void
+      all?: (...values: unknown[]) => unknown[]
+      get?: (...values: unknown[]) => unknown
+    },
+  ) {}
 
   run(...values: unknown[]) {
-    this.runFn(...values)
+    this.options.run?.(...values)
     return { changes: 1 }
+  }
+
+  all(...values: unknown[]) {
+    return this.options.all?.(...values) ?? []
+  }
+
+  get(...values: unknown[]) {
+    return this.options.get?.(...values)
   }
 }
 
@@ -47,15 +68,73 @@ class FakeDb {
   }
 
   prepare(sql: string) {
-    return new FakeStatement((...values) => {
-      if (sql.includes('INSERT INTO collection_records')) {
-        this.records.push(values)
-      }
-    })
+    return new FakeStatement({
+      run: (...values) => {
+        if (sql.includes('INSERT INTO collection_records')) {
+          this.records.push(values)
+          return
+        }
+        if (sql.includes('UPDATE collection_records SET')) {
+          const recordId = values[9]
+          const index = this.records.findIndex((record) => record[0] === recordId)
+          if (index >= 0) {
+            const current = this.records[index]
+            this.records[index] = [
+              recordId,
+              current?.[1],
+              values[0],
+              values[1],
+              values[2],
+              values[3],
+              values[4],
+              values[5],
+              values[6],
+              values[7],
+              values[8],
+            ]
+          }
+        }
+      },
+      all: (...values) => {
+        if (!sql.includes('SELECT * FROM collection_records')) {
+          return []
+        }
+        const sessionId = values[0]
+        const hasStatus = sql.includes('AND status = ?')
+        const status = hasStatus ? values[1] : null
+        const limit = Number(values[hasStatus ? 2 : 1] ?? 20)
+        return this.records
+          .filter((record) => record[1] === sessionId && (!status || record[7] === status))
+          .sort((left, right) => Number(right[10]) - Number(left[10]))
+          .slice(0, limit)
+          .map(fakeRecordRow)
+      },
+      get: (...values) => {
+        const recordId = values[0]
+        const record = this.records.find((item) => item[0] === recordId)
+        return record ? fakeRecordRow(record) : undefined
+      },
+    }) as never
   }
 
   close() {
     this.closed = true
+  }
+}
+
+function fakeRecordRow(record: unknown[]) {
+  return {
+    id: String(record[0]),
+    session_id: String(record[1]),
+    sku_code: record[2] === null ? null : String(record[2]),
+    source_url: String(record[3]),
+    goods_link: record[4] === null ? null : String(record[4]),
+    page_url: String(record[5]),
+    saved_path: record[6] === null ? null : String(record[6]),
+    status: String(record[7]),
+    reason: record[8] === null ? null : String(record[8]),
+    file_size: record[9] === null ? null : Number(record[9]),
+    created_at: Number(record[10]),
   }
 }
 
@@ -396,4 +475,83 @@ describe('CollectionClickService', () => {
     expect(db.records[0]?.[7]).toBe('skipped')
     expect(db.records[0]?.[8]).toBe('dedup')
   })
+
+  it('lists active-session records and retries failed records in place', async () => {
+    const db = new FakeDb()
+    const { service, fs } = createService({
+      session: activeSession({ mode: 'scroll' }),
+      db,
+    })
+    db.records.push([
+      'record-1',
+      'session-1',
+      null,
+      'https://img.temu.com/retry.jpg',
+      'https://www.temu.com/goods/1',
+      'https://www.temu.com/search?q=shirt',
+      null,
+      'failed',
+      'download failed',
+      null,
+      1000,
+    ])
+
+    expect(service.listRecords({ sessionId: 'session-1', status: 'failed' })).toMatchObject([
+      {
+        id: 'record-1',
+        sourceUrl: 'https://img.temu.com/retry.jpg',
+        status: 'failed',
+      },
+    ])
+
+    await expect(service.retryRecord('record-1')).resolves.toMatchObject({
+      status: 'success',
+      savedPath: '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.jpg',
+    })
+    expect(fs.writeFile).toHaveBeenCalledWith(
+      '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.jpg',
+      Buffer.from('image-bytes'),
+    )
+    expect(db.records[0]?.[7]).toBe('success')
+    expect(db.records[0]?.[8]).toBeNull()
+  })
 })
+
+describe('collection manifest export', () => {
+  it('writes collection_records to a CSV manifest', async () => {
+    const workbenchRoot = join(tmpdir(), `collection-manifest-${Date.now()}`)
+    const outputDir = join(workbenchRoot, '01-采集')
+    await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
+    await mkdir(outputDir, { recursive: true })
+    const db = openCollectionDatabase(workbenchRoot)
+    try {
+      insertCollectionRecord(db, {
+        id: 'record-1',
+        sessionId: 'session-1',
+        skuCode: 'SKU-001',
+        sourceUrl: 'https://img.temu.com/a.jpg',
+        goodsLink: 'https://www.temu.com/goods/1',
+        pageUrl: 'https://www.temu.com/goods/1',
+        savedPath: join(outputDir, 'SKU-001/SKU-001-001.jpg'),
+        status: 'success',
+        reason: null,
+        fileSize: 123,
+        createdAt: 1000,
+      })
+
+      const manifestPath = await exportCollectionManifest(db, outputDir, 'session-1')
+
+      await expect(fsReadText(manifestPath)).resolves.toContain(
+        'sku_code,saved_path,source_url,goods_link,status,file_size,created_at',
+      )
+      await expect(fsReadText(manifestPath)).resolves.toContain('SKU-001,')
+    } finally {
+      db.close()
+      await rm(workbenchRoot, { force: true, recursive: true })
+    }
+  })
+})
+
+async function fsReadText(path: string) {
+  return String(await import('node:fs/promises').then((fs) => fs.readFile(path)))
+}

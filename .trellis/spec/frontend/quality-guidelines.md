@@ -330,12 +330,15 @@ for (const [key, value] of Object.entries(apiKeys)) {
   - `collection:handle-scroll({ event, platformRule }) -> CollectionScrollResult`
   - `collection:set-sku({ goods_link, sku_code }) -> { ok: true, results: CollectionClickResult[] }`
   - `collection:get-active-session() -> CollectionSession | null`
+  - `collection:list-records({ session_id, status?, limit? }) -> CollectionRecordRow[]`
+  - `collection:retry-record({ record_id }) -> CollectionScrollResult`
   - Event: `collection:event -> { type: 'sku-required', session, goods_link, image_url } | { type: 'image-saved', record } | session events`
 - Service methods:
   - `CollectionClickService.handleClick(event, platformRule): Promise<CollectionClickResult>`
   - `CollectionClickService.handleScroll(event, platformRule): Promise<CollectionScrollResult>`
   - `CollectionClickService.assignSkuAndSavePending(goodsLink, skuCode): Promise<{ ok: true; results: CollectionClickResult[] }>`
 - DB table: `{workbenchRoot}/.workbench/workbench.db`, table `collection_records`.
+- Manifest: `01-采集/{session_id}-manifest.csv`.
 
 #### 3. Contracts
 - Click events come from the injected script shape `{ kind: 'click', img, goodsLink?, page, platform? }` and must be zod-validated at the IPC boundary.
@@ -348,6 +351,9 @@ for (const [key, value] of Object.entries(apiKeys)) {
 - Scroll filtering belongs in the injected script before the IPC call: exclude keywords first, then include keywords, then size range.
 - Deduplication is scoped to the target folder by image hash. Matching hash returns `skipped` and still writes a `collection_records` row.
 - Renderer displays the SKU prompt as a non-modal bottom-right surface and may collapse it to a toast; renderer must not download images, write files, or insert DB rows.
+- `collection:list-records` is current-session only in v1.0; reject requests for non-active sessions rather than implementing history browsing.
+- `collection:retry-record` rereads `source_url`, writes the retried file into the same destination class, and updates the existing record in place.
+- `stopSession` must export CSV manifest after writing completed session state and before emitting `manifest-exported`.
 
 #### 4. Validation & Error Matrix
 - No active collection session -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='state_conflict')`.
@@ -355,6 +361,8 @@ for (const [key, value] of Object.entries(apiKeys)) {
 - Active session mode is not `scroll` for a scroll event -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='state_conflict')`.
 - Bad click payload or bad SKU payload -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='validation')`.
 - Bad scroll payload -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='validation')`.
+- Listing records for a non-active session -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='state_conflict')`.
+- Retrying an unknown record -> `AppErrorClass('HTTP_4XX', retryable=false, details.kind='not_found')`.
 - Image download failure -> return `failed` and insert a failed `collection_records` row with the error reason.
 - File sequence exhausted -> `AppErrorClass('HTTP_4XX', retryable=false)`.
 - Optional IPC fields must be normalized before assigning to exact optional TypeScript types; omit undefined fields instead of passing `{ field: undefined }`.
@@ -363,8 +371,10 @@ for (const [key, value] of Object.entries(apiKeys)) {
 - Good: first click on a product page emits `sku-required`; user enters `SKU-001`; the original pending image is saved to `01-采集/SKU-001/SKU-001-001.jpg` and a success record is inserted.
 - Base: click on a listing/search page saves to `散图池` and records `reason='not_goods_page'`.
 - Base: scroll image passing filters saves to `散图池` with `sku_code=null`.
+- Base: stopping a session writes `sku_code,saved_path,source_url,goods_link,status,file_size,created_at` CSV header plus records sorted by creation time.
 - Bad: storing only the SKU and requiring the user to click the same image again after filling the prompt.
 - Bad: accepting scroll images in the main process without first checking the active session is in `scroll` mode.
+- Bad: implementing history browsing in the records UI before the PRD asks for it.
 
 #### 6. Tests Required
 - Unit test first product-page click returns `pending_sku` and writes no file or DB row.
@@ -375,6 +385,8 @@ for (const [key, value] of Object.entries(apiKeys)) {
 - Unit test download failure writes a failed record.
 - Unit test scroll mode saves to `散图池` and rejects non-scroll sessions.
 - Unit test injected script filtering order: exclude keywords override include keywords, then size range.
+- Unit test manifest CSV export header and record rows.
+- Unit test failed record retry updates the existing record.
 - Run `pnpm -F @tengyu-aipod/client build`, `test`, `type-check`, and `lint` when main/preload/renderer collection IPC changes.
 
 #### 7. Wrong vs Correct

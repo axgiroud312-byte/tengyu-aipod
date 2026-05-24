@@ -11,6 +11,7 @@ import {
   browserProfileLocks,
 } from './browser-profile-lock'
 import { type CDPClient, cdpClient } from './cdp-client'
+import { exportCollectionManifest } from './collection-record-store'
 
 export type CollectionMode = 'click' | 'scroll'
 export type CollectionSessionStatus = 'starting' | 'active' | 'paused' | 'stopping' | 'completed'
@@ -40,6 +41,7 @@ export type CollectionSessionEvent =
   | { type: 'session-paused'; session: CollectionSession; reason: CollectionPauseReason }
   | { type: 'session-resumed'; session: CollectionSession }
   | { type: 'session-stopped'; session: CollectionSession }
+  | { type: 'manifest-exported'; session: CollectionSession; manifest_path: string }
   | { type: 'sku-required'; session: CollectionSession; goods_link: string; image_url: string }
   | { type: 'image-saved'; record: unknown }
 
@@ -147,8 +149,15 @@ export class CollectionSessionManager {
 
     const completed = this.updateActiveSession({ status: 'completed', ended_at: this.now() })
     writeSession(runtime.workbenchRoot, this.openDatabase, completed)
+    const manifestPath = await exportManifest(
+      runtime.workbenchRoot,
+      this.openDatabase,
+      completed.output_dir,
+      completed.id,
+    )
     this.active = null
     this.emit({ type: 'session-stopped', session: completed })
+    this.emit({ type: 'manifest-exported', session: completed, manifest_path: manifestPath })
     return completed
   }
 
@@ -314,6 +323,20 @@ function writeSession(
       session.ended_at ?? null,
       session.id,
     )
+  } finally {
+    db.close()
+  }
+}
+
+async function exportManifest(
+  workbenchRoot: string,
+  openDatabase: (workbenchRoot: string) => CollectionDatabase,
+  outputDir: string,
+  sessionId: string,
+) {
+  const db = openDatabase(workbenchRoot)
+  try {
+    return await exportCollectionManifest(db, outputDir, sessionId)
   } finally {
     db.close()
   }

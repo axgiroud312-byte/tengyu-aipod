@@ -10,11 +10,20 @@ import {
 type InsertedSession = CollectionSession & { task_id: string | null }
 
 class FakeStatement {
-  constructor(private readonly runFn: (...values: unknown[]) => void) {}
+  constructor(
+    private readonly options: {
+      run?: (...values: unknown[]) => void
+      all?: (...values: unknown[]) => unknown[]
+    },
+  ) {}
 
   run(...values: unknown[]) {
-    this.runFn(...values)
+    this.options.run?.(...values)
     return { changes: 1 }
+  }
+
+  all(...values: unknown[]) {
+    return this.options.all?.(...values) ?? []
   }
 }
 
@@ -27,22 +36,25 @@ class FakeDb {
   }
 
   prepare(sql: string) {
-    return new FakeStatement((...values) => {
-      if (!sql.includes('INSERT INTO collection_sessions')) {
-        return
-      }
-      const row: InsertedSession = {
-        id: String(values[0]),
-        platform: String(values[1]),
-        profile_id: String(values[2]),
-        mode: values[3] as CollectionSession['mode'],
-        status: values[4] as CollectionSession['status'],
-        output_dir: String(values[5]),
-        started_at: Number(values[6]),
-        ...(typeof values[7] === 'number' ? { ended_at: values[7] } : {}),
-        task_id: values[8] === null ? null : String(values[8]),
-      }
-      this.rows.set(row.id, row)
+    return new FakeStatement({
+      run: (...values) => {
+        if (!sql.includes('INSERT INTO collection_sessions')) {
+          return
+        }
+        const row: InsertedSession = {
+          id: String(values[0]),
+          platform: String(values[1]),
+          profile_id: String(values[2]),
+          mode: values[3] as CollectionSession['mode'],
+          status: values[4] as CollectionSession['status'],
+          output_dir: String(values[5]),
+          started_at: Number(values[6]),
+          ...(typeof values[7] === 'number' ? { ended_at: values[7] } : {}),
+          task_id: values[8] === null ? null : String(values[8]),
+        }
+        this.rows.set(row.id, row)
+      },
+      all: () => [],
     })
   }
 
@@ -181,8 +193,9 @@ describe('CollectionSessionManager', () => {
     expect(cdp.disconnect).toHaveBeenCalledWith('profile-1')
     expect(locks.status('profile-1')).toBeNull()
     expect(db.rows.get('session-1')).toMatchObject({ status: 'completed', ended_at: 2000 })
+    expect(events.map((event) => event.type)).toContain('session-stopped')
     expect(events.at(-1)).toMatchObject({
-      type: 'session-stopped',
+      type: 'manifest-exported',
       session: expect.objectContaining({ status: 'completed' }),
     })
   })

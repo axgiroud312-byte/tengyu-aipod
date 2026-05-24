@@ -1,6 +1,13 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CollectionClickResult } from '../main/lib/collection-click-service'
+import type {
+  CollectionClickResult,
+  CollectionScrollResult,
+} from '../main/lib/collection-click-service'
+import type {
+  CollectionRecordRow,
+  CollectionRecordStatus,
+} from '../main/lib/collection-record-store'
 import type {
   CollectionSession,
   CollectionSessionEvent,
@@ -92,6 +99,13 @@ const api = {
     },
     getActiveSession: () =>
       ipcRenderer.invoke('collection:get-active-session') as Promise<CollectionSession | null>,
+    listRecords: (input: {
+      session_id: string
+      status?: CollectionRecordStatus
+      limit?: number
+    }) => ipcRenderer.invoke('collection:list-records', input) as Promise<CollectionRecordRow[]>,
+    retryRecord: (input: { record_id: string }) =>
+      ipcRenderer.invoke('collection:retry-record', input) as Promise<CollectionScrollResult>,
   },
   generation: {
     generatePrompts: (input: GenerationPromptInput) =>
