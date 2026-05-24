@@ -105,7 +105,8 @@ model Provider {
 }
 
 model ComfyuiWorkflow {
-  id                       String   @id
+  row_id                   String   @id @default(cuid())
+  id                       String
   category                 String
   version                  String
   workflow_json            String   @db.Text

@@ -3,7 +3,7 @@
   "name": "server-api-workflows",
   "title": "server api workflows",
   "description": "GET /api/comfyui-workflows 派发",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

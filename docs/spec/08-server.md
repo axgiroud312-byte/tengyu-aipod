@@ -158,7 +158,8 @@ model Provider {
 }
 
 model ComfyuiWorkflow {
-  id                  String   @id              // 'extract-v3'
+  row_id              String   @id @default(cuid())
+  id                  String                    // 'extract-v3'
   category            String                    // 'extract' | 'img2img' | 'matting'
   version             String
   workflow_json       String                    @db.Text  // ComfyUI 原生 workflow JSON
@@ -316,10 +317,14 @@ GET /api/providers
 GET /api/comfyui-workflows
   query: ?category=extract
   response: ComfyuiWorkflowSummary[]
+  auth: Bearer client JWT
+  contract: only enabled rows; latest version per id; no workflow_json/input_slots/output_slots
 
 GET /api/comfyui-workflows/:id/content
   query: ?version=3.0.1
   response: ComfyuiWorkflow (full)
+  auth: Bearer client JWT
+  contract: if version omitted, latest enabled version for id; includes parsed workflow_json/input_slots/output_slots
 
 GET /api/platform-rules
   query: ?category=collection
