@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/01-orchestration.md","reason":"核对 profile 互斥锁是否符合跨模块资源互斥规则。"}
+{"file":"docs/spec/07-listing.md","reason":"核对上架可复用的 lock API、错误码和后续 runner 接入边界。"}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"确认没有引入与 ADR-0004 冲突的上架 DOM 实现。"}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"核对本 task 没有违反后续 listing 自动化四层分离前置纪律。"}
+{"file":".trellis/tasks/05-23-listing-profile-lock/research/profile-lock-context.md","reason":"核对 PRD/jsonl 是否覆盖真实基线、外部源码上下文和现有实现缺口。"}

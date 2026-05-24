@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
+import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
 import { registerCollectionSessionIpc } from './lib/collection-session-manager'
 import { registerDetectionConfigIpc } from './lib/detection-config'
@@ -50,6 +51,7 @@ app.whenReady().then(() => {
   ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
   ipcMain.handle('activation:sync-status', () => activationPoller.poll())
   registerOnboardingIpc()
+  registerBrowserProfileLockIpc()
   registerSkillCacheIpc()
   registerTempFileIpc()
   registerCollectionSessionIpc()
@@ -79,6 +81,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  browserProfileLocks.clear()
   void tempFileManager.cleanupSession().catch(() => null)
   tempFileManager.clearTimers()
 })

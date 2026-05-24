@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 
 export type BrowserProfileModule = 'collection' | 'listing'
@@ -26,10 +27,16 @@ export class BrowserProfileLockHandle {
   }
 }
 
+const nodeRequire = createRequire(import.meta.url)
+
 export class BrowserProfileLockManager {
   private readonly locks = new Map<string, BrowserProfileHolder>()
 
-  acquire(profileId: string, module: BrowserProfileModule, taskId: string) {
+  acquire(
+    profileId: string,
+    module: BrowserProfileModule,
+    taskId: string,
+  ): BrowserProfileLockHandle {
     const existing = this.locks.get(profileId)
     if (existing) {
       throw new AppErrorClass('PROFILE_LOCKED', '比特浏览器 profile 已被占用', false, {
@@ -69,3 +76,14 @@ export class BrowserProfileLockManager {
 }
 
 export const browserProfileLocks = new BrowserProfileLockManager()
+
+export function registerBrowserProfileLockIpc(
+  locks: BrowserProfileLockManager = browserProfileLocks,
+) {
+  const ipcMain = electronIpcMain()
+  ipcMain.handle('browser-profile-lock:list', () => locks.list())
+}
+
+function electronIpcMain() {
+  return (nodeRequire('electron') as typeof import('electron')).ipcMain
+}

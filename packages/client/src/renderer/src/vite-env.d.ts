@@ -20,6 +20,9 @@ declare global {
       keychain: {
         has: (key: string) => Promise<boolean>
       }
+      browserProfileLock: {
+        list: () => Promise<import('../../main/lib/browser-profile-lock').BrowserProfileHolder[]>
+      }
       skill: {
         list: (filter?: {
           module?: 'generation' | 'detection' | 'title'

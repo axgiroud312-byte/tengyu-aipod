@@ -195,6 +195,56 @@ const pool = new SharpPreprocessPool()
 const result = await pool.process({ module: 'title', taskId, workbenchRoot, input })
 ```
 
+### Scenario: Browser Profile Lock Status Bridge
+
+#### 1. Scope / Trigger
+- Trigger: collection or listing UI needs to display whether a Bit Browser profile is occupied by another module.
+- Boundary: lock ownership lives in Electron main process; renderer can only read lock status through preload IPC.
+
+#### 2. Signatures
+- Main singleton: `browserProfileLocks: BrowserProfileLockManager`
+- Lock acquire: `browserProfileLocks.acquire(profileId, module, taskId): BrowserProfileLockHandle`
+- Conflict: throws `AppErrorClass('PROFILE_LOCKED', retryable=false)`
+- IPC: `browser-profile-lock:list`
+- Preload: `window.api.browserProfileLock.list(): Promise<BrowserProfileHolder[]>`
+- Holder shape: `{ profileId: string; module: 'collection' | 'listing'; taskId: string; acquiredAt: number }`
+
+#### 3. Contracts
+- Same `profileId` may be held by exactly one module at a time.
+- `BrowserProfileLockHandle.release()` must be idempotent.
+- `browserProfileLocks.clear()` must run during Electron `before-quit` cleanup.
+- Renderer code must not mutate lock state directly; it only reads `window.api.browserProfileLock.list()`.
+- Listing runner must acquire the shared singleton before CDP connection and release it in `finally`.
+
+#### 4. Validation & Error Matrix
+- Profile already held by collection -> listing acquire throws `PROFILE_LOCKED` with existing holder details.
+- Profile already held by listing -> collection acquire throws `PROFILE_LOCKED` with existing holder details.
+- Releasing an already released handle -> no-op.
+- App shutdown -> all in-memory profile locks are cleared.
+
+#### 5. Good/Base/Bad Cases
+- Good: listing UI reads lock list and disables a profile occupied by collection.
+- Base: empty lock list means no in-process module currently holds a profile.
+- Bad: renderer manually tracks profile occupancy without reading main-process lock state.
+
+#### 6. Tests Required
+- Unit tests cover collection/listing conflicts, release then reacquire, duplicate release, and `clear()`.
+- `pnpm -F @tengyu-aipod/client type-check`
+- `pnpm -F @tengyu-aipod/client lint`
+- `pnpm -F @tengyu-aipod/client test`
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+const occupiedProfiles = new Set<string>()
+```
+
+Correct:
+```ts
+const locks = await window.api.browserProfileLock.list()
+```
+
 ### Scenario: Collection Playwright E2E with Mock BitBrowser/CDP
 
 #### 1. Scope / Trigger

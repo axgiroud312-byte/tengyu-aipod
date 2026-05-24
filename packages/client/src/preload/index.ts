@@ -1,5 +1,6 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { BrowserProfileHolder } from '../main/lib/browser-profile-lock'
 import type {
   CollectionClickEvent,
   CollectionClickResult,
@@ -67,6 +68,9 @@ const api = {
   },
   keychain: {
     has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,
+  },
+  browserProfileLock: {
+    list: () => ipcRenderer.invoke('browser-profile-lock:list') as Promise<BrowserProfileHolder[]>,
   },
   skill: {
     list: (filter?: {

@@ -3,7 +3,7 @@
   "name": "listing-profile-lock",
   "title": "listing profile lock",
   "description": "BrowserProfileLock 单例",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
