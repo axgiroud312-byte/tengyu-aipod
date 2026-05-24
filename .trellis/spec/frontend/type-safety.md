@@ -76,6 +76,53 @@ Correct:
 import type { ListingItem } from '@tengyu-aipod/shared'
 ```
 
+### Scenario: Listing Batch Loader Contract
+
+#### 1. Scope / Trigger
+- Trigger: listing runner/UI need a filesystem scan result from a local `05-货号成品/{batch}/` directory.
+- Boundary: scanner lives in Electron client main code and returns shared listing contracts; it must not depend on Playwright, DOM selectors, or platform workflow code.
+
+#### 2. Signatures
+- `loadBatchAsListingItems(batchDir, options?): Promise<ListingMaterialScanResult & { listingItems: ListingItem[] }>`
+- Options: `{ template?: ListingTemplateConfig; excludedFolderNames?: string[] }`
+- Title source: `readExistingTitles(join(batchDir, 'titles.xlsx'))`
+
+#### 3. Contracts
+- Scan only first-level SKU folders under `batchDir`.
+- Template is explicit from `options.template` or inferred by matching `SLICE_8_LISTING_TEMPLATES[].materialRootDir`.
+- Excluded folder names are `template.excludedFolderNames + options.excludedFolderNames`; v1 Temu clothing excludes `GzG00010` through the template config.
+- Missing title or missing images produces a warning and skips that SKU.
+- Image paths are natural-sorted and mapped into `ListingItem.imageGroups`; top-level loose images default to `material`.
+- Nested non-role folders become `variantGroups` and their images are also placed in `imageGroups.sku`.
+- Video files and description text are optional fields; absent values should not be serialized as explicit `undefined`.
+
+#### 4. Validation & Error Matrix
+- Empty or missing `titles.xlsx` -> warning on batch, then per-SKU title warnings as applicable.
+- SKU folder with no supported images -> warning and skip.
+- Excluded folder -> no item and no warning.
+- Existing real Slice 8 material roots should scan without `REAL_LISTING` because scanning is pure local file I/O.
+
+#### 5. Good/Base/Bad Cases
+- Good: runner consumes `listingItems` typed as shared `ListingItem[]`.
+- Base: UI may show `items` for scan preview and pass `listingItems` to runner.
+- Bad: duplicating a local `ListingItem` shape in the scanner or hard-coding `GzG00010` in loader logic.
+
+#### 6. Tests Required
+- Unit tests cover title lookup, natural image ordering, excluded folders, missing title/image warnings, nested variant folders, videos, and description text.
+- Real-path smoke test should attempt the three `SLICE_8_LISTING_TEMPLATES` roots when they exist and skip missing paths without failing.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+const excluded = folder.name === 'GzG00010'
+```
+
+Correct:
+```ts
+const excluded = template.excludedFolderNames.includes(folder.name)
+```
+
 ---
 
 ## Validation

@@ -3,7 +3,7 @@
   "name": "listing-batch-loader",
   "title": "listing batch loader",
   "description": "扫 05/{batch}/ 转 ListingItem[]",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
