@@ -25,6 +25,16 @@ export type CollectionClickEvent = {
   platform?: string | undefined
 }
 
+export type CollectionScrollEvent = {
+  kind: 'scroll'
+  img: string
+  goodsLink?: string | undefined
+  page: string
+  platform?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
+}
+
 export type CollectionClickResult =
   | {
       status: 'success'
@@ -46,6 +56,11 @@ export type CollectionClickResult =
       record: CollectionRecordInput
       error: string
     }
+
+export type CollectionScrollResult = Exclude<CollectionClickResult, { status: 'pending_sku' }>
+
+type CollectionSavedResult = CollectionScrollResult
+type CollectionImageEvent = CollectionClickEvent | CollectionScrollEvent
 
 export type CollectionClickServiceDependencies = {
   sessionManager?: Pick<
@@ -149,15 +164,43 @@ export class CollectionClickService {
     return { ok: true, results }
   }
 
+  async handleScroll(
+    event: CollectionScrollEvent,
+    platformRule: CollectionPlatformRule,
+  ): Promise<CollectionScrollResult> {
+    const session = this.sessionManager.getActiveSession()
+    if (!session || session.status !== 'active') {
+      throw new AppErrorClass('HTTP_4XX', '当前没有活动采集会话', false, {
+        kind: 'state_conflict',
+      })
+    }
+    if (session.mode !== 'scroll') {
+      throw new AppErrorClass('HTTP_4XX', '当前采集会话不是滚动模式', false, {
+        kind: 'state_conflict',
+        mode: session.mode,
+      })
+    }
+
+    const createdAt = this.now()
+    return this.saveImage({
+      session,
+      event,
+      skuCode: null,
+      targetDir: join(session.output_dir, '散图池'),
+      fileBase: `${platformRule.key}-${timestampSlug(createdAt)}`,
+      createdAt,
+    })
+  }
+
   private async saveImage(input: {
     session: CollectionSession
-    event: CollectionClickEvent
+    event: CollectionImageEvent
     skuCode: string | null
     targetDir: string
     fileBase: string
     reason?: string
     createdAt: number
-  }): Promise<CollectionClickResult> {
+  }): Promise<CollectionSavedResult> {
     try {
       const buffer = await this.downloadImage(input.event.img)
       const hash = sha256(buffer)
@@ -218,7 +261,7 @@ export class CollectionClickService {
 
   private record(input: {
     session: CollectionSession
-    event: CollectionClickEvent
+    event: CollectionImageEvent
     skuCode: string | null
     savedPath: string | null
     status: 'success' | 'skipped' | 'failed'
@@ -398,6 +441,18 @@ const CollectionClickIpcSchema = z.object({
   }),
 })
 
+const CollectionScrollIpcSchema = CollectionClickIpcSchema.extend({
+  event: z.object({
+    kind: z.literal('scroll'),
+    img: z.string().min(1),
+    goodsLink: z.string().optional(),
+    page: z.string().min(1),
+    platform: z.string().optional(),
+    width: z.number().nonnegative().optional(),
+    height: z.number().nonnegative().optional(),
+  }),
+})
+
 function emitCollectionEvent(event: unknown) {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('collection:event', event)
@@ -454,6 +509,33 @@ export function registerCollectionClickIpc() {
     if ('record' in result) {
       emitCollectionEvent({ type: 'image-saved', record: result.record })
     }
+    return result
+  })
+
+  ipcMain.handle('collection:handle-scroll', async (_event, input: unknown) => {
+    const parsed = CollectionScrollIpcSchema.safeParse(input)
+    if (!parsed.success) {
+      throw new AppErrorClass('HTTP_4XX', '滚动采集参数不正确', false, {
+        kind: 'validation',
+        issues: parsed.error.issues,
+      })
+    }
+    const rawEvent = parsed.data.event
+    const rawRule = parsed.data.platformRule
+    const platformRule: CollectionPlatformRule = normalizePlatformRule(rawRule)
+    const result = await collectionClickService.handleScroll(
+      {
+        kind: rawEvent.kind,
+        img: rawEvent.img,
+        page: rawEvent.page,
+        ...(rawEvent.goodsLink ? { goodsLink: rawEvent.goodsLink } : {}),
+        ...(rawEvent.platform ? { platform: rawEvent.platform } : {}),
+        ...(rawEvent.width !== undefined ? { width: rawEvent.width } : {}),
+        ...(rawEvent.height !== undefined ? { height: rawEvent.height } : {}),
+      },
+      platformRule,
+    )
+    emitCollectionEvent({ type: 'image-saved', record: result.record })
     return result
   })
 }

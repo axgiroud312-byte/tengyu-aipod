@@ -231,4 +231,52 @@ describe('createCollectionInjectedScript', () => {
       },
     ])
   })
+
+  it('drops scroll images when exclude keywords match before include keywords', () => {
+    const script = createCollectionInjectedScript({
+      platformRule,
+      scrollFilter: {
+        excludeKeywords: ['promo'],
+        includeKeywords: ['goods'],
+      },
+    })
+    const harness = createHarness({ script })
+    const img = image(harness.FakeImageElement, {
+      goodsLink: 'https://www.temu.com/goods/promo-shirt',
+    })
+
+    harness.observers[0]?.trigger(img)
+
+    expect(harness.callbacks).toEqual([])
+  })
+
+  it('drops scroll images outside the configured size range', () => {
+    const script = createCollectionInjectedScript({
+      platformRule,
+      scrollFilter: {
+        minWidth: 600,
+        maxHeight: 500,
+      },
+    })
+    const harness = createHarness({ script })
+    const tooSmall = image(harness.FakeImageElement, {
+      goodsLink: 'https://www.temu.com/goods/1',
+      width: 500,
+      height: 300,
+      naturalWidth: 500,
+      naturalHeight: 300,
+    })
+    const tooTall = image(harness.FakeImageElement, {
+      goodsLink: 'https://www.temu.com/goods/2',
+      width: 700,
+      height: 800,
+      naturalWidth: 700,
+      naturalHeight: 800,
+    })
+
+    harness.observers[0]?.trigger(tooSmall)
+    harness.observers[0]?.trigger(tooTall)
+
+    expect(harness.callbacks).toEqual([])
+  })
 })

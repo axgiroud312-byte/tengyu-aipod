@@ -311,4 +311,89 @@ describe('CollectionClickService', () => {
     expect(db.records[0]?.[7]).toBe('failed')
     expect(db.records[0]?.[8]).toBe('download failed')
   })
+
+  it('saves scroll images into the loose image pool', async () => {
+    const { service, fs, db } = createService({
+      session: activeSession({ mode: 'scroll' }),
+    })
+
+    await expect(
+      service.handleScroll(
+        {
+          kind: 'scroll',
+          img: 'https://img.temu.com/a.webp',
+          goodsLink: 'https://www.temu.com/goods/1',
+          page: 'https://www.temu.com/search?q=shirt',
+          width: 500,
+          height: 300,
+        },
+        platformRule,
+      ),
+    ).resolves.toMatchObject({
+      status: 'success',
+      savedPath: '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.webp',
+    })
+
+    expect(fs.writeFile).toHaveBeenCalledWith(
+      '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.webp',
+      Buffer.from('image-bytes'),
+    )
+    expect(db.records[0]?.slice(0, 8)).toEqual([
+      'record-1',
+      'session-1',
+      null,
+      'https://img.temu.com/a.webp',
+      'https://www.temu.com/goods/1',
+      'https://www.temu.com/search?q=shirt',
+      '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.webp',
+      'success',
+    ])
+  })
+
+  it('rejects scroll events unless the active session is in scroll mode', async () => {
+    const { service } = createService()
+
+    await expect(
+      service.handleScroll(
+        {
+          kind: 'scroll',
+          img: 'https://img.temu.com/a.jpg',
+          page: 'https://www.temu.com/search?q=shirt',
+        },
+        platformRule,
+      ),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      details: { kind: 'state_conflict', mode: 'click' },
+    })
+  })
+
+  it('deduplicates scroll image hashes inside the loose image pool', async () => {
+    const image = Buffer.from('same-scroll-image')
+    const { service, fs, db } = createService({
+      session: activeSession({ mode: 'scroll' }),
+      image,
+    })
+    const existingPath = '/tmp/wb/01-采集/散图池/existing.jpg'
+    fs.files.set(existingPath, image)
+
+    await expect(
+      service.handleScroll(
+        {
+          kind: 'scroll',
+          img: 'https://img.temu.com/a.jpg',
+          page: 'https://www.temu.com/search?q=shirt',
+        },
+        platformRule,
+      ),
+    ).resolves.toMatchObject({
+      status: 'skipped',
+      savedPath: existingPath,
+      reason: 'dedup',
+    })
+
+    expect(fs.writeFile).not.toHaveBeenCalled()
+    expect(db.records[0]?.[7]).toBe('skipped')
+    expect(db.records[0]?.[8]).toBe('dedup')
+  })
 })
