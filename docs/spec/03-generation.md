@@ -232,6 +232,8 @@ class GrsaiAdapter implements ImageGenerationAdapter {
 
 **异步模式**（v1.5）：当 replyType='async' 时返回 task_id，轮询 `/v1/api/result?id=...`。
 
+**节点 fallback**：原节点抛出网络/5xx/429 等可重试错误，或返回 `status=failed` 时，先切到另一个节点重试一次；`status=violation` 不切节点、不重试。
+
 ## 3. Skill 系统
 
 ### 3.1 Skill 数据结构
