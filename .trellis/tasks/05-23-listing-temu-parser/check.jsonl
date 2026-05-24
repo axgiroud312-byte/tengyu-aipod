@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Verify parser.ts stays in parser layer and returns observed_state only."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Check no source project DOM parser/action/workflow code was directly ported."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Check parser state quality, real-page evidence, and state-transition readiness."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check listing platform boundaries and real-test guard expectations."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Check parser output shape is stable for executor/workflow consumers."}
+{"file":".trellis/tasks/05-23-listing-temu-parser/research/temu-parser-contract.md","reason":"Confirm implementation and tests match the parser contract."}

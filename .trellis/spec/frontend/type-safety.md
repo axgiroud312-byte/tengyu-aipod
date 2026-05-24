@@ -178,6 +178,63 @@ export const PLATFORM_SELECTORS = {
 } as const satisfies Record<SelectorKey, readonly ListingSelector[]>
 ```
 
+### Scenario: Listing Platform Page Parser Contract
+
+#### 1. Scope / Trigger
+- Trigger: a listing platform adds a `page-parser.ts` file for Dianxiaomi DOM automation.
+- Boundary: parsers read DOM and return observed state only. They must not click, fill, upload, save, publish, or return Playwright handles to executor/workflow code.
+
+#### 2. Signatures
+- Platform parser file: `packages/client/src/modules/listing/platforms/<platform>/page-parser.ts`
+- Parser entry: `parseDraftPage(page: Page): Promise<PlatformDraftPageState>`
+- State shape must include page identity, page guards, field states, upload/image states, SKU states, submit controls, and toast states when the platform supports them.
+- Test guard: `REAL_LISTING=1`
+
+#### 3. Contracts
+- Parser return values must be JSON-serializable data: strings, numbers, booleans, nulls, arrays, and plain objects.
+- Parser return values must not include `Page`, `Locator`, `ElementHandle`, DOM nodes, functions, promises, or class instances.
+- Missing DOM elements must not throw by default. Return `found=false`, `count=0`, or `current_value=null` so executor/action code can raise structured listing errors with full state.
+- Parsers should consume the platform selector table instead of scattering new locator strings. If a new locator is required, add it to `selectors.ts` first.
+- Real parser tests must connect to the existing Bit Browser profile required by the task and assert state against real Dianxiaomi pages.
+- Real parser tests must be skipped by default and run only when `REAL_LISTING=1` is set.
+- Evidence should include screenshots and parsed state JSON. Avoid full-page HTML dumps unless a failure needs one.
+
+#### 4. Validation & Error Matrix
+- Parser throws on a missing optional/expected field -> test failure; return a not-found state instead.
+- Parser returns a Playwright handle or non-serializable value -> unit test failure via JSON serialization.
+- Real page guard says login/loading/blocking when the page is actually ready -> `REAL_LISTING=1` test failure.
+- Required fields missing on both real templates -> `REAL_LISTING=1` test failure and selector/parser review.
+
+#### 5. Good/Base/Bad Cases
+- Good: `parseDraftPage(page)` reads fields, image counts, button states, and page guards into a serializable state object.
+- Base: helper functions may use `Locator` internally for short-lived reads and discard it before returning.
+- Bad: parser clicks dropdowns, mutates fields, stores locators in state, or calls executor/workflow code.
+
+#### 6. Tests Required
+- Unit tests assert parser state is JSON-serializable.
+- Guarded real tests assert core page guards and required field/control states on the real v1 templates.
+- Quality gates: `pnpm -F @tengyu-aipod/client test`, `pnpm -F @tengyu-aipod/client type-check`, `pnpm -F @tengyu-aipod/client lint`, `pnpm -F @tengyu-aipod/client build`, plus root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+return {
+  titleField: page.locator('input[name="title"]'),
+}
+```
+
+Correct:
+```ts
+return {
+  title_field: {
+    found: true,
+    current_value: await titleInput.inputValue(),
+    is_disabled: false,
+  },
+}
+```
+
 ---
 
 ## Validation

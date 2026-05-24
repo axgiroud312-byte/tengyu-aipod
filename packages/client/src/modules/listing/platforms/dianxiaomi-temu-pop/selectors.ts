@@ -169,9 +169,13 @@ export const TEMU_POP_SELECTORS = {
   success_toast: [
     'css=.ant-message-success',
     'css=.ant-notification-notice-success',
-    'text=发布成功',
+    'css=.ant-message-notice:has-text("发布成功")',
   ],
-  failure_toast: ['css=.ant-message-error', 'css=.ant-notification-notice-error', 'text=发布失败'],
+  failure_toast: [
+    'css=.ant-message-error',
+    'css=.ant-notification-notice-error',
+    'css=.ant-message-notice:has-text("发布失败")',
+  ],
   login_indicators: [
     'text=欢迎登录 简单生意就在店小秘',
     'text=拖动下方拼图完成验证',

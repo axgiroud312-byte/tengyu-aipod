@@ -16,7 +16,7 @@ const describeReal = runRealListing ? describe : describe.skip
 const evidenceDir = resolve(
   process.cwd(),
   '../..',
-  '.trellis/tasks/05-23-listing-temu-selectors/evidence',
+  '.trellis/tasks/archive/2026-05/05-23-listing-temu-selectors/evidence',
 )
 
 describeReal('Temu PopTemu selectors on real Dianxiaomi pages', () => {
@@ -37,7 +37,7 @@ describeReal('Temu PopTemu selectors on real Dianxiaomi pages', () => {
         const page = await context.newPage()
         pages.push(page)
         await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60_000 })
-        await page.waitForTimeout(3_000)
+        await waitForTemuEditorReady(page)
 
         await mkdir(evidenceDir, { recursive: true })
         await page.screenshot({
@@ -87,6 +87,21 @@ async function findBitBrowserProfile2_1111(): Promise<BitBrowserProfile> {
     throw new Error('BitBrowser profile 2-1111 not found')
   }
   return profile
+}
+
+async function waitForTemuEditorReady(page: Page): Promise<void> {
+  await page.locator('#productProductInfo input.productNumber').waitFor({
+    state: 'attached',
+    timeout: 60_000,
+  })
+  await page.locator('#skuDataInfo th:has-text("SKU货号") .link:has-text("一键生成")').waitFor({
+    state: 'attached',
+    timeout: 60_000,
+  })
+  await page.locator('#shipmentInfo .ant-form-item:has(label[title="运费模板"])').waitFor({
+    state: 'attached',
+    timeout: 60_000,
+  })
 }
 
 async function firstSelectorHit(

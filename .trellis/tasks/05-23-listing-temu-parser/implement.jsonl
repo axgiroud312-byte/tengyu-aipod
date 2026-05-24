@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Parser must follow listing §2.2: read DOM and return observed_state without leaking ElementHandle."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"DOM code must be rewritten from real observation; source project DOM parser logic is forbidden to port directly."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Parser task must follow four-layer boundaries and state-transition framing."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Listing platform boundaries define that parser belongs under platform DOM layer and runner must stay DOM-free."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Parser state is consumed by later executor/workflow layers and must preserve stable data contracts."}
+{"file":".trellis/tasks/archive/2026-05/05-23-listing-temu-selectors/research/temu-selector-source-map.md","reason":"Selector source map and real template baseline from the completed prerequisite task."}
+{"file":".trellis/tasks/archive/2026-05/05-23-listing-temu-selectors/evidence/real-selector-hit-report.json","reason":"Real selector hit report for parser fields on both Temu templates."}
+{"file":".trellis/tasks/05-23-listing-temu-parser/research/temu-parser-contract.md","reason":"Parser output contract, real test contract, and reference source map."}
