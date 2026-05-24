@@ -137,6 +137,14 @@ export type ComfyuiImg2imgRunInput = {
   taskId?: string
 }
 
+export type ComfyuiExtractRunInput = {
+  sourceImagePaths: string[]
+  workflowId: string
+  workflowVersion?: string
+  prompt?: string
+  taskId?: string
+}
+
 type GenerationDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 type Img2imgReference = {
   artifactId: string
@@ -705,6 +713,16 @@ export async function listComfyuiImg2imgWorkflows(
   return workflows.filter((workflow) => workflow.capability === 'img2img')
 }
 
+export async function listComfyuiExtractWorkflows(
+  dependencies: {
+    workflowCache?: Pick<typeof comfyuiWorkflowCacheManager, 'listWorkflows'>
+  } = {},
+): Promise<ComfyuiWorkflowSummary[]> {
+  const workflowCache = dependencies.workflowCache ?? comfyuiWorkflowCacheManager
+  const workflows = await workflowCache.listWorkflows('extract')
+  return workflows.filter((workflow) => workflow.capability === 'extract')
+}
+
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
   const count = clampInt(input.count, 1, 20, 5)
   const capability = input.capability ?? 'txt2img'
@@ -808,6 +826,44 @@ export async function runComfyuiImg2img(
   const taskId = input.taskId ?? `img2img_${randomUUID()}`
   void runComfyuiImg2imgBatch(
     { ...input, taskId, sourceArtifactIds },
+    {
+      ...dependencies,
+      getSecret: async () => apiKey,
+    },
+  )
+    .then((result) => {
+      emitCompleted({ ok: true, result })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
+  return taskId
+}
+
+export async function runComfyuiExtract(
+  input: ComfyuiExtractRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const sourceImagePaths = Array.from(
+    new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
+  )
+  if (sourceImagePaths.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张采集源图', false)
+  }
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = input.taskId ?? `extract_comfy_${randomUUID()}`
+  void runComfyuiExtractBatch(
+    { ...input, taskId, sourceImagePaths },
     {
       ...dependencies,
       getSecret: async () => apiKey,
@@ -1050,6 +1106,110 @@ export async function runExtractBatch(
   }
 }
 
+export async function runComfyuiExtractBatch(
+  input: ComfyuiExtractRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const sourceImagePaths = Array.from(
+    new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
+  )
+  if (sourceImagePaths.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张采集源图', false)
+  }
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = input.taskId ?? `extract_comfy_${randomUUID()}`
+  const result: GenerationRunResult = {
+    taskId,
+    total: sourceImagePaths.length,
+    succeeded: 0,
+    failed: 0,
+    images: [],
+    failures: [],
+  }
+  const emit = dependencies.emitProgress ?? emitProgress
+  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+  const sourceFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
+  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+
+  try {
+    ensureGenerationTables(db)
+    const adapter =
+      dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
+      new ComfyuiChenyuAdapter({
+        instanceManager: new ComfyuiInstanceManager({
+          chenyu: new ChenyuCloudClient(apiKey),
+        }),
+        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+        workbenchRoot,
+        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      })
+
+    for (const sourceImagePath of sourceImagePaths) {
+      emitExtractProgress(result, sourceImagePaths.length, taskId, emit)
+      try {
+        assertInsideFolder(sourceImagePath, sourceFolder)
+        const sourceIdentity = await imageIdentity(sourceImagePath)
+        registerSourceArtifact(db, {
+          identity: sourceIdentity,
+          imagePath: sourceImagePath,
+          taskId,
+          createdAt: Date.now(),
+        })
+        const response = await adapter.generate({
+          capability: 'extract',
+          prompt: input.prompt?.trim() || 'Extract the print from the source product image.',
+          workflow_id: input.workflowId.trim(),
+          reference_images: [await imageReference(sourceImagePath)],
+          output: { format: 'png' },
+          options: {
+            taskId,
+            sourceArtifactIds: [sourceIdentity.artifactId],
+            ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+          },
+        } satisfies GenerateRequest)
+        if (response.status !== 'succeeded') {
+          throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
+        }
+        result.succeeded += response.images.length
+        result.images.push(
+          ...response.images.map((image) => ({
+            prompt: input.prompt ?? '',
+            url: image.url,
+            ...(image.local_path ? { localPath: image.local_path } : {}),
+            sourcePath: sourceImagePath,
+            artifactId: sourceIdentity.artifactId,
+            printId: sourceIdentity.printId,
+          })),
+        )
+      } catch (error) {
+        result.failed += 1
+        result.failures.push({
+          prompt: input.prompt ?? '',
+          sourcePath: sourceImagePath,
+          error: appErrorMessage(error),
+        })
+      } finally {
+        emitExtractProgress(result, sourceImagePaths.length, taskId, emit)
+      }
+    }
+
+    return result
+  } finally {
+    db.close()
+  }
+}
+
 export async function runComfyuiImg2imgBatch(
   input: ComfyuiImg2imgRunInput,
   dependencies: GenerationServiceDependencies = {},
@@ -1213,11 +1373,15 @@ export function registerGenerationIpc() {
   ipcMain.handle('generation:list-extract-sources', () => listExtractSources())
   ipcMain.handle('generation:list-img2img-sources', () => listImg2imgSources())
   ipcMain.handle('generation:list-comfyui-img2img-workflows', () => listComfyuiImg2imgWorkflows())
+  ipcMain.handle('generation:list-comfyui-extract-workflows', () => listComfyuiExtractWorkflows())
   ipcMain.handle('generation:parse-manual-prompts', (_event, text: string) =>
     parseManualPrompts(text),
   )
   ipcMain.handle('generation:run-txt2img', (_event, input: Txt2imgRunInput) => runTxt2img(input))
   ipcMain.handle('generation:run-extract', (_event, input: ExtractRunInput) => runExtract(input))
+  ipcMain.handle('generation:run-comfyui-extract', (_event, input: ComfyuiExtractRunInput) =>
+    runComfyuiExtract(input),
+  )
   ipcMain.handle('generation:run-comfyui-img2img', (_event, input: ComfyuiImg2imgRunInput) =>
     runComfyuiImg2img(input),
   )

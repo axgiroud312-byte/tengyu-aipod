@@ -5,9 +5,11 @@ import type { Skill } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  listComfyuiExtractWorkflows,
   listComfyuiImg2imgWorkflows,
   listExtractSources,
   listImg2imgSources,
+  runComfyuiExtractBatch,
   runComfyuiImg2imgBatch,
   runExtractBatch,
 } from './generation-service'
@@ -225,6 +227,143 @@ describe('generation extract service', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'extract-task', capability: 'extract', processed: 1 }),
     )
+  })
+})
+
+describe('generation comfyui extract service', () => {
+  it('lists only extract ComfyUI workflows', async () => {
+    const result = await listComfyuiExtractWorkflows({
+      workflowCache: {
+        listWorkflows: vi.fn().mockResolvedValue([
+          {
+            id: 'extract-v1',
+            version: '1.0.0',
+            name: 'Extract',
+            capability: 'extract',
+            requiredModels: [],
+          },
+          {
+            id: 'img2img-v1',
+            version: '1.0.0',
+            name: 'Image Variation',
+            capability: 'img2img',
+            requiredModels: [],
+          },
+        ]),
+      },
+    })
+
+    expect(result.map((workflow) => workflow.id)).toEqual(['extract-v1'])
+  })
+
+  it('runs ComfyUI extract with collection source lineage', async () => {
+    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    await createImage(sourcePath, 'source-image')
+    const fakeDb = createFakeDb()
+    const progress: unknown[] = []
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiExtractBatch(
+      {
+        sourceImagePaths: [sourcePath],
+        workflowId: 'extract-v1',
+        workflowVersion: '1.0.0',
+        prompt: 'extract print',
+        taskId: 'extract-comfy-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+        emitProgress: (item) => progress.push(item),
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'extract-comfy-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+    })
+    expect(fakeDb.artifacts).toHaveLength(1)
+    const sourceArtifactId = fakeDb.artifacts[0]?.[0]
+    expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
+    expect(fakeDb.artifacts[0]?.[6]).toBe(sourcePath)
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'extract',
+        workflow_id: 'extract-v1',
+        reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
+        options: expect.objectContaining({
+          taskId: 'extract-comfy-task',
+          sourceArtifactIds: [sourceArtifactId],
+          workflowVersion: '1.0.0',
+        }),
+      }),
+    )
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        task_id: 'extract-comfy-task',
+        capability: 'extract',
+        processed: 1,
+      }),
+    )
+  })
+
+  it('rejects ComfyUI extract sources outside collection folder', async () => {
+    const outsidePath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    await createImage(outsidePath, 'print-image')
+
+    const result = await runComfyuiExtractBatch(
+      {
+        sourceImagePaths: [outsidePath],
+        workflowId: 'extract-v1',
+        prompt: 'extract print',
+        taskId: 'extract-comfy-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: createFakeDb().openDatabase,
+        createComfyuiAdapter: () => ({ generate: vi.fn() }),
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'extract-comfy-task',
+      total: 1,
+      succeeded: 0,
+      failed: 1,
+    })
+    expect(result.failures[0]?.error).toBe('提取只能选择 01-采集 目录下的源图')
+  })
+
+  it('returns a setup error when no ComfyUI instance is registered for extract', async () => {
+    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    await createImage(sourcePath, 'source-image')
+
+    await expect(
+      runComfyuiExtractBatch(
+        {
+          sourceImagePaths: [sourcePath],
+          workflowId: 'extract-v1',
+          prompt: 'extract print',
+          taskId: 'extract-comfy-task',
+        },
+        {
+          readConfig: async () => ({ workbench_root: workbenchRoot }),
+          getSecret: async () => 'cy-key',
+          openDatabase: createDbWithoutComfyuiInstance().openDatabase,
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'CHENYU_INSTANCE_DOWN',
+      message: '请先创建并启动 ComfyUI 实例',
+    })
   })
 })
 

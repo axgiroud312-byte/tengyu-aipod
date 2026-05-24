@@ -1352,6 +1352,277 @@ function ComfyuiImg2imgPanel() {
   )
 }
 
+function ComfyuiExtractPanel() {
+  const [sources, setSources] = useState<GenerationImageSource[]>([])
+  const [sourceFolder, setSourceFolder] = useState('')
+  const [selectedPaths, setSelectedPaths] = useState<string[]>([])
+  const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
+  const [workflowKey, setWorkflowKey] = useState('')
+  const [prompt, setPrompt] = useState('')
+  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [result, setResult] = useState<GenerationRunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loadingSources, setLoadingSources] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  useEffect(() => {
+    void loadSources()
+    void loadWorkflows()
+  }, [])
+
+  useEffect(() => {
+    const offProgress = window.api.generation.onProgress((nextProgress) => {
+      if (nextProgress.capability !== 'extract') {
+        return
+      }
+      setProgress(nextProgress)
+    })
+    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
+      if (event.ok && event.result.taskId !== progress?.task_id) {
+        return
+      }
+      setRunning(false)
+      if (event.ok) {
+        setResult(event.result)
+        setError(null)
+        return
+      }
+      setError(event.error)
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [progress?.task_id])
+
+  const percent = progressPercent(progress)
+  const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
+
+  async function loadSources() {
+    setLoadingSources(true)
+    setError(null)
+    try {
+      const nextSources = await window.api.generation.listExtractSources()
+      setSourceFolder(nextSources.folder)
+      setSources(nextSources.images)
+      setSelectedPaths((current) =>
+        current.filter((path) => nextSources.images.some((image) => image.path === path)),
+      )
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取采集源图失败')
+    } finally {
+      setLoadingSources(false)
+    }
+  }
+
+  async function loadWorkflows() {
+    try {
+      const nextWorkflows = await window.api.generation.listComfyuiExtractWorkflows()
+      setWorkflows(nextWorkflows)
+      setWorkflowKey(
+        (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      )
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 提取工作流失败')
+    }
+  }
+
+  function toggleSource(path: string, checked: boolean) {
+    setSelectedPaths((current) =>
+      checked ? Array.from(new Set([...current, path])) : current.filter((item) => item !== path),
+    )
+  }
+
+  function selectAllSources() {
+    setSelectedPaths(sources.map((source) => source.path))
+  }
+
+  function clearSources() {
+    setSelectedPaths([])
+  }
+
+  async function startExtract() {
+    setError(null)
+    if (selectedPaths.length === 0) {
+      setError('请先选择 01-采集 下的源图')
+      return
+    }
+    if (!selectedWorkflow) {
+      setError('请选择 ComfyUI 提取工作流')
+      return
+    }
+
+    setResult(null)
+    setRunning(true)
+    const taskId = await window.api.generation.runComfyuiExtract({
+      sourceImagePaths: selectedPaths,
+      workflowId: selectedWorkflow.id,
+      workflowVersion: selectedWorkflow.version,
+      prompt,
+    })
+    setProgress({
+      task_id: taskId,
+      capability: 'extract',
+      processed: 0,
+      total: selectedPaths.length,
+      succeeded: 0,
+      failed: 0,
+    })
+  }
+
+  return (
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="space-y-5">
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="font-semibold">采集源图</h4>
+              <p className="mt-1 text-sm text-muted-foreground">{sourceFolder || '01-采集'}</p>
+            </div>
+            <div className="flex gap-2">
+              <Button onClick={() => void loadSources()} type="button" variant="secondary">
+                {loadingSources ? (
+                  <Loader2 className="mr-2 h-4 w-4" />
+                ) : (
+                  <ImagePlus className="mr-2 h-4 w-4" />
+                )}
+                刷新
+              </Button>
+              <Button onClick={selectAllSources} type="button" variant="secondary">
+                全选
+              </Button>
+              <Button onClick={clearSources} type="button" variant="secondary">
+                清空
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 grid max-h-[430px] gap-3 overflow-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
+            {sources.length ? (
+              sources.map((source) => (
+                <label
+                  className="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-md border bg-muted/30 p-2 text-sm"
+                  key={source.path}
+                >
+                  <input
+                    checked={selectedPaths.includes(source.path)}
+                    className="mt-1"
+                    onChange={(event) => toggleSource(source.path, event.target.checked)}
+                    type="checkbox"
+                  />
+                  <span className="min-w-0">
+                    <img
+                      alt={source.name}
+                      className="h-28 w-full rounded-sm object-cover"
+                      src={source.thumbnailUrl}
+                    />
+                    <span className="mt-2 block truncate font-medium">{source.name}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {source.relativePath}
+                    </span>
+                  </span>
+                </label>
+              ))
+            ) : (
+              <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground sm:col-span-2 lg:col-span-3">
+                暂无采集源图
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-background p-4">
+          <h4 className="font-semibold">ComfyUI 提取工作流</h4>
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <label className="block space-y-2 text-sm font-medium">
+              <span>工作流</span>
+              <select
+                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(event) => setWorkflowKey(event.target.value)}
+                value={workflowKey}
+              >
+                {workflows.map((workflow) => (
+                  <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
+                    {workflow.name} · {workflow.version}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="block space-y-2 text-sm font-medium">
+              <span>提示词</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="可留空，使用工作流默认提取逻辑"
+                value={prompt}
+              />
+            </label>
+          </div>
+        </div>
+      </div>
+
+      <aside className="space-y-5">
+        <div className="rounded-md border bg-background p-4">
+          <h4 className="font-semibold">执行</h4>
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-muted-foreground">已选源图</dt>
+              <dd className="font-medium tabular-nums">{selectedPaths.length}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">工作流</dt>
+              <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
+            </div>
+          </dl>
+          <Button
+            className="mt-4 w-full"
+            disabled={running}
+            onClick={() => void startExtract()}
+            type="button"
+          >
+            {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+            开始提取
+          </Button>
+        </div>
+
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex items-center justify-between">
+            <h4 className="font-semibold">进度</h4>
+            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+          </div>
+          <div className="mt-4 h-2 rounded-full bg-muted">
+            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-muted-foreground">处理</dt>
+              <dd className="font-medium tabular-nums">
+                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">成功</dt>
+              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">失败</dt>
+              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+            </div>
+          </dl>
+          {error ? (
+            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+          ) : null}
+          {result ? (
+            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
+              完成：成功 {result.succeeded}，失败 {result.failed}
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function SkillVariableControl({
   variable,
   value,
@@ -1500,6 +1771,8 @@ export function GenerationWorkbench() {
 
         {activeCapability === 'extract' && activeProvider === 'grsai' ? (
           <GrsaiExtractPanel />
+        ) : activeCapability === 'extract' && activeProvider === 'comfyui-chenyu' ? (
+          <ComfyuiExtractPanel />
         ) : activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu' ? (
           <ComfyuiImg2imgPanel />
         ) : (activeCapability === 'txt2img' || activeCapability === 'img2img') &&

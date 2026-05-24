@@ -11,6 +11,7 @@ import type {
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
 import type {
+  ComfyuiExtractRunInput,
   ComfyuiImg2imgRunInput,
   ExtractRunInput,
   ExtractSourcesResult,
@@ -77,12 +78,18 @@ const api = {
       ipcRenderer.invoke('generation:list-comfyui-img2img-workflows') as Promise<
         ComfyuiWorkflowSummary[]
       >,
+    listComfyuiExtractWorkflows: () =>
+      ipcRenderer.invoke('generation:list-comfyui-extract-workflows') as Promise<
+        ComfyuiWorkflowSummary[]
+      >,
     parseManualPrompts: (text: string) =>
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
       ipcRenderer.invoke('generation:run-txt2img', input) as Promise<string>,
     runExtract: (input: ExtractRunInput) =>
       ipcRenderer.invoke('generation:run-extract', input) as Promise<string>,
+    runComfyuiExtract: (input: ComfyuiExtractRunInput) =>
+      ipcRenderer.invoke('generation:run-comfyui-extract', input) as Promise<string>,
     runComfyuiImg2img: (input: ComfyuiImg2imgRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-img2img', input) as Promise<string>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {

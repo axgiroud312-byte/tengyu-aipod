@@ -1,1 +1,12 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/03-generation.md","reason":"Generation extract ComfyUI contracts, workflow cache, output folders, and IPC expectations."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend spec index for renderer changes."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Existing generation workbench and extract UI conventions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Renderer state should remain local to the panel."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Preload and renderer type contracts."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Frontend quality and verification expectations."}
+{"file":".trellis/spec/backend/index.md","reason":"Main-process service and IPC spec index."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Renderer-safe AppError contracts for setup and provider errors."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Feature spans UI, preload IPC, main service, adapter, filesystem, and DB."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse existing Grsai extract UI and ComfyUI adapter/workflow cache patterns."}
+{"file":".trellis/tasks/05-23-extract-comfyui-ui/research/local-code-flow.md","reason":"Local code flow and minimal implementation plan."}
