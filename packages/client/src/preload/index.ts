@@ -13,6 +13,7 @@ import type {
 import type {
   ComfyuiExtractRunInput,
   ComfyuiImg2imgRunInput,
+  ComfyuiMattingRunInput,
   ExtractRunInput,
   ExtractSourcesResult,
   GenerationProgress,
@@ -82,6 +83,10 @@ const api = {
       ipcRenderer.invoke('generation:list-comfyui-extract-workflows') as Promise<
         ComfyuiWorkflowSummary[]
       >,
+    listComfyuiMattingWorkflows: () =>
+      ipcRenderer.invoke('generation:list-comfyui-matting-workflows') as Promise<
+        ComfyuiWorkflowSummary[]
+      >,
     parseManualPrompts: (text: string) =>
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
@@ -90,6 +95,8 @@ const api = {
       ipcRenderer.invoke('generation:run-extract', input) as Promise<string>,
     runComfyuiExtract: (input: ComfyuiExtractRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-extract', input) as Promise<string>,
+    runComfyuiMatting: (input: ComfyuiMattingRunInput) =>
+      ipcRenderer.invoke('generation:run-comfyui-matting', input) as Promise<string>,
     runComfyuiImg2img: (input: ComfyuiImg2imgRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-img2img', input) as Promise<string>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {

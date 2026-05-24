@@ -180,6 +180,63 @@ describe('ComfyuiChenyuAdapter', () => {
     )
   })
 
+  it('writes matting outputs with source print id png names', async () => {
+    const mattingWorkflow: ComfyuiWorkflow = {
+      ...workflow,
+      id: 'matting-v1',
+      capability: 'matting',
+    }
+    const db = createDb()
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage: vi.fn().mockResolvedValue('uploaded.png'),
+        queuePrompt: vi.fn().mockResolvedValue('prompt-1'),
+        getHistory: vi.fn().mockResolvedValue({
+          status: { completed: true },
+          outputs: { '9': { images: [{ filename: 'result.webp' }] } },
+        }),
+        viewImage: vi.fn().mockResolvedValue(Buffer.from('result-bytes')),
+      },
+      workflowCache: { get: vi.fn().mockResolvedValue(mattingWorkflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+    })
+
+    const response = await adapter.generate({
+      capability: 'matting',
+      prompt: 'remove background',
+      workflow_id: 'matting-v1',
+      reference_images: [
+        { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+      ],
+      output: { format: 'png' },
+      options: {
+        taskId: 'matting-task',
+        sourceArtifactIds: ['source-artifact'],
+        printId: 'pri_print',
+      },
+    })
+
+    expect(response.images[0]?.local_path).toBe('/workbench/02-生图/04-抠图/pri_print.png')
+    expect(db.rows[0]).toEqual(
+      expect.arrayContaining([
+        'matting-task',
+        'pri_print',
+        'matting',
+        'comfyui-chenyu',
+        'matting-v1',
+        JSON.stringify(['source-artifact']),
+      ]),
+    )
+  })
+
   it('throws CHENYU_INSTANCE_DOWN when no running instance is available', async () => {
     const adapter = new ComfyuiChenyuAdapter({
       instanceManager: { refreshCurrentInstance: vi.fn().mockResolvedValue({ status: 'stopped' }) },

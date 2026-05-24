@@ -7,10 +7,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   listComfyuiExtractWorkflows,
   listComfyuiImg2imgWorkflows,
+  listComfyuiMattingWorkflows,
   listExtractSources,
   listImg2imgSources,
   runComfyuiExtractBatch,
   runComfyuiImg2imgBatch,
+  runComfyuiMattingBatch,
   runExtractBatch,
 } from './generation-service'
 
@@ -516,5 +518,118 @@ describe('generation comfyui img2img service', () => {
       code: 'CHENYU_INSTANCE_DOWN',
       message: '请先创建并启动 ComfyUI 实例',
     })
+  })
+})
+
+describe('generation comfyui matting service', () => {
+  it('lists only matting ComfyUI workflows', async () => {
+    const result = await listComfyuiMattingWorkflows({
+      workflowCache: {
+        listWorkflows: vi.fn().mockResolvedValue([
+          {
+            id: 'matting-v1',
+            version: '1.0.0',
+            name: 'BiRefNet',
+            capability: 'matting',
+            requiredModels: [],
+          },
+          {
+            id: 'extract-v1',
+            version: '1.0.0',
+            name: 'Extract',
+            capability: 'extract',
+            requiredModels: [],
+          },
+        ]),
+      },
+    })
+
+    expect(result.map((workflow) => workflow.id)).toEqual(['matting-v1'])
+  })
+
+  it('runs ComfyUI matting with selected print source lineage', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+    const progress: unknown[] = []
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///matting.png', local_path: '/matting.png' }],
+    })
+
+    const result = await runComfyuiMattingBatch(
+      {
+        sourceArtifactIds: ['print-artifact'],
+        workflowId: 'matting-v1',
+        workflowVersion: '1.0.0',
+        prompt: 'remove background',
+        taskId: 'matting-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+        emitProgress: (item) => progress.push(item),
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'matting-task', total: 1, succeeded: 1, failed: 0 })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'matting',
+        workflow_id: 'matting-v1',
+        reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
+        options: expect.objectContaining({
+          taskId: 'matting-task',
+          sourceArtifactIds: ['print-artifact'],
+          printId: 'pri_print',
+          workflowVersion: '1.0.0',
+        }),
+      }),
+    )
+    expect(progress).toContainEqual(
+      expect.objectContaining({ task_id: 'matting-task', capability: 'matting', processed: 1 }),
+    )
+  })
+
+  it('filters raw collection images out of matting sources through artifact validation', async () => {
+    const rawPath = join(workbenchRoot, '01-采集', 'sku-a', 'raw.png')
+    await createImage(rawPath, 'raw-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'raw-artifact',
+        print_id: 'pri_raw',
+        step: 'manual-import',
+        file_path: rawPath,
+      },
+    ])
+
+    const result = await runComfyuiMattingBatch(
+      {
+        sourceArtifactIds: ['raw-artifact'],
+        workflowId: 'matting-v1',
+        prompt: 'remove background',
+        taskId: 'matting-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate: vi.fn() }),
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'matting-task', total: 1, succeeded: 0, failed: 1 })
+    expect(result.failures[0]?.error).toBe('图生图不能直接选择 01-采集 原图，请先提取成印花')
   })
 })

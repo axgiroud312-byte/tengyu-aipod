@@ -3,7 +3,7 @@
   "name": "matting-comfyui-direct",
   "title": "matting comfyui direct",
   "description": "ComfyUI 直接抠图工作流",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

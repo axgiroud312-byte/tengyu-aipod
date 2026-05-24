@@ -142,7 +142,10 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       const targetPath =
         input.req.capability === 'img2img'
           ? await uniqueVersionedTargetPath(outputFolder, printId, '.png')
-          : join(outputFolder, `${printId}${extensionFromFilename(output.filename)}`)
+          : join(
+              outputFolder,
+              `${printId}${input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)}`,
+            )
       await writeFile(targetPath, buffer)
       const artifactId = await registerComfyuiArtifact(db, {
         taskId: taskIdFromRequest(input.req),
