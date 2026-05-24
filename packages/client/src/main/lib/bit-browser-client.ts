@@ -41,7 +41,9 @@ export class BitBrowserClient {
   private readonly timeoutMs: number
 
   constructor(options: BitBrowserClientOptions = {}) {
-    this.baseUrl = normalizeBaseUrl(options.baseUrl ?? BIT_BROWSER_DEFAULT_BASE_URL)
+    this.baseUrl = normalizeBaseUrl(
+      options.baseUrl ?? process.env.TENGYU_BIT_BROWSER_BASE_URL ?? BIT_BROWSER_DEFAULT_BASE_URL,
+    )
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 

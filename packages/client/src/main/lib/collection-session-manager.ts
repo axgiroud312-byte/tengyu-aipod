@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto'
+import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
-import { BrowserWindow, ipcMain } from 'electron'
+import type { BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
-import { readAppConfig } from '../onboarding'
 import {
   type BrowserProfileLockHandle,
   type BrowserProfileLockManager,
@@ -12,6 +12,8 @@ import {
 } from './browser-profile-lock'
 import { type CDPClient, cdpClient } from './cdp-client'
 import { exportCollectionManifest } from './collection-record-store'
+
+const nodeRequire = createRequire(import.meta.url)
 
 export type CollectionMode = 'click' | 'scroll'
 export type CollectionSessionStatus = 'starting' | 'active' | 'paused' | 'stopping' | 'completed'
@@ -46,9 +48,10 @@ export type CollectionSessionEvent =
   | { type: 'image-saved'; record: unknown }
 
 type CollectionDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type ReadAppConfig = () => Promise<{ workbench_root?: string | undefined }>
 
 export type CollectionSessionManagerDependencies = {
-  readConfig?: typeof readAppConfig
+  readConfig?: ReadAppConfig
   openDatabase?: (workbenchRoot: string) => CollectionDatabase
   cdp?: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
   locks?: BrowserProfileLockManager
@@ -83,7 +86,7 @@ const CollectionSessionConfigSchema = z
 
 export class CollectionSessionManager {
   private active: SessionRuntime | null = null
-  private readonly readConfig: typeof readAppConfig
+  private readonly readConfig: ReadAppConfig
   private readonly openDatabase: (workbenchRoot: string) => CollectionDatabase
   private readonly cdp: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
   private readonly locks: BrowserProfileLockManager
@@ -259,12 +262,16 @@ function openWorkbenchDatabase(workbenchRoot: string) {
   return new Database(workbenchDbPath(workbenchRoot))
 }
 
-async function readWorkbenchRoot(readConfig: typeof readAppConfig) {
+async function readWorkbenchRoot(readConfig: ReadAppConfig) {
   const config = await readConfig()
   if (!config.workbench_root) {
     throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
   }
   return config.workbench_root
+}
+
+async function readAppConfig() {
+  return (await import('../onboarding')).readAppConfig()
 }
 
 function ensureCollectionSessionTable(db: Pick<Database.Database, 'exec'>) {
@@ -343,7 +350,7 @@ async function exportManifest(
 }
 
 function emitCollectionEvent(event: CollectionSessionEvent) {
-  for (const window of BrowserWindow.getAllWindows()) {
+  for (const window of electronBrowserWindow().getAllWindows()) {
     window.webContents.send('collection:event', event)
   }
 }
@@ -353,6 +360,7 @@ export const collectionSessionManager = new CollectionSessionManager({
 })
 
 export function registerCollectionSessionIpc() {
+  const ipcMain = electronIpcMain()
   ipcMain.handle('collection:start-session', (_event, input: unknown) => {
     const parsed = CollectionSessionConfigSchema.safeParse(input)
     if (!parsed.success) {
@@ -365,4 +373,12 @@ export function registerCollectionSessionIpc() {
   })
   ipcMain.handle('collection:stop-session', () => collectionSessionManager.stopSession())
   ipcMain.handle('collection:get-active-session', () => collectionSessionManager.getActiveSession())
+}
+
+function electronIpcMain(): typeof ipcMain {
+  return (nodeRequire('electron') as typeof import('electron')).ipcMain
+}
+
+function electronBrowserWindow(): typeof BrowserWindow {
+  return (nodeRequire('electron') as typeof import('electron')).BrowserWindow
 }

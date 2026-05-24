@@ -37,6 +37,20 @@ declare global {
         cleanupAll: () => Promise<{ ok: true }>
       }
       collection: {
+        startSession: (
+          input: import('../../main/lib/collection-session-manager').CollectionSessionConfig,
+        ) => Promise<import('../../main/lib/collection-session-manager').CollectionSession>
+        stopSession: () => Promise<
+          import('../../main/lib/collection-session-manager').CollectionSession | null
+        >
+        handleClick: (input: {
+          event: import('../../main/lib/collection-click-service').CollectionClickEvent
+          platformRule: import('../../main/lib/collection-injected-script').CollectionPlatformRule
+        }) => Promise<import('../../main/lib/collection-click-service').CollectionClickResult>
+        handleScroll: (input: {
+          event: import('../../main/lib/collection-click-service').CollectionScrollEvent
+          platformRule: import('../../main/lib/collection-injected-script').CollectionPlatformRule
+        }) => Promise<import('../../main/lib/collection-click-service').CollectionScrollResult>
         setSku: (input: { goods_link: string; sku_code: string }) => Promise<{
           ok: true
           results: import('../../main/lib/collection-click-service').CollectionClickResult[]

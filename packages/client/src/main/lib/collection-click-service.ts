@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { extname, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
-import { BrowserWindow, ipcMain } from 'electron'
+import type { BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
@@ -20,6 +21,8 @@ import {
   type CollectionSessionManager,
   collectionSessionManager,
 } from './collection-session-manager'
+
+const nodeRequire = createRequire(import.meta.url)
 
 export type CollectionClickEvent = {
   kind: 'click'
@@ -598,7 +601,7 @@ const CollectionScrollIpcSchema = CollectionClickIpcSchema.extend({
 })
 
 function emitCollectionEvent(event: unknown) {
-  for (const window of BrowserWindow.getAllWindows()) {
+  for (const window of electronBrowserWindow().getAllWindows()) {
     window.webContents.send('collection:event', event)
   }
 }
@@ -619,6 +622,7 @@ const CollectionRetryRecordInputSchema = z.object({
 })
 
 export function registerCollectionClickIpc() {
+  const ipcMain = electronIpcMain()
   ipcMain.handle('collection:set-sku', async (_event, input: unknown) => {
     const parsed = CollectionSkuInputSchema.safeParse(input)
     if (!parsed.success) {
@@ -720,6 +724,14 @@ export function registerCollectionClickIpc() {
     emitCollectionEvent({ type: 'image-saved', record: result.record })
     return result
   })
+}
+
+function electronIpcMain(): typeof ipcMain {
+  return (nodeRequire('electron') as typeof import('electron')).ipcMain
+}
+
+function electronBrowserWindow(): typeof BrowserWindow {
+  return (nodeRequire('electron') as typeof import('electron')).BrowserWindow
 }
 
 function normalizePlatformRule(rawRule: z.infer<typeof CollectionClickIpcSchema>['platformRule']) {

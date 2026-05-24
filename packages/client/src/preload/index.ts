@@ -1,15 +1,19 @@
 import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 import type {
+  CollectionClickEvent,
   CollectionClickResult,
+  CollectionScrollEvent,
   CollectionScrollResult,
 } from '../main/lib/collection-click-service'
+import type { CollectionPlatformRule } from '../main/lib/collection-injected-script'
 import type {
   CollectionRecordRow,
   CollectionRecordStatus,
 } from '../main/lib/collection-record-store'
 import type {
   CollectionSession,
+  CollectionSessionConfig,
   CollectionSessionEvent,
 } from '../main/lib/collection-session-manager'
 import type { ComfyuiWorkflowSummary } from '../main/lib/comfyui-workflow-cache'
@@ -82,6 +86,16 @@ const api = {
       }>,
   },
   collection: {
+    startSession: (input: CollectionSessionConfig) =>
+      ipcRenderer.invoke('collection:start-session', input) as Promise<CollectionSession>,
+    stopSession: () =>
+      ipcRenderer.invoke('collection:stop-session') as Promise<CollectionSession | null>,
+    handleClick: (input: { event: CollectionClickEvent; platformRule: CollectionPlatformRule }) =>
+      ipcRenderer.invoke('collection:handle-click', input) as Promise<CollectionClickResult>,
+    handleScroll: (input: {
+      event: CollectionScrollEvent
+      platformRule: CollectionPlatformRule
+    }) => ipcRenderer.invoke('collection:handle-scroll', input) as Promise<CollectionScrollResult>,
     setSku: (input: { goods_link: string; sku_code: string }) =>
       ipcRenderer.invoke('collection:set-sku', input) as Promise<{
         ok: true

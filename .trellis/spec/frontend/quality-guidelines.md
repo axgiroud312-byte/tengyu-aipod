@@ -195,6 +195,111 @@ const pool = new SharpPreprocessPool()
 const result = await pool.process({ module: 'title', taskId, workbenchRoot, input })
 ```
 
+### Scenario: Collection Playwright E2E with Mock BitBrowser/CDP
+
+#### 1. Scope / Trigger
+- Trigger: collection automation needs E2E coverage without connecting to a real BitBrowser profile.
+- Boundary: Playwright owns the mock product page; collection services still use the real session manager, click service, file writes, SQLite record store, hash deduplication, retry path, and browser profile lock.
+
+#### 2. Signatures
+- E2E script: `pnpm -F @tengyu-aipod/client exec playwright test -c playwright.e2e.config.ts e2e/collection.spec.ts`
+- Env override: `TENGYU_BIT_BROWSER_BASE_URL=<mock server url>`
+- Preload collection API:
+  - `collection.startSession(input: CollectionSessionConfig): Promise<CollectionSession>`
+  - `collection.stopSession(): Promise<CollectionSession | null>`
+  - `collection.handleClick({ event, platformRule }): Promise<CollectionClickResult>`
+  - `collection.handleScroll({ event, platformRule }): Promise<CollectionScrollResult>`
+  - `collection.setSku({ goods_link, sku_code }): Promise<{ ok: true; results: CollectionClickResult[] }>`
+  - `collection.retryRecord({ record_id }): Promise<CollectionScrollResult>`
+
+#### 3. Contracts
+- Mock product pages must include real `<img>` elements and product links so Playwright can interact through user-facing locators.
+- Mock BitBrowser must return a CDP endpoint shape with `http` and `ws`; tests may inject a fake `CDPClient` that returns the Playwright browser.
+- Click mode first goods-page image without SKU returns `pending_sku`; after `setSku`/`assignSkuAndSavePending`, the file is saved under `01-采集/{SKU}/`.
+- Scroll mode saves visible image events under `01-采集/散图池/`.
+- `TENGYU_BIT_BROWSER_BASE_URL` is for tests/local automation only; production default remains `http://127.0.0.1:54345`.
+
+#### 4. Validation & Error Matrix
+- Missing workbench root -> `HTTP_4XX` before creating collection files.
+- Duplicate image hash in the target folder -> `skipped` record with `reason: "dedup"`.
+- Failed image download -> `failed` record with the download error message; retry reuses the stored record ID.
+- Competing sessions on the same profile lock -> `PROFILE_LOCKED` with `kind: "resource_lock"`.
+
+#### 5. Good/Base/Bad Cases
+- Good: Playwright opens a local product page, injects the collection script, routes events through `CollectionClickService`, then asserts real files and records.
+- Base: Scroll tests may send a scroll payload through the same exposed binding after scrolling the image into view; the injected script's observer details remain covered by unit tests.
+- Bad: E2E requiring a real BitBrowser install/profile or real marketplace page.
+
+#### 6. Tests Required
+- Assert mock product page has an image and product link.
+- Assert click mode pending SKU, SKU assignment, saved file path, and duplicate skip.
+- Assert scroll mode saves to `散图池`.
+- Assert failed download record can be retried successfully.
+- Assert profile lock competition rejects a second session.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+// Requires a real local BitBrowser and makes CI depend on a user's profile.
+await collectionSessionManager.startSession({ profile_id: 'real-profile', mode: 'click' })
+```
+
+Correct:
+```ts
+const cdp = new CDPClient({
+  bitBrowser: fakeBitBrowser,
+  chromium: { connectOverCDP: async () => browser },
+})
+```
+
+### Scenario: Electron Runtime Imports in Testable Main-Process Services
+
+#### 1. Scope / Trigger
+- Trigger: a main-process service is imported directly from Node-based unit/E2E tests.
+- Boundary: service classes can be imported outside Electron; IPC registration and window event fan-out still require Electron runtime.
+
+#### 2. Signatures
+- Use `import type { BrowserWindow, ipcMain } from 'electron'` for Electron-only types.
+- Load Electron values inside runtime-only helpers with `createRequire(import.meta.url)`.
+- Lazily import modules that statically depend on Electron, such as `../onboarding`, only on the default production path.
+
+#### 3. Contracts
+- Constructors with injected dependencies must not require Electron to exist at import time.
+- `register*Ipc()` functions may require Electron because they only run inside the Electron main process.
+- Tests that inject `readConfig`, `cdp`, locks, and event emitters should not load Electron runtime modules.
+
+#### 4. Validation & Error Matrix
+- Static `import { app } from 'electron'` through a test-import chain -> Playwright/Vitest Node process can throw `does not provide an export named 'app'`.
+- Lazy Electron load in `register*Ipc()` -> Electron app still registers handlers normally.
+- Missing injected dependency in tests -> default path may import Electron; inject the boundary explicitly.
+
+#### 5. Good/Base/Bad Cases
+- Good: `CollectionSessionManager` can be imported by Playwright E2E with fake config/CDP.
+- Base: Electron UI uses the same singleton and IPC registration as before.
+- Bad: A pure service imports `BrowserWindow`, `ipcMain`, `app`, or `dialog` as runtime values at top level only for event fan-out or IPC registration.
+
+#### 6. Tests Required
+- Run `pnpm -F @tengyu-aipod/client type-check`.
+- Run affected Node/E2E tests that import the service directly.
+- Run `pnpm -F @tengyu-aipod/client build` to confirm Electron bundling still succeeds.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+import { BrowserWindow, ipcMain } from 'electron'
+```
+
+Correct:
+```ts
+import { createRequire } from 'node:module'
+import type { BrowserWindow, ipcMain } from 'electron'
+
+const nodeRequire = createRequire(import.meta.url)
+const electronIpcMain = () => (nodeRequire('electron') as typeof import('electron')).ipcMain
+```
+
 ### Scenario: TempFileManager
 
 #### 1. Scope / Trigger
