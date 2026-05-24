@@ -156,9 +156,9 @@ export type ComfyuiMattingRunInput = {
 
 export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & {
   workflowId: string
-  maskSkillId: string
+  maskSkillId?: string
   maskSkillVersion?: string
-  maskModel: string
+  maskModel?: string
 }
 
 type GenerationDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
@@ -173,7 +173,7 @@ type GenerationServiceDependencies = {
   readConfig?: typeof readAppConfig
   getSecret?: typeof getSecret
   openDatabase?: (workbenchRoot: string) => GenerationDatabase
-  skillCache?: Pick<typeof skillCacheManager, 'getSkill'>
+  skillCache?: Pick<typeof skillCacheManager, 'getSkill' | 'listSkills'>
   workflowCache?: Pick<typeof comfyuiWorkflowCacheManager, 'listWorkflows' | 'get'>
   promptGenerator?: Pick<typeof promptGeneratorService, 'generatePrompts'>
   createGrsaiAdapter?: (apiKey: string) => Pick<GrsaiAdapter, 'generate'>
@@ -203,6 +203,30 @@ function naturalCompare(left: string, right: string) {
 
 function normalizeModel(model: string) {
   return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? model : DEFAULT_GENERATION_MODEL
+}
+
+async function resolveMixedMattingMaskSkill(
+  input: MixedMattingRunInput,
+  skillCache: Pick<typeof skillCacheManager, 'getSkill' | 'listSkills'>,
+) {
+  const skillId = input.maskSkillId?.trim()
+  if (skillId) {
+    return skillCache.getSkill(skillId, input.maskSkillVersion)
+  }
+
+  const summaries = await skillCache.listSkills({
+    module: 'generation',
+    category: 'matting-mask',
+  })
+  const first = summaries[0]
+  if (!first) {
+    throw new AppErrorClass('HTTP_4XX', '没有可用的黑白图 Skill', false, {
+      provider: 'grsai',
+      category: 'matting-mask',
+    })
+  }
+
+  return skillCache.getSkill(first.id, first.version)
 }
 
 function workbenchDbPath(workbenchRoot: string) {
