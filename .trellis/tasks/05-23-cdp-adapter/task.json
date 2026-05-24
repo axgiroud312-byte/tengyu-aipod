@@ -3,7 +3,7 @@
   "name": "cdp-adapter",
   "title": "cdp adapter",
   "description": "Playwright connectOverCDP+注入采集脚本",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
