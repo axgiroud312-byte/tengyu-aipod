@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend conventions for API adapters, error handling, and test structure."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index before implementation."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Grsai adapter changes request/response contracts across service and UI layers."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Avoid duplicating image-generation adapter helpers and normalization logic."}
+{"file":"docs/spec/03-generation.md","reason":"Authoritative generation module adapter contract and capability matrix."}
+{"file":"references/generation-paid/grsai-api.md","reason":"Concrete Grsai endpoint, payload, replyType, and error semantics."}
