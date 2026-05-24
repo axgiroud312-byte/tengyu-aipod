@@ -23,9 +23,10 @@ import type {
   TitleTaskEvent,
 } from '../../main/lib/title-service'
 import { DetectionWorkbench } from './components/detection-workbench'
+import { GenerationWorkbench } from './components/generation-workbench'
 
 type OnboardingStep = 1 | 2 | 3 | 4
-type WorkbenchModule = 'title' | 'detection'
+type WorkbenchModule = 'title' | 'generation' | 'detection'
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 
 const apiKeyFields = [
@@ -113,6 +114,28 @@ function progressPercent(progress: TitleProgress | null) {
     return 0
   }
   return Math.round((progress.processed / progress.total) * 100)
+}
+
+function moduleTitle(module: WorkbenchModule) {
+  switch (module) {
+    case 'title':
+      return '标题生成模块'
+    case 'generation':
+      return '生图模块'
+    default:
+      return '侵权检测模块'
+  }
+}
+
+function moduleDescription(module: WorkbenchModule) {
+  switch (module) {
+    case 'title':
+      return '从货号成品图批量生成跨境标题'
+    case 'generation':
+      return '按文生图、图生图、提取、抠图组织生产路径'
+    default:
+      return '批量检测印花风险并流转结果'
+  }
 }
 
 function ActivationBadge({
@@ -473,12 +496,10 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                 <div className="flex items-start justify-between gap-6">
                   <div className="space-y-1">
                     <p className="text-sm font-medium text-muted-foreground">
-                      {activeModule === 'title' ? '标题生成模块' : '侵权检测模块'}
+                      {moduleTitle(activeModule)}
                     </p>
                     <h1 className="text-2xl font-semibold text-balance">
-                      {activeModule === 'title'
-                        ? '从货号成品图批量生成跨境标题'
-                        : '批量检测印花风险并流转结果'}
+                      {moduleDescription(activeModule)}
                     </h1>
                   </div>
                   <div className="rounded-md border bg-muted px-3 py-2 text-right text-xs text-muted-foreground">
@@ -493,6 +514,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                     variant={activeModule === 'title' ? 'default' : 'secondary'}
                   >
                     标题生成
+                  </Button>
+                  <Button
+                    onClick={() => setActiveModule('generation')}
+                    type="button"
+                    variant={activeModule === 'generation' ? 'default' : 'secondary'}
+                  >
+                    生图
                   </Button>
                   <Button
                     onClick={() => setActiveModule('detection')}
@@ -698,6 +726,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                     </div>
                   </div>
                 </div>
+              ) : activeModule === 'generation' ? (
+                <GenerationWorkbench />
               ) : (
                 <DetectionWorkbench />
               )}
