@@ -1,0 +1,278 @@
+[
+  {
+    "template": "clothing",
+    "info": {
+      "url": "https://www.dianxiaomi.com/web/popTemu/edit?id=128935194843933515",
+      "globalFileInputs": [
+        {
+          "id": "localFileUploadInp",
+          "accept": "",
+          "cls": "",
+          "display": "none",
+          "parentText": "重要通知：9月15日晚22:00 — 9月16日早07:00店小秘将进行停机维护，期间将暂停店小秘所有服务，请提前做好准备！给您带来的不便敬请谅解~ 为保证页面正常显示，请使用Chrome或Firefox浏览器，点击下载Chrome或Firefox浏览器。如使用360、搜狗、QQ等国产浏览器请设置为“极速模式”点此查看如何设置首页产品数据采集数据搬家产品开发产品检测UPC管理外观专利采集箱待发布在"
+        }
+      ],
+      "sections": [
+        {
+          "label": "产品标题",
+          "text": "产品标题0 / 500",
+          "buttons": [],
+          "inputs": [
+            {
+              "type": "text",
+              "accept": "",
+              "id": "",
+              "cls": "ant-input ant-input-sm css-1oz1bg8",
+              "placeholder": "",
+              "value": "",
+              "display": "block"
+            }
+          ],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"产品标题\">产品标题</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-33b62b61=\"\" data-v-8efb8f34=\"\" data-v-aa019337=\"\" class=\"inputContainer\"><span data-v-33b62b61=\"\" class=\"ant-input-group-wrapper ant-dropdown-trigger ant-input-group-wrapper-sm css-1oz1bg8\"><span class=\"ant-input-wrapper ant-input-group css-1oz1bg8\"><!----><input type=\"text\" class=\"ant-input ant-input-sm css-1oz1bg8\" maxlength=\"500\" placeholder=\"\" value=\"\"><span class=\"ant-input-group-addon\"><div data-v-33b62b61=\"\" class=\"flex-align-center\"><i data-v-33b62b61=\"\" class=\"iconfont icon_deepseek cursor-pointer\"></i><!----><span></span><!----><span></span><!----><i data-v-33b62b61=\"\" class=\"iconfont icon_format_size ml7 cursor-pointer\"></i><!----></div></span></span></span><!----><div data-v-33b62b61=\"\" class=\"ml10 w80 color-gray\"><span data-v-33b62b61=\"\" class=\"\">0</span> / 500</div></div></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "英文标题",
+          "text": "英文标题0 / 500",
+          "buttons": [],
+          "inputs": [
+            {
+              "type": "text",
+              "accept": "",
+              "id": "",
+              "cls": "ant-input ant-input-sm css-1oz1bg8",
+              "placeholder": "",
+              "value": "",
+              "display": "block"
+            }
+          ],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"英文标题\">英文标题</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-33b62b61=\"\" data-v-8efb8f34=\"\" data-v-aa019337=\"\" class=\"inputContainer\"><span data-v-33b62b61=\"\" class=\"ant-input-group-wrapper ant-dropdown-trigger ant-input-group-wrapper-sm css-1oz1bg8\"><span class=\"ant-input-wrapper ant-input-group css-1oz1bg8\"><!----><input type=\"text\" class=\"ant-input ant-input-sm css-1oz1bg8\" maxlength=\"500\" placeholder=\"\" value=\"\"><span class=\"ant-input-group-addon\"><div data-v-33b62b61=\"\" class=\"flex-align-center\"><span></span><!----><span></span><!----><span></span><!----><i data-v-33b62b61=\"\" class=\"iconfont icon_format_size ml7 cursor-pointer\"></i><!----></div></span></span></span><!----><div data-v-33b62b61=\"\" class=\"ml10 w80 color-gray\"><span data-v-33b62b61=\"\" class=\"\">0</span> / 500</div></div></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "产品货号",
+          "text": "产品货号",
+          "buttons": [],
+          "inputs": [
+            {
+              "type": "text",
+              "accept": "",
+              "id": "",
+              "cls": "ant-input css-1oz1bg8 productNumber",
+              "placeholder": "产品货号不能包含中文和中文符号",
+              "value": "",
+              "display": "inline-block"
+            }
+          ],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"\" title=\"产品货号\">产品货号</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><input data-v-aa019337=\"\" type=\"text\" class=\"ant-input css-1oz1bg8 productNumber\" placeholder=\"产品货号不能包含中文和中文符号\" value=\"\" style=\"width: 250px;\"></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "产品轮播图",
+          "text": "产品轮播图选择图片添加水印crop编辑图片导出全部图片说明！ 1 点击图片拖动，即可调整图片顺序！ 2 「产品轮播图最多选用 10 张，最少选用3张 已经选用了 0 张」，比例1:1，不小于800*800，大小在2M以内",
+          "buttons": [
+            {
+              "tag": "button",
+              "text": "选择图片",
+              "cls": "css-1oz1bg8 ant-btn ant-btn-default"
+            },
+            {
+              "tag": "a",
+              "text": "添加水印",
+              "cls": "img-options-action-btn ant-dropdown-trigger"
+            },
+            {
+              "tag": "a",
+              "text": "crop编辑图片",
+              "cls": "img-options-action-btn ant-dropdown-trigger"
+            },
+            {
+              "tag": "a",
+              "text": "导出全部图片",
+              "cls": "img-options-action-btn"
+            }
+          ],
+          "inputs": [],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8 mainImage\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"产品轮播图\">产品轮播图</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-567bb6c2=\"\" data-v-aa019337=\"\" class=\"img-module\"><div data-v-567bb6c2=\"\" class=\"header mb-25\"><button data-v-e191d33b=\"\" class=\"css-1oz1bg8 ant-btn ant-btn-default\" type=\"button\"><!----><span>选择图片</span><span data-v-e191d33b=\"\" class=\"iconfont icon_down\"></span></button><!----><div data-v-567bb6c2=\"\" class=\"action\"><div data-v-a30004b5=\"\" data-v-567bb6c2=\"\" class=\"img-options\"><div data-v-a30004b5=\"\" class=\"ant-flex css-1oz1bg8 ant-flex-align-center\"><div data-v-a30004b5=\"\" class=\"action-item\"><a class=\"img-options-action-btn ant-dropdown-trigger\"><div class=\"ant-flex css-1oz1bg8 ant-flex-align-center ant-flex-justify-space-between\"><span class=\"batch-add-watermark-icon\"></span><span class=\"m-left5 m-right5\">添加水印</span><i class=\"iconfont icon_down\"></i></div></a><!----></div><div data-v-a30004b5=\"\" class=\"action-item\"><a class=\"img-options-action-btn ant-dropdown-trigger\"><div class=\"ant-flex css-1oz1bg8 ant-flex-align-center ant-flex-justify-space-between\"><span class=\"attach-icons md-18\">crop</span><span class=\"m-left5 m-right5\">编辑图片</span><i class=\"iconfont icon_down\"></i></div></a><!----></div><div data-v-a30004b5=\"\" class=\"action-item\"><a data-v-a30004b5=\"\" class=\"img-options-action-btn\"><div class=\"ant-flex css-1oz1bg8 ant-flex-align-center ant-flex-justify-space-between\"><span class=\"iconfont icon_download\"></span><span class=\"m-left5 m-right5\">导出全部图片</span><!----></div></a></div></div></div></div></div><div data-v-567bb6c2=\"\" class=\"tip color-[#999] mt-10\"><div data-v-567bb6c2=\"\" class=\"mb-25 explain-module\"><span data-v-567bb6c2=\"\" class=\"tit px-8 mr-10\">说明！</span"
+        },
+        {
+          "label": "产品素材图",
+          "text": "产品素材图说明 素材图将自动获取产品轮播图/颜色图的第一张图片，可单独修改，素材图尺寸要求比例为1：1，不小于800*800",
+          "buttons": [],
+          "inputs": [],
+          "images": 1,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"产品素材图\">产品素材图</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-c05bcaa3=\"\" data-v-aa019337=\"\"><div data-v-c05bcaa3=\"\" class=\"material-img-module\"><div data-v-c05bcaa3=\"\" class=\"img-list\"><div data-v-4061fce2=\"\" data-v-c05bcaa3=\"\" class=\"single-image\"><!----><div data-v-437eaaf5=\"\" class=\"img-out img-box !size-120\" style=\"width: 120px !important; height: 120px !important;\"><!----><img data-v-437eaaf5=\"\" class=\"img-css !w-100%\" src=\"https://s1.dianxiaomi.com/dxm-web/2026-05/assets/kong-CH5MPQUG.png\" draggable=\"false\"></div><!----><!----></div></div></div><div data-v-c05bcaa3=\"\" class=\"explain-module m-top12\"><span data-v-c05bcaa3=\"\" class=\"tit\">说明</span><div data-v-c05bcaa3=\"\" class=\"cont\"> 素材图将自动获取产品轮播图/颜色图的第一张图片，可单独修改，素材图尺寸要求比例为1：1，不小于800*800 </div></div></div></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "产品视频",
+          "text": "产品视频添加视频图片生成视频 播放 删除 因视频文件会占用大量服务器存储资源，请视频上传7天内完成产品发布，未发布的产品视频将会被清除 使用宽高比1：1或3：4或16：9视频（建议优先采用1：1或3：4视频），大小500M以内。（建议视频时长在1分钟内） 上传视频内容需含商品主图，非PPT、无黑边、无水印，且内容及背景音乐需确认无IP侵权 上传视频内容建议前5s内突出商品的核心卖点，且语音讲解或配",
+          "buttons": [
+            {
+              "tag": "button",
+              "text": "添加视频",
+              "cls": "css-1oz1bg8 ant-btn ant-btn-default"
+            },
+            {
+              "tag": "button",
+              "text": "图片生成视频",
+              "cls": "css-1oz1bg8 ant-btn ant-btn-link"
+            },
+            {
+              "tag": "a",
+              "text": "播放",
+              "cls": "link"
+            },
+            {
+              "tag": "a",
+              "text": "删除",
+              "cls": "link"
+            }
+          ],
+          "inputs": [],
+          "images": 1,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"\" title=\"产品视频\">产品视频</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-ff91db00=\"\" class=\"video-operate\"><div data-v-ff91db00=\"\" class=\"ant-space css-1oz1bg8 ant-space-horizontal ant-space-align-center mb-10 btns\" style=\"gap: 8px;\"><div class=\"ant-space-item\" style=\"\"><button data-v-ff91db00=\"\" class=\"css-1oz1bg8 ant-btn ant-btn-default\" type=\"button\"><!----><span>添加视频</span><i data-v-ff91db00=\"\" class=\"iconfont icon_down\"></i></button><!----></div><!----><div class=\"ant-space-item\"><button data-v-ff91db00=\"\" class=\"css-1oz1bg8 ant-btn ant-btn-link\" type=\"button\"><!----><i data-v-ff91db00=\"\" class=\"iconfont icon_video mr-10\"></i><span>图片生成视频</span></button></div><!----></div><div data-v-ff91db00=\"\" class=\"video-operate-img mb-12\" style=\"display: none;\"><div data-v-ff91db00=\"\" class=\"video-operate-img-box\"><div data-v-ff91db00=\"\" class=\"img-out w-100! h-100! border-1 border-solid border-#ccc\"><img data-v-ff91db00=\"\" class=\"img-css\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAADrVJREFUeNrsXflzE9cd/0iWZEuyZVmSZWzLBoyNMdjBFAiEtJCUkh4hSZNO05lmOv2lRxKS/pZ/oG2aHumVdNof2ukP6dBpEjJpwnRIIRwh4UiAgiFgwLexjU8s35Zk7fa9J621h4S18q6RZ/YzI7z7tLva/X7e93zvLYABAwYMGDBgwIABAwYMGDBgwIABAwYMGDBgwIABAwYMGMgSmNQc3HU76CanvEs2HzJElxaC4XDk6cMnLx7d9709XDonWNRcPcrxjQBvkJE+SAfGw2bgzJ/3H5l+/pmFSVFFSCQcMUSsEtFoVLBEjnRIUUVIOBQyJKyaEE7sHhYkRRUhMzMzhoRVguMUPvuupKgiZHpq1pCwakK4ZIFUSlJUEVLkyYfNaoHf4zQknQb6hyfRNzSRKrp1/GX/h9PPPfMVLmNC3EUe5Nos8BiEpOdzORsmIzlk63bapJjV/ADPG0LWIQ+kpJgzIoRdwSBFHXh1pFjUXZsHh+xhpLtvOFFqMJnmtwOl3uxw6HGZqdCUacty6mw32npxk3y6eoYwMTlDOCDPYTaxvzmibfrxF7tRWeoj5HhQVVmybMyXRa36LbV+zIbC+PTCDZwln1A4ArPZzARO/94Nw8NjGBkZx6WrH"
+        }
+      ],
+      "dropdownText": []
+    }
+  },
+  {
+    "template": "general",
+    "info": {
+      "url": "https://www.dianxiaomi.com/web/popTemu/edit?id=128935194833519551",
+      "globalFileInputs": [
+        {
+          "id": "localFileUploadInp",
+          "accept": "",
+          "cls": "",
+          "display": "none",
+          "parentText": "重要通知：9月15日晚22:00 — 9月16日早07:00店小秘将进行停机维护，期间将暂停店小秘所有服务，请提前做好准备！给您带来的不便敬请谅解~ 为保证页面正常显示，请使用Chrome或Firefox浏览器，点击下载Chrome或Firefox浏览器。如使用360、搜狗、QQ等国产浏览器请设置为“极速模式”点此查看如何设置首页产品数据采集数据搬家产品开发产品检测UPC管理外观专利采集箱待发布在"
+        }
+      ],
+      "sections": [
+        {
+          "label": "产品标题",
+          "text": "产品标题0 / 500",
+          "buttons": [],
+          "inputs": [
+            {
+              "type": "text",
+              "accept": "",
+              "id": "",
+              "cls": "ant-input ant-input-sm css-1oz1bg8",
+              "placeholder": "",
+              "value": "",
+              "display": "block"
+            }
+          ],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"产品标题\">产品标题</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-33b62b61=\"\" data-v-8efb8f34=\"\" data-v-aa019337=\"\" class=\"inputContainer\"><span data-v-33b62b61=\"\" class=\"ant-input-group-wrapper ant-dropdown-trigger ant-input-group-wrapper-sm css-1oz1bg8\"><span class=\"ant-input-wrapper ant-input-group css-1oz1bg8\"><!----><input type=\"text\" class=\"ant-input ant-input-sm css-1oz1bg8\" maxlength=\"500\" placeholder=\"\" value=\"\"><span class=\"ant-input-group-addon\"><div data-v-33b62b61=\"\" class=\"flex-align-center\"><i data-v-33b62b61=\"\" class=\"iconfont icon_deepseek cursor-pointer\"></i><!----><span></span><!----><span></span><!----><i data-v-33b62b61=\"\" class=\"iconfont icon_format_size ml7 cursor-pointer\"></i><!----></div></span></span></span><!----><div data-v-33b62b61=\"\" class=\"ml10 w80 color-gray\"><span data-v-33b62b61=\"\" class=\"\">0</span> / 500</div></div></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "英文标题",
+          "text": "英文标题0 / 500",
+          "buttons": [],
+          "inputs": [
+            {
+              "type": "text",
+              "accept": "",
+              "id": "",
+              "cls": "ant-input ant-input-sm css-1oz1bg8",
+              "placeholder": "",
+              "value": "",
+              "display": "block"
+            }
+          ],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"英文标题\">英文标题</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-33b62b61=\"\" data-v-8efb8f34=\"\" data-v-aa019337=\"\" class=\"inputContainer\"><span data-v-33b62b61=\"\" class=\"ant-input-group-wrapper ant-dropdown-trigger ant-input-group-wrapper-sm css-1oz1bg8\"><span class=\"ant-input-wrapper ant-input-group css-1oz1bg8\"><!----><input type=\"text\" class=\"ant-input ant-input-sm css-1oz1bg8\" maxlength=\"500\" placeholder=\"\" value=\"\"><span class=\"ant-input-group-addon\"><div data-v-33b62b61=\"\" class=\"flex-align-center\"><span></span><!----><span></span><!----><span></span><!----><i data-v-33b62b61=\"\" class=\"iconfont icon_format_size ml7 cursor-pointer\"></i><!----></div></span></span></span><!----><div data-v-33b62b61=\"\" class=\"ml10 w80 color-gray\"><span data-v-33b62b61=\"\" class=\"\">0</span> / 500</div></div></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "产品货号",
+          "text": "产品货号",
+          "buttons": [],
+          "inputs": [
+            {
+              "type": "text",
+              "accept": "",
+              "id": "",
+              "cls": "ant-input css-1oz1bg8 productNumber",
+              "placeholder": "产品货号不能包含中文和中文符号",
+              "value": "",
+              "display": "inline-block"
+            }
+          ],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"\" title=\"产品货号\">产品货号</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><input data-v-aa019337=\"\" type=\"text\" class=\"ant-input css-1oz1bg8 productNumber\" placeholder=\"产品货号不能包含中文和中文符号\" value=\"\" style=\"width: 250px;\"></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "产品轮播图",
+          "text": "产品轮播图选择图片添加水印crop编辑图片导出全部图片说明！ 1 点击图片拖动，即可调整图片顺序！ 2 「产品轮播图最多选用 10 张，最少选用3张 已经选用了 0 张」，比例1:1，不小于800*800，大小在2M以内",
+          "buttons": [
+            {
+              "tag": "button",
+              "text": "选择图片",
+              "cls": "css-1oz1bg8 ant-btn ant-btn-default"
+            },
+            {
+              "tag": "a",
+              "text": "添加水印",
+              "cls": "img-options-action-btn ant-dropdown-trigger"
+            },
+            {
+              "tag": "a",
+              "text": "crop编辑图片",
+              "cls": "img-options-action-btn ant-dropdown-trigger"
+            },
+            {
+              "tag": "a",
+              "text": "导出全部图片",
+              "cls": "img-options-action-btn"
+            }
+          ],
+          "inputs": [],
+          "images": 0,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8 mainImage\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"产品轮播图\">产品轮播图</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-567bb6c2=\"\" data-v-aa019337=\"\" class=\"img-module\"><div data-v-567bb6c2=\"\" class=\"header mb-25\"><button data-v-e191d33b=\"\" class=\"css-1oz1bg8 ant-btn ant-btn-default\" type=\"button\"><!----><span>选择图片</span><span data-v-e191d33b=\"\" class=\"iconfont icon_down\"></span></button><!----><div data-v-567bb6c2=\"\" class=\"action\"><div data-v-a30004b5=\"\" data-v-567bb6c2=\"\" class=\"img-options\"><div data-v-a30004b5=\"\" class=\"ant-flex css-1oz1bg8 ant-flex-align-center\"><div data-v-a30004b5=\"\" class=\"action-item\"><a class=\"img-options-action-btn ant-dropdown-trigger\"><div class=\"ant-flex css-1oz1bg8 ant-flex-align-center ant-flex-justify-space-between\"><span class=\"batch-add-watermark-icon\"></span><span class=\"m-left5 m-right5\">添加水印</span><i class=\"iconfont icon_down\"></i></div></a><!----></div><div data-v-a30004b5=\"\" class=\"action-item\"><a class=\"img-options-action-btn ant-dropdown-trigger\"><div class=\"ant-flex css-1oz1bg8 ant-flex-align-center ant-flex-justify-space-between\"><span class=\"attach-icons md-18\">crop</span><span class=\"m-left5 m-right5\">编辑图片</span><i class=\"iconfont icon_down\"></i></div></a><!----></div><div data-v-a30004b5=\"\" class=\"action-item\"><a data-v-a30004b5=\"\" class=\"img-options-action-btn\"><div class=\"ant-flex css-1oz1bg8 ant-flex-align-center ant-flex-justify-space-between\"><span class=\"iconfont icon_download\"></span><span class=\"m-left5 m-right5\">导出全部图片</span><!----></div></a></div></div></div></div></div><div data-v-567bb6c2=\"\" class=\"tip color-[#999] mt-10\"><div data-v-567bb6c2=\"\" class=\"mb-25 explain-module\"><span data-v-567bb6c2=\"\" class=\"tit px-8 mr-10\">说明！</span"
+        },
+        {
+          "label": "产品素材图",
+          "text": "产品素材图说明 素材图将自动获取产品轮播图/颜色图的第一张图片，可单独修改，素材图尺寸要求比例为1：1，不小于800*800",
+          "buttons": [],
+          "inputs": [],
+          "images": 1,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"ant-form-item-required\" title=\"产品素材图\">产品素材图</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-c05bcaa3=\"\" data-v-aa019337=\"\"><div data-v-c05bcaa3=\"\" class=\"material-img-module\"><div data-v-c05bcaa3=\"\" class=\"img-list\"><div data-v-4061fce2=\"\" data-v-c05bcaa3=\"\" class=\"single-image\"><!----><div data-v-437eaaf5=\"\" class=\"img-out img-box !size-120\" style=\"width: 120px !important; height: 120px !important;\"><!----><img data-v-437eaaf5=\"\" class=\"img-css !w-100%\" src=\"https://s1.dianxiaomi.com/dxm-web/2026-05/assets/kong-CH5MPQUG.png\" draggable=\"false\"></div><!----><!----></div></div></div><div data-v-c05bcaa3=\"\" class=\"explain-module m-top12\"><span data-v-c05bcaa3=\"\" class=\"tit\">说明</span><div data-v-c05bcaa3=\"\" class=\"cont\"> 素材图将自动获取产品轮播图/颜色图的第一张图片，可单独修改，素材图尺寸要求比例为1：1，不小于800*800 </div></div></div></div></div><!----><!----></div></div><!----></div>"
+        },
+        {
+          "label": "产品视频",
+          "text": "产品视频添加视频图片生成视频 播放 删除 因视频文件会占用大量服务器存储资源，请视频上传7天内完成产品发布，未发布的产品视频将会被清除 使用宽高比1：1或3：4或16：9视频（建议优先采用1：1或3：4视频），大小500M以内。（建议视频时长在1分钟内） 上传视频内容需含商品主图，非PPT、无黑边、无水印，且内容及背景音乐需确认无IP侵权 上传视频内容建议前5s内突出商品的核心卖点，且语音讲解或配",
+          "buttons": [
+            {
+              "tag": "button",
+              "text": "添加视频",
+              "cls": "css-1oz1bg8 ant-btn ant-btn-default"
+            },
+            {
+              "tag": "button",
+              "text": "图片生成视频",
+              "cls": "css-1oz1bg8 ant-btn ant-btn-link"
+            },
+            {
+              "tag": "a",
+              "text": "播放",
+              "cls": "link"
+            },
+            {
+              "tag": "a",
+              "text": "删除",
+              "cls": "link"
+            }
+          ],
+          "inputs": [],
+          "images": 1,
+          "html": "<div data-v-aa019337=\"\" class=\"ant-form-item css-1oz1bg8\"><div class=\"ant-row ant-form-item-row css-1oz1bg8\"><div class=\"ant-col ant-form-item-label css-1oz1bg8\"><label class=\"\" title=\"产品视频\">产品视频</label></div><div class=\"ant-col ant-form-item-control css-1oz1bg8\"><div class=\"ant-form-item-control-input\"><div class=\"ant-form-item-control-input-content\"><div data-v-ff91db00=\"\" class=\"video-operate\"><div data-v-ff91db00=\"\" class=\"ant-space css-1oz1bg8 ant-space-horizontal ant-space-align-center mb-10 btns\" style=\"gap: 8px;\"><div class=\"ant-space-item\" style=\"\"><button data-v-ff91db00=\"\" class=\"css-1oz1bg8 ant-btn ant-btn-default\" type=\"button\"><!----><span>添加视频</span><i data-v-ff91db00=\"\" class=\"iconfont icon_down\"></i></button><!----></div><!----><div class=\"ant-space-item\"><button data-v-ff91db00=\"\" class=\"css-1oz1bg8 ant-btn ant-btn-link\" type=\"button\"><!----><i data-v-ff91db00=\"\" class=\"iconfont icon_video mr-10\"></i><span>图片生成视频</span></button></div><!----></div><div data-v-ff91db00=\"\" class=\"video-operate-img mb-12\" style=\"display: none;\"><div data-v-ff91db00=\"\" class=\"video-operate-img-box\"><div data-v-ff91db00=\"\" class=\"img-out w-100! h-100! border-1 border-solid border-#ccc\"><img data-v-ff91db00=\"\" class=\"img-css\" src=\"data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAGQAAABkCAYAAABw4pVUAAAAGXRFWHRTb2Z0d2FyZQBBZG9iZSBJbWFnZVJlYWR5ccllPAAADrVJREFUeNrsXflzE9cd/0iWZEuyZVmSZWzLBoyNMdjBFAiEtJCUkh4hSZNO05lmOv2lRxKS/pZ/oG2aHumVdNof2ukP6dBpEjJpwnRIIRwh4UiAgiFgwLexjU8s35Zk7fa9J621h4S18q6RZ/YzI7z7tLva/X7e93zvLYABAwYMGDBgwIABAwYMGDBgwIABAwYMGDBgwIABAwYMGMgSmNQc3HU76CanvEs2HzJElxaC4XDk6cMnLx7d9709XDonWNRcPcrxjQBvkJE+SAfGw2bgzJ/3H5l+/pmFSVFFSCQcMUSsEtFoVLBEjnRIUUVIOBQyJKyaEE7sHhYkRRUhMzMzhoRVguMUPvuupKgiZHpq1pCwakK4ZIFUSlJUEVLkyYfNaoHf4zQknQb6hyfRNzSRKrp1/GX/h9PPPfMVLmNC3EUe5Nos8BiEpOdzORsmIzlk63bapJjV/ADPG0LWIQ+kpJgzIoRdwSBFHXh1pFjUXZsHh+xhpLtvOFFqMJnmtwOl3uxw6HGZqdCUacty6mw32npxk3y6eoYwMTlDOCDPYTaxvzmibfrxF7tRWeoj5HhQVVmybMyXRa36LbV+zIbC+PTCDZwln1A4ArPZzARO/94Nw8NjGBkZx6WrH"
+        }
+      ],
+      "dropdownText": []
+    }
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "name": "carousel",
+    "menus": [
+      {
+        "cls": "ant-dropdown css-1oz1bg8 ant-dropdown-placement-bottomLeft",
+        "text": "本地图片空间图片网络图片引用采集图片",
+        "html": "<div class=\"ant-dropdown css-1oz1bg8 ant-dropdown-placement-bottomLeft\" style=\"min-width: 100px; left: 436px; top: 2071px;\"><!----><ul data-v-e191d33b=\"\" class=\"ant-dropdown-menu ant-dropdown-menu-root ant-dropdown-menu-vertical ant-dropdown-menu-light css-1oz1bg8\" role=\"menu\" data-menu-list=\"true\" style=\"min-width: 160px; max-width: unset;\"><li class=\"ant-dropdown-menu-item ant-dropdown-menu-item-only-child\" data-menu-id=\"local\" aria-disabled=\"false\" role=\"menuitem\" tabindex=\"-1\" title=\"本地图片\"><!----><span class=\"ant-dropdown-menu-title-content\">本地图片</span></li><!----><li class=\"ant-dropdown-menu-item ant-dropdown-menu-item-only-child\" data-menu-id=\"space\" aria-disabled=\"false\" role=\"menuitem\" tabindex=\"-1\" title=\"空间图片\"><!----><span class=\"ant-dropdown-menu-title-content\">空间图片</span></li><!----><li class=\"ant-dropdown-menu-item ant-dropdown-menu-item-only-child\" data-menu-id=\"net\" aria-disabled=\"false\" role=\"menuitem\" tabindex=\"-1\" title=\"网络图片\"><!----><span class=\"ant-dropdown-menu-title-content\">网络图片</span></li><!----><li class=\"ant-dropdown-menu-item ant-dropdown-menu-item-only-child\" data-menu-id=\"crawl\" aria-disabled=\"false\" role=\"menuitem\" tabindex=\"-1\" title=\"引用采集图片\"><!----><span class=\"ant-dropdown-menu-title-content\">引用采集图片</span></li><!----><!----><!----></ul></div>"
+      }
+    ]
+  },
+  {
+    "name": "video",
+    "menus": [
+      {
+        "cls": "ant-dropdown css-1oz1bg8 ant-dropdown-placement-bottomLeft",
+        "text": "本地上传网络上传",
+        "html": "<div class=\"ant-dropdown css-1oz1bg8 ant-dropdown-placement-bottomLeft\" style=\"min-width: 100px; left: 436px; top: 2575px;\"><!----><ul data-v-e191d33b=\"\" class=\"ant-dropdown-menu ant-dropdown-menu-root ant-dropdown-menu-vertical ant-dropdown-menu-light css-1oz1bg8\" role=\"menu\" data-menu-list=\"true\" style=\"min-width: unset; max-width: unset;\"><li class=\"ant-dropdown-menu-item ant-dropdown-menu-item-only-child\" data-menu-id=\"1\" aria-disabled=\"false\" role=\"menuitem\" tabindex=\"-1\" title=\"本地上传\"><!----><span class=\"ant-dropdown-menu-title-content\">本地上传</span></li><!----><li class=\"ant-dropdown-menu-item ant-dropdown-menu-item-only-child\" data-menu-id=\"2\" aria-disabled=\"false\" role=\"menuitem\" tabindex=\"-1\" title=\"网络上传\"><!----><span class=\"ant-dropdown-menu-title-content\">网络上传</span></li><!----><!----><!----></ul></div>"
+      }
+    ]
+  }
+]

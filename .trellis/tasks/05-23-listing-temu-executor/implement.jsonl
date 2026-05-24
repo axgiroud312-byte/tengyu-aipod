@@ -1,1 +1,8 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Executor must follow §2.3: parse current state, re-locate, execute, then parse and verify target state."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"DOM action code must be rewritten under the four-layer platform structure, not directly ported from the source project."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Action implementation must use observed_state -> target_state -> transition -> success_evidence discipline."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Runner/platform boundaries and parser guard lessons apply to executor failures and tests."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Shared listing types plus selector/parser platform contracts define executor inputs and state boundaries."}
+{"file":".trellis/tasks/archive/2026-05/05-23-listing-temu-selectors/research/temu-selector-source-map.md","reason":"Selector source map and real page anchors for Temu executor actions."}
+{"file":".trellis/tasks/archive/2026-05/05-23-listing-temu-parser/research/temu-parser-contract.md","reason":"Parser state contract that executor must consume and verify against."}
+{"file":".trellis/tasks/05-23-listing-temu-executor/research/temu-executor-contract.md","reason":"Executor-specific state transition contracts, upload reconnaissance, and real-test constraints."}

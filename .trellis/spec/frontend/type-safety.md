@@ -235,6 +235,67 @@ return {
 }
 ```
 
+### Scenario: Listing Platform Action Executor Contract
+
+#### 1. Scope / Trigger
+- Trigger: a listing platform adds an `action-executor.ts` file for Dianxiaomi DOM automation.
+- Boundary: executors perform one action primitive at a time. They must not orchestrate a full listing workflow, persist batch results, or reuse parser-time Playwright handles.
+
+#### 2. Signatures
+- Platform executor file: `packages/client/src/modules/listing/platforms/<platform>/action-executor.ts`
+- Text actions return the post-action parser state: `fillTitle(page, value): Promise<PlatformDraftPageState>`
+- Mutating upload/SKU actions must expose an explicit guard option such as `{ allowMutation?: boolean }`.
+- Publishing must use a separate explicit guard such as `{ allowPublish?: boolean }`.
+- Structured error: `ListingActionError` must carry `action`, listing error code, selector when known, URL/state context, page text excerpt, and optional evidence path.
+
+#### 3. Contracts
+- Every action must follow this sequence: `parseDraftPage(page)` -> validate page/action preconditions -> re-locate the target selector -> perform the action -> parse again -> verify the target state.
+- Parser state is evidence, not a handle cache. Do not store or pass `Locator` / `ElementHandle` values from parser state into executor steps.
+- Low-risk real tests may write the existing field value back to the same field.
+- High-risk actions that change real drafts, including image upload, video upload, one-click SKU generation, shop switching, saving, and publishing, must be blocked by default and require explicit guard options.
+- Upload success must be proven by parser-visible count/card/toast state, not by a file chooser opening or `setInputFiles()` resolving.
+- Real executor tests must be skipped by default and run only when `REAL_LISTING=1` is set. Mutating real tests need a second guard such as `REAL_LISTING_MUTATE=1`.
+
+#### 4. Validation & Error Matrix
+- Login page -> `LOGIN_REQUIRED`
+- Loading page or non-editing workflow step -> `PAGE_NOT_READY`
+- Blocking modal -> `BLOCKING_MODAL`
+- Missing target selector/control -> `SELECTOR_NOT_FOUND`
+- Text value not reflected after fill -> `FIELD_VALUE_MISMATCH`
+- Missing local media file -> `MATERIAL_FILE_MISSING`
+- Upload control/file chooser unavailable -> `FILE_CHOOSER_TIMEOUT`
+- Upload count/card does not change or failure toast appears -> `UPLOAD_COUNT_MISMATCH`
+- Publish guard missing or publish fails -> `PUBLISH_FAILED`
+
+#### 5. Good/Base/Bad Cases
+- Good: `fillTitle` parses current state, re-locates `title_input`, fills, blurs, then waits until parser reads the target title.
+- Base: `replaceShopName` returns immediately when the current shop already matches the target, and requires `allowMutation=true` only when changing shops.
+- Bad: upload actions call `setInputFiles()` and return success without reading parser state after the upload.
+
+#### 6. Tests Required
+- Unit tests assert structured error shape, missing-file behavior, default mutation guards, and safe same-value no-op behavior.
+- Guarded real tests assert low-risk same-value text/shop actions on both real v1 Temu templates with `REAL_LISTING=1`.
+- Mutating real tests, when run, must explicitly set both `REAL_LISTING=1` and `REAL_LISTING_MUTATE=1`, use real material roots, and write evidence under the task evidence directory.
+- Quality gates: `pnpm -F @tengyu-aipod/client test`, `pnpm -F @tengyu-aipod/client type-check`, `pnpm -F @tengyu-aipod/client lint`, `pnpm -F @tengyu-aipod/client build`, plus root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+await page.locator('#localFileUploadInp').setInputFiles(files)
+return { ok: true }
+```
+
+Correct:
+```ts
+const before = await parseDraftPage(page)
+await uploadFiles(page, files)
+const after = await parseDraftPage(page)
+if (after.carousel_images.count <= before.carousel_images.count) {
+  throw new ListingActionError({ action: 'uploadCarouselImages', code: 'UPLOAD_COUNT_MISMATCH' })
+}
+```
+
 ---
 
 ## Validation
