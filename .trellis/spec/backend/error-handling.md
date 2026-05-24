@@ -599,6 +599,69 @@ await chenyu.setShutdownTimer({
 })
 ```
 
+### Scenario: Client ComfyUI Instance Manager
+
+#### 1. Scope / Trigger
+
+- Trigger: ComfyUI instance lifecycle services in the Electron main process.
+- Applies to: `packages/client/src/main/lib/*instance-manager*`.
+
+#### 2. Signatures
+
+- `new ComfyuiInstanceManager({ chenyu, ...dependencies })`
+- `createInstance({ pod, gpu, podTag?, gpuNums?, autoShutdownMinutes? })`
+- `getCurrentInstance()`, `refreshCurrentInstance()`
+- `shutdownCurrentInstance()`, `restartCurrentInstance()`, `destroyCurrentInstance()`
+- `extendShutdown(minutesFromNow)`
+- `getBalance()`
+
+#### 3. Contracts
+
+- The manager stores one active row in `comfyui_instances` with `id = 1`.
+- State names are `none`, `starting`, `running`, `shutting_down`, and `stopped`.
+- `createInstance` calls Chenyu `createByPod`, then immediately calls `setShutdownTimer`.
+- Default auto-shutdown is 60 minutes.
+- `setShutdownTimer.shutdown_time` is always a Unix timestamp in seconds.
+- ComfyUI URL is extracted from `server_map` where `port_type === "http"` and title contains `ComfyUI`.
+- Cost estimate is elapsed runtime minutes multiplied by `(pod_price_hour + gpu_price_hour) / 60`.
+- UI polling such as "balance every 60 seconds" stays outside the service; the service exposes `getBalance()`.
+
+#### 4. Validation & Error Matrix
+
+- Missing workbench root -> `HTTP_4XX`, non-retryable.
+- No current instance when lifecycle action is requested -> `CHENYU_INSTANCE_DOWN`, non-retryable.
+- Missing ComfyUI URL after instance creation -> `HTTP_5XX`, retryable.
+- Chenyu API errors must propagate as `AppErrorClass` from `ChenyuCloudClient`; do not swallow or remap them to generic `Error`.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: user selects Pod/GPU, manager creates the instance, sets shutdown timer, stores the row, and later refreshes status from Chenyu.
+- Base: no stored row returns `null` from `getCurrentInstance`.
+- Bad: allowing multiple active rows, or deleting the row before Chenyu destroy succeeds.
+
+#### 6. Tests Required
+
+- Unit tests for create order, shutdown timer timestamp, ComfyUI URL extraction, singleton row persistence, refresh/status mapping, lifecycle updates, balance delegation, and cost estimation.
+- Run root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```ts
+await chenyu.createByPod(input)
+saveLocalState({ status: 'running' })
+```
+
+##### Correct
+
+```ts
+const instance = await chenyu.createByPod(input)
+await chenyu.setShutdownTimer({ instance_uuid: instance.instance_uuid, enable: true, shutdown_time })
+const latest = await chenyu.getInstanceInfo(instance.instance_uuid)
+saveLocalState({ status: stateFromChenyuStatus(latest.status) })
+```
+
 ---
 
 ## Error Handling Patterns

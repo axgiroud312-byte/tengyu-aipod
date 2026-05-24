@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/03-generation.md","reason":"Defines ComfyUI instance lifecycle UX, shutdown timer policy, SQLite table shape, IPC expectations, and error semantics."}
+{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Primary Chenyu instance lifecycle, server_map, balance, and shutdown timer reference."}
+{"file":".trellis/tasks/05-23-comfyui-instance-manager/research/comfyui-instance-manager.md","reason":"Task-specific implementation boundaries and service behavior notes."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for main-process service code."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Service must preserve Chenyu/ComfyUI AppError semantics and status failures."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality expectations and test requirements for backend code."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Required to reuse ChenyuCloudClient, existing DB patterns, and generation services instead of rewriting slice 4."}

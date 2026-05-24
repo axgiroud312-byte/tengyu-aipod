@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/03-generation.md","reason":"Verify instance manager behavior against lifecycle, SQLite row, shutdown timer, and ComfyUI URL requirements."}
+{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Verify Chenyu lifecycle/status/server_map usage."}
+{"file":".trellis/tasks/05-23-comfyui-instance-manager/research/comfyui-instance-manager.md","reason":"Check implementation boundaries and service-level acceptance."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for review."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify AppError/status behavior and no swallowed Chenyu failures."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify lint, type-check, and unit-test expectations."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify reuse of existing clients/services and no rewrite of generation skeleton/concurrency/service."}
