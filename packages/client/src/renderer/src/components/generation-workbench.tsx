@@ -26,6 +26,14 @@ import {
 } from '../store/generation'
 
 type Txt2imgMode = 'ai' | 'manual'
+type Img2imgMode = 'text' | 'layout' | 'style' | 'layout-style' | 'manual'
+type ReferenceImageDraft = {
+  id: string
+  name: string
+  dataUrl: string
+  base64: string
+  mime_type: string
+}
 
 const capabilityIcons: Record<GenerationCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
@@ -61,6 +69,35 @@ const grsaiModels = [
 ]
 
 const aspectRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5']
+const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
+  {
+    key: 'text',
+    label: '纯文字',
+    instruction: 'Do not use reference images. Generate new print prompts from the text only.',
+  },
+  {
+    key: 'layout',
+    label: '参考构图',
+    instruction:
+      'Use only the layout structure from the reference image. Do not copy subject matter.',
+  },
+  {
+    key: 'style',
+    label: '参考风格',
+    instruction: 'Use only the art style from the reference image. Create new content.',
+  },
+  {
+    key: 'layout-style',
+    label: '构图+风格',
+    instruction:
+      'Use both layout and art style from the reference image while creating a new motif.',
+  },
+  {
+    key: 'manual',
+    label: '自己写',
+    instruction: '',
+  },
+]
 
 function clampNumber(value: string, min: number, max: number, fallback: number) {
   const parsed = Number(value)
@@ -75,6 +112,23 @@ function progressPercent(progress: GenerationProgress | null) {
     return 0
   }
   return Math.round((progress.processed / progress.total) * 100)
+}
+
+function splitDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
+  return {
+    mime_type: match?.[1] ?? 'image/png',
+    base64: match?.[2] ?? dataUrl,
+  }
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('读取参考图失败')))
+    reader.readAsDataURL(file)
+  })
 }
 
 function capabilityCopy(capability: GenerationCapability, provider: GenerationProvider) {
@@ -118,14 +172,22 @@ function capabilityCopy(capability: GenerationCapability, provider: GenerationPr
   }
 }
 
-function Txt2imgGrsaiPanel() {
+function GrsaiPromptGenerationPanel({
+  capability,
+}: {
+  capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>
+}) {
   const [mode, setMode] = useState<Txt2imgMode>('ai')
+  const [img2imgMode, setImg2imgMode] = useState<Img2imgMode>('text')
   const [printMode, setPrintMode] = useState<'local' | 'full'>('local')
   const [promptCount, setPromptCount] = useState('5')
   const [requirement, setRequirement] = useState('')
-  const [skillId, setSkillId] = useState('txt2img-print-prompt-v3')
+  const [skillId, setSkillId] = useState(
+    capability === 'img2img' ? 'img2img-print-prompt-v3' : 'txt2img-print-prompt-v3',
+  )
   const [llmModel, setLlmModel] = useState('qwen3-vl-plus')
   const [manualText, setManualText] = useState('')
+  const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>([])
   const [drafts, setDrafts] = useState<Txt2imgPromptDraft[]>([])
   const [generationModel, setGenerationModel] = useState('nano-banana-2')
   const [aspectRatio, setAspectRatio] = useState('1:1')
@@ -139,7 +201,7 @@ function Txt2imgGrsaiPanel() {
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== 'txt2img') {
+      if (nextProgress.capability !== capability) {
         return
       }
       setProgress(nextProgress)
@@ -157,7 +219,14 @@ function Txt2imgGrsaiPanel() {
       offProgress()
       offCompleted()
     }
-  }, [])
+  }, [capability])
+
+  const activeImg2imgMode = img2imgModes.find((item) => item.key === img2imgMode) ?? img2imgModes[0]
+  const aiMode = capability === 'txt2img' ? mode === 'ai' : img2imgMode !== 'manual'
+  const manualMode = capability === 'txt2img' ? mode === 'manual' : img2imgMode === 'manual'
+  const usesReference =
+    capability === 'img2img' &&
+    (img2imgMode === 'layout' || img2imgMode === 'style' || img2imgMode === 'layout-style')
 
   const selectedPrompts = useMemo(
     () => drafts.filter((draft) => draft.selected && draft.text.trim()).map((draft) => draft.text),
@@ -170,11 +239,23 @@ function Txt2imgGrsaiPanel() {
     setError(null)
     try {
       const nextDrafts = await window.api.generation.generatePrompts({
+        capability,
         ...(skillId.trim() ? { skillId: skillId.trim() } : {}),
         printMode,
         requirement,
         count: clampNumber(promptCount, 1, 20, 5),
         model: llmModel,
+        ...(capability === 'img2img' && activeImg2imgMode
+          ? { modeInstruction: activeImg2imgMode.instruction }
+          : {}),
+        ...(usesReference
+          ? {
+              referenceImages: referenceImages.map((image) => ({
+                base64: image.base64,
+                mime_type: image.mime_type,
+              })),
+            }
+          : {}),
       })
       setDrafts(nextDrafts)
     } catch (nextError) {
@@ -182,6 +263,27 @@ function Txt2imgGrsaiPanel() {
     } finally {
       setGeneratingPrompts(false)
     }
+  }
+
+  async function addReferenceFiles(files: FileList | null) {
+    if (!files?.length) {
+      return
+    }
+
+    const nextImages = await Promise.all(
+      Array.from(files).map(async (file) => {
+        const dataUrl = await readFileAsDataUrl(file)
+        const { base64, mime_type } = splitDataUrl(dataUrl)
+        return {
+          id: crypto.randomUUID(),
+          name: file.name,
+          dataUrl,
+          base64,
+          mime_type,
+        } satisfies ReferenceImageDraft
+      }),
+    )
+    setReferenceImages((current) => [...current, ...nextImages])
   }
 
   async function parseManualText() {
@@ -207,14 +309,13 @@ function Txt2imgGrsaiPanel() {
 
   async function startGeneration() {
     setError(null)
-    if (mode === 'manual') {
+    if (manualMode) {
       await parseManualText()
     }
 
-    const prompts =
-      mode === 'manual'
-        ? await window.api.generation.parseManualPrompts(manualText)
-        : selectedPrompts
+    const prompts = manualMode
+      ? await window.api.generation.parseManualPrompts(manualText)
+      : selectedPrompts
     if (prompts.length === 0) {
       setError('请先准备至少一条提示词')
       return
@@ -223,6 +324,7 @@ function Txt2imgGrsaiPanel() {
     setResult(null)
     setRunning(true)
     const taskId = await window.api.generation.runTxt2img({
+      capability,
       prompts,
       model: generationModel,
       aspectRatio,
@@ -231,7 +333,7 @@ function Txt2imgGrsaiPanel() {
     })
     setProgress({
       task_id: taskId,
-      capability: 'txt2img',
+      capability,
       processed: 0,
       total: prompts.length,
       succeeded: 0,
@@ -244,24 +346,67 @@ function Txt2imgGrsaiPanel() {
       <div className="space-y-5">
         <div className="rounded-md border bg-background p-4">
           <div className="flex gap-2">
-            <Button
-              onClick={() => setMode('ai')}
-              type="button"
-              variant={mode === 'ai' ? 'default' : 'secondary'}
-            >
-              AI 生成提示词
-            </Button>
-            <Button
-              onClick={() => setMode('manual')}
-              type="button"
-              variant={mode === 'manual' ? 'default' : 'secondary'}
-            >
-              自己写提示词
-            </Button>
+            {capability === 'txt2img' ? (
+              <>
+                <Button
+                  onClick={() => setMode('ai')}
+                  type="button"
+                  variant={mode === 'ai' ? 'default' : 'secondary'}
+                >
+                  AI 生成提示词
+                </Button>
+                <Button
+                  onClick={() => setMode('manual')}
+                  type="button"
+                  variant={mode === 'manual' ? 'default' : 'secondary'}
+                >
+                  自己写提示词
+                </Button>
+              </>
+            ) : (
+              img2imgModes.map((item) => (
+                <Button
+                  key={item.key}
+                  onClick={() => setImg2imgMode(item.key)}
+                  type="button"
+                  variant={img2imgMode === item.key ? 'default' : 'secondary'}
+                >
+                  {item.label}
+                </Button>
+              ))
+            )}
           </div>
 
-          {mode === 'ai' ? (
+          {aiMode ? (
             <div className="mt-4 grid gap-4">
+              {capability === 'img2img' && usesReference ? (
+                <div className="rounded-md border p-3">
+                  <label className="block space-y-2 text-sm font-medium">
+                    <span>参考图</span>
+                    <input
+                      accept="image/*"
+                      className="block w-full text-sm"
+                      multiple
+                      onChange={(event) => void addReferenceFiles(event.target.files)}
+                      type="file"
+                    />
+                  </label>
+                  {referenceImages.length ? (
+                    <div className="mt-3 grid grid-cols-4 gap-2">
+                      {referenceImages.map((image) => (
+                        <div className="rounded-md border bg-muted p-2 text-xs" key={image.id}>
+                          <img
+                            alt={image.name}
+                            className="h-20 w-full rounded-sm object-cover"
+                            src={image.dataUrl}
+                          />
+                          <div className="mt-1 truncate">{image.name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div className="grid gap-4 md:grid-cols-3">
                 <fieldset className="rounded-md border p-3">
                   <legend className="px-1 text-sm font-medium">印花类型</legend>
@@ -310,11 +455,15 @@ function Txt2imgGrsaiPanel() {
               </div>
 
               <label className="block space-y-2 text-sm font-medium">
-                <span>印花要求</span>
+                <span>{capability === 'img2img' ? '新图要求' : '印花要求'}</span>
                 <textarea
                   className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   onChange={(event) => setRequirement(event.target.value)}
-                  placeholder="圣诞风格小熊主题，复古海报感"
+                  placeholder={
+                    capability === 'img2img'
+                      ? '生成新的复古花朵，不直接复制参考图主体'
+                      : '圣诞风格小熊主题，复古海报感'
+                  }
                   value={requirement}
                 />
               </label>
@@ -577,8 +726,9 @@ export function GenerationWorkbench() {
           </div>
         </div>
 
-        {activeCapability === 'txt2img' && activeProvider === 'grsai' ? (
-          <Txt2imgGrsaiPanel />
+        {(activeCapability === 'txt2img' || activeCapability === 'img2img') &&
+        activeProvider === 'grsai' ? (
+          <GrsaiPromptGenerationPanel capability={activeCapability} />
         ) : (
           <div
             className={`mt-5 rounded-md border p-5 ${

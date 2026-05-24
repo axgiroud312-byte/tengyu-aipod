@@ -18,15 +18,19 @@ export type Txt2imgPromptDraft = {
 }
 
 export type GenerationPromptInput = {
+  capability?: 'txt2img' | 'img2img'
   skillId?: string
   skillVersion?: string
   printMode?: 'local' | 'full'
   requirement: string
   count: number
   model?: string
+  modeInstruction?: string
+  referenceImages?: Array<{ base64: string; mime_type: string }>
 }
 
 export type Txt2imgRunInput = {
+  capability?: 'txt2img' | 'img2img'
   prompts: string[]
   model: string
   aspectRatio: string
@@ -36,7 +40,7 @@ export type Txt2imgRunInput = {
 
 export type GenerationProgress = {
   task_id: string
-  capability: 'txt2img'
+  capability: 'txt2img' | 'img2img'
   processed: number
   total: number
   succeeded: number
@@ -94,16 +98,21 @@ function emitCompleted(event: GenerationTaskEvent) {
 
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
   const count = clampInt(input.count, 1, 20, 5)
+  const capability = input.capability ?? 'txt2img'
   const prompts = await promptGeneratorService.generatePrompts({
-    ...(input.skillId ? { skillId: input.skillId } : { category: 'txt2img' as const }),
+    ...(input.skillId ? { skillId: input.skillId } : { category: capability }),
     variables: {
       printMode: input.printMode === 'full' ? '满印' : '局部',
       requirement: input.requirement,
       count,
+      modeInstruction: input.modeInstruction ?? '',
     },
     count,
     ...(input.model ? { model: input.model } : {}),
-    userMessage: `生成 ${count} 条适合 Grsai 文生图的英文印花提示词。`,
+    ...(input.referenceImages?.length ? { refImages: input.referenceImages } : {}),
+    userMessage:
+      input.modeInstruction ??
+      `生成 ${count} 条适合 Grsai ${capability === 'img2img' ? '图生图' : '文生图'}的英文印花提示词。`,
     responseFormat: 'json_object',
   })
 
@@ -136,6 +145,7 @@ async function runTxt2imgTask(
   input: Txt2imgRunInput,
   apiKey: string,
 ) {
+  const capability = input.capability ?? 'txt2img'
   const controller = new GenerationConcurrencyController({
     workers: clampInt(input.concurrency, 1, 10, 3),
   })
@@ -155,7 +165,7 @@ async function runTxt2imgTask(
         controller.run(`${taskId}-${index}`, async () => {
           emitProgress({
             task_id: taskId,
-            capability: 'txt2img',
+            capability,
             processed: result.succeeded + result.failed,
             total: prompts.length,
             succeeded: result.succeeded,
@@ -184,7 +194,7 @@ async function runTxt2imgTask(
           } finally {
             emitProgress({
               task_id: taskId,
-              capability: 'txt2img',
+              capability,
               processed: result.succeeded + result.failed,
               total: prompts.length,
               succeeded: result.succeeded,
