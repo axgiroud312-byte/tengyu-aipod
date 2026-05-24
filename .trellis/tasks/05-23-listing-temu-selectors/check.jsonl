@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Verify selectors.ts stays static and platform DOM layers remain separated."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Check no source project DOM action/parser/workflow code was directly ported."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Check real-page reconnaissance, selector fallback quality, evidence, and state-transition framing."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check listing platform boundaries and real-test guard expectations."}
+{"file":".trellis/tasks/05-23-listing-temu-selectors/research/temu-selector-source-map.md","reason":"Confirm implementation matches the planned ownership and real test contract."}

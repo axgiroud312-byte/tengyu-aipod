@@ -123,6 +123,61 @@ Correct:
 const excluded = template.excludedFolderNames.includes(folder.name)
 ```
 
+### Scenario: Listing Platform Selector Contract
+
+#### 1. Scope / Trigger
+- Trigger: a listing platform adds a `selectors.ts` file for Dianxiaomi DOM automation.
+- Boundary: selectors are static locator contracts only. Page reading, clicking, parsing, uploading, saving, and publishing belong to parser/executor/workflow/smoke tasks.
+
+#### 2. Signatures
+- Platform selector file: `packages/client/src/modules/listing/platforms/<platform>/selectors.ts`
+- Selector type: ``type ListingSelector = `css=${string}` | `text=${string}` | `label=${string}` | `placeholder=${string}` | `role=${string}```
+- Selector table: `PLATFORM_SELECTORS satisfies Record<SelectorKey, readonly ListingSelector[]>`
+- Real-test required keys: `PLATFORM_REQUIRED_REAL_SELECTOR_KEYS satisfies readonly SelectorKey[]`
+- Test guard: `REAL_LISTING=1`
+
+#### 3. Contracts
+- Every selector value must use an explicit prefix: `css=`, `text=`, `label=`, `placeholder=`, or `role=`.
+- Every selector group must provide at least two candidates so executor tasks have fallbacks.
+- `selectors.ts` must not import Playwright, Electron, filesystem modules, Bit Browser clients, or runtime runner code.
+- Real selector tests must connect to the existing Bit Browser profile required by the task and assert selectors against real Dianxiaomi pages.
+- Real selector tests must be skipped by default and run only when `REAL_LISTING=1` is set.
+- Evidence should include screenshots, selector hit reports, and lightweight DOM snapshots around matched elements. Do not commit full multi-megabyte page HTML dumps when smaller selector-scoped snapshots prove the contract.
+
+#### 4. Validation & Error Matrix
+- Missing prefix -> selector unit test failure.
+- Fewer than two candidates for a selector key -> selector unit test failure.
+- Required real selector key has no hit on any target template -> `REAL_LISTING=1` test failure.
+- Real profile unavailable or not logged in -> `REAL_LISTING=1` test failure; default CI remains green because the real test is skipped.
+- Full-page HTML evidence larger than needed -> replace with selector-scoped DOM snapshots before committing.
+
+#### 5. Good/Base/Bad Cases
+- Good: static selector table plus default unit tests and a guarded real test that writes a selector hit report.
+- Base: platform-specific helper converts prefixed selector strings into Playwright locators inside the test or executor layer.
+- Bad: `selectors.ts` calls `page.locator()`, reads DOM, clicks buttons, opens Bit Browser, or contains page workflow logic.
+
+#### 6. Tests Required
+- Unit tests assert every selector group has at least two candidates and every candidate uses an allowed prefix.
+- Unit tests assert all required real selector keys exist.
+- Guarded real tests assert each required key hits both real v1 templates and persist evidence under the task's `evidence/` directory.
+- Quality gates: `pnpm -F @tengyu-aipod/client test`, `pnpm -F @tengyu-aipod/client type-check`, `pnpm -F @tengyu-aipod/client lint`, `pnpm -F @tengyu-aipod/client build`, plus root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+export async function titleInput(page: Page) {
+  return page.getByLabel('Product title')
+}
+```
+
+Correct:
+```ts
+export const PLATFORM_SELECTORS = {
+  title_input: ['label=Product title', 'css=.title input'],
+} as const satisfies Record<SelectorKey, readonly ListingSelector[]>
+```
+
 ---
 
 ## Validation

@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/07-listing.md","reason":"Temu platform must follow the listing four-layer structure and selectors.ts responsibilities in §2.1."}
+{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"DOM code must be rewritten from real observation; source project DOM logic is forbidden to port directly."}
+{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Selector task must follow reconnaissance-first workflow and keep selectors pure/static."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Listing runner and platform boundaries define where selectors may live and what they must not contain."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Real selector tests cross Bit Browser, Playwright, evidence files, and platform selector contracts."}
+{"file":".trellis/tasks/05-23-listing-temu-selectors/research/temu-selector-source-map.md","reason":"Source map, real template baseline, candidate selectors, and forbidden reuse boundaries for Temu selectors."}
