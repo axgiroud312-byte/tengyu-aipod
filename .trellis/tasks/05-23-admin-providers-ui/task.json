@@ -3,7 +3,7 @@
   "name": "admin-providers-ui",
   "title": "admin providers ui",
   "description": "/admin/providers CRUD",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
