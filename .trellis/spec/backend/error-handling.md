@@ -407,6 +407,70 @@ customer: device.code.customer
 
 ---
 
+## Scenario: Client Provider Registry API
+
+### 1. Scope / Trigger
+
+- Trigger: `/api/providers`, provider registry dispatch, paid generation provider metadata, vision LLM provider metadata, or ComfyUI cloud provider metadata.
+- Applies to: `packages/server/src/app/api/providers/**` and `packages/server/src/lib/providers.ts`.
+
+### 2. Signatures
+
+- `GET /api/providers`
+  - Header: `Authorization: Bearer <activation_token>`
+  - Query: `type?: 'paid-generation' | 'vision-llm' | 'comfyui-cloud'`
+  - Success: `{ ok: true, data: ProviderRegistryItem[] }`
+- `ProviderRegistryItem` includes `id`, `name`, `type`, `base_url`, `fallback_url`, `api_style`, `endpoints`, `model_options`, `default_params`, `capabilities`, and `enabled`.
+
+### 3. Contracts
+
+- Client auth is required with the same development bypass behavior as `/api/skills`.
+- Only `enabled = true` providers are returned.
+- Query `type` filters by `Provider.type`; omitted `type` returns all enabled providers.
+- Results are ordered by `sort_order ASC`, then `id ASC`.
+- `endpoints_json` and `default_params_json` are parsed into objects; malformed or non-object JSON returns `{}`.
+- `model_options_json` is parsed into `string[]`; malformed or non-array JSON returns `[]`.
+- The response must never contain user API keys, server API keys, or keychain identifiers.
+
+### 4. Validation & Error Matrix
+
+- Missing/invalid bearer token -> HTTP 401 with the `ClientAuthError.code`.
+- Invalid `type` query -> HTTP 400 with `INVALID_PROVIDER_QUERY`.
+- Unexpected database/runtime error -> HTTP 500 with `INTERNAL_ERROR`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `GET /api/providers?type=paid-generation` returns enabled Grsai metadata sorted by `sort_order`.
+- Base: a valid type with no enabled providers returns an empty array.
+- Bad: returning disabled providers, raw JSON strings, or any API key field.
+
+### 6. Tests Required
+
+- Unit test serialization: JSON fields parse, malformed JSON falls back, and no secret fields are emitted.
+- Unit test query shape: enabled/type filters and `sort_order` ordering are passed to Prisma.
+- Route test: auth is required, valid `type` is forwarded, invalid `type` returns `INVALID_PROVIDER_QUERY`.
+- Run `pnpm -F @tengyu-aipod/server test`, `type-check`, and `lint`, plus root `pnpm test`, `type-check`, and `lint`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+return { ...provider, api_key: process.env.GRSAI_API_KEY }
+```
+
+#### Correct
+
+```ts
+return {
+  id: provider.id,
+  base_url: provider.base_url,
+  endpoints: JSON.parse(provider.endpoints_json),
+}
+```
+
+---
+
 ## Error Types
 
 <!-- Custom error classes/types -->

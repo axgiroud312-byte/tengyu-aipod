@@ -3,7 +3,7 @@
   "name": "server-api-providers",
   "title": "server api providers",
   "description": "GET /api/providers 派发",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
