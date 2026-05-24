@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { basename, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -10,20 +11,17 @@ import {
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
-import { BrowserWindow, ipcMain } from 'electron'
+import type { BrowserWindow, ipcMain } from 'electron'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
-import { readAppConfig } from '../onboarding'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
-import { getDetectionConfig } from './detection-config'
-import { getSecret } from './keychain'
 import {
   PreprocessError,
   type PreprocessFormat,
   type PreprocessOptions,
   SharpPreprocessPool,
 } from './preprocess-pool'
-import { skillCacheManager } from './skill-cache'
-import { tempFileManager } from './temp-file-manager'
+
+const nodeRequire = createRequire(import.meta.url)
 
 export type DetectionThreshold = {
   passMax?: number
@@ -150,13 +148,25 @@ export type DetectionTaskEvent =
   | { ok: false; taskId: string; error: string }
 
 type DetectionServiceDependencies = {
-  skillCache?: Pick<typeof skillCacheManager, 'getSkill'>
+  skillCache?: { getSkill: (id: string, version?: string) => Promise<Skill> }
   createBailianAdapter?: (apiKey: string) => Pick<AliyunBailianAdapter, 'visionCompletion'>
   preprocessPool?: Pick<SharpPreprocessPool, 'process' | 'close'>
-  readConfig?: typeof readAppConfig
-  getSecret?: typeof getSecret
+  readConfig?: ReadAppConfig
+  getSecret?: (key: string) => Promise<string | null>
   openDatabase?: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
   emitProgress?: (progress: DetectionProgress) => void
+  tempFileManager?: DetectionTempFileManager
+}
+
+type ReadAppConfig = () => Promise<{ workbench_root?: string | undefined }>
+
+type DetectionTempFileManager = {
+  createTaskDir(module: 'detection', taskId: string): Promise<string>
+  cleanupTask(
+    module: 'detection',
+    taskId: string,
+    options?: { keepIfFailed?: boolean },
+  ): Promise<void>
 }
 
 type ImageIdentity = {
@@ -418,7 +428,7 @@ function ensureDetectionTables(db: Pick<Database.Database, 'exec'>) {
   `)
 }
 
-async function readWorkbenchRoot(readConfig: typeof readAppConfig = readAppConfig) {
+async function readWorkbenchRoot(readConfig: ReadAppConfig = readAppConfig) {
   const workbenchConfig = await readConfig()
   if (!workbenchConfig.workbench_root) {
     throw new Error('workbench_root is required before detection can run')
@@ -988,6 +998,7 @@ export class DetectionService {
       readConfig: dependencies.readConfig ?? readAppConfig,
       getSecret: dependencies.getSecret ?? getSecret,
       openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      tempFileManager: dependencies.tempFileManager ?? tempFileManager,
     }
 
     try {
@@ -1008,7 +1019,7 @@ export class DetectionService {
         }
       }
 
-      await tempFileManager.createTaskDir('detection', taskId)
+      await resolved.tempFileManager.createTaskDir('detection', taskId)
       tempDirCreated = true
 
       const skill = await resolved.skillCache.getSkill(config.skillId, config.skillVersion)
@@ -1085,7 +1096,9 @@ export class DetectionService {
       }
 
       if (tempDirCreated) {
-        await tempFileManager.cleanupTask('detection', taskId, { keepIfFailed: keepFailedTemp })
+        await resolved.tempFileManager.cleanupTask('detection', taskId, {
+          keepIfFailed: keepFailedTemp,
+        })
       }
     }
   }
@@ -1262,18 +1275,19 @@ export class DetectionService {
 export const detectionService = new DetectionService()
 
 function emitDetectionProgress(progress: DetectionProgress) {
-  for (const window of BrowserWindow.getAllWindows()) {
+  for (const window of electronBrowserWindow().getAllWindows()) {
     window.webContents.send('detection:progress', progress)
   }
 }
 
 function emitDetectionCompleted(event: DetectionTaskEvent) {
-  for (const window of BrowserWindow.getAllWindows()) {
+  for (const window of electronBrowserWindow().getAllWindows()) {
     window.webContents.send('detection:completed', event)
   }
 }
 
 export function registerDetectionIpc() {
+  const ipcMain = electronIpcMain()
   ipcMain.handle('detection:list-input-sources', () => detectionService.listInputSources())
   ipcMain.handle('detection:scan-folder', (_event, input: { folder: string }) =>
     detectionService.scanFolder(input),
@@ -1301,4 +1315,36 @@ export function registerDetectionIpc() {
   ipcMain.handle('detection:delete-result', (_event, input: { artifact_id: string }) =>
     detectionService.deleteResult(input),
   )
+}
+
+async function readAppConfig() {
+  return (await import('../onboarding')).readAppConfig()
+}
+
+async function getSecret(key: string) {
+  return (await import('./keychain')).getSecret(key)
+}
+
+async function getDetectionConfig() {
+  return (await import('./detection-config')).getDetectionConfig()
+}
+
+const skillCacheManager = {
+  getSkill: async (id: string, version?: string) =>
+    (await import('./skill-cache')).skillCacheManager.getSkill(id, version),
+}
+
+const tempFileManager = {
+  createTaskDir: async (module: 'detection', taskId: string) =>
+    (await import('./temp-file-manager')).tempFileManager.createTaskDir(module, taskId),
+  cleanupTask: async (module: 'detection', taskId: string, options?: { keepIfFailed?: boolean }) =>
+    (await import('./temp-file-manager')).tempFileManager.cleanupTask(module, taskId, options),
+}
+
+function electronIpcMain(): typeof ipcMain {
+  return (nodeRequire('electron') as typeof import('electron')).ipcMain
+}
+
+function electronBrowserWindow(): typeof BrowserWindow {
+  return (nodeRequire('electron') as typeof import('electron')).BrowserWindow
 }

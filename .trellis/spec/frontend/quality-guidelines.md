@@ -253,6 +253,74 @@ const cdp = new CDPClient({
 })
 ```
 
+### Scenario: Detection Playwright E2E with Mock Bailian
+
+#### 1. Scope / Trigger
+- Trigger: detection needs end-to-end coverage of preprocessing, Bailian vision calls, risk classification, file output, record storage, temp cleanup, and retry behavior.
+- Boundary: tests may call `DetectionService.runDetectionBatch` directly from Playwright's Node process with injected dependencies; do not require a real Bailian key or Electron app window for this service-level E2E.
+
+#### 2. Signatures
+- E2E script: `pnpm -F @tengyu-aipod/client exec playwright test -c playwright.e2e.config.ts e2e/detection.spec.ts`
+- Service entry: `DetectionService.runDetectionBatch(config, dependencies)`
+- Required injected dependencies for E2E:
+  - `skillCache.getSkill`
+  - `createBailianAdapter`
+  - `preprocessPool`
+  - `readConfig`
+  - `getSecret`
+  - `openDatabase`
+  - `tempFileManager`
+
+#### 3. Contracts
+- Fixture input must include 10 PNG images under a workbench-like source folder; include both transparent-background and opaque images.
+- Mock Bailian must return JSON scores covering all three bands:
+  - `pass`: 0-39
+  - `review`: 40-69
+  - `block`: 70-100
+- Preprocess must flatten transparent backgrounds to near-white RGB output before sending the data URL to Bailian.
+- Successful detection copies files into `03-检测/{pass|review|block}/` and removes the task temp directory.
+- Failed detection keeps task temp through `cleanupTask(..., { keepIfFailed: true })` for retry diagnostics.
+
+#### 4. Validation & Error Matrix
+- Missing Bailian image data URL in mock request -> test failure.
+- Temporary retryable Bailian failure within `maxRetries` -> final success and one extra adapter call.
+- Unparseable model output -> failed result with `errorCode: "llm_parse_failed"`.
+- Duplicate source image hash with same model/skill/version and `forceRetest` false -> skipped cached result; E2E fixtures must be unique unless testing cache behavior.
+
+#### 5. Good/Base/Bad Cases
+- Good: Generate images with `sharp`, use a real `SharpPreprocessPool`, real SQLite-backed record store, and fake Bailian responses.
+- Base: Use `concurrency: 1` when the test maps deterministic score order to image order.
+- Bad: Connect to real Bailian, require a real API key, or assert exact white pixels after JPEG compression instead of a near-white range.
+
+#### 6. Tests Required
+- Assert pass/review/block output counts from 10 images.
+- Assert progress reaches `processed = total` with no failures for the success path.
+- Assert successful task temp directory is deleted.
+- Assert transparent input produces near-white flattened RGB pixels in the Bailian data URL.
+- Assert a transient Bailian failure is retried.
+- Assert unparseable output marks `llm_parse_failed` and requests failed-temp retention.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+// Makes CI depend on a real user's local key and network.
+createBailianAdapter: (apiKey) => new AliyunBailianAdapter({ apiKey, region: 'cn' })
+```
+
+Correct:
+```ts
+createBailianAdapter: () => ({
+  visionCompletion: async () => ({
+    text: JSON.stringify({ risk_score: 78, reason: 'mock high risk' }),
+    model: 'qwen3-vl-flash',
+    finishReason: 'stop',
+    usage: null,
+    raw: {},
+  }),
+})
+```
+
 ### Scenario: Electron Runtime Imports in Testable Main-Process Services
 
 #### 1. Scope / Trigger

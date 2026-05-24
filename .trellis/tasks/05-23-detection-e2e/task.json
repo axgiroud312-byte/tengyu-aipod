@@ -3,7 +3,7 @@
   "name": "detection-e2e",
   "title": "detection e2e",
   "description": "Playwright E2E 检测流程",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
