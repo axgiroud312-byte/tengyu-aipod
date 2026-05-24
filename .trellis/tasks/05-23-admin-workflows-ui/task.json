@@ -3,7 +3,7 @@
   "name": "admin-workflows-ui",
   "title": "admin workflows ui",
   "description": "/admin/comfyui-workflows CRUD+上传 JSON",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

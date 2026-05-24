@@ -655,8 +655,8 @@ ID / 名称 / 类型 / Base URL / Fallback URL / API Style /
 分类：[全部 ▼]
 
 | ID | 分类 | 版本 | 推荐 Pod 关键词 | 最小显存 | 启用 | 操作 |
-| extract-v3 | extract | 3.0.1 | ComfyUI Default | 12GB | ✅ | [编辑][下载 JSON] |
-| matting-v2 | matting | 2.0 | ComfyUI Default | 8GB | ✅ | [编辑] |
+| extract-v3 | extract | 3.0.1 | ComfyUI Default | 12GB | ✅ | [编辑][下载 JSON][禁用] |
+| matting-v2 | matting | 2.0 | ComfyUI Default | 8GB | ✅ | [编辑][版本历史] |
 
 [+ 上传新工作流]
   ID：[matting-v3]
@@ -669,6 +669,16 @@ ID / 名称 / 类型 / Base URL / Fallback URL / API Style /
   最小显存：[8]GB
   必需模型：[输入]
   [保存]
+
+Admin API:
+- `GET /admin/api/comfyui-workflows?category=` → latest version per id, includes disabled rows.
+- `POST /admin/api/comfyui-workflows` → creates exact `{ id, version }`; rejects malformed `workflow_json`, `input_slots_json`, or `output_slots_json`.
+- `GET /admin/api/comfyui-workflows/:id?version=` → full parsed workflow content for editing/downloading.
+- `PATCH /admin/api/comfyui-workflows/:id` with `save_mode='overwrite' | 'new_version'`.
+  - `overwrite` updates the selected `{ id, version }` row by `row_id`.
+  - `new_version` creates the next patch version from the selected version.
+- `GET /admin/api/comfyui-workflows/:id/versions` → all versions sorted newest first.
+- `[禁用]` sets `enabled=false` on the current version immediately; it must not create a new version.
 ```
 
 ### 6.10 公告管理
