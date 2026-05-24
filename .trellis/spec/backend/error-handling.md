@@ -724,6 +724,63 @@ cloned[slot.nodeId].inputs[slot.field] = uploadedFilename
 
 ---
 
+## Scenario: Client Platform Rules Dispatch API
+
+### 1. Scope / Trigger
+
+- Trigger: client-facing `/api/platform-rules` route or platform-rule serialization changes.
+- Applies to: `packages/server/src/app/api/platform-rules/**` and `packages/server/src/lib/platform-rules.ts`.
+
+### 2. Signatures
+
+- `GET /api/platform-rules?category=collection|listing`
+- `listPlatformRules(filter?: { category?: 'collection' | 'listing' }): Promise<{ version: string; rules: PlatformRuleItem[] }>`
+- `serializePlatformRule(rule: PrismaPlatformRule): PlatformRuleItem`
+
+### 3. Contracts
+
+- The route requires client bearer JWT through `requireClientAuth(..., { allowDevelopmentBypass: true })`.
+- The query `category` is optional; when present it must be `collection` or `listing`.
+- Response shape follows existing client API convention: `{ ok: true, data: { version, rules } }`.
+- `data.version` is a deterministic cache marker built from enabled rule keys and row versions.
+- `data.rules` includes only enabled `platform_rules` rows.
+- `rules_json` is stored as `String @db.Text` but returned as an object; malformed or non-object JSON returns `{}`.
+
+### 4. Validation & Error Matrix
+
+- Missing, invalid, expired, or unbound client JWT -> HTTP 401 with the `ClientAuthError.code`.
+- Invalid `category` -> HTTP 400 with `INVALID_PLATFORM_RULE_QUERY`.
+- Unexpected auth failure -> HTTP 500 with `INTERNAL_ERROR`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: `GET /api/platform-rules?category=collection` returns enabled collection rules with parsed `rules_json`.
+- Base: no category returns enabled collection and listing rules together.
+- Bad: returning raw JSON text in `rules_json`, or omitting the top-level cache `version`.
+
+### 6. Tests Required
+
+- Route test for client auth call, category forwarding, invalid category, and auth failure.
+- Helper test for `rules_json` object parsing and malformed JSON fallback.
+- Query test for enabled-only filtering, category where clause, ordering, and cache version output.
+- Run server build/test/type-check/lint plus root build gates required by the active task.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+return NextResponse.json({ ok: true, data: rules })
+```
+
+#### Correct
+
+```ts
+return NextResponse.json({ ok: true, data: { version, rules } })
+```
+
+---
+
 ## Error Handling Patterns
 
 <!-- Try-catch patterns, error propagation -->

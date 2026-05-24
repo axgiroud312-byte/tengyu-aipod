@@ -3,7 +3,7 @@
   "name": "server-api-platform-rules",
   "title": "server api platform rules",
   "description": "GET /api/platform-rules 派发",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
