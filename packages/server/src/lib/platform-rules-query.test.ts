@@ -2,16 +2,28 @@ import type { PlatformRule } from '@prisma/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const findMany = vi.fn()
+const findUnique = vi.fn()
+const create = vi.fn()
+const update = vi.fn()
 
 vi.mock('@/lib/db', () => ({
   db: {
     platformRule: {
+      create,
       findMany,
+      findUnique,
+      update,
     },
   },
 }))
 
-const { listPlatformRules } = await import('./platform-rules')
+const {
+  createPlatformRule,
+  getAdminPlatformRule,
+  listAdminPlatformRules,
+  listPlatformRules,
+  updatePlatformRule,
+} = await import('./platform-rules')
 
 function platformRule(overrides: Partial<PlatformRule> = {}): PlatformRule {
   const now = new Date('2026-05-24T00:00:00.000Z')
@@ -29,6 +41,9 @@ function platformRule(overrides: Partial<PlatformRule> = {}): PlatformRule {
 
 beforeEach(() => {
   findMany.mockReset()
+  findUnique.mockReset()
+  create.mockReset()
+  update.mockReset()
 })
 
 describe('platform rules queries', () => {
@@ -56,6 +71,51 @@ describe('platform rules queries', () => {
         category: 'collection',
       },
       orderBy: [{ category: 'asc' }, { key: 'asc' }],
+    })
+  })
+
+  it('lists admin platform rules including disabled rows', async () => {
+    findMany.mockResolvedValueOnce([platformRule({ enabled: false })])
+
+    await expect(listAdminPlatformRules({ category: 'listing' })).resolves.toMatchObject([
+      { key: 'temu', enabled: false },
+    ])
+
+    expect(findMany).toHaveBeenCalledWith({
+      where: {
+        category: 'listing',
+      },
+      orderBy: [{ category: 'asc' }, { key: 'asc' }],
+    })
+  })
+
+  it('gets, creates, and updates admin platform rules with JSON text preserved', async () => {
+    findUnique.mockResolvedValueOnce(platformRule())
+    create.mockResolvedValueOnce(platformRule({ key: 'ozon' }))
+    update.mockResolvedValueOnce(platformRule({ enabled: false }))
+    const input = {
+      key: 'ozon',
+      name: 'Ozon',
+      category: 'collection' as const,
+      rules_json: '{"allowed_domains":["ozon.ru"]}',
+      enabled: true,
+      version: '20260524-01',
+    }
+
+    await expect(getAdminPlatformRule('temu')).resolves.toMatchObject({ key: 'temu' })
+    await createPlatformRule(input)
+    await updatePlatformRule('temu', { ...input, enabled: false })
+
+    expect(create).toHaveBeenCalledWith({ data: input })
+    expect(update).toHaveBeenCalledWith({
+      where: { key: 'temu' },
+      data: {
+        name: 'Ozon',
+        category: 'collection',
+        rules_json: '{"allowed_domains":["ozon.ru"]}',
+        enabled: false,
+        version: '20260524-01',
+      },
     })
   })
 })

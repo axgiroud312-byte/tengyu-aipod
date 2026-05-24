@@ -3,7 +3,7 @@
   "name": "admin-platform-rules-ui",
   "title": "admin platform rules ui",
   "description": "/admin/platform-rules CRUD",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

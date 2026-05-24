@@ -781,6 +781,65 @@ return NextResponse.json({ ok: true, data: { version, rules } })
 
 ---
 
+## Scenario: Admin Platform Rules CRUD API
+
+### 1. Scope / Trigger
+
+- Trigger: `/admin/platform-rules` UI, admin platform-rule APIs, or platform-rule management helpers.
+- Applies to: `packages/server/src/app/admin/api/platform-rules/**`, `packages/server/src/app/admin/platform-rules/**`, and `packages/server/src/lib/platform-rules.ts`.
+
+### 2. Signatures
+
+- `GET /admin/api/platform-rules?category=collection|listing`
+- `POST /admin/api/platform-rules`
+- `GET /admin/api/platform-rules/:key`
+- `PATCH /admin/api/platform-rules/:key`
+- Body: `{ key, name, category, rules_json, enabled, version }`
+
+### 3. Contracts
+
+- Admin list includes enabled and disabled rows so operators can re-enable a rule.
+- Admin list may filter by `collection` or `listing`; invalid categories are ignored as no filter.
+- Create and update preserve `rules_json` as text in the database.
+- `rules_json` must parse to a JSON object; arrays, malformed JSON, or primitives are invalid.
+- PATCH uses the URL `:key` as the stable row identity; body `key` is ignored for identity changes.
+- UI uses `enabled` as the reversible CRUD delete/restore mechanism; do not hard-delete platform rules unless a separate task explicitly requires it.
+
+### 4. Validation & Error Matrix
+
+- Invalid body or invalid `rules_json` -> HTTP 400 with `INVALID_PLATFORM_RULE_INPUT`.
+- Duplicate key on create -> HTTP 409 with `PLATFORM_RULE_EXISTS`.
+- Unknown key on get or patch -> HTTP 404 with `PLATFORM_RULE_NOT_FOUND`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: create a collection rule from the template, edit `rules_json`, save, and see the refreshed list immediately.
+- Base: disabling a rule removes it from the client dispatch API but keeps it visible in admin.
+- Bad: admin update parses `rules_json` then writes it back as a normalized object or JSON array; the schema contract is text containing an object.
+
+### 6. Tests Required
+
+- Admin route tests for list filter, create, invalid JSON, detail get, patch, and not-found patch.
+- Query tests for admin list including disabled rows, create, update, and get helpers.
+- Browser/manual check of `/admin/platform-rules` with a valid admin cookie: page title, list, JSON editor, and collection/listing template buttons render.
+- Run server build/test/type-check/lint plus the full task quality gate.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await db.platformRule.delete({ where: { key } })
+```
+
+#### Correct
+
+```ts
+await updatePlatformRule(key, { ...input, enabled: false })
+```
+
+---
+
 ## Error Handling Patterns
 
 <!-- Try-catch patterns, error propagation -->

@@ -24,6 +24,15 @@ export type PlatformRulesPayload = {
   rules: PlatformRuleItem[]
 }
 
+export type PlatformRuleUpsertInput = {
+  key: string
+  name: string
+  category: PlatformRuleCategory
+  rules_json: string
+  enabled: boolean
+  version: string
+}
+
 function parseJsonObject(value: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value) as unknown
@@ -68,4 +77,50 @@ export async function listPlatformRules(
     version: buildRulesVersion(rules),
     rules,
   }
+}
+
+export async function listAdminPlatformRules(filter: PlatformRuleFilter = {}) {
+  const rules = await db.platformRule.findMany({
+    where: {
+      ...(filter.category ? { category: filter.category } : {}),
+    },
+    orderBy: [{ category: 'asc' }, { key: 'asc' }],
+  })
+
+  return rules.map(serializePlatformRule)
+}
+
+export async function getAdminPlatformRule(key: string) {
+  const rule = await db.platformRule.findUnique({ where: { key } })
+  return rule ? serializePlatformRule(rule) : null
+}
+
+export async function createPlatformRule(input: PlatformRuleUpsertInput) {
+  const rule = await db.platformRule.create({
+    data: {
+      key: input.key,
+      name: input.name,
+      category: input.category,
+      rules_json: input.rules_json,
+      enabled: input.enabled,
+      version: input.version,
+    },
+  })
+
+  return serializePlatformRule(rule)
+}
+
+export async function updatePlatformRule(key: string, input: PlatformRuleUpsertInput) {
+  const rule = await db.platformRule.update({
+    where: { key },
+    data: {
+      name: input.name,
+      category: input.category,
+      rules_json: input.rules_json,
+      enabled: input.enabled,
+      version: input.version,
+    },
+  })
+
+  return serializePlatformRule(rule)
 }
