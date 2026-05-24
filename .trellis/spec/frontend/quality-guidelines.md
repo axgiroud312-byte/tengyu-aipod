@@ -259,6 +259,65 @@ const tempDir = await tempFileManager.createTaskDir('title', taskId)
 await writeFile(join(tempDir, 'prompt-snapshot.json'), json)
 ```
 
+### Scenario: Electron Client Local Persistence E2E
+
+#### 1. Scope / Trigger
+- Trigger: Electron client code stores local secrets or writes workbench SQLite tables during E2E.
+- Boundary: this applies to local client persistence under `app.getPath('userData')` and `{workbenchRoot}/.workbench/workbench.db`; it does not replace server Prisma/Postgres rules.
+
+#### 2. Signatures
+- API key IPC: `onboarding:save-api-keys -> Record<string, string> -> Promise<{ ok: true }>`
+- Keychain helpers: `setSecret(key, value)`, `getSecret(key)`, `hasSecret(key)`
+- Generation DB opener: `openWorkbenchDatabase(workbenchRoot) -> { exec, prepare, close }`
+- E2E env keys:
+  - `TENGYU_ELECTRON_USER_DATA_DIR`
+  - `TENGYU_SERVER_URL`
+  - `TENGYU_BAILIAN_BASE_URL`
+  - `TENGYU_GRSAI_CN_BASE_URL`
+  - `TENGYU_GRSAI_GLOBAL_BASE_URL`
+
+#### 3. Contracts
+- `save-api-keys` must write multiple secrets sequentially. `setSecret` reads and rewrites the whole `secrets.json`; concurrent writes can lose keys.
+- E2E must isolate Electron user data with `TENGYU_ELECTRON_USER_DATA_DIR` so keychain/config state does not leak across tests.
+- Grsai E2E must route both node base URLs to local mocks through env overrides; production defaults remain the real Grsai hosts.
+- Generation DB code should prefer `better-sqlite3`; if Electron cannot load the native binding, it may fall back to `node:sqlite` only behind the same narrow `{ exec, prepare, close }` interface.
+
+#### 4. Validation & Error Matrix
+- Concurrent secret writes -> lost API key; later `getSecret('bailian')` or `getSecret('grsai')` returns null.
+- Missing user data isolation -> E2E can pass or fail depending on a previous run's onboarding state.
+- Missing Grsai env override -> Electron main process calls real Grsai instead of the mock server.
+- Missing SQLite fallback or native binding -> extract/artifact E2E fails when opening `workbench.db`.
+
+#### 5. Good/Base/Bad Cases
+- Good: E2E saves `bailian` and `grsai`, asserts both exist, then runs prompt generation and Grsai generation through real IPC.
+- Base: unit tests inject fake DB or fake adapters for service-level orchestration.
+- Bad: parallel `Promise.all(Object.entries(apiKeys).map(setSecret))` against the same local secrets file.
+
+#### 6. Tests Required
+- Playwright Electron E2E with mock Bailian and mock Grsai APIs.
+- Assert prompt generation, Grsai node fallback, max concurrent `/generate` requests, and artifacts `source_artifact_ids`.
+- Run `pnpm -F @tengyu-aipod/client build` before Electron E2E when main/preload code changes.
+- Run `pnpm -F @tengyu-aipod/client e2e`, `test`, `type-check`, and `lint`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+await Promise.all(
+  Object.entries(apiKeys).map(([key, value]) => setSecret(key, value.trim())),
+)
+```
+
+Correct:
+```ts
+for (const [key, value] of Object.entries(apiKeys)) {
+  const trimmed = value.trim()
+  if (trimmed) {
+    await setSecret(key, trimmed)
+  }
+}
+```
+
 ### Scenario: Title Module Service
 
 #### 1. Scope / Trigger

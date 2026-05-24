@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { basename, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -127,6 +128,7 @@ type GenerationServiceDependencies = {
 
 const DEFAULT_GENERATION_MODEL: GrsaiModel = 'nano-banana-2'
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+const nodeRequire = createRequire(import.meta.url)
 
 function clampInt(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) {
@@ -148,7 +150,20 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  try {
+    return new Database(workbenchDbPath(workbenchRoot))
+  } catch (error) {
+    return openNodeSqliteDatabase(workbenchDbPath(workbenchRoot), error)
+  }
+}
+
+function openNodeSqliteDatabase(path: string, betterSqliteError: unknown): GenerationDatabase {
+  try {
+    const { DatabaseSync } = nodeRequire('node:sqlite') as typeof import('node:sqlite')
+    return new DatabaseSync(path) as unknown as GenerationDatabase
+  } catch (error) {
+    throw betterSqliteError instanceof Error ? betterSqliteError : error
+  }
 }
 
 function ensureGenerationTables(db: Pick<Database.Database, 'exec'>) {

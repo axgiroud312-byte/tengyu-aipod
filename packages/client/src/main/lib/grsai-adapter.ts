@@ -85,6 +85,12 @@ const DEFAULT_POLL_INTERVAL_MS = 2_000
 const DEFAULT_POLL_TIMEOUT_MS = 300_000
 
 export function grsaiBaseUrl(node: GrsaiNode) {
+  const envValue =
+    node === 'cn' ? process.env.TENGYU_GRSAI_CN_BASE_URL : process.env.TENGYU_GRSAI_GLOBAL_BASE_URL
+  if (envValue?.trim()) {
+    return envValue.replace(/\/+$/, '')
+  }
+
   return GRSAI_BASE_URLS[node]
 }
 
