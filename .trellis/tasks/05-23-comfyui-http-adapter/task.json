@@ -3,7 +3,7 @@
   "name": "comfyui-http-adapter",
   "title": "comfyui http adapter",
   "description": "ComfyUI 原生 HTTP API",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

@@ -473,9 +473,66 @@ return {
 
 ## Error Types
 
-<!-- Custom error classes/types -->
+### Scenario: Client ComfyUI HTTP Adapter
 
-(To be filled by the team)
+#### 1. Scope / Trigger
+
+- Trigger: native ComfyUI HTTP calls from the Electron main process.
+- Applies to: `packages/client/src/main/lib/*comfy*` transport adapters.
+
+#### 2. Signatures
+
+- `new ComfyHttpClient(baseUrl, options?)`
+- `uploadImage(buffer: Buffer, filename: string): Promise<string>`
+- `queuePrompt(workflow: unknown): Promise<string>`
+- `getHistory(promptId: string): Promise<ComfyHistoryEntry>`
+- `viewImage(filename: string): Promise<Buffer>`
+
+#### 3. Contracts
+
+- `baseUrl` is the ComfyUI URL selected from Chenyu `server_map`.
+- `POST /upload/image` uses multipart field `image` and returns the ComfyUI filename.
+- `POST /prompt` sends `{ prompt: workflow }` and returns `prompt_id`.
+- `GET /history/{prompt_id}` polls until `status.completed === true`.
+- `GET /view?filename=...` returns image bytes as a Node `Buffer`.
+- This adapter is transport-only. Workflow input injection, persistence, and Chenyu lifecycle stay in higher-level services.
+
+#### 4. Validation & Error Matrix
+
+- Request abort/timeout -> `NETWORK_TIMEOUT`, retryable, `details.kind = 'network'`.
+- Network connection failure -> `NETWORK_OFFLINE`, retryable, `details.kind = 'network'`.
+- HTTP 429 or queue-full/busy response -> `HTTP_429`, retryable.
+- HTTP 5xx -> `HTTP_5XX`, retryable.
+- Other HTTP 4xx -> `HTTP_4XX`, non-retryable.
+- Missing `name` or `prompt_id`, empty JSON, or invalid JSON -> `HTTP_5XX`, retryable protocol failure.
+
+#### 5. Good/Base/Bad Cases
+
+- Good: upload source image, queue workflow, poll history, then download output bytes.
+- Base: unfinished history keeps polling until the configured timeout.
+- Bad: returning raw `ArrayBuffer` from `viewImage`, or throwing generic `Error` that cannot be classified by `GenerationConcurrencyController`.
+
+#### 6. Tests Required
+
+- Unit tests with MSW for upload, queue, history polling, view download, queue-full/429, 5xx, and history timeout.
+- Run `pnpm -F @tengyu-aipod/client test`, `pnpm -F @tengyu-aipod/client type-check`, and `pnpm -F @tengyu-aipod/client lint`.
+
+#### 7. Wrong vs Correct
+
+##### Wrong
+
+```ts
+throw new Error('ComfyUI failed')
+```
+
+##### Correct
+
+```ts
+throw new AppErrorClass('HTTP_5XX', 'ComfyUI 服务暂时不可用', true, {
+  kind: 'network',
+  provider: 'comfyui-chenyu',
+})
+```
 
 ---
 

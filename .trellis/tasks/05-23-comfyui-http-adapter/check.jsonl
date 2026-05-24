@@ -1,1 +1,7 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/03-generation.md","reason":"Check implementation against the ComfyUI provider flow and route-level acceptance criteria."}
+{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Verify the adapter matches the documented Tengyu ComfyUI call sequence."}
+{"file":".trellis/tasks/05-23-comfyui-http-adapter/research/comfyui-http-api.md","reason":"Check endpoint-specific behavior, polling, and boundaries."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for review."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify errors use retryable/non-retryable AppError semantics."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify lint, type-check, and unit-test expectations."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify the implementation reuses existing generation patterns and does not rewrite slice 4 services."}
