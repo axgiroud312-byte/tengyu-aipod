@@ -25,6 +25,7 @@ import {
   browserProfileLocks,
 } from '../../main/lib/browser-profile-lock'
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
+import { sheinWorkflow } from './platforms/dianxiaomi-shein/workflow'
 import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
 
 const nodeRequire = createRequire(import.meta.url)
@@ -928,5 +929,6 @@ export const listingRunner = new ListingRunner({
   emitProgress: emitListingProgress,
   workflows: {
     'temu-pop': temuPopWorkflow,
+    shein: sheinWorkflow,
   },
 })
