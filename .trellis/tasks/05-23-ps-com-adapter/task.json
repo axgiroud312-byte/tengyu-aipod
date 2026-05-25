@@ -3,7 +3,7 @@
   "name": "ps-com-adapter",
   "title": "ps com adapter",
   "description": "winax COM 封装+串行 Mutex",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

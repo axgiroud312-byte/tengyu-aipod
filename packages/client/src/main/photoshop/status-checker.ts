@@ -1,6 +1,7 @@
 import { execFile as nodeExecFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { PhotoshopStatus } from '@tengyu-aipod/shared'
+import { PhotoshopComAdapter } from './com-adapter'
 
 type ExecFileResult = { stdout: string; stderr: string }
 type ExecFileFn = (file: string, args: string[]) => Promise<ExecFileResult>
@@ -9,6 +10,7 @@ interface PhotoshopStatusCheckerOptions {
   platform?: NodeJS.Platform
   now?: () => number
   execFile?: ExecFileFn
+  comAdapter?: Pick<PhotoshopComAdapter, 'getVersion'>
 }
 
 const execFileAsync = promisify(nodeExecFile)
@@ -55,6 +57,7 @@ export class PhotoshopStatusChecker {
   private readonly platform: NodeJS.Platform
   private readonly now: () => number
   private readonly execFile: ExecFileFn
+  private readonly comAdapter: Pick<PhotoshopComAdapter, 'getVersion'>
 
   constructor(options: PhotoshopStatusCheckerOptions = {}) {
     this.platform = options.platform ?? process.platform
@@ -64,6 +67,12 @@ export class PhotoshopStatusChecker {
       (async (file, args) => {
         const result = await execFileAsync(file, args, { windowsHide: true })
         return { stdout: result.stdout, stderr: result.stderr }
+      })
+    this.comAdapter =
+      options.comAdapter ??
+      new PhotoshopComAdapter({
+        platform: this.platform,
+        execFile: this.execFile,
       })
   }
 
@@ -148,15 +157,7 @@ export class PhotoshopStatusChecker {
     error?: string
   }> {
     try {
-      const result = await this.execFile('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        '$app = New-Object -ComObject Photoshop.Application; [Console]::OutputEncoding = [Text.UTF8Encoding]::UTF8; Write-Output $app.Version',
-      ])
-      return { connected: true, version: normalizeVersion(result.stdout) }
+      return { connected: true, version: normalizeVersion(await this.comAdapter.getVersion()) }
     } catch (error) {
       return { connected: false, version: null, error: getErrorMessage(error) }
     }

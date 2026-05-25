@@ -8,6 +8,20 @@
 
 参考文档（按重要性排序）：
 - `docs/spec/05-photoshop.md §8`
+- `docs/adr/0007-photoshop-windows-only-v1.md`
+
+## 本机真实环境
+
+- Windows + Photoshop：主理人 Windows 本机，已检测到 `Adobe Photoshop 2026` 进程，真实 COM 版本读取已返回 `27.7.0`。
+- 真实 PSD 模板：
+  - `C:\Users\niilo\Desktop\钥匙扣x.psd`
+  - `C:\Users\niilo\Desktop\mao 杯子.psd`
+- 印花素材根目录：通过 `process.env.PS_MATERIAL_ROOT` 读取，当前本机路径为 `C:\Users\niilo\Desktop\印花素材`。
+- 输出根目录：通过 `process.env.PS_OUTPUT_ROOT` 读取，当前本机路径为 `C:\Users\niilo\Desktop\新建文件夹`。
+- 真实 Photoshop 测试守护：
+  - `REAL_PS=1` 才运行真实 Photoshop / COM 测试。
+  - `REAL_PS_MUTATE=1` 才允许覆盖输出文件或关闭未保存测试文档。
+  - 禁止程序 quit Photoshop；只能在二级守护开启时关闭测试自己打开的文档，避免丢主理人的其它工作。
 
 ## 验收标准
 
@@ -24,7 +38,7 @@
 
 ## 实施提示
 
-`winax` 加载 PS COM 后第一次调用慢（启动 PS）。
+优先复用 `ps-status-checker` 已验证的 Windows PowerShell COM bridge：`New-Object -ComObject Photoshop.Application`。主理人本机未安装 Visual Studio C++ Build Tools，`winax` 原生模块无法构建，所以本阶段用 PowerShell COM 作为等价真实 COM 接入。所有 Windows-only 逻辑必须有 `process.platform === 'win32'` 守护，非 Windows 通过 AppError 优雅失败，不能出现 import error。
 
 ## 完成后
 

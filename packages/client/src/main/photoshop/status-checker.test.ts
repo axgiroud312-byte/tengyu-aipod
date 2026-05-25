@@ -29,6 +29,14 @@ function createChecker(overrides: {
       }
       throw new Error(`unexpected command: ${file}`)
     },
+    comAdapter: {
+      getVersion: async () => {
+        if (overrides.comError) {
+          throw overrides.comError
+        }
+        return overrides.comVersion ?? '26.0.0'
+      },
+    },
   })
 }
 
