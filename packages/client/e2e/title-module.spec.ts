@@ -239,10 +239,11 @@ test.describe('title module E2E', () => {
     await page.reload()
     await expect(page.getByText('标题生成模块')).toBeVisible()
 
-    await page.getByPlaceholder('选择 05-货号成品 下的一个批次目录').fill(batchDir)
+    await page.getByPlaceholder('选择货号成品中的一个批次目录').fill(batchDir)
+    await page.getByRole('button', { name: '高级参数' }).click()
     await page.getByRole('spinbutton', { name: '并发数' }).fill('1')
     await page.getByRole('button', { name: '扫描' }).click()
-    await expect(page.getByText('预估 2 张图')).toBeVisible()
+    await expect(page.getByText('待生成张数').locator('..')).toContainText('2')
 
     await page.evaluate(() => {
       window.__titleProgressEvents = []
@@ -287,7 +288,8 @@ test.describe('title module E2E', () => {
     await expect(page.getByText('标题生成模块')).toBeVisible()
 
     await rm(join(batchDir, 'SKU003', '1.png'))
-    await page.getByPlaceholder('选择 05-货号成品 下的一个批次目录').fill(batchDir)
+    await page.getByPlaceholder('选择货号成品中的一个批次目录').fill(batchDir)
+    await page.getByRole('button', { name: '高级参数' }).click()
     await page.getByRole('spinbutton', { name: '并发数' }).fill('1')
     await page.getByRole('button', { name: '扫描' }).click()
     await page.getByRole('button', { name: '开始生成标题' }).click()

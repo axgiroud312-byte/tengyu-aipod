@@ -176,11 +176,12 @@ export function registerOnboardingIpc() {
   })
 
   ipcMain.handle('onboarding:save-api-keys', async (_event, apiKeys: Record<string, string>) => {
-    await Promise.all(
-      Object.entries(apiKeys)
-        .filter(([, value]) => value.trim())
-        .map(([key, value]) => setSecret(key, value.trim())),
-    )
+    for (const [key, value] of Object.entries(apiKeys)) {
+      const trimmed = value.trim()
+      if (trimmed) {
+        await setSecret(key, trimmed)
+      }
+    }
 
     return { ok: true }
   })
