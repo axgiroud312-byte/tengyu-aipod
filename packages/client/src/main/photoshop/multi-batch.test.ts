@@ -69,6 +69,7 @@ describe('PhotoshopMultiBatchRunner', () => {
     const executed: string[] = []
     const skipFlags: Array<boolean | undefined> = []
     const progress: string[] = []
+    const logStages: string[] = []
     const templates = new Map([
       ['C:\\templates\\cup:front?.psd', createTemplate('C:\\templates\\cup:front?.psd', 'tpl-1')],
       ['C:\\templates\\keychain.psd', createTemplate('C:\\templates\\keychain.psd', 'tpl-2')],
@@ -98,7 +99,12 @@ describe('PhotoshopMultiBatchRunner', () => {
           },
         },
         onProgress: (item) => {
-          progress.push(`${item.template_name}:${item.group_index}`)
+          progress.push(`${item.current_stage}:${item.template_name}:${item.group_index}`)
+        },
+        progressLogger: {
+          write: (entry) => {
+            logStages.push(entry.stage)
+          },
         },
       },
     )
@@ -106,7 +112,21 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(scanned).toEqual(['C:\\templates\\cup:front?.psd', 'C:\\templates\\keychain.psd'])
     expect(executed).toHaveLength(4)
     expect(skipFlags).toEqual([true, true, true, true])
-    expect(progress).toEqual(['cup_front_:0', 'cup_front_:1', 'keychain:0', 'keychain:1'])
+    expect(progress).toEqual([
+      'task_start:cup_front_:0',
+      'group_complete:cup_front_:0',
+      'task_start:cup_front_:1',
+      'group_complete:cup_front_:1',
+      'task_start:keychain:0',
+      'group_complete:keychain:0',
+      'task_start:keychain:1',
+      'group_complete:keychain:1',
+    ])
+    expect(logStages).toContain('task_start')
+    expect(logStages).toContain('jsx_generate')
+    expect(logStages).toContain('jsx_exec')
+    expect(logStages).toContain('output_verify')
+    expect(logStages).toContain('group_complete')
     expect(result).toMatchObject({
       ok: true,
       task_id: 'batch-1',
@@ -140,6 +160,7 @@ describe('PhotoshopMultiBatchRunner', () => {
             return createCompletedJobResult(job.output_paths)
           },
         },
+        progressLogger: null,
       },
     )
 
@@ -168,6 +189,7 @@ describe('PhotoshopMultiBatchRunner', () => {
             return createCompletedJobResult(job.output_paths)
           },
         },
+        progressLogger: null,
       },
     )
 
@@ -212,7 +234,7 @@ describe('PhotoshopMultiBatchRunner', () => {
           tempFiles: new TempFileManager({ rootDir: join(tempDir, 'jsx-tmp') }),
         }),
     })
-    const runner = new PhotoshopMultiBatchRunner({ scanner, engine })
+    const runner = new PhotoshopMultiBatchRunner({ scanner, engine, progressLogger: null })
 
     await expect(
       runner.runBatch(prints, ['C:\\Users\\niilo\\Desktop\\钥匙扣x.psd'], {

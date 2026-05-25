@@ -111,6 +111,42 @@ export interface PhotoshopJobResult {
   result_file_path?: string
 }
 
+export type PhotoshopProgressStage =
+  | 'task_start'
+  | 'jsx_generate'
+  | 'jsx_exec'
+  | 'output_verify'
+  | 'group_complete'
+
+export interface PhotoshopProgressInfo {
+  task_id: string
+  total_groups: number
+  completed: number
+  failed: number
+  skipped: number
+  current_group: number | null
+  current_stage: PhotoshopProgressStage
+  verified_outputs: number
+  template_index?: number
+  template_total?: number
+  template_name?: string
+  group_index?: number
+  group_total?: number
+  groups_completed?: number
+}
+
+export interface PhotoshopProgressLogEntry {
+  ts: number
+  level: 'debug' | 'info' | 'warn' | 'error'
+  stage: PhotoshopProgressStage
+  group?: number
+  input?: string
+  attempt?: number
+  output_file?: string
+  error?: string
+  duration_ms?: number
+}
+
 export interface PhotoshopPrintAsset {
   id: string
   file_path: string

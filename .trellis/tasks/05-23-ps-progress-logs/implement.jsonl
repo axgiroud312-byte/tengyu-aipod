@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/05-photoshop.md","reason":"Defines Photoshop progress model, structured log fields, IPC progress channel, and stage names."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for main-process logging, IPC, and execution progress code."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for renderer-facing progress contracts."}
+{"file":".trellis/spec/guides/index.md","reason":"Thinking guide index for cross-layer progress event and log field consistency."}
+{"file":".trellis/tasks/05-23-ps-progress-logs/prd.md","reason":"Task-specific Windows + Photoshop 2023+ requirements, REAL_PS guards, and real local PSD/material/output paths."}

@@ -1,5 +1,5 @@
-import { AppErrorClass } from '@tengyu-aipod/shared'
-import { ipcMain } from 'electron'
+import { AppErrorClass, type PhotoshopProgressInfo } from '@tengyu-aipod/shared'
+import { type WebContents, ipcMain } from 'electron'
 import { z } from 'zod'
 import { psdScanner } from './psd-scanner'
 import { photoshopStatusChecker } from './status-checker'
@@ -7,6 +7,13 @@ import { photoshopStatusChecker } from './status-checker'
 const scanTemplateInputSchema = z.object({
   psd_path: z.string().min(1),
 })
+
+export function sendPhotoshopProgress(
+  webContents: Pick<WebContents, 'send'>,
+  progress: PhotoshopProgressInfo,
+): void {
+  webContents.send('photoshop:progress', progress)
+}
 
 export function registerPhotoshopIpc(): void {
   ipcMain.handle('photoshop:get-status', () => photoshopStatusChecker.check())

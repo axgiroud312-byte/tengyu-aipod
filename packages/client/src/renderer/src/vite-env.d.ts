@@ -46,6 +46,9 @@ declare global {
           input: import('@tengyu-aipod/shared').PhotoshopScanTemplateRequest,
         ) => Promise<import('@tengyu-aipod/shared').PsdTemplate>
         listCachedTemplates: () => Promise<import('@tengyu-aipod/shared').PsdTemplate[]>
+        onProgress: (
+          callback: (progress: import('@tengyu-aipod/shared').PhotoshopProgressInfo) => void,
+        ) => () => void
       }
     }
   }

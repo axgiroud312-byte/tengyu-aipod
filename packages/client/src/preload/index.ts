@@ -1,5 +1,6 @@
 import type {
   ActivationBadgeState,
+  PhotoshopProgressInfo,
   PhotoshopScanTemplateRequest,
   PhotoshopStatus,
   PsdTemplate,
@@ -65,6 +66,16 @@ const api = {
       ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
     listCachedTemplates: () =>
       ipcRenderer.invoke('photoshop:list-cached-templates') as Promise<PsdTemplate[]>,
+    onProgress: (callback: (progress: PhotoshopProgressInfo) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: PhotoshopProgressInfo) => {
+        callback(progress)
+      }
+      ipcRenderer.on('photoshop:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('photoshop:progress', listener)
+      }
+    },
   },
 }
 
