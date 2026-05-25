@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { initializeActivationStore, useActivationStore } from '@/store/activation'
-import type { ActivationBadgeState } from '@tengyu-aipod/shared'
+import type { ActivationBadgeState, PhotoshopStatus } from '@tengyu-aipod/shared'
 import { APP_VERSION } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
@@ -11,7 +11,7 @@ import {
   PlayCircle,
   RefreshCw,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type OnboardingStep = 1 | 2 | 3 | 4
 
@@ -70,6 +70,100 @@ function statusDotClassName(tone: ActivationBadgeState['tone']) {
     default:
       return 'bg-muted-foreground'
   }
+}
+
+function photoshopStatusLabel(status: PhotoshopStatus | null) {
+  if (!status) {
+    return '检测中'
+  }
+  if (status.com_connected) {
+    return `已连接${status.version ? ` · v${status.version}` : ''}`
+  }
+  if (status.running) {
+    return '运行中 · COM 未连接'
+  }
+  if (status.installed) {
+    return '已安装 · 未启动'
+  }
+  return '仅支持 Windows / 未安装'
+}
+
+function photoshopStatusTone(status: PhotoshopStatus | null) {
+  if (!status) {
+    return 'border-border bg-muted text-muted-foreground'
+  }
+  if (status.com_connected) {
+    return 'border-emerald-200 bg-emerald-50 text-emerald-800'
+  }
+  if (status.running || status.installed) {
+    return 'border-amber-200 bg-amber-50 text-amber-900'
+  }
+  return 'border-red-200 bg-red-50 text-red-800'
+}
+
+function photoshopStatusDot(status: PhotoshopStatus | null) {
+  if (!status) {
+    return 'bg-muted-foreground'
+  }
+  if (status.com_connected) {
+    return 'bg-emerald-500'
+  }
+  if (status.running || status.installed) {
+    return 'bg-amber-500'
+  }
+  return 'bg-red-500'
+}
+
+function PhotoshopStatusBar() {
+  const [status, setStatus] = useState<PhotoshopStatus | null>(null)
+  const [checking, setChecking] = useState(false)
+
+  const refreshStatus = useCallback(async () => {
+    setChecking(true)
+    try {
+      const nextStatus = await window.api.photoshop.getStatus()
+      setStatus(nextStatus)
+    } finally {
+      setChecking(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshStatus()
+    const timer = window.setInterval(() => {
+      void refreshStatus()
+    }, 30_000)
+
+    return () => window.clearInterval(timer)
+  }, [refreshStatus])
+
+  return (
+    <div
+      className={`flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-sm ${photoshopStatusTone(
+        status,
+      )}`}
+    >
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${photoshopStatusDot(status)}`} />
+        <div className="min-w-0">
+          <p className="font-medium">Photoshop 状态：{photoshopStatusLabel(status)}</p>
+          {status?.error_message ? (
+            <p className="truncate text-xs opacity-80">{status.error_message}</p>
+          ) : null}
+        </div>
+      </div>
+      <Button
+        className="h-8 shrink-0 px-3"
+        disabled={checking}
+        onClick={() => void refreshStatus()}
+        type="button"
+        variant="secondary"
+      >
+        <RefreshCw className="mr-2 h-3.5 w-3.5" />
+        刷新状态
+      </Button>
+    </div>
+  )
 }
 
 function ActivationBadge({
@@ -249,6 +343,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               </h1>
               <p className="text-base text-muted-foreground">软件已准备就绪</p>
             </div>
+            <PhotoshopStatusBar />
             <div className="flex items-center gap-3">
               <Button type="button" onClick={handlePing}>
                 IPC Ping

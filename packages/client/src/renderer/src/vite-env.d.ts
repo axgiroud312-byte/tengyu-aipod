@@ -40,6 +40,9 @@ declare global {
           callback: (status: import('@tengyu-aipod/shared').ActivationBadgeState) => void,
         ) => () => void
       }
+      photoshop: {
+        getStatus: () => Promise<import('@tengyu-aipod/shared').PhotoshopStatus>
+      }
     }
   }
 }

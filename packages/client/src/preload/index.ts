@@ -1,4 +1,4 @@
-import type { ActivationBadgeState } from '@tengyu-aipod/shared'
+import type { ActivationBadgeState, PhotoshopStatus } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
@@ -53,6 +53,9 @@ const api = {
         ipcRenderer.removeListener('activation:status-changed', listener)
       }
     },
+  },
+  photoshop: {
+    getStatus: () => ipcRenderer.invoke('photoshop:get-status') as Promise<PhotoshopStatus>,
   },
 }
 
