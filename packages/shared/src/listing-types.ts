@@ -158,6 +158,7 @@ export interface StageResult {
   endedAt: number
   screenshotPath?: string
   domSnapshotPath?: string
+  stateSnapshotPath?: string
   details?: Record<string, string | number | boolean | null>
   error?: ListingFailure
 }

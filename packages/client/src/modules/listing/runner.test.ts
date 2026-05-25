@@ -146,6 +146,26 @@ function createConfig(overrides: Partial<ListingRunConfig> = {}): ListingRunConf
     fail_streak_limit: 2,
     resume: false,
     timeout_ms: 1000,
+    evidence_dir: '/tmp/evidence',
+    ...overrides,
+  }
+}
+
+function createConfigWithoutEvidenceDir(
+  overrides: Partial<Omit<ListingRunConfig, 'evidence_dir'>> = {},
+): ListingRunConfig {
+  return {
+    task_id: 'task-1',
+    batch_id: 'batch-1',
+    batch_dir: '/tmp/batch',
+    platform: 'temu-pop',
+    template,
+    submit_mode: 'save-draft',
+    workspaces: [{ profile_id: 'profile-a' }, { profile_id: 'profile-b' }],
+    max_attempts: 2,
+    fail_streak_limit: 2,
+    resume: false,
+    timeout_ms: 1000,
     ...overrides,
   }
 }
@@ -282,7 +302,7 @@ describe('listing runner', () => {
       statusRow('SKU-2', 'failed', {
         retry_count: 2,
         last_error: '之前失败',
-        evidence_dir: '/tmp/evidence/profile-a/SKU-2',
+        evidence_dir: '/tmp/evidence/evidence/profile-a/SKU-2',
       }),
       statusRow('SKU-3', 'skipped'),
     ])
@@ -323,7 +343,7 @@ describe('listing runner', () => {
     expect(store.rows.get('/tmp/batch::SKU-2::temu-pop::profile-a')).toMatchObject({
       status: 'success',
       retry_count: 1,
-      evidence_dir: '/tmp/evidence/profile-a/SKU-2',
+      evidence_dir: '/tmp/evidence/evidence/profile-a/SKU-2',
     })
   })
 
@@ -428,13 +448,13 @@ describe('listing runner', () => {
       },
     )
 
-    expect(result.results[0]?.evidenceDir).toBe('/tmp/evidence/profile-a/SKU-1')
+    expect(result.results[0]?.evidenceDir).toBe('/tmp/evidence/evidence/profile-a/SKU-1')
     expect(workflow.runListingItem).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ sku: 'SKU-1' }),
       expect.objectContaining({
         profileId: 'profile-a',
-        evidenceDir: '/tmp/evidence/profile-a/SKU-1',
+        evidenceDir: '/tmp/evidence/evidence/profile-a/SKU-1',
       }),
     )
     expect(progress).toEqual(
@@ -453,6 +473,39 @@ describe('listing runner', () => {
           currentSku: 'SKU-1',
         }),
       ]),
+    )
+  })
+
+  it('creates the default listing temp directory through TempFileManager', async () => {
+    const store = new FakeStatusStore()
+    const { cdp } = createBrowserRuntime()
+    const createTaskDir = vi.fn(async () => '/tmp/workbench/.workbench/tmp/listing/task-1')
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) =>
+        successResult(item, config),
+      ),
+    }
+
+    const result = await runLocalListingBatch(
+      createConfigWithoutEvidenceDir({
+        workspaces: [{ profile_id: 'profile-a' }],
+      }),
+      [createItem('SKU-1')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        cdp,
+        locks: new BrowserProfileLockManager(),
+        workflows: { 'temu-pop': workflow },
+        tempFiles: { createTaskDir },
+        sleep: vi.fn().mockResolvedValue(undefined),
+        now: () => 1000,
+      },
+    )
+
+    expect(createTaskDir).toHaveBeenCalledWith('listing', 'task-1')
+    expect(result.results[0]?.evidenceDir).toBe(
+      '/tmp/workbench/.workbench/tmp/listing/task-1/evidence/profile-a/SKU-1',
     )
   })
 

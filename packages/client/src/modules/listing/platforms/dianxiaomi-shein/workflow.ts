@@ -1,5 +1,3 @@
-import { mkdir, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import {
   type ListingConfig,
   type ListingFailure,
@@ -10,6 +8,7 @@ import {
   createListingFailure,
 } from '@tengyu-aipod/shared'
 import type { Page } from 'playwright'
+import { saveStageEvidence } from '../../evidence'
 import {
   type ListingActionError,
   fillSku,
@@ -61,8 +60,6 @@ const DEFAULT_ACTIONS: SheinWorkflowActions = {
   generateSkuCode,
 }
 
-const DOM_SNAPSHOT_MAX_CHARS = 200_000
-
 export async function runListingItem(
   page: Page,
   item: ListingItem,
@@ -74,12 +71,13 @@ export async function runListingItem(
   const stages: StageResult[] = []
   const actions = { ...DEFAULT_ACTIONS, ...dependencies.actions }
 
-  for (const stage of SHEIN_WORKFLOW_STAGES) {
+  for (const [stageIndex, stage] of SHEIN_WORKFLOW_STAGES.entries()) {
     const result = await runStage({
       page,
       item,
       config,
       stage,
+      stageIndex: stageIndex + 1,
       actions,
       allowMutation: dependencies.allowMutation === true,
       allowPublish: dependencies.allowPublish === true,
@@ -116,6 +114,7 @@ async function runStage(args: {
   item: ListingItem
   config: ListingConfig
   stage: SheinWorkflowStage
+  stageIndex: number
   actions: SheinWorkflowActions
   allowMutation: boolean
   allowPublish: boolean
@@ -124,28 +123,46 @@ async function runStage(args: {
   const startedAt = args.now()
   try {
     const details = await executeStage(args)
-    const evidence = await saveStageEvidence(args.page, args.config.evidenceDir, args.stage, 'ok')
-    return {
+    const result: StageResult = {
       stage: args.stage,
       ok: true,
       startedAt,
       endedAt: args.now(),
-      ...evidence,
       details,
     }
-  } catch (error) {
-    const failure = failureFromUnknown(error, args.stage)
     const evidence = await saveStageEvidence(
       args.page,
       args.config.evidenceDir,
       args.stage,
-      'failed',
+      result,
+      {
+        stageIndex: args.stageIndex,
+      },
     )
     return {
+      ...result,
+      ...evidence,
+    }
+  } catch (error) {
+    const failure = failureFromUnknown(error, args.stage)
+    const result: StageResult = {
       stage: args.stage,
       ok: false,
       startedAt,
       endedAt: args.now(),
+      error: failure,
+    }
+    const evidence = await saveStageEvidence(
+      args.page,
+      args.config.evidenceDir,
+      args.stage,
+      result,
+      {
+        stageIndex: args.stageIndex,
+      },
+    )
+    return {
+      ...result,
       ...evidence,
       error: {
         ...failure,
@@ -380,44 +397,6 @@ async function waitForEditableDraftPage(
   }
 
   return state
-}
-
-async function saveStageEvidence(
-  page: Page,
-  evidenceDir: string,
-  stage: ListingStage,
-  status: 'failed' | 'ok',
-) {
-  const dir = join(evidenceDir, stage)
-  await mkdir(dir, { recursive: true })
-  const screenshotPath = join(dir, `${status}.png`)
-  const domSnapshotPath = join(dir, `${status}.html`)
-  await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => undefined)
-  const html = await readCompactDomSnapshot(page)
-  await writeFile(domSnapshotPath, html)
-  return { screenshotPath, domSnapshotPath }
-}
-
-async function readCompactDomSnapshot(page: Page): Promise<string> {
-  const html = await page
-    .evaluate(() => {
-      const clone = document.documentElement.cloneNode(true) as HTMLElement
-      for (const node of clone.querySelectorAll('script, style, link, svg, canvas')) {
-        node.remove()
-      }
-      for (const node of clone.querySelectorAll('img')) {
-        node.removeAttribute('src')
-        node.removeAttribute('srcset')
-      }
-      return `<!doctype html>\n${clone.outerHTML}`
-    })
-    .catch(() => page.content().catch(() => ''))
-
-  if (html.length <= DOM_SNAPSHOT_MAX_CHARS) {
-    return html
-  }
-
-  return `${html.slice(0, DOM_SNAPSHOT_MAX_CHARS)}\n<!-- DOM snapshot truncated at ${DOM_SNAPSHOT_MAX_CHARS} chars -->`
 }
 
 export function selectSheinUploadImageFiles(item: ListingItem): string[] {

@@ -99,10 +99,15 @@ export type ListingRunnerDependencies = {
   cdp?: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
   locks?: BrowserProfileLockManager
   workflows?: Partial<Record<ListingPlatformKey, ListingWorkflow>>
+  tempFiles?: ListingTempFiles
   emitProgress?: ListingProgressEmitter
   randomId?: () => string
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+}
+
+type ListingTempFiles = {
+  createTaskDir(module: 'listing', taskId: string): Promise<string>
 }
 
 type ResolvedRunConfig = Required<
@@ -219,6 +224,7 @@ export class ListingRunner {
   private readonly cdp: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
   private readonly locks: BrowserProfileLockManager
   private readonly workflows: Partial<Record<ListingPlatformKey, ListingWorkflow>>
+  private readonly tempFiles: ListingTempFiles
   private readonly emitProgress: ListingProgressEmitter | undefined
   private readonly randomId: () => string
   private readonly now: () => number
@@ -230,6 +236,13 @@ export class ListingRunner {
     this.cdp = dependencies.cdp ?? cdpClient
     this.locks = dependencies.locks ?? browserProfileLocks
     this.workflows = dependencies.workflows ?? {}
+    this.tempFiles = dependencies.tempFiles ?? {
+      createTaskDir: async (module, taskId) =>
+        (await import('../../main/lib/temp-file-manager')).tempFileManager.createTaskDir(
+          module,
+          taskId,
+        ),
+    }
     this.emitProgress = dependencies.emitProgress
     this.randomId = dependencies.randomId ?? randomUUID
     this.now = dependencies.now ?? Date.now
@@ -237,16 +250,14 @@ export class ListingRunner {
   }
 
   async runLocalListingBatch(config: ListingRunConfig, items: ListingItem[]): Promise<BatchResult> {
-    const resolved = normalizeRunConfig(config, {
-      randomId: this.randomId,
-    })
+    const workbenchRoot = await readWorkbenchRoot(this.readConfig)
+    const resolved = await this.resolveRunConfig(config, workbenchRoot)
     if (resolved.workspaces.length === 0) {
       throw new AppErrorClass('HTTP_4XX', '请先选择至少一个比特浏览器工作区', false, {
         kind: 'validation',
       })
     }
 
-    const workbenchRoot = await readWorkbenchRoot(this.readConfig)
     const store = this.openStatusStore(workbenchRoot)
     const queues = assignItemsToWorkspaces(items, resolved.workspaces)
     const progress = createProgressSnapshot(items.length, queues)
@@ -279,10 +290,8 @@ export class ListingRunner {
     queue: ListingItem[],
     config: ListingRunConfig,
   ): Promise<WorkspaceResult> {
-    const resolved = normalizeRunConfig(config, {
-      randomId: this.randomId,
-    })
     const workbenchRoot = await readWorkbenchRoot(this.readConfig)
+    const resolved = await this.resolveRunConfig(config, workbenchRoot)
     const store = this.openStatusStore(workbenchRoot)
     const progress = createProgressSnapshot(queue.length, new Map([[profileId, queue]]))
     try {
@@ -518,6 +527,28 @@ export class ListingRunner {
     }
     await this.cdp.disconnect(profileId).catch(() => undefined)
   }
+
+  private async resolveRunConfig(
+    config: ListingRunConfig,
+    workbenchRoot: string,
+  ): Promise<ResolvedRunConfig> {
+    const taskId = config.task_id ?? this.randomId()
+    return normalizeRunConfig(
+      {
+        ...config,
+        task_id: taskId,
+        evidence_dir: config.evidence_dir ?? (await this.createListingEvidenceRoot(taskId)),
+      },
+      {
+        randomId: () => taskId,
+        workbenchRoot,
+      },
+    )
+  }
+
+  private async createListingEvidenceRoot(taskId: string) {
+    return this.tempFiles.createTaskDir('listing', taskId)
+  }
 }
 
 export class SqliteListingStatusStore implements ListingStatusStore {
@@ -623,7 +654,7 @@ function assignItemsToWorkspaces(items: ListingItem[], workspaces: ListingWorksp
 
 function normalizeRunConfig(
   config: ListingRunConfig,
-  dependencies: Pick<ListingRunnerDependencies, 'randomId'> = {},
+  dependencies: Pick<ListingRunnerDependencies, 'randomId'> & { workbenchRoot?: string } = {},
 ): ResolvedRunConfig {
   const taskId = config.task_id ?? dependencies.randomId?.() ?? randomUUID()
   return {
@@ -637,7 +668,14 @@ function normalizeRunConfig(
     resume: config.resume ?? true,
     retry_failed_only: config.retry_failed_only ?? false,
     evidence_dir:
-      config.evidence_dir ?? join(config.batch_dir, '.workbench', 'tmp', 'listing', taskId),
+      config.evidence_dir ??
+      join(
+        dependencies.workbenchRoot ?? config.batch_dir,
+        WORKBENCH_DIRECTORIES.metadata,
+        'tmp',
+        'listing',
+        taskId,
+      ),
   }
 }
 
@@ -727,7 +765,7 @@ function statusKeyFor(
 }
 
 function evidenceDirFor(config: ResolvedRunConfig, profileId: string, item: ListingItem) {
-  return join(config.evidence_dir, profileId || 'workspace', item.sku)
+  return join(config.evidence_dir, 'evidence', profileId || 'workspace', item.sku)
 }
 
 function createSkippedResult(

@@ -3,7 +3,7 @@
   "name": "listing-evidence",
   "title": "listing evidence",
   "description": "每 stage 截图/DOM 保存到 tmp",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
