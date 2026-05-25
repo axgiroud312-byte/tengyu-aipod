@@ -5,6 +5,7 @@ import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { TempFileManager } from './temp-file-manager'
 import {
   type TitleBatchConfig,
   TitleService,
@@ -20,6 +21,10 @@ type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 
 let workbenchRoot = ''
 let tempRoot = ''
+
+function createTempFileManager() {
+  return new TempFileManager({ rootDir: join(workbenchRoot, '.workbench', 'tmp') })
+}
 
 vi.mock('electron', () => ({
   BrowserWindow: {
@@ -212,6 +217,7 @@ describe('TitleService', () => {
       readConfig: async () => ({ workbench_root: workbenchRoot }),
       getSecret: async () => 'sk-test',
       openDatabase: () => fakeDb as unknown as TestDatabase,
+      tempFileManager: createTempFileManager(),
       emitProgress: (item) => progress.push(item),
     })
 
@@ -263,6 +269,7 @@ describe('TitleService', () => {
         preprocessPool: { process: vi.fn(), close: vi.fn() },
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => null,
+        tempFileManager: createTempFileManager(),
       },
     )
 

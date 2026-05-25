@@ -10,6 +10,7 @@ import {
   classifyRisk,
   parseDetectionResponse,
 } from './detection-service'
+import { TempFileManager } from './temp-file-manager'
 
 type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 
@@ -146,6 +147,10 @@ function createSqliteDependencies() {
     openDatabase: (_workbenchRoot: string) =>
       new Database(join(workbenchRoot, '.workbench', 'workbench.db')),
   }
+}
+
+function createTempFileManager() {
+  return new TempFileManager({ rootDir: join(workbenchRoot, '.workbench', 'tmp') })
 }
 
 async function initializeDetectionSqlite(
@@ -339,6 +344,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
         emitProgress: (item) => progress.push(item),
       },
     )
@@ -414,6 +420,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
       },
     )
 
@@ -428,6 +435,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
       },
     )
 
@@ -478,6 +486,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
       },
     )
 

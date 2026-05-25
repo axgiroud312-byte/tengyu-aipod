@@ -96,7 +96,13 @@ type TitleServiceDependencies = {
   readConfig?: typeof readAppConfig
   getSecret?: typeof getSecret
   openDatabase?: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+  tempFileManager?: TitleTempFileManager
   emitProgress?: (progress: TitleProgress) => void
+}
+
+type TitleTempFileManager = {
+  createTaskDir(module: 'title', taskId: string): Promise<string>
+  cleanupTask(module: 'title', taskId: string, options?: { keepIfFailed?: boolean }): Promise<void>
 }
 
 type SkuFolder = {
@@ -672,6 +678,7 @@ export class TitleService {
       readConfig: dependencies.readConfig ?? readAppConfig,
       getSecret: dependencies.getSecret ?? getSecret,
       openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      tempFileManager: dependencies.tempFileManager ?? tempFileManager,
     }
 
     try {
@@ -680,7 +687,7 @@ export class TitleService {
         throw new Error('workbench_root is required before title generation can run')
       }
 
-      await tempFileManager.createTaskDir('title', taskId)
+      await resolved.tempFileManager.createTaskDir('title', taskId)
       tempDirCreated = true
 
       const batchDirInfo = await stat(config.batchDir)
@@ -822,7 +829,9 @@ export class TitleService {
       }
 
       if (tempDirCreated) {
-        await tempFileManager.cleanupTask('title', taskId, { keepIfFailed: keepFailedTemp })
+        await resolved.tempFileManager.cleanupTask('title', taskId, {
+          keepIfFailed: keepFailedTemp,
+        })
       }
     }
   }
