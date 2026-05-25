@@ -100,6 +100,14 @@ export interface PhotoshopJsxJobFile {
   content: string
 }
 
+export interface PhotoshopJobResult {
+  ok: boolean
+  outputs: string[]
+  attempts: number
+  jsx_path?: string
+  result_file_path?: string
+}
+
 export interface PhotoshopPrintAsset {
   id: string
   file_path: string
