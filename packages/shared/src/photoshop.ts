@@ -118,3 +118,21 @@ export interface PhotoshopTaskGroup {
   print_assets: PhotoshopPrintAsset[]
   job: PhotoshopJob
 }
+
+export interface PhotoshopBatchTemplateResult {
+  template_id: string
+  template_name: string
+  groups_total: number
+  groups_completed: number
+  outputs: string[]
+}
+
+export interface PhotoshopBatchResult {
+  ok: boolean
+  task_id: string
+  templates_total: number
+  groups_total: number
+  groups_completed: number
+  outputs: string[]
+  templates: PhotoshopBatchTemplateResult[]
+}
