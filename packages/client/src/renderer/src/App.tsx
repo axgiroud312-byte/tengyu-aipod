@@ -1,5 +1,9 @@
 import { Button } from '@/components/ui/button'
-import { CollectionPage } from '@/features/collection/CollectionPage'
+import {
+  CollectionPage,
+  type CollectionPageState,
+  type CollectionProfileOption,
+} from '@/features/collection/CollectionPage'
 import { DetectionPage } from '@/features/detection/DetectionPage'
 import { GenerationPage } from '@/features/generation/GenerationPage'
 import { ListingPage } from '@/features/listing/ListingPage'
@@ -61,6 +65,19 @@ import type {
 
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
+
+const defaultCollectionProfiles: CollectionProfileOption[] = [
+  { id: 'profile-001', label: '主店环境', detail: 'Temu 主店环境', online: true },
+  { id: 'profile-002', label: '备用环境', detail: '可手动改写编号', online: false },
+]
+
+const defaultCollectionPageState: CollectionPageState = {
+  platform: 'temu',
+  profileId: '',
+  mode: 'click',
+  outputDir: '',
+  scrollKeywords: '',
+}
 
 const titleModelPrices: Record<string, { input: number; output: number }> = {
   'qwen3-vl-flash': { input: 0.15, output: 1.5 },
@@ -720,6 +737,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [collectionRecords, setCollectionRecords] = useState<CollectionRecordRow[]>([])
   const [collectionError, setCollectionError] = useState<string | null>(null)
   const [retryingRecordId, setRetryingRecordId] = useState<string | null>(null)
+  const [collectionPageState, setCollectionPageState] = useState<CollectionPageState>(
+    defaultCollectionPageState,
+  )
+  const [collectionProfiles, setCollectionProfiles] =
+    useState<CollectionProfileOption[]>(defaultCollectionProfiles)
+  const [isStartingCollection, setIsStartingCollection] = useState(false)
+  const [isStoppingCollection, setIsStoppingCollection] = useState(false)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
 
@@ -758,6 +782,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       if (
         event.type === 'image-saved' ||
         event.type === 'session-started' ||
+        event.type === 'session-paused' ||
+        event.type === 'session-resumed' ||
         event.type === 'session-stopped'
       ) {
         void refreshCollectionRecords()
@@ -944,6 +970,61 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     }
   }
 
+  function updateCollectionPageState<K extends keyof CollectionPageState>(
+    key: K,
+    value: CollectionPageState[K],
+  ) {
+    setCollectionPageState((current) => ({ ...current, [key]: value }))
+  }
+
+  function refreshCollectionProfiles() {
+    setCollectionProfiles(defaultCollectionProfiles)
+    setCollectionError(null)
+  }
+
+  async function startCollectionSession() {
+    const profileId = collectionPageState.profileId.trim()
+    if (!profileId) {
+      setCollectionError('请先选择或填写比特浏览器环境编号')
+      return
+    }
+    setIsStartingCollection(true)
+    setCollectionError(null)
+    try {
+      const session = await window.api.collection.startSession({
+        platform: collectionPageState.platform,
+        profile_id: profileId,
+        mode: collectionPageState.mode,
+        ...(collectionPageState.outputDir.trim()
+          ? { output_dir: collectionPageState.outputDir.trim() }
+          : {}),
+      })
+      setCollectionSession(session)
+      await refreshCollectionRecords()
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '启动采集会话失败')
+    } finally {
+      setIsStartingCollection(false)
+    }
+  }
+
+  async function stopCollectionSession() {
+    setIsStoppingCollection(true)
+    setCollectionError(null)
+    try {
+      const session = await window.api.collection.stopSession()
+      setCollectionSession(session)
+      if (!session) {
+        setCollectionRecords([])
+      }
+      await refreshCollectionRecords()
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '停止采集会话失败')
+    } finally {
+      setIsStoppingCollection(false)
+    }
+  }
+
   async function retryCollectionRecord(recordId: string) {
     setRetryingRecordId(recordId)
     try {
@@ -1000,12 +1081,21 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
             <div className="space-y-6">
               {activeModule === 'collection' ? (
                 <CollectionPage
-                  collectionError={collectionError}
-                  collectionRecords={collectionRecords}
-                  collectionSession={collectionSession}
-                  onRefresh={() => void refreshCollectionRecords()}
+                  error={collectionError}
+                  onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
+                  onRefreshProfiles={refreshCollectionProfiles}
+                  onRefreshRecords={() => void refreshCollectionRecords()}
                   onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
+                  onStartSession={() => void startCollectionSession()}
+                  onStateChange={updateCollectionPageState}
+                  onStopSession={() => void stopCollectionSession()}
+                  profiles={collectionProfiles}
+                  records={collectionRecords}
                   retryingRecordId={retryingRecordId}
+                  session={collectionSession}
+                  starting={isStartingCollection}
+                  state={collectionPageState}
+                  stopping={isStoppingCollection}
                 />
               ) : activeModule === 'title' ? (
                 <div className="rounded-md border bg-background p-5 shadow-sm">
