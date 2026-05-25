@@ -47,6 +47,7 @@ export type ListingRunConfig = {
   timeout_ms?: number
   fail_streak_limit?: number
   resume?: boolean
+  retry_failed_only?: boolean
   evidence_dir?: string
 }
 
@@ -107,12 +108,24 @@ export type ListingRunnerDependencies = {
 type ResolvedRunConfig = Required<
   Pick<
     ListingRunConfig,
-    'batch_id' | 'evidence_dir' | 'fail_streak_limit' | 'max_attempts' | 'resume' | 'submit_mode'
+    | 'batch_id'
+    | 'evidence_dir'
+    | 'fail_streak_limit'
+    | 'max_attempts'
+    | 'resume'
+    | 'retry_failed_only'
+    | 'submit_mode'
   >
 > &
   Omit<
     ListingRunConfig,
-    'batch_id' | 'evidence_dir' | 'fail_streak_limit' | 'max_attempts' | 'resume' | 'submit_mode'
+    | 'batch_id'
+    | 'evidence_dir'
+    | 'fail_streak_limit'
+    | 'max_attempts'
+    | 'resume'
+    | 'retry_failed_only'
+    | 'submit_mode'
   > & {
     task_id: string
     timeout_ms: number
@@ -353,7 +366,15 @@ export class ListingRunner {
 
       for (const item of queue) {
         const statusKey = statusKeyFor(config, item, profileId)
-        const existingStatus = config.resume ? await store.find(statusKey) : null
+        const existingStatus =
+          config.resume || config.retry_failed_only ? await store.find(statusKey) : null
+        if (config.retry_failed_only && existingStatus?.status !== 'failed') {
+          const skipped = createSkippedResult(item, config, profileId, '重试失败：非失败状态，跳过')
+          results.push(skipped)
+          markWorkspaceFinished(progress, profileId, skipped)
+          this.emitBatchProgress(config, progress, 'skipped')
+          continue
+        }
         if (existingStatus?.status === 'success') {
           const skipped = createSkippedResult(item, config, profileId, '断点续传：已成功，跳过')
           results.push(skipped)
@@ -614,6 +635,7 @@ function normalizeRunConfig(
     timeout_ms: config.timeout_ms ?? DEFAULT_TIMEOUT_MS,
     fail_streak_limit: config.fail_streak_limit ?? DEFAULT_FAIL_STREAK_LIMIT,
     resume: config.resume ?? true,
+    retry_failed_only: config.retry_failed_only ?? false,
     evidence_dir:
       config.evidence_dir ?? join(config.batch_dir, '.workbench', 'tmp', 'listing', taskId),
   }

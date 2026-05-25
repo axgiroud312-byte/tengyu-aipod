@@ -189,6 +189,15 @@ declare global {
           callback: (event: import('../../main/lib/title-service').TitleTaskEvent) => void,
         ) => () => void
       }
+      listing: {
+        run: (input: {
+          config: import('../../modules/listing/runner').ListingRunConfig
+          items: import('@tengyu-aipod/shared').ListingItem[]
+        }) => Promise<string>
+        onProgress: (
+          callback: (progress: import('@tengyu-aipod/shared').ListingProgress) => void,
+        ) => () => void
+      }
       activation: {
         activate: (input: { code: string; device_name: string }) => Promise<
           | {

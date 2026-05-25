@@ -276,6 +276,57 @@ describe('listing runner', () => {
     })
   })
 
+  it('runs only failed listing_status rows when retry_failed_only is enabled', async () => {
+    const store = new FakeStatusStore([
+      statusRow('SKU-1', 'success', { retry_count: 1 }),
+      statusRow('SKU-2', 'failed', {
+        retry_count: 2,
+        last_error: '之前失败',
+        evidence_dir: '/tmp/evidence/profile-a/SKU-2',
+      }),
+      statusRow('SKU-3', 'skipped'),
+    ])
+    const { cdp } = createBrowserRuntime()
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) =>
+        successResult(item, config),
+      ),
+    }
+
+    const result = await runLocalListingBatch(
+      createConfig({
+        resume: true,
+        retry_failed_only: true,
+        workspaces: [{ profile_id: 'profile-a' }],
+        evidence_dir: '/tmp/evidence',
+      }),
+      [createItem('SKU-1'), createItem('SKU-2'), createItem('SKU-3')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        cdp,
+        locks: new BrowserProfileLockManager(),
+        workflows: { 'temu-pop': workflow },
+        sleep: vi.fn().mockResolvedValue(undefined),
+        now: () => 1000,
+      },
+    )
+
+    expect(workflow.runListingItem).toHaveBeenCalledTimes(1)
+    expect(workflow.runListingItem).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sku: 'SKU-2' }),
+      expect.anything(),
+    )
+    expect(result.successCount).toBe(1)
+    expect(result.skippedCount).toBe(2)
+    expect(store.rows.get('/tmp/batch::SKU-2::temu-pop::profile-a')).toMatchObject({
+      status: 'success',
+      retry_count: 1,
+      evidence_dir: '/tmp/evidence/profile-a/SKU-2',
+    })
+  })
+
   it('retries retryable item failures before marking success', async () => {
     const store = new FakeStatusStore()
     const { cdp } = createBrowserRuntime()
@@ -471,3 +522,25 @@ describe('listing runner', () => {
     expect(store.closed).toBe(true)
   })
 })
+
+function statusRow(
+  sku: string,
+  status: ListingStatusRow['status'],
+  overrides: Partial<ListingStatusRow> = {},
+): ListingStatusRow {
+  return {
+    id: `row-${sku}`,
+    batch_path: '/tmp/batch',
+    sku_code: sku,
+    platform: 'temu-pop',
+    workspace_id: 'profile-a',
+    status,
+    draft_template_id: null,
+    retry_count: 0,
+    last_attempted_at: 1,
+    last_error: null,
+    evidence_dir: null,
+    created_at: 1,
+    ...overrides,
+  }
+}

@@ -1,4 +1,10 @@
-import type { ActivationBadgeState, Skill, SkillSummary } from '@tengyu-aipod/shared'
+import type {
+  ActivationBadgeState,
+  ListingItem,
+  ListingProgress,
+  Skill,
+  SkillSummary,
+} from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 import type { BrowserProfileHolder } from '../main/lib/browser-profile-lock'
 import type {
@@ -43,6 +49,7 @@ import type {
   Txt2imgRunInput,
 } from '../main/lib/generation-service'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
+import type { ListingRunConfig } from '../modules/listing/runner'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
@@ -271,6 +278,20 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('title:completed', listener)
+      }
+    },
+  },
+  listing: {
+    run: (input: { config: ListingRunConfig; items: ListingItem[] }) =>
+      ipcRenderer.invoke('listing:run', input) as Promise<string>,
+    onProgress: (callback: (progress: ListingProgress) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: ListingProgress) => {
+        callback(progress)
+      }
+      ipcRenderer.on('listing:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('listing:progress', listener)
       }
     },
   },
