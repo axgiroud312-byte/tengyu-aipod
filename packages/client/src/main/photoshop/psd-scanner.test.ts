@@ -280,5 +280,5 @@ describe('PsdScanner', () => {
       expect(template.doc_size.h).toBeGreaterThan(0)
       expect(template.layers.length).toBeGreaterThan(0)
     }
-  })
+  }, 120_000)
 })

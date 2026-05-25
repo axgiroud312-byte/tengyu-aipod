@@ -224,6 +224,7 @@ describe('PhotoshopMultiBatchRunner', () => {
     })
     const engine = new PhotoshopExecutionEngine({
       platform: 'win32',
+      shouldSkipJob: async () => false,
       recorder: {
         recordRunning: async () => undefined,
         recordCompleted: async () => undefined,

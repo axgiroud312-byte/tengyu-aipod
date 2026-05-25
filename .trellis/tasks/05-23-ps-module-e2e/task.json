@@ -3,7 +3,7 @@
   "name": "ps-module-e2e",
   "title": "ps module e2e",
   "description": "Windows 真实 PS E2E（手动）",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
