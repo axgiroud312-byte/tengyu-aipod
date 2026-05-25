@@ -1,4 +1,16 @@
 import { Button } from '@/components/ui/button'
+import { CollectionPage } from '@/features/collection/CollectionPage'
+import { DetectionPage } from '@/features/detection/DetectionPage'
+import { GenerationPage } from '@/features/generation/GenerationPage'
+import { ListingPage } from '@/features/listing/ListingPage'
+import { Shell } from '@/layout/Shell'
+import {
+  type WorkbenchModule,
+  getStoredWorkbenchRoute,
+  isWorkbenchRoute,
+  moduleFromPath,
+  workbenchModules,
+} from '@/layout/navigation'
 import { initializeActivationStore, useActivationStore } from '@/store/activation'
 import type {
   ActivationBadgeState,
@@ -6,7 +18,6 @@ import type {
   PhotoshopStatus,
   PsdTemplate,
 } from '@tengyu-aipod/shared'
-import { APP_VERSION } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
   Calculator,
@@ -25,6 +36,15 @@ import {
   Settings2,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  HashRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom'
 import type { CollectionRecordRow } from '../../main/lib/collection-record-store'
 import type { CollectionSession } from '../../main/lib/collection-session-manager'
 import type { CollectionSessionEvent } from '../../main/lib/collection-session-manager'
@@ -34,12 +54,8 @@ import type {
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
-import { DetectionWorkbench } from './components/detection-workbench'
-import { GenerationWorkbench } from './components/generation-workbench'
-import { ListingWorkbench } from './components/listing-workbench'
 
 type OnboardingStep = 1 | 2 | 3 | 4
-type WorkbenchModule = 'collection' | 'title' | 'generation' | 'detection' | 'listing' | 'ps'
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
 
@@ -132,67 +148,22 @@ function progressPercent(progress: TitleProgress | null) {
   return Math.round((progress.processed / progress.total) * 100)
 }
 
-function collectionStatusLabel(status: CollectionRecordRow['status']) {
-  switch (status) {
-    case 'success':
-      return '成功'
-    case 'skipped':
-      return '跳过'
-    default:
-      return '失败'
-  }
+function parseOnboardingStep(value: string | undefined): OnboardingStep {
+  const parsed = Number(value)
+  return parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 ? parsed : 1
 }
 
-function collectionStatusClassName(status: CollectionRecordRow['status']) {
-  switch (status) {
-    case 'success':
-      return 'text-emerald-700'
-    case 'skipped':
-      return 'text-amber-700'
-    default:
-      return 'text-red-700'
-  }
+function onboardingPath(step: OnboardingStep) {
+  return `/onboarding/${step}`
 }
 
-function fileNameFromPath(path: string | null | undefined) {
-  if (!path) {
-    return '未保存'
-  }
-  return path.split(/[\\/]/).at(-1) || path
-}
-
-function moduleTitle(module: WorkbenchModule) {
-  switch (module) {
-    case 'collection':
-      return '采集模块'
-    case 'title':
-      return '标题生成模块'
-    case 'generation':
-      return '生图模块'
-    case 'ps':
-      return 'PS 套版模块'
-    case 'listing':
-      return '上架模块'
-    default:
-      return '侵权检测模块'
-  }
-}
-
-function moduleDescription(module: WorkbenchModule) {
-  switch (module) {
-    case 'collection':
-      return '查看当前采集会话的保存记录和失败重试'
-    case 'title':
-      return '从货号成品图批量生成跨境标题'
-    case 'generation':
-      return '按文生图、图生图、提取、抠图组织生产路径'
-    case 'ps':
-      return '扫描 PSD 模板并准备 Photoshop 套版执行'
-    case 'listing':
-      return '批量操作店小秘草稿并保留真实页面证据'
-    default:
-      return '批量检测印花风险并流转结果'
-  }
+function isForceOnboardingState(state: unknown) {
+  return (
+    typeof state === 'object' &&
+    state !== null &&
+    'forceOnboarding' in state &&
+    (state as { forceOnboarding?: unknown }).forceOnboarding === true
+  )
 }
 
 function photoshopStatusLabel(status: PhotoshopStatus | null) {
@@ -717,7 +688,8 @@ function ActivationBadge({
 
 function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
   const status = useActivationStore((state) => state.status)
-  const [activeModule, setActiveModule] = useState<WorkbenchModule>('title')
+  const location = useLocation()
+  const activeModule = moduleFromPath(location.pathname) ?? 'title'
   const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
   const [languages, setLanguages] = useState<Array<{ key: string; label: string }>>([])
   const [models, setModels] = useState<Array<{ key: string; label: string }>>([])
@@ -1013,16 +985,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="flex h-16 items-center justify-between border-b px-8">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">Workbench</p>
-          <h1 className="text-lg font-semibold tracking-normal">腾域 aipod</h1>
-        </div>
-        <ActivationBadge onEnterActivation={onEnterActivation} />
-      </header>
-
-      <section className="mx-auto w-full max-w-7xl space-y-6 px-8 py-6">
+    <Shell activationBadge={<ActivationBadge onEnterActivation={onEnterActivation} />}>
+      <div className="space-y-6">
         {isBlocked ? (
           <div className="mt-20 max-w-xl space-y-5 rounded-md border border-red-200 bg-red-50 p-6 text-red-900">
             <div className="space-y-2">
@@ -1038,185 +1002,15 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
         ) : (
           <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
             <div className="space-y-6">
-              <div className="rounded-md border bg-background p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-6">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-muted-foreground">
-                      {moduleTitle(activeModule)}
-                    </p>
-                    <h1 className="text-2xl font-semibold text-balance">
-                      {moduleDescription(activeModule)}
-                    </h1>
-                  </div>
-                  <div className="rounded-md border bg-muted px-3 py-2 text-right text-xs text-muted-foreground">
-                    <div>版本</div>
-                    <div className="mt-1 font-mono text-foreground">{APP_VERSION}</div>
-                  </div>
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <Button
-                    onClick={() => setActiveModule('collection')}
-                    type="button"
-                    variant={activeModule === 'collection' ? 'default' : 'secondary'}
-                  >
-                    采集
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('title')}
-                    type="button"
-                    variant={activeModule === 'title' ? 'default' : 'secondary'}
-                  >
-                    标题生成
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('generation')}
-                    type="button"
-                    variant={activeModule === 'generation' ? 'default' : 'secondary'}
-                  >
-                    生图
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('detection')}
-                    type="button"
-                    variant={activeModule === 'detection' ? 'default' : 'secondary'}
-                  >
-                    侵权检测
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('listing')}
-                    type="button"
-                    variant={activeModule === 'listing' ? 'default' : 'secondary'}
-                  >
-                    上架
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('ps')}
-                    type="button"
-                    variant={activeModule === 'ps' ? 'default' : 'secondary'}
-                  >
-                    PS 套版
-                  </Button>
-                </div>
-              </div>
-
               {activeModule === 'collection' ? (
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="text-lg font-semibold text-balance">当前采集记录</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {collectionSession
-                          ? `${collectionSession.platform} · ${collectionSession.mode === 'click' ? '点击模式' : '滚动模式'}`
-                          : '当前没有活动采集会话'}
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => void refreshCollectionRecords()}
-                      type="button"
-                      variant="secondary"
-                    >
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      刷新
-                    </Button>
-                  </div>
-
-                  {collectionError ? (
-                    <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                      {collectionError}
-                    </div>
-                  ) : null}
-
-                  <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                    <div className="rounded-md border">
-                      <div className="border-b px-3 py-2 text-sm font-medium">
-                        最近保存（{collectionRecords.length}）
-                      </div>
-                      <div className="max-h-96 overflow-auto p-2">
-                        {collectionRecords.length ? (
-                          collectionRecords.map((record) => (
-                            <div
-                              className="grid gap-3 rounded-md px-2 py-3 text-sm md:grid-cols-[96px_minmax(0,1fr)_auto]"
-                              key={record.id}
-                            >
-                              {record.savedPath && record.status !== 'failed' ? (
-                                <img
-                                  alt=""
-                                  className="h-16 w-24 rounded-md border object-cover"
-                                  src={`file://${record.savedPath}`}
-                                />
-                              ) : (
-                                <div className="flex h-16 w-24 items-center justify-center rounded-md border bg-muted text-xs text-muted-foreground">
-                                  无预览
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <div className="truncate font-medium">
-                                  {fileNameFromPath(record.savedPath)}
-                                </div>
-                                <div className="mt-1 truncate text-xs text-muted-foreground">
-                                  {record.goodsLink ?? record.pageUrl}
-                                </div>
-                                {record.reason ? (
-                                  <div className="mt-1 text-xs text-red-700">{record.reason}</div>
-                                ) : null}
-                              </div>
-                              <div className="flex items-center gap-2 md:justify-end">
-                                <span
-                                  className={`text-xs font-medium ${collectionStatusClassName(record.status)}`}
-                                >
-                                  {collectionStatusLabel(record.status)}
-                                </span>
-                                {record.status === 'failed' ? (
-                                  <Button
-                                    className="h-8 px-2"
-                                    disabled={retryingRecordId === record.id}
-                                    onClick={() => void retryCollectionRecord(record.id)}
-                                    type="button"
-                                    variant="secondary"
-                                  >
-                                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                                    重试
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="px-2 py-10 text-center text-sm text-muted-foreground">
-                            暂无采集记录
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-md border p-4">
-                      <h3 className="text-sm font-medium">当前会话</h3>
-                      <dl className="mt-3 space-y-3 text-sm">
-                        <div>
-                          <dt className="text-muted-foreground">状态</dt>
-                          <dd className="mt-1 font-medium">
-                            {collectionSession?.status ?? '未开始'}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground">输出目录</dt>
-                          <dd className="mt-1 break-all text-xs">
-                            {collectionSession?.output_dir ?? '-'}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground">失败记录</dt>
-                          <dd className="mt-1 font-medium tabular-nums">
-                            {
-                              collectionRecords.filter((record) => record.status === 'failed')
-                                .length
-                            }
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
+                <CollectionPage
+                  collectionError={collectionError}
+                  collectionRecords={collectionRecords}
+                  collectionSession={collectionSession}
+                  onRefresh={() => void refreshCollectionRecords()}
+                  onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
+                  retryingRecordId={retryingRecordId}
+                />
               ) : activeModule === 'title' ? (
                 <div className="rounded-md border bg-background p-5 shadow-sm">
                   <div className="grid gap-5">
@@ -1412,16 +1206,16 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                   </div>
                 </div>
               ) : activeModule === 'generation' ? (
-                <GenerationWorkbench />
+                <GenerationPage />
               ) : activeModule === 'listing' ? (
-                <ListingWorkbench />
+                <ListingPage />
               ) : activeModule === 'ps' ? (
                 <div className="space-y-6">
                   <PhotoshopStatusBar />
                   <PhotoshopMockupPanel />
                 </div>
               ) : (
-                <DetectionWorkbench />
+                <DetectionPage />
               )}
 
               {activeModule === 'title' ? (
@@ -1586,7 +1380,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
             ) : null}
           </div>
         )}
-      </section>
+      </div>
       {pendingCollectionSku && isCollectionSkuPromptExpanded ? (
         <div className="fixed bottom-5 right-5 z-40 w-96 rounded-md border bg-background p-4 text-sm shadow-xl">
           <div className="space-y-1">
@@ -1629,7 +1423,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           </span>
         </button>
       ) : null}
-    </main>
+    </Shell>
   )
 }
 
@@ -1655,8 +1449,7 @@ function StepHeader({ step }: { step: OnboardingStep }) {
             key={item.number}
           >
             <div className="flex items-center gap-2 text-sm font-medium">
-              <Icon className="h-4 w-4" />
-              Step {item.number}/4
+              <Icon className="h-4 w-4" />第 {item.number} 步 共 4 步
             </div>
             <div className="mt-1 text-xs text-muted-foreground">{item.label}</div>
           </div>
@@ -1667,7 +1460,12 @@ function StepHeader({ step }: { step: OnboardingStep }) {
 }
 
 function Onboarding() {
-  const [step, setStep] = useState<OnboardingStep>(1)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const params = useParams()
+  const step = parseOnboardingStep(params.step)
+  const requestedStep = params.step
+  const forceOnboarding = isForceOnboardingState(location.state)
   const [activationCode, setActivationCode] = useState('')
   const [deviceName, setDeviceName] = useState(defaultDeviceName)
   const [activationMessage, setActivationMessage] = useState<string | null>(null)
@@ -1679,29 +1477,38 @@ function Onboarding() {
     bailian: '',
     bit_browser_url: '127.0.0.1:54345',
   })
+  const [isStateLoaded, setIsStateLoaded] = useState(false)
   const [ready, setReady] = useState(false)
 
   function enterActivation() {
     setReady(false)
-    setStep(1)
+    navigate(onboardingPath(1), { replace: true, state: { forceOnboarding: true } })
   }
 
   useEffect(() => {
     async function loadState() {
       const state = await window.api.onboarding.getState()
       setWorkbenchRoot(state.default_workbench_root)
-      if (!state.needs_onboarding) {
+      if (!state.needs_onboarding && !forceOnboarding) {
         setReady(true)
+        navigate(getStoredWorkbenchRoute(), { replace: true })
       }
+      setIsStateLoaded(true)
     }
 
     void loadState()
-  }, [])
+  }, [forceOnboarding, navigate])
 
   const canActivate = useMemo(
     () => /^POD-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(activationCode),
     [activationCode],
   )
+
+  useEffect(() => {
+    if (requestedStep && onboardingPath(step) !== `/onboarding/${requestedStep}`) {
+      navigate(onboardingPath(step), { replace: true })
+    }
+  }, [navigate, requestedStep, step])
 
   async function activate() {
     setActivationMessage(null)
@@ -1720,7 +1527,7 @@ function Onboarding() {
     setActivationMessage(
       `激活成功，可用设备 ${result.data.used_devices}/${result.data.max_devices}`,
     )
-    setStep(2)
+    navigate(onboardingPath(2))
   }
 
   async function chooseWorkbenchRoot() {
@@ -1732,7 +1539,7 @@ function Onboarding() {
 
   async function saveWorkbenchRoot() {
     await window.api.onboarding.saveWorkbenchRoot(workbenchRoot)
-    setStep(3)
+    navigate(onboardingPath(3))
   }
 
   async function saveApiKeys(nextStep: OnboardingStep = 4) {
@@ -1740,16 +1547,25 @@ function Onboarding() {
       Object.entries(apiKeys).map(([key, value]) => [key, value.trim()]),
     )
     await window.api.onboarding.saveApiKeys(cleaned)
-    setStep(nextStep)
+    navigate(onboardingPath(nextStep))
   }
 
   async function complete() {
     await window.api.onboarding.complete()
     setReady(true)
+    navigate(getStoredWorkbenchRoute(), { replace: true })
   }
 
   if (ready) {
     return <MainWorkbench onEnterActivation={enterActivation} />
+  }
+
+  if (!isStateLoaded) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
+        正在读取启动状态...
+      </main>
+    )
   }
 
   return (
@@ -1768,7 +1584,7 @@ function Onboarding() {
           {step === 1 ? (
             <div className="space-y-5">
               <div>
-                <h2 className="text-xl font-semibold">Step 1/4 - 激活</h2>
+                <h2 className="text-xl font-semibold">第 1 步 共 4 步：激活</h2>
               </div>
               <label className="block space-y-2 text-sm font-medium">
                 <span>激活码</span>
@@ -1812,7 +1628,7 @@ function Onboarding() {
 
           {step === 2 ? (
             <div className="space-y-5">
-              <h2 className="text-xl font-semibold">Step 2/4 - 素材总目录</h2>
+              <h2 className="text-xl font-semibold">第 2 步 共 4 步：素材总目录</h2>
               <label className="block space-y-2 text-sm font-medium">
                 <span>素材根目录</span>
                 <div className="flex gap-2">
@@ -1834,7 +1650,11 @@ function Onboarding() {
                 软件会创建 01-采集、02-生图、03-检测、04-待套版印花、05-货号成品 和 .workbench。
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => setStep(1)} type="button" variant="secondary">
+                <Button
+                  onClick={() => navigate(onboardingPath(1))}
+                  type="button"
+                  variant="secondary"
+                >
                   上一步
                 </Button>
                 <Button onClick={() => void saveWorkbenchRoot()} type="button">
@@ -1846,7 +1666,7 @@ function Onboarding() {
 
           {step === 3 ? (
             <div className="space-y-5">
-              <h2 className="text-xl font-semibold">Step 3/4 - API Keys</h2>
+              <h2 className="text-xl font-semibold">第 3 步 共 4 步：接口密钥</h2>
               <div className="grid gap-4">
                 {apiKeyFields.map((field) => (
                   <label className="block space-y-2 text-sm font-medium" key={field.key}>
@@ -1876,7 +1696,11 @@ function Onboarding() {
                 ))}
               </div>
               <div className="flex gap-2">
-                <Button onClick={() => setStep(2)} type="button" variant="secondary">
+                <Button
+                  onClick={() => navigate(onboardingPath(2))}
+                  type="button"
+                  variant="secondary"
+                >
                   上一步
                 </Button>
                 <Button onClick={() => void saveApiKeys()} type="button" variant="secondary">
@@ -1914,6 +1738,63 @@ function Onboarding() {
   )
 }
 
+function WorkbenchRoute() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
+
+  useEffect(() => {
+    async function loadState() {
+      const state = await window.api.onboarding.getState()
+      setNeedsOnboarding(state.needs_onboarding)
+      if (state.needs_onboarding) {
+        navigate(onboardingPath(1), { replace: true })
+      }
+    }
+
+    void loadState()
+  }, [navigate])
+
+  if (needsOnboarding === null) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
+        正在读取启动状态...
+      </main>
+    )
+  }
+
+  if (needsOnboarding) {
+    return null
+  }
+
+  const activePath = isWorkbenchRoute(location.pathname)
+    ? location.pathname
+    : getStoredWorkbenchRoute()
+
+  if (activePath !== location.pathname) {
+    return <Navigate replace to={activePath} />
+  }
+
+  return (
+    <MainWorkbench
+      onEnterActivation={() =>
+        navigate(onboardingPath(1), { replace: true, state: { forceOnboarding: true } })
+      }
+    />
+  )
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route element={<Navigate replace to={getStoredWorkbenchRoute()} />} path="/" />
+      <Route element={<Onboarding />} path="/onboarding/:step" />
+      <Route element={<WorkbenchRoute />} path="/*" />
+      <Route element={<Navigate replace to={getStoredWorkbenchRoute()} />} path="*" />
+    </Routes>
+  )
+}
+
 export function App() {
   useEffect(() => {
     let cleanup: (() => void) | null = null
@@ -1927,5 +1808,9 @@ export function App() {
     }
   }, [])
 
-  return <Onboarding />
+  return (
+    <HashRouter>
+      <AppRoutes />
+    </HashRouter>
+  )
 }
