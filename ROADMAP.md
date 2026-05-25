@@ -11,19 +11,19 @@
 切片 0   项目骨架        ← 当前位置（5 个 task 已建好 prd）
 切片 1   激活码闭环      ← 切片 0 完成后立即进行（9 个 task 已建好 prd）
 v0.1.0   ↑ 发版本：激活码可用
-切片 2   标题生成模块    ← 用百炼，最简单的业务模块（5 task，未建）
+切片 2   标题生成模块    ← 用百炼，最简单的业务模块（状态：✅ 已完成并归档）
 v0.2.0
-切片 3   侵权检测模块    ← 复用百炼 adapter
+切片 3   侵权检测模块    ← 复用百炼 adapter（状态：✅ 已完成并归档）
 v0.3.0
-切片 4   生图-Grsai      ← 独立 adapter
+切片 4   生图-Grsai      ← 独立 adapter（状态：✅ 已完成并归档）
 v0.4.0
-切片 5   生图-ComfyUI    ← 晨羽实例管理
+切片 5   生图-ComfyUI    ← 晨羽实例管理（状态：✅ 已完成并归档）
 v0.5.0
-切片 6   采集模块        ← 比特浏览器真实集成
+切片 6   采集模块        ← 比特浏览器真实集成（状态：✅ 已完成并归档）
 v0.6.0
 切片 7   PS 套版         ← Windows 真实 PS
 v0.7.0
-切片 8   上架模块        ← 最复杂，按 listing-automation-builder SKILL 重写
+切片 8   上架模块        ← 最复杂，按 listing-automation-builder SKILL 重写（状态：✅ 已完成并归档）
 v1.0.0   ↑ 全功能 v1 发布
 v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 ```
@@ -159,6 +159,8 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 
 ## 切片 7 — PS 套版（12 task，Windows-only）
 
+状态：✅ 已完成并归档。PS 套版切片已完成 12 个 task，本地 Windows + Photoshop COM 真实测试已跑通可执行范围；完整手动矩阵受本机 fixture 数量限制，详见 `ps-module-e2e` 归档证据。
+
 | # | Task | Slug | 优先级 |
 |---|---|---|---|
 | 61 | PS 状态检测 | ps-status-checker | P0 |
@@ -174,7 +176,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 71 | PS 模块 UI | ps-module-ui | P0 |
 | 72 | PS 手动 E2E | ps-module-e2e | P1 |
 
-**v0.7.0 发版**
+**v0.7.0 发版**：已具备 PS 套版能力。
 
 ## 切片 8 — 上架（20 task）
 
@@ -204,6 +206,8 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 92 | 上架手动 E2E | listing-module-e2e | P1 |
 
 **v1.0.0 发版（v1 全功能）**
+
+当前收口状态：⚠️ 待全链路 E2E 真实验收。代码层切片 1-8 全部归档，v1.0.0 待主理人本机跑通完整链路 + 提供完整 fixture 矩阵后正式放行。
 
 ## v1.5 — 增量（15 task）
 
