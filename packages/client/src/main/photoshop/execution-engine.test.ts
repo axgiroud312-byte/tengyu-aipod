@@ -4,7 +4,12 @@ import { basename, join } from 'node:path'
 import type { PhotoshopJob, PsdTemplate } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TempFileManager } from '../lib/temp-file-manager'
-import { PhotoshopExecutionEngine, SqlitePhotoshopWorkflowStepRecorder } from './execution-engine'
+import {
+  PhotoshopExecutionEngine,
+  SqlitePhotoshopWorkflowStepRecorder,
+  createPhotoshopJobSignature,
+  shouldSkipJob,
+} from './execution-engine'
 import { writePhotoshopJobJsx } from './jsx-generator'
 import { PsdScanner } from './psd-scanner'
 
@@ -51,6 +56,30 @@ function createJob(overrides: Partial<PhotoshopJob> = {}): PhotoshopJob {
 }
 
 describe('PhotoshopExecutionEngine', () => {
+  it('creates a stable job signature from mockup, sorted replacements, clip mode, and format', () => {
+    const left = createJob({
+      so_replacements: [
+        { layer_path: 'B', input_image: 'C:\\prints\\b.png' },
+        { layer_path: 'A', input_image: 'C:\\prints\\a.png' },
+      ],
+      clip_mode: 'guides',
+      format: 'png',
+    })
+    const right = createJob({
+      so_replacements: [
+        { layer_path: 'A', input_image: 'C:\\prints\\a.png' },
+        { layer_path: 'B', input_image: 'C:\\prints\\b.png' },
+      ],
+      clip_mode: 'guides',
+      format: 'png',
+    })
+
+    expect(createPhotoshopJobSignature(left)).toBe(createPhotoshopJobSignature(right))
+    expect(createPhotoshopJobSignature({ ...right, clip_mode: 'none' })).not.toBe(
+      createPhotoshopJobSignature(right),
+    )
+  })
+
   it('rejects non-Windows platforms before touching COM', async () => {
     const engine = new PhotoshopExecutionEngine({ platform: 'darwin' })
 
@@ -163,6 +192,59 @@ describe('PhotoshopExecutionEngine', () => {
     expect(events).toEqual(['running:0', 'completed:0'])
   })
 
+  it('skips completed jobs before writing JSX or running COM when enabled', async () => {
+    const calls: string[] = []
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      shouldSkipJob: async () => true,
+      writeJsx: async () => {
+        calls.push('write')
+        return {
+          jsx_path: join(tempDir, 'job.jsx'),
+          result_file_path: join(tempDir, 'result.json'),
+        }
+      },
+      comAdapter: {
+        runJsxFile: async () => {
+          calls.push('com')
+        },
+      },
+      recorder: noopRecorder,
+    })
+
+    await expect(engine.runJob(createJob(), 0, { skipCompleted: true })).resolves.toMatchObject({
+      ok: true,
+      attempts: 0,
+      skipped: true,
+    })
+    expect(calls).toEqual([])
+  })
+
+  it('does not skip completed jobs unless the caller enables skipping', async () => {
+    const resultPath = join(tempDir, 'job-result.json')
+    const outputPath = join(tempDir, '01.jpg')
+    await writeFile(resultPath, JSON.stringify({ ok: true }), 'utf8')
+    await writeFile(outputPath, 'fake image', 'utf8')
+    const calls: string[] = []
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      shouldSkipJob: async () => true,
+      writeJsx: async () => ({ jsx_path: join(tempDir, 'job.jsx'), result_file_path: resultPath }),
+      comAdapter: {
+        runJsxFile: async () => {
+          calls.push('com')
+        },
+      },
+      recorder: noopRecorder,
+    })
+
+    await expect(engine.runJob(createJob({ output_paths: [outputPath] }))).resolves.toMatchObject({
+      ok: true,
+      attempts: 1,
+    })
+    expect(calls).toEqual(['com'])
+  })
+
   it('persists workflow_steps rows through the sqlite recorder', async () => {
     const rows: Array<{ sql: string; params: Record<string, unknown> }> = []
     const db = {
@@ -175,6 +257,7 @@ describe('PhotoshopExecutionEngine', () => {
     }
     const recorder = new SqlitePhotoshopWorkflowStepRecorder({
       db: db as never,
+      hashFile: async () => 'hash-01',
     })
     const job = createJob()
 
@@ -188,15 +271,77 @@ describe('PhotoshopExecutionEngine', () => {
       step: 'group-0',
       status: 'running',
     })
+    expect(JSON.parse(String(rows[0]?.params.params_snapshot))).toMatchObject({
+      job_signature: createPhotoshopJobSignature(job),
+      clip_mode: 'auto',
+    })
     expect(rows[1]?.params).toMatchObject({
       id: 'task-1:photoshop:0',
       status: 'completed',
-      output_json: JSON.stringify({ outputs: job.output_paths }),
+      output_json: JSON.stringify({
+        outputs: job.output_paths,
+        output_hashes: { [job.output_paths[0] as string]: 'hash-01' },
+      }),
+    })
+    expect(rows[2]?.params).toMatchObject({
+      task_id: 'task-1',
+      step_id: 'task-1:photoshop:0',
+      provider: 'photoshop',
+      file_path: job.output_paths[0],
+      file_hash: 'hash-01',
     })
   })
 
+  it('returns true from shouldSkipJob only when DB, files, and hashes match', async () => {
+    const job = createJob({ output_paths: ['C:\\outputs\\01.jpg'] })
+    const rows = [
+      {
+        params_snapshot: JSON.stringify({
+          job_signature: createPhotoshopJobSignature(job),
+        }),
+      },
+    ]
+    const artifacts = [{ file_path: 'C:\\outputs\\01.jpg', file_hash: 'hash-01' }]
+    const db = {
+      prepare: (sql: string) => ({
+        all: (...params: unknown[]) => {
+          if (sql.includes('FROM workflow_steps')) {
+            expect(params).toEqual(['task-1'])
+            return rows
+          }
+          expect(params).toEqual(['C:\\outputs\\01.jpg'])
+          return artifacts
+        },
+      }),
+    }
+
+    await expect(
+      shouldSkipJob(job, {
+        db: db as never,
+        accessFile: async () => undefined,
+        hashFile: async () => 'hash-01',
+      }),
+    ).resolves.toBe(true)
+    await expect(
+      shouldSkipJob(job, {
+        db: db as never,
+        accessFile: async () => undefined,
+        hashFile: async () => 'changed',
+      }),
+    ).resolves.toBe(false)
+    await expect(
+      shouldSkipJob(job, {
+        db: db as never,
+        accessFile: async () => {
+          throw new Error('missing')
+        },
+        hashFile: async () => 'hash-01',
+      }),
+    ).resolves.toBe(false)
+  })
+
   it('runs a real Photoshop path A job when REAL_PS=1', async () => {
-    if (process.env.REAL_PS !== '1') {
+    if (process.env.REAL_PS !== '1' || process.env.REAL_PS_MUTATE !== '1') {
       return
     }
 

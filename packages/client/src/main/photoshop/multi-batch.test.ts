@@ -67,6 +67,7 @@ describe('PhotoshopMultiBatchRunner', () => {
   it('runs every print group for every template and returns output summary', async () => {
     const scanned: string[] = []
     const executed: string[] = []
+    const skipFlags: Array<boolean | undefined> = []
     const progress: string[] = []
     const templates = new Map([
       ['C:\\templates\\cup:front?.psd', createTemplate('C:\\templates\\cup:front?.psd', 'tpl-1')],
@@ -90,8 +91,9 @@ describe('PhotoshopMultiBatchRunner', () => {
           },
         },
         engine: {
-          runJob: async (job) => {
+          runJob: async (job, _maxRetries, options) => {
             executed.push(`${job.mockup_path}:${job.so_replacements[0]?.input_image}`)
+            skipFlags.push(options?.skipCompleted)
             return createCompletedJobResult(job.output_paths)
           },
         },
@@ -103,6 +105,7 @@ describe('PhotoshopMultiBatchRunner', () => {
 
     expect(scanned).toEqual(['C:\\templates\\cup:front?.psd', 'C:\\templates\\keychain.psd'])
     expect(executed).toHaveLength(4)
+    expect(skipFlags).toEqual([true, true, true, true])
     expect(progress).toEqual(['cup_front_:0', 'cup_front_:1', 'keychain:0', 'keychain:1'])
     expect(result).toMatchObject({
       ok: true,
@@ -143,8 +146,36 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(executedClipCounts).toEqual([6])
   })
 
+  it('can disable skip completed when running Photoshop jobs', async () => {
+    const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
+    const skipFlags: Array<boolean | undefined> = []
+
+    await runBatch(
+      createPrints().slice(0, 1),
+      [template.file_path],
+      {
+        taskId: 'batch-no-skip',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        skipCompleted: false,
+      },
+      {
+        scanner: {
+          scanPsd: async () => template,
+        },
+        engine: {
+          runJob: async (job, _maxRetries, options) => {
+            skipFlags.push(options?.skipCompleted)
+            return createCompletedJobResult(job.output_paths)
+          },
+        },
+      },
+    )
+
+    expect(skipFlags).toEqual([false])
+  })
+
   it('runs a small real multi-template Photoshop batch when REAL_PS=1', async () => {
-    if (process.env.REAL_PS !== '1') {
+    if (process.env.REAL_PS !== '1' || process.env.REAL_PS_MUTATE !== '1') {
       return
     }
 

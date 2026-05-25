@@ -166,6 +166,30 @@ function PhotoshopStatusBar() {
   )
 }
 
+function PhotoshopMockupPanel() {
+  const [skipCompleted, setSkipCompleted] = useState(true)
+
+  return (
+    <div className="rounded-md border p-4">
+      <div className="flex items-center justify-between gap-4">
+        <div>
+          <h2 className="text-base font-semibold tracking-normal">PS 套版</h2>
+          <p className="mt-1 text-sm text-muted-foreground">批量任务默认跳过已完成输出</p>
+        </div>
+        <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
+          <input
+            checked={skipCompleted}
+            className="h-4 w-4"
+            onChange={(event) => setSkipCompleted(event.target.checked)}
+            type="checkbox"
+          />
+          跳过已完成
+        </label>
+      </div>
+    </div>
+  )
+}
+
 function ActivationBadge({
   onEnterActivation,
 }: {
@@ -344,6 +368,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               <p className="text-base text-muted-foreground">软件已准备就绪</p>
             </div>
             <PhotoshopStatusBar />
+            <PhotoshopMockupPanel />
             <div className="flex items-center gap-3">
               <Button type="button" onClick={handlePing}>
                 IPC Ping

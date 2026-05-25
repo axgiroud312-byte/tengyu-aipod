@@ -22,6 +22,7 @@ export interface PhotoshopBatchConfig {
   format?: PhotoshopExportFormat
   jpgQuality?: number
   clipMode?: PhotoshopClipMode
+  skipCompleted?: boolean
   maxRetries?: number
 }
 
@@ -80,6 +81,7 @@ export class PhotoshopMultiBatchRunner {
         groupOptions.jpgQuality = config.jpgQuality
       }
       const clipMode = config.clipMode ?? 'auto'
+      groupOptions.clipMode = clipMode
       const templateWithClipAreas: PsdTemplate = {
         ...template,
         clip_areas: deriveClipAreas(
@@ -106,7 +108,9 @@ export class PhotoshopMultiBatchRunner {
           groups_completed: groupsCompleted,
         })
 
-        const result = await this.engine.runJob(group.job, config.maxRetries ?? 0)
+        const result = await this.engine.runJob(group.job, config.maxRetries ?? 0, {
+          skipCompleted: config.skipCompleted ?? true,
+        })
         groupsCompleted += 1
         templateOutputs.push(...result.outputs)
         allOutputs.push(...result.outputs)

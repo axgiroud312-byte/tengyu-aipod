@@ -88,6 +88,7 @@ export interface PhotoshopJob {
   group_index: number
   mockup_path: string
   so_replacements: PhotoshopSoReplacement[]
+  clip_mode?: PhotoshopClipMode
   clip_areas: PsdClipArea[]
   output_paths: string[]
   format: PhotoshopExportFormat
@@ -105,6 +106,7 @@ export interface PhotoshopJobResult {
   ok: boolean
   outputs: string[]
   attempts: number
+  skipped?: boolean
   jsx_path?: string
   result_file_path?: string
 }

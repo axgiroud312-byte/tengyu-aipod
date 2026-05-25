@@ -3,7 +3,7 @@
   "name": "ps-skip-completed",
   "title": "ps skip completed",
   "description": "跳过已完成（DB+文件+hash）",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

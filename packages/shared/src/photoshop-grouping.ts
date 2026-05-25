@@ -1,4 +1,5 @@
 import type {
+  PhotoshopClipMode,
   PhotoshopExportFormat,
   PhotoshopJob,
   PhotoshopPrintAsset,
@@ -13,6 +14,7 @@ export interface GroupPhotoshopTasksOptions {
   taskId: string
   outputRoot: string
   replaceRange?: PhotoshopReplaceRange
+  clipMode?: PhotoshopClipMode
   format?: PhotoshopExportFormat
   jpgQuality?: number
 }
@@ -116,6 +118,7 @@ function buildJob(
     group_index: groupIndex,
     mockup_path: template.file_path,
     so_replacements: soReplacements,
+    clip_mode: options.clipMode,
     clip_areas: clipAreas,
     output_paths: outputPaths,
     format: options.format,
@@ -142,6 +145,7 @@ export function groupTasks(
 ): PhotoshopTaskGroup[] {
   const resolvedOptions: Required<GroupPhotoshopTasksOptions> = {
     replaceRange: options.replaceRange ?? 'auto',
+    clipMode: options.clipMode ?? 'auto',
     format: options.format ?? 'jpg',
     jpgQuality: options.jpgQuality ?? 12,
     outputRoot: options.outputRoot,
