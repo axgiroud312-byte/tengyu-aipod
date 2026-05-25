@@ -15,5 +15,18 @@
     "@biomejs/biome": "^1.9.4",
     "turbo": "^2.5.0",
     "typescript": "^5.8.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@biomejs/biome",
+      "@prisma/client",
+      "@prisma/engines",
+      "bcrypt",
+      "better-sqlite3",
+      "esbuild",
+      "msw",
+      "prisma",
+      "sharp"
+    ]
   }
 }

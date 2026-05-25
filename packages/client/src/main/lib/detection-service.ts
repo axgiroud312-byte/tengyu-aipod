@@ -9,6 +9,7 @@ import {
   type Skill,
   type SkillSummary,
   WORKBENCH_DIRECTORIES,
+  listVisionModels,
 } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
 import type { BrowserWindow, ipcMain } from 'electron'
@@ -192,7 +193,6 @@ type CachedDetectionRow = {
 
 const DEFAULT_MODEL = 'qwen3-vl-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
-const MODEL_OPTIONS = ['qwen3-vl-flash', 'qwen3-vl-plus', 'qwen-vl-max'] as const
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const DETECTION_INPUT_SOURCE_DEFS = [
   {
@@ -759,7 +759,7 @@ function resultSelectSql(whereSql: string) {
 
 export class DetectionService {
   listModels() {
-    return MODEL_OPTIONS
+    return listVisionModels().map((model) => model.key)
   }
 
   async listInputSources(

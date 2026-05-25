@@ -181,6 +181,63 @@ describe('ComfyuiChenyuAdapter', () => {
     )
   })
 
+  it('runs txt2img workflows without uploading reference images', async () => {
+    const txt2imgWorkflow: ComfyuiWorkflow = {
+      ...workflow,
+      id: 'txt2img-v1',
+      capability: 'txt2img',
+      workflowJson: {
+        '2': { inputs: { text: '' } },
+        '9': { inputs: {} },
+      },
+      inputSlots: [{ name: 'prompt', nodeId: '2', field: 'text' }],
+    }
+    const db = createDb()
+    const uploadImage = vi.fn()
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage,
+        queuePrompt: vi.fn().mockResolvedValue('prompt-1'),
+        getHistory: vi.fn().mockResolvedValue({
+          status: { completed: true },
+          outputs: { '9': { images: [{ filename: 'result.png' }] } },
+        }),
+        viewImage: vi.fn().mockResolvedValue(Buffer.from('result-bytes')),
+      },
+      workflowCache: { get: vi.fn().mockResolvedValue(txt2imgWorkflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+    })
+
+    const response = await adapter.generate({
+      capability: 'txt2img',
+      prompt: 'centered floral print',
+      workflow_id: 'txt2img-v1',
+      output: { format: 'png', size_px: { width: 1024, height: 1024 } },
+      options: { taskId: 'txt2img-task', width: 1024, height: 1024 },
+    })
+
+    expect(uploadImage).not.toHaveBeenCalled()
+    expect(response.images[0]?.local_path).toContain('/workbench/02-生图/01-文生图/')
+    expect(db.rows[0]).toEqual(
+      expect.arrayContaining([
+        'txt2img-task',
+        'txt2img',
+        'comfyui-chenyu',
+        'txt2img-v1',
+        JSON.stringify([]),
+        'centered floral print',
+      ]),
+    )
+  })
+
   it('writes matting outputs with source print id png names', async () => {
     const mattingWorkflow: ComfyuiWorkflow = {
       ...workflow,

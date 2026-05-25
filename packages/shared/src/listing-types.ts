@@ -12,6 +12,10 @@ export type ListingSkuMode = 'manual' | 'one-click-generate'
 
 export type ListingStatus = 'pending' | 'uploading' | 'success' | 'failed' | 'skipped'
 
+export type ListingWorkspaceStatus = 'idle' | 'running' | 'paused' | 'failed' | 'completed'
+
+export type ListingTaskStatus = 'queued' | 'running' | 'paused' | 'completed' | 'failed'
+
 export type ListingStage =
   | 'enter_page'
   | 'page_ready'
@@ -139,6 +143,56 @@ export interface ListingTemplateConfig {
   skuMode: ListingSkuMode
   uploadVideo: boolean
   requiredImageGroups: ListingImageGroup[]
+}
+
+export interface ListingWorkspaceRecord {
+  id: string
+  profile_id: string
+  profile_name: string
+  platform: ListingPlatformKey
+  status: ListingWorkspaceStatus
+  current_task_id: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface ListingWorkspaceInput {
+  profile_id: string
+  profile_name: string
+  platform: ListingPlatformKey
+}
+
+export interface ListingTaskRecord {
+  id: string
+  workspace_id: string
+  platform: ListingPlatformKey
+  template_key: ListingTemplateKey
+  draft_template_id: string
+  shop_name: string
+  batch_dir: string
+  sku_mode: ListingSkuMode
+  submit_mode: ListingSubmitMode
+  max_attempts: number
+  fail_streak_limit: number
+  resume: boolean
+  status: ListingTaskStatus
+  last_run_task_id: string | null
+  created_at: number
+  updated_at: number
+}
+
+export interface ListingTaskInput {
+  workspace_id: string
+  platform: ListingPlatformKey
+  template_key: ListingTemplateKey
+  draft_template_id: string
+  shop_name: string
+  batch_dir: string
+  sku_mode: ListingSkuMode
+  submit_mode: ListingSubmitMode
+  max_attempts: number
+  fail_streak_limit: number
+  resume: boolean
 }
 
 export interface ListingConfig {

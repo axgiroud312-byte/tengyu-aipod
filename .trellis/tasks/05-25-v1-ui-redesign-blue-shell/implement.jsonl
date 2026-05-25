@@ -1,0 +1,18 @@
+{"file": "docs/CONTEXT.md", "reason": "领域语言 — 所有术语（货号/印花/工作区/任务/Skill 等）的唯一权威，UI 文案与变量命名必须遵守"}
+{"file": "docs/spec/00-overview.md", "reason": "整体架构 + 编码风格（TypeScript strict、主进程 vs 渲染层 IPC 边界、错误处理、§10 不可违反 invariants）"}
+{"file": "docs/spec/02-collection.md", "reason": "采集模块 spec — §8.1 启动配置面板（平台/profile/模式/输出/开始按钮）+ §5.2 滚动设置 + §3 会话状态机 + IPC 接口"}
+{"file": "docs/spec/03-generation.md", "reason": "生图模块 spec — §1 4 Tab 矩阵（本任务要把文生图加 ComfyUI、修订 §1.1）+ §2 Provider 抽象 + §1.2 输入约束（文生图无参考图）"}
+{"file": "docs/spec/04-detection.md", "reason": "侵权检测模块 spec — §1 输入输出 + §2 风险等级阈值（用户可调）+ §3 预处理管线 + UI 设计"}
+{"file": "docs/spec/05-photoshop.md", "reason": "PS 套版模块 spec — Windows-only、COM 连接、模板扫描、套版执行、Mac 降级提示"}
+{"file": "docs/spec/06-title.md", "reason": "标题生成模块 spec — 批次扫描、Skill 调用、预处理、并发、xlsx 输出"}
+{"file": "docs/spec/07-listing.md", "reason": "上架模块 spec — 本任务要修订引入「工作区 × 任务编排」业务模型、§2 listing-automation-builder 四层结构、IPC 接口、Workflow Runner 改造"}
+{"file": "docs/spec/09-cross-cutting.md", "reason": "跨平台 / 并发控制 / Profile 锁 / 暂停恢复 / 打包 — 上架业务改造涉及 profile 锁全程持有"}
+{"file": "docs/adr/0003-skill-and-provider-cloud-dispatch.md", "reason": "Skill/Provider 派发边界 — 服务端不接触图片/API Key/任务数据；本任务 UI 不能突破此边界"}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "上架四层结构（selectors/page-parser/action-executor/workflow）— 上架业务改造必须遵守"}
+{"file": "docs/adr/0005-task-and-sku-two-layer-model.md", "reason": "task/sku 双层模型 — 上架编排引入的 listing_tasks 表要符合此分层"}
+{"file": "docs/adr/0006-unified-generation-module-by-capability.md", "reason": "生图按能力组织而非按 provider — 本任务 ComfyUI 文生图扩展不能破坏此抽象"}
+{"file": "docs/adr/0007-photoshop-windows-only-v1.md", "reason": "PS 套版 Windows-only — Mac 端降级 UI 必须保留"}
+{"file": "references/vision-llm-providers/aliyun-bailian-api.md", "reason": "百炼 API + 5 个 VL 模型清单（qwen3-vl-plus/flash/qwen-vl-max/plus/qwen3.6-plus）+ 单价 — 用于 listVisionModels() 实现"}
+{"file": "references/generation-comfyui/chenyu-cloud-api.md", "reason": "晨羽智云 API + ComfyUI 工作流派发 — ComfyUI 文生图后端实施所需"}
+{"file": "references/generation-paid/grsai-api.md", "reason": "Grsai 付费生图 API — 文生图/图生图/提取 grsai 路径所需"}
+{"file": ".trellis/tasks/05-25-v1-ui-redesign-blue-shell/prd.md", "reason": "本任务 PRD — design tokens / 字体 / 6 模块 wireframe / scope 边界与所有锁定决策"}

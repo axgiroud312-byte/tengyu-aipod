@@ -63,7 +63,7 @@ describe('TempFileManager', () => {
   })
 
   it('keeps failed task directories for delayed cleanup', async () => {
-    const manager = new TempFileManager(1)
+    const manager = new TempFileManager({ rootDir: tempDir, failedTtlMs: 1 })
     const dir = await manager.createTaskDir('title', 'failed')
     await writeFile(join(dir, 'debug.jpg'), 'debug')
 

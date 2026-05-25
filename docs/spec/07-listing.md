@@ -508,6 +508,56 @@ CREATE TABLE listing_status (
 - 重试 `status='failed'` 的（重置 retry_count）
 - 处理 `status='pending'` 或 `status='uploading'`（中断的）
 
+## 9.1 工作区 × 任务编排
+
+v1 UI 在 `listing_status` 之外新增两张本地 SQLite 表，用来保存"哪个比特浏览器工作区有哪些上架任务"。它们只存在客户端 `.workbench/workbench.db`，服务端不接触店铺、批次目录或任务数据。
+
+```sql
+CREATE TABLE listing_workspaces (
+  id TEXT PRIMARY KEY,
+  profile_id TEXT NOT NULL,
+  profile_name TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  status TEXT NOT NULL,              -- idle | running | paused | failed | completed
+  current_task_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  UNIQUE(profile_id, platform)
+);
+
+CREATE TABLE listing_tasks (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  template_key TEXT NOT NULL,
+  draft_template_id TEXT NOT NULL,
+  shop_name TEXT NOT NULL,
+  batch_dir TEXT NOT NULL,
+  sku_mode TEXT NOT NULL,
+  submit_mode TEXT NOT NULL,
+  max_attempts INTEGER NOT NULL,
+  fail_streak_limit INTEGER NOT NULL,
+  resume INTEGER NOT NULL,
+  status TEXT NOT NULL,              -- queued | running | paused | completed | failed
+  last_run_task_id TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  FOREIGN KEY(workspace_id) REFERENCES listing_workspaces(id)
+);
+```
+
+新增 IPC：
+
+- `listing:list-saved-workspaces`
+- `listing:save-workspace`
+- `listing:update-workspace-status`
+- `listing:list-tasks`
+- `listing:create-task`
+- `listing:update-task-status`
+- `listing:delete-task`
+
+Runner 契约：`ListingRunConfig.workspaces[]` 可以携带 `workspace_id` 和 `task_id`。工作区开始时 runner 标记对应 `listing_tasks.status='running'`、`listing_workspaces.status='running'`；工作区完成后按货号结果回写 `completed` 或 `failed`，并清空 `current_task_id`。跨工作区仍并行，同工作区仍串行；DOM 操作仍只在平台目录的 `selectors / page-parser / action-executor / workflow` 四层内发生。
+
 ## 10. 证据保存
 
 ```

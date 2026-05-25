@@ -2,7 +2,9 @@ import {
   AppErrorClass,
   type ListingConfig,
   type ListingItem,
+  type ListingTaskStatus,
   type ListingTemplateConfig,
+  type ListingWorkspaceStatus,
 } from '@tengyu-aipod/shared'
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserProfileLockManager } from '../../main/lib/browser-profile-lock'
@@ -11,6 +13,7 @@ import {
   type ListingRunConfig,
   type ListingStatusRow,
   type ListingStatusStore,
+  type ListingTaskStore,
   runLocalListingBatch,
 } from './runner'
 
@@ -66,6 +69,46 @@ class FakeStatusStore implements ListingStatusStore {
       input.platform,
       input.workspaceId ?? input.workspace_id,
     ].join('::')
+  }
+}
+
+class FakeTaskStore implements ListingTaskStore {
+  readonly taskStatuses: Array<{
+    taskId: string
+    status: ListingTaskStatus
+    lastRunTaskId?: string | null
+  }> = []
+  readonly workspaceStatuses: Array<{
+    workspaceId: string
+    status: ListingWorkspaceStatus
+    currentTaskId: string | null
+  }> = []
+  closed = false
+
+  updateTaskStatus(taskId: string, status: ListingTaskStatus, lastRunTaskId?: string | null) {
+    const row: {
+      taskId: string
+      status: ListingTaskStatus
+      lastRunTaskId?: string | null
+    } = { taskId, status }
+    if (lastRunTaskId !== undefined) {
+      row.lastRunTaskId = lastRunTaskId
+    }
+    this.taskStatuses.push(row)
+    return null
+  }
+
+  updateWorkspaceStatus(
+    workspaceId: string,
+    status: ListingWorkspaceStatus,
+    currentTaskId: string | null,
+  ) {
+    this.workspaceStatuses.push({ workspaceId, status, currentTaskId })
+    return null
+  }
+
+  close() {
+    this.closed = true
   }
 }
 
@@ -478,6 +521,100 @@ describe('listing runner', () => {
         }),
       ]),
     )
+  })
+
+  it('updates persisted workspace tasks as running and completed', async () => {
+    const store = new FakeStatusStore()
+    const taskStore = new FakeTaskStore()
+    const { cdp } = createBrowserRuntime()
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) =>
+        successResult(item, config),
+      ),
+    }
+
+    const result = await runLocalListingBatch(
+      createConfig({
+        task_id: 'run-1',
+        workspaces: [
+          {
+            profile_id: 'profile-a',
+            task_id: 'listing-task-a',
+            workspace_id: 'workspace-a',
+          },
+        ],
+      }),
+      [createItem('SKU-1')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        openTaskStore: () => taskStore,
+        cdp,
+        locks: new BrowserProfileLockManager(),
+        workflows: { 'temu-pop': workflow },
+        sleep: vi.fn().mockResolvedValue(undefined),
+        now: () => 1000,
+      },
+    )
+
+    expect(result.successCount).toBe(1)
+    expect(taskStore.taskStatuses).toEqual([
+      { taskId: 'listing-task-a', status: 'running', lastRunTaskId: 'run-1' },
+      { taskId: 'listing-task-a', status: 'completed', lastRunTaskId: 'run-1' },
+    ])
+    expect(taskStore.workspaceStatuses).toEqual([
+      { workspaceId: 'workspace-a', status: 'running', currentTaskId: 'listing-task-a' },
+      { workspaceId: 'workspace-a', status: 'completed', currentTaskId: null },
+    ])
+    expect(taskStore.closed).toBe(true)
+  })
+
+  it('marks persisted workspace tasks as failed when the workspace has failed items', async () => {
+    const store = new FakeStatusStore()
+    const taskStore = new FakeTaskStore()
+    const { cdp } = createBrowserRuntime()
+    const workflow = {
+      runListingItem: vi.fn(async () => {
+        throw new AppErrorClass('DRAFT_NOT_FOUND', '草稿模板不存在', false)
+      }),
+    }
+
+    const result = await runLocalListingBatch(
+      createConfig({
+        task_id: 'run-2',
+        max_attempts: 1,
+        workspaces: [
+          {
+            profile_id: 'profile-a',
+            task_id: 'listing-task-a',
+            workspace_id: 'workspace-a',
+          },
+        ],
+      }),
+      [createItem('SKU-1')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        openTaskStore: () => taskStore,
+        cdp,
+        locks: new BrowserProfileLockManager(),
+        workflows: { 'temu-pop': workflow },
+        sleep: vi.fn().mockResolvedValue(undefined),
+        now: () => 1000,
+      },
+    )
+
+    expect(result.failedCount).toBe(1)
+    expect(taskStore.taskStatuses.at(-1)).toEqual({
+      taskId: 'listing-task-a',
+      status: 'failed',
+      lastRunTaskId: 'run-2',
+    })
+    expect(taskStore.workspaceStatuses.at(-1)).toEqual({
+      workspaceId: 'workspace-a',
+      status: 'failed',
+      currentTaskId: null,
+    })
   })
 
   it('creates the default listing temp directory through TempFileManager', async () => {

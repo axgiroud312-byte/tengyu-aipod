@@ -1,5 +1,14 @@
 import { Button } from '@/components/ui/button'
-import { APP_VERSION, type RiskLevel } from '@tengyu-aipod/shared'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { type RiskLevel, estimateDetectionCost } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
   Copy,
@@ -28,6 +37,8 @@ type FlattenedImage = DetectionImageInfo & {
   sourceKey: string
   external: boolean
 }
+
+type ResultFilter = 'all' | RiskLevel | 'failed'
 
 const DEFAULT_MAX_SIZE = 1024
 
@@ -68,14 +79,41 @@ function riskTone(riskLevel: RiskLevel | 'failed') {
 function riskLabel(riskLevel: RiskLevel | 'failed') {
   switch (riskLevel) {
     case 'pass':
-      return 'Pass'
+      return '通过'
     case 'review':
-      return 'Review'
+      return '复核'
     case 'block':
-      return 'Block'
+      return '拦截'
     default:
-      return 'Failed'
+      return '失败'
   }
+}
+
+const resultFilterLabels: Record<ResultFilter, string> = {
+  all: '全部',
+  pass: '通过',
+  review: '复核',
+  block: '拦截',
+  failed: '失败',
+}
+
+function resultLevel(result: DetectionImageResult): RiskLevel | 'failed' {
+  return result.status === 'failed' ? 'failed' : result.riskLevel
+}
+
+function resultScore(result: DetectionImageResult) {
+  return result.status === 'failed' ? '-' : String(result.riskScore)
+}
+
+function resultReason(result: DetectionImageResult) {
+  return result.status === 'failed' ? result.error : result.reason || '-'
+}
+
+function progressPercent(progress: DetectionProgress | null) {
+  if (!progress?.total) {
+    return 0
+  }
+  return Math.round((progress.processed / progress.total) * 100)
 }
 
 function csvEscape(value: string) {
@@ -189,7 +227,7 @@ function ThumbnailGrid({
   return (
     <div
       ref={containerRef}
-      className="relative h-[520px] overflow-auto rounded-md border bg-background"
+      className="relative h-[420px] overflow-auto rounded-md border bg-background"
       onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}
     >
       <div className="relative" style={{ height: `${rows * rowHeight}px` }}>
@@ -248,6 +286,8 @@ export function DetectionWorkbench() {
   const [progress, setProgress] = useState<DetectionProgress | null>(null)
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null)
   const [results, setResults] = useState<DetectionImageResult[]>([])
+  const [resultFilter, setResultFilter] = useState<ResultFilter>('all')
+  const [activeResult, setActiveResult] = useState<DetectionImageResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
@@ -372,6 +412,12 @@ export function DetectionWorkbench() {
     }
     return next
   }, [results])
+  const filteredResults = useMemo(() => {
+    if (resultFilter === 'all') {
+      return resultsSorted
+    }
+    return resultsSorted.filter((result) => resultLevel(result) === resultFilter)
+  }, [resultFilter, resultsSorted])
   const passPromotionIds = useMemo(
     () =>
       resultsSorted.reduce<string[]>((acc, result) => {
@@ -387,6 +433,15 @@ export function DetectionWorkbench() {
   const isRunning = Boolean(progress && progress.processed < progress.total)
   const canRun = Boolean(config?.skillId) && selectedImages.length > 0 && !isRunning
   const selectedCount = selectedImages.length
+  const progressPercentValue = progressPercent(progress)
+  const estimatedCost = useMemo(
+    () => estimateDetectionCost(selectedCount, config?.model ?? 'qwen3-vl-flash', compression),
+    [compression, config?.model, selectedCount],
+  )
+  const balanceValue = balance.trim() ? Number(balance) : null
+  const hasBalance = balanceValue !== null && Number.isFinite(balanceValue)
+  const balanceLow =
+    hasBalance && balanceValue !== null ? balanceValue < estimatedCost.yuan * 1.5 : false
 
   const toggleFolder = useCallback((folder: string) => {
     setSelectedFolders((current) =>
@@ -495,7 +550,7 @@ export function DetectionWorkbench() {
 
   function openPromoteDialog() {
     if (!passPromotionIds.length) {
-      setError('没有可加入待套版的 pass 图')
+      setError('没有可加入待套版的通过图')
       return
     }
     setPromoteMode('copy')
@@ -504,7 +559,7 @@ export function DetectionWorkbench() {
 
   async function promotePassImages() {
     if (!passPromotionIds.length) {
-      setError('没有可加入待套版的 pass 图')
+      setError('没有可加入待套版的通过图')
       setIsPromoteDialogOpen(false)
       return
     }
@@ -518,8 +573,8 @@ export function DetectionWorkbench() {
       })
       setMessage(
         promoteMode === 'move'
-          ? `已移动 ${count} 张 pass 图到待套版`
-          : `已复制 ${count} 张 pass 图到待套版`,
+          ? `已移动 ${count} 张通过图到待套版`
+          : `已复制 ${count} 张通过图到待套版`,
       )
       setIsPromoteDialogOpen(false)
     } catch (promoteError) {
@@ -531,7 +586,7 @@ export function DetectionWorkbench() {
 
   async function retestRow(result: DetectionImageResult) {
     if (!result.artifactId) {
-      setError('这张图没有可重测的 artifact')
+      setError('这张图没有可重测记录')
       return
     }
     setError(null)
@@ -568,23 +623,57 @@ export function DetectionWorkbench() {
     setMessage(`已移动 ${count} 张到待套版`)
   }
 
+  function clearSelection() {
+    setSelectedFolders([])
+    setManualOverrides({})
+    setExternalImages([])
+    setResults([])
+    setError(null)
+    setMessage(null)
+  }
+
   return (
-    <div className="space-y-6">
-      <div className="rounded-md border bg-background p-5 shadow-sm">
-        <div className="flex items-start justify-between gap-6">
-          <div className="space-y-1">
-            <p className="text-sm font-medium text-muted-foreground">侵权检测模块</p>
-            <h1 className="text-2xl font-semibold text-balance">输入选择、批量检测、结果流转</h1>
-            <p className="text-sm text-muted-foreground">版本 {APP_VERSION}</p>
+    <div className="space-y-5">
+      <div className="flex items-start justify-between gap-6">
+        <div className="space-y-1">
+          <p className="text-sm font-medium text-primary">侵权检测</p>
+          <h1 className="text-2xl font-semibold text-balance">选择印花，判断风险，流转到待套版</h1>
+          <p className="text-sm text-muted-foreground">
+            检测输入来自 02-生图，也支持外部图片拖入。
+          </p>
+        </div>
+        <div className="grid grid-cols-3 overflow-hidden rounded-md border bg-card text-sm shadow-sm">
+          <div className="border-r px-4 py-3">
+            <div className="text-xs text-muted-foreground">已选</div>
+            <div className="mt-1 font-mono text-lg font-semibold tabular-nums">{selectedCount}</div>
           </div>
-          <div className="rounded-md border bg-muted px-3 py-2 text-right text-xs text-muted-foreground">
-            <div>当前选图</div>
-            <div className="mt-1 font-mono text-foreground">{selectedCount}</div>
+          <div className="border-r px-4 py-3">
+            <div className="text-xs text-muted-foreground">通过</div>
+            <div className="mt-1 font-mono text-lg font-semibold text-emerald-700 tabular-nums">
+              {stats.pass}
+            </div>
+          </div>
+          <div className="px-4 py-3">
+            <div className="text-xs text-muted-foreground">风险</div>
+            <div className="mt-1 font-mono text-lg font-semibold text-red-700 tabular-nums">
+              {stats.review + stats.block}
+            </div>
           </div>
         </div>
       </div>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_360px]">
+      {error ? (
+        <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+          {error}
+        </div>
+      ) : null}
+      {message ? (
+        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
+          {message}
+        </div>
+      ) : null}
+
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-6">
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
@@ -646,7 +735,7 @@ export function DetectionWorkbench() {
             <div className="flex items-start justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">检测设置</p>
-                <h2 className="mt-1 text-lg font-semibold">模型 / Skill / 阈值 / 关注重点</h2>
+                <h2 className="mt-1 text-lg font-semibold">模型 / 模板 / 阈值 / 关注重点</h2>
               </div>
               <div className="text-right text-xs text-muted-foreground">
                 <div>预估费用</div>
@@ -708,91 +797,18 @@ export function DetectionWorkbench() {
             <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t pt-5">
               <div className="flex items-center gap-2 text-sm text-muted-foreground">
                 <FolderOpen className="h-4 w-4" />
-                预估费用按当前选图实时刷新
+                主操作在右侧执行栏，最小窗口下不用滚动也能开始检测。
               </div>
-              <div className="flex gap-2">
-                <Button
-                  disabled={!selectedCount}
-                  onClick={() => {
-                    setSelectedFolders([])
-                    setManualOverrides({})
-                    setExternalImages([])
-                    setResults([])
-                    setError(null)
-                    setMessage(null)
-                  }}
-                  type="button"
-                  variant="secondary"
-                >
-                  清空选择
-                </Button>
-                <Button disabled={!canRun} onClick={() => void runDetection()} type="button">
-                  {isRunning ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <FolderOpen className="mr-2 h-4 w-4" />
-                  )}
-                  开始检测
-                </Button>
-              </div>
+              <Button
+                disabled={!selectedCount}
+                onClick={clearSelection}
+                type="button"
+                variant="secondary"
+              >
+                清空选择
+              </Button>
             </div>
           </div>
-
-          {progress ? (
-            <div className="rounded-md border bg-background p-5 shadow-sm">
-              <div className="flex items-center justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">进度</p>
-                  <h2 className="mt-1 text-lg font-semibold">
-                    {progress.processed} / {progress.total}
-                  </h2>
-                </div>
-                <div className="text-right text-sm text-muted-foreground">
-                  <div>当前并发</div>
-                  <div className="mt-1 font-mono text-foreground">
-                    {progress.concurrency ?? (Number(concurrency) || 3)}
-                  </div>
-                </div>
-              </div>
-              <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full bg-primary transition-all"
-                  style={{
-                    width: `${progress.total ? Math.round((progress.processed / progress.total) * 100) : 0}%`,
-                  }}
-                />
-              </div>
-              <div className="mt-4 grid grid-cols-4 gap-3 text-sm">
-                <div className="rounded-md bg-muted p-3">
-                  <div className="text-muted-foreground">成功</div>
-                  <div className="mt-1 font-semibold">{progress.succeeded}</div>
-                </div>
-                <div className="rounded-md bg-muted p-3">
-                  <div className="text-muted-foreground">失败</div>
-                  <div className="mt-1 font-semibold">{progress.failed}</div>
-                </div>
-                <div className="rounded-md bg-muted p-3">
-                  <div className="text-muted-foreground">跳过</div>
-                  <div className="mt-1 font-semibold">{progress.skipped}</div>
-                </div>
-                <div className="rounded-md bg-muted p-3">
-                  <div className="text-muted-foreground">任务</div>
-                  <div className="mt-1 truncate font-mono text-xs">{runningTaskId ?? '-'}</div>
-                </div>
-              </div>
-            </div>
-          ) : null}
-
-          {error ? (
-            <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-              {error}
-            </div>
-          ) : null}
-          {message ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800">
-              {message}
-            </div>
-          ) : null}
 
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
@@ -817,114 +833,242 @@ export function DetectionWorkbench() {
                   variant="secondary"
                 >
                   <Download className="mr-2 h-4 w-4" />
-                  导出 CSV
+                  导出表格
                 </Button>
               </div>
             </div>
 
             <div className="mt-4 grid gap-3 md:grid-cols-4">
               <div className="rounded-md bg-muted p-3">
-                <div className="text-muted-foreground">Pass</div>
+                <div className="text-muted-foreground">通过</div>
                 <div className="mt-1 font-semibold text-emerald-700">{stats.pass}</div>
               </div>
               <div className="rounded-md bg-muted p-3">
-                <div className="text-muted-foreground">Review</div>
+                <div className="text-muted-foreground">复核</div>
                 <div className="mt-1 font-semibold text-amber-700">{stats.review}</div>
               </div>
               <div className="rounded-md bg-muted p-3">
-                <div className="text-muted-foreground">Block</div>
+                <div className="text-muted-foreground">拦截</div>
                 <div className="mt-1 font-semibold text-red-700">{stats.block}</div>
               </div>
               <div className="rounded-md bg-muted p-3">
-                <div className="text-muted-foreground">Failed</div>
+                <div className="text-muted-foreground">失败</div>
                 <div className="mt-1 font-semibold">{stats.failed}</div>
               </div>
             </div>
 
-            <div className="mt-5 overflow-hidden rounded-md border">
-              <div className="grid grid-cols-[120px_90px_100px_1fr_1fr_180px] gap-3 border-b bg-muted/50 px-3 py-2 text-xs font-medium text-muted-foreground">
-                <div>缩略图</div>
-                <div>风险值</div>
-                <div>等级</div>
-                <div>依据</div>
-                <div>来源</div>
-                <div>操作</div>
-              </div>
-              <div className="max-h-[520px] overflow-auto">
-                {resultsSorted.length ? (
-                  resultsSorted.map((result) => {
-                    const riskScore = result.status === 'failed' ? '-' : String(result.riskScore)
-                    const level = result.status === 'failed' ? 'failed' : result.riskLevel
-                    return (
-                      <div
-                        className="grid grid-cols-[120px_90px_100px_1fr_1fr_180px] gap-3 border-b px-3 py-3 text-sm last:border-b-0"
-                        key={`${result.artifactId ?? result.imagePath}-${result.status}`}
+            <Tabs
+              className="mt-5"
+              onValueChange={(value) => setResultFilter(value as ResultFilter)}
+              value={resultFilter}
+            >
+              <TabsList className="grid h-auto w-full grid-cols-5 p-1">
+                {(['all', 'pass', 'review', 'block', 'failed'] as ResultFilter[]).map((filter) => (
+                  <TabsTrigger className="h-9" key={filter} value={filter}>
+                    {resultFilterLabels[filter]}
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            <div className="mt-5 grid max-h-[560px] gap-4 overflow-auto pr-1 sm:grid-cols-2 2xl:grid-cols-3">
+              {filteredResults.length ? (
+                filteredResults.map((result) => {
+                  const level = resultLevel(result)
+                  return (
+                    <div
+                      className="rounded-md border bg-muted/20 p-3 text-sm transition hover:border-primary/50"
+                      key={`${result.artifactId ?? result.imagePath}-${result.status}`}
+                    >
+                      <button
+                        className="block w-full overflow-hidden rounded-md border bg-muted text-left"
+                        onClick={() => setActiveResult(result)}
+                        type="button"
                       >
-                        <div className="h-16 overflow-hidden rounded-md border bg-muted">
-                          <img
-                            alt={result.imagePath}
-                            className="h-full w-full object-cover"
-                            src={result.thumbnailUrl || fileUrl(result.imagePath)}
-                          />
-                        </div>
-                        <div className="flex items-center font-mono text-base font-semibold tabular-nums">
-                          {riskScore}
-                        </div>
-                        <div className="flex items-center">
-                          <RiskBadge level={level} />
-                        </div>
-                        <div className="flex items-center text-muted-foreground">
-                          {result.status === 'failed' ? result.error : result.reason || '-'}
-                        </div>
-                        <div className="flex items-center truncate text-xs text-muted-foreground">
-                          {result.imagePath}
-                        </div>
-                        <div className="flex flex-wrap gap-2">
-                          <Button
-                            className="h-8 px-2"
-                            disabled={!result.artifactId}
-                            onClick={() => void moveRow(result)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            <MoveRight className="mr-1 h-3.5 w-3.5" />
-                            移动
-                          </Button>
-                          <Button
-                            className="h-8 px-2"
-                            disabled={!result.artifactId}
-                            onClick={() => void retestRow(result)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            <RefreshCw className="mr-1 h-3.5 w-3.5" />
-                            重测
-                          </Button>
-                          <Button
-                            className="h-8 px-2"
-                            disabled={!result.artifactId}
-                            onClick={() => void deleteRow(result)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            <Trash2 className="mr-1 h-3.5 w-3.5" />
-                            删除
-                          </Button>
-                        </div>
+                        <img
+                          alt={result.imagePath}
+                          className="h-36 w-full object-cover"
+                          src={result.thumbnailUrl || fileUrl(result.imagePath)}
+                        />
+                      </button>
+                      <div className="mt-3 flex items-center justify-between gap-3">
+                        <RiskBadge level={level} />
+                        <span className="font-mono text-lg font-semibold tabular-nums">
+                          {resultScore(result)}
+                        </span>
                       </div>
-                    )
-                  })
-                ) : (
-                  <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    暂无检测结果
-                  </div>
-                )}
-              </div>
+                      <p className="mt-2 line-clamp-2 min-h-10 text-muted-foreground">
+                        {resultReason(result)}
+                      </p>
+                      <p className="mt-2 truncate text-xs text-muted-foreground">
+                        {result.imagePath}
+                      </p>
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        <Button
+                          className="h-8 px-2"
+                          disabled={!result.artifactId}
+                          onClick={() => void moveRow(result)}
+                          type="button"
+                          variant="secondary"
+                        >
+                          <MoveRight className="mr-1 h-3.5 w-3.5" />
+                          移动
+                        </Button>
+                        <Button
+                          className="h-8 px-2"
+                          disabled={!result.artifactId}
+                          onClick={() => void retestRow(result)}
+                          type="button"
+                          variant="secondary"
+                        >
+                          <RefreshCw className="mr-1 h-3.5 w-3.5" />
+                          重测
+                        </Button>
+                        <Button
+                          className="h-8 px-2"
+                          disabled={!result.artifactId}
+                          onClick={() => void deleteRow(result)}
+                          type="button"
+                          variant="secondary"
+                        >
+                          <Trash2 className="mr-1 h-3.5 w-3.5" />
+                          删除
+                        </Button>
+                      </div>
+                    </div>
+                  )
+                })
+              ) : (
+                <div className="rounded-md bg-muted px-3 py-10 text-center text-sm text-muted-foreground sm:col-span-2 2xl:col-span-3">
+                  暂无检测结果
+                </div>
+              )}
             </div>
           </div>
         </div>
 
-        <aside className="space-y-6">
+        <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
+          <div className="rounded-md border bg-background p-5 shadow-sm">
+            <p className="text-sm font-medium text-muted-foreground">预估与执行</p>
+            <h2 className="mt-1 text-lg font-semibold">开始检测</h2>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">当前选图</dt>
+                <dd className="mt-1 font-semibold">{selectedCount} 张</dd>
+              </div>
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">预估费用</dt>
+                <dd className="mt-1 font-semibold">¥{estimatedCost.yuan.toFixed(4)}</dd>
+              </div>
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">检测模板</dt>
+                <dd className="mt-1 font-semibold">{config?.skillId ? '已保存' : '未保存'}</dd>
+              </div>
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">并发</dt>
+                <dd className="mt-1 font-semibold">
+                  {Math.max(1, Math.min(8, Number(concurrency) || 3))}
+                </dd>
+              </div>
+            </dl>
+            <label className="mt-3 block space-y-2 text-sm font-medium">
+              <span>余额（手动输入）</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                min={0}
+                onChange={(event) => setBalance(event.target.value)}
+                placeholder="用于预览告警"
+                step="0.01"
+                type="number"
+                value={balance}
+              />
+            </label>
+            {hasBalance ? (
+              <div
+                className={`mt-3 rounded-md border px-3 py-2 text-sm ${
+                  balanceLow
+                    ? 'border-red-200 bg-red-50 text-red-800'
+                    : 'border-emerald-200 bg-emerald-50 text-emerald-800'
+                }`}
+              >
+                {balanceLow ? '余额低于建议安全线' : '余额充足'}
+              </div>
+            ) : null}
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <Button
+                disabled={!selectedCount}
+                onClick={clearSelection}
+                type="button"
+                variant="secondary"
+              >
+                清空
+              </Button>
+              <Button disabled={!canRun} onClick={() => void runDetection()} type="button">
+                {isRunning ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <FolderOpen className="mr-2 h-4 w-4" />
+                )}
+                开始检测
+              </Button>
+            </div>
+          </div>
+
+          <div className="rounded-md border bg-background p-5 shadow-sm">
+            <h2 className="text-lg font-semibold">阈值分段</h2>
+            <dl className="mt-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-emerald-800">
+                <dt>通过</dt>
+                <dd>0-{config?.threshold.passMax ?? 39}</dd>
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
+                <dt>复核</dt>
+                <dd>
+                  {(config?.threshold.passMax ?? 39) + 1}-{config?.threshold.reviewMax ?? 69}
+                </dd>
+              </div>
+              <div className="flex items-center justify-between rounded-md border border-red-200 bg-red-50 px-3 py-2 text-red-800">
+                <dt>拦截</dt>
+                <dd>{(config?.threshold.reviewMax ?? 69) + 1}-100</dd>
+              </div>
+            </dl>
+          </div>
+
+          <div className="rounded-md border bg-background p-5 shadow-sm">
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">进度</h2>
+              <span className="text-sm tabular-nums text-muted-foreground">
+                {progressPercentValue}%
+              </span>
+            </div>
+            <div className="mt-4 h-2 overflow-hidden rounded-full bg-muted">
+              <div
+                className="h-full rounded-full bg-primary transition-all"
+                style={{ width: `${progressPercentValue}%` }}
+              />
+            </div>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-muted-foreground">处理</dt>
+                <dd className="font-medium tabular-nums">
+                  {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">成功</dt>
+                <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">失败</dt>
+                <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">跳过</dt>
+                <dd className="font-medium tabular-nums">{progress?.skipped ?? 0}</dd>
+              </div>
+            </dl>
+          </div>
+
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <h2 className="text-lg font-semibold">手动多选缩略图</h2>
@@ -941,30 +1085,6 @@ export function DetectionWorkbench() {
               />
             </div>
           </div>
-
-          <div className="rounded-md border bg-background p-5 shadow-sm">
-            <h2 className="text-lg font-semibold">预估</h2>
-            <div className="mt-3 rounded-md bg-muted p-3 text-sm">
-              <div className="text-muted-foreground">当前选图</div>
-              <div className="mt-1 font-semibold">{selectedCount} 张</div>
-            </div>
-            <div className="mt-3 rounded-md bg-muted p-3 text-sm">
-              <div className="text-muted-foreground">提示</div>
-              <div className="mt-1">{config?.skillId ? '检测配置已就绪' : '请先保存检测配置'}</div>
-            </div>
-            <label className="mt-3 block space-y-2 text-sm font-medium">
-              <span>余额（手动输入）</span>
-              <input
-                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                min={0}
-                onChange={(event) => setBalance(event.target.value)}
-                placeholder="用于预览告警"
-                step="0.01"
-                type="number"
-                value={balance}
-              />
-            </label>
-          </div>
         </aside>
       </div>
       {isPromoteDialogOpen ? (
@@ -977,7 +1097,7 @@ export function DetectionWorkbench() {
               <div>
                 <h2 className="text-lg font-semibold">一键加入待套版</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  发现 {passPromotionIds.length} 张 pass 印花，将流转到 04-待套版印花。
+                  发现 {passPromotionIds.length} 张通过印花，将流转到 04-待套版印花。
                 </p>
               </div>
             </div>
@@ -997,7 +1117,7 @@ export function DetectionWorkbench() {
                 <span>
                   <span className="block font-medium">复制（推荐）</span>
                   <span className="mt-1 block text-muted-foreground">
-                    保留 03-检测/pass 副本，同时复制到 04-待套版印花。
+                    保留 03-检测/通过 副本，同时复制到 04-待套版印花。
                   </span>
                 </span>
               </label>
@@ -1015,7 +1135,7 @@ export function DetectionWorkbench() {
                 <span>
                   <span className="block font-medium">移动</span>
                   <span className="mt-1 block text-muted-foreground">
-                    将 pass 图移入 04-待套版印花，不保留 03-检测/pass 副本。
+                    将通过图移入 04-待套版印花，不保留 03-检测/通过 副本。
                   </span>
                 </span>
               </label>
@@ -1038,6 +1158,64 @@ export function DetectionWorkbench() {
           </div>
         </div>
       ) : null}
+      <Dialog open={Boolean(activeResult)} onOpenChange={(open) => !open && setActiveResult(null)}>
+        {activeResult ? (
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>检测详情</DialogTitle>
+              <DialogDescription>
+                风险值 {resultScore(activeResult)}，等级 {riskLabel(resultLevel(activeResult))}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-5 md:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="overflow-hidden rounded-md border bg-muted">
+                <img
+                  alt={activeResult.imagePath}
+                  className="max-h-[520px] w-full object-contain"
+                  src={activeResult.thumbnailUrl || fileUrl(activeResult.imagePath)}
+                />
+              </div>
+              <div className="space-y-4 text-sm">
+                <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                  <span className="text-muted-foreground">风险等级</span>
+                  <RiskBadge level={resultLevel(activeResult)} />
+                </div>
+                <div className="rounded-md border px-3 py-2">
+                  <div className="text-muted-foreground">模型依据</div>
+                  <p className="mt-2 leading-6">{resultReason(activeResult)}</p>
+                </div>
+                <div className="rounded-md border px-3 py-2">
+                  <div className="text-muted-foreground">源文件</div>
+                  <p className="mt-2 break-all text-xs">{activeResult.imagePath}</p>
+                </div>
+                {'outputPath' in activeResult ? (
+                  <div className="rounded-md border px-3 py-2">
+                    <div className="text-muted-foreground">检测产物</div>
+                    <p className="mt-2 break-all text-xs">{activeResult.outputPath}</p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+            <DialogFooter>
+              <Button
+                disabled={!activeResult.artifactId}
+                onClick={() => void retestRow(activeResult)}
+                type="button"
+                variant="secondary"
+              >
+                重测
+              </Button>
+              <Button
+                disabled={!activeResult.artifactId}
+                onClick={() => void moveRow(activeResult)}
+                type="button"
+              >
+                移动到待套版
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        ) : null}
+      </Dialog>
     </div>
   )
 }

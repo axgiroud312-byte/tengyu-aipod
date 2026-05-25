@@ -1,0 +1,18 @@
+{"file": "docs/CONTEXT.md", "reason": "领域语言 — 验收时检查 UI 文案与代码命名是否遵守 glossary，避免出现「Workbench / Step 1/4」等英文裸露或术语不一致"}
+{"file": "docs/spec/00-overview.md", "reason": "§10 不可违反 invariants（10 条铁律）+ 编码风格 — 检查 TS strict、IPC 命名、API Key 不出主进程等"}
+{"file": "docs/spec/02-collection.md", "reason": "采集 §8.1 启动配置面板 / §3 会话状态机 — 验收 idle/active/paused 三态 UI 完整、IPC 调用正确"}
+{"file": "docs/spec/03-generation.md", "reason": "生图 §1.2 输入约束（文生图无参考图、采集图不能直接图生图）+ §1.1 修订后的 4 Tab × provider 矩阵 — 验收 UI 校验是否到位"}
+{"file": "docs/spec/04-detection.md", "reason": "检测 §2 阈值用户可调 + §3 预处理顺序（透明底加白必开）— 验收 UI 是否允许阈值调整、预处理顺序是否正确"}
+{"file": "docs/spec/05-photoshop.md", "reason": "PS 套版 Windows-only — 验收 Mac 降级 UI 是否保留、COM 状态显示是否准确"}
+{"file": "docs/spec/06-title.md", "reason": "标题生成 — 验收已有标题策略、并发、xlsx 输出、模型成本预估"}
+{"file": "docs/spec/07-listing.md", "reason": "上架 — 验收业务改造后「workspace × 任务编排」模型 + listing-automation-builder 四层结构 + IPC 接口 + DB schema"}
+{"file": "docs/spec/09-cross-cutting.md", "reason": "Profile 锁 / 暂停恢复 / 打包体积 — 验收锁机制、字体包体积 ≤ 3MB、跨平台一致性"}
+{"file": "docs/adr/0003-skill-and-provider-cloud-dispatch.md", "reason": "服务端边界 — 验收 renderer 没把图片/API Key 上传服务端"}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "上架四层结构 — 验收 selectors.ts / page-parser.ts / action-executor.ts / workflow.ts 是否分层正确"}
+{"file": "docs/adr/0005-task-and-sku-two-layer-model.md", "reason": "task/sku 双层 — 验收 listing_tasks 表与 task 模型一致性"}
+{"file": "docs/adr/0006-unified-generation-module-by-capability.md", "reason": "生图按能力组织 — 验收 4 Tab 是按 capability 不是按 provider"}
+{"file": "docs/adr/0007-photoshop-windows-only-v1.md", "reason": "PS 套版 Windows-only — 验收降级提示与 spec 一致"}
+{"file": "references/vision-llm-providers/aliyun-bailian-api.md", "reason": "VL 模型清单与单价 — 验收 listVisionModels() 返回 5 个、检测/标题成本预估正确"}
+{"file": "references/generation-comfyui/chenyu-cloud-api.md", "reason": "晨羽智云 ComfyUI API — 验收 ComfyUI 文生图调用是否正确"}
+{"file": "references/generation-paid/grsai-api.md", "reason": "Grsai API — 验收付费生图调用是否正确"}
+{"file": ".trellis/tasks/05-25-v1-ui-redesign-blue-shell/prd.md", "reason": "本任务 PRD — 验收所有 Acceptance Criteria（设计 tokens、字体、wireframe、scope）逐项满足"}

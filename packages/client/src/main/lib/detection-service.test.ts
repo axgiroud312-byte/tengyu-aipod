@@ -1,7 +1,7 @@
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Skill } from '@tengyu-aipod/shared'
+import { type Skill, listVisionModels } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -10,6 +10,7 @@ import {
   classifyRisk,
   parseDetectionResponse,
 } from './detection-service'
+import { TempFileManager } from './temp-file-manager'
 
 type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 
@@ -146,6 +147,10 @@ function createSqliteDependencies() {
     openDatabase: (_workbenchRoot: string) =>
       new Database(join(workbenchRoot, '.workbench', 'workbench.db')),
   }
+}
+
+function createTempFileManager() {
+  return new TempFileManager({ rootDir: join(workbenchRoot, '.workbench', 'tmp') })
 }
 
 async function initializeDetectionSqlite(
@@ -289,6 +294,12 @@ describe('detection service utilities', () => {
 })
 
 describe('DetectionService', () => {
+  it('uses the shared vision model list', () => {
+    const service = new DetectionService()
+
+    expect(service.listModels()).toEqual(listVisionModels().map((model) => model.key))
+  })
+
   it('preprocesses, calls Bailian with JSON response format, copies outputs, stores results, and emits progress', async () => {
     const imagePaths = [
       join(tempRoot, 'inputs', 'print-a.png'),
@@ -339,6 +350,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
         emitProgress: (item) => progress.push(item),
       },
     )
@@ -414,6 +426,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
       },
     )
 
@@ -428,6 +441,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
       },
     )
 
@@ -478,6 +492,7 @@ describe('DetectionService', () => {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'sk-test',
         openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
       },
     )
 

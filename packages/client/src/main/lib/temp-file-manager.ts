@@ -20,6 +20,7 @@ interface TempFileManagerOptions {
   workbenchRootProvider?: WorkbenchRootProvider
   now?: () => number
   orphanTtlMs?: number
+  failedTtlMs?: number
 }
 
 interface CleanupTaskOptions {
@@ -74,10 +75,7 @@ export class TempFileManager {
   private readonly sessionDirs = new Set<string>()
 
   constructor(optionsOrFailedTtlMs: TempFileManagerOptions | number = {}) {
-    const options =
-      typeof optionsOrFailedTtlMs === 'number'
-        ? { failedTtlMs: optionsOrFailedTtlMs }
-        : optionsOrFailedTtlMs
+    const options = typeof optionsOrFailedTtlMs === 'number' ? {} : optionsOrFailedTtlMs
 
     this.rootDir = options.rootDir
     this.workbenchRootProvider = options.workbenchRootProvider ?? getWorkbenchRoot
@@ -86,7 +84,7 @@ export class TempFileManager {
     this.defaultFailedTtlMs =
       typeof optionsOrFailedTtlMs === 'number'
         ? optionsOrFailedTtlMs
-        : DEFAULT_FAILED_TTL_MS
+        : (options.failedTtlMs ?? DEFAULT_FAILED_TTL_MS)
   }
 
   async rootPath(): Promise<string> {

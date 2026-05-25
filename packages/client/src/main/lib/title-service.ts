@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, readdir, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { AppErrorClass, type Skill, type SkillSummary } from '@tengyu-aipod/shared'
+import {
+  AppErrorClass,
+  type Skill,
+  type SkillSummary,
+  listVisionModels,
+} from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
@@ -96,7 +101,13 @@ type TitleServiceDependencies = {
   readConfig?: typeof readAppConfig
   getSecret?: typeof getSecret
   openDatabase?: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+  tempFileManager?: TitleTempFileManager
   emitProgress?: (progress: TitleProgress) => void
+}
+
+type TitleTempFileManager = {
+  createTaskDir(module: 'title', taskId: string): Promise<string>
+  cleanupTask(module: 'title', taskId: string, options?: { keepIfFailed?: boolean }): Promise<void>
 }
 
 type SkuFolder = {
@@ -139,22 +150,16 @@ const PLATFORM_OPTIONS = [
 ]
 
 const LANGUAGE_OPTIONS = [
-  { key: 'en', label: 'English' },
+  { key: 'en', label: '英语' },
   { key: 'zh', label: '中文' },
-  { key: 'es', label: 'Español' },
-  { key: 'pt', label: 'Português' },
-  { key: 'de', label: 'Deutsch' },
-  { key: 'fr', label: 'Français' },
-  { key: 'ja', label: '日本語' },
-  { key: 'ko', label: '한국어' },
-  { key: 'ru', label: 'Русский' },
-  { key: 'ar', label: 'العربية' },
-]
-
-const MODEL_OPTIONS = [
-  { key: 'qwen3-vl-plus', label: 'qwen3-vl-plus' },
-  { key: 'qwen3-vl-flash', label: 'qwen3-vl-flash' },
-  { key: 'qwen-vl-max', label: 'qwen-vl-max' },
+  { key: 'es', label: '西班牙语' },
+  { key: 'pt', label: '葡萄牙语' },
+  { key: 'de', label: '德语' },
+  { key: 'fr', label: '法语' },
+  { key: 'ja', label: '日语' },
+  { key: 'ko', label: '韩语' },
+  { key: 'ru', label: '俄语' },
+  { key: 'ar', label: '阿拉伯语' },
 ]
 
 function naturalCompare(left: string, right: string) {
@@ -583,7 +588,7 @@ export class TitleService {
   }
 
   listModels() {
-    return MODEL_OPTIONS
+    return listVisionModels()
   }
 
   async scanBatchDir(batchDir: string): Promise<TitleScanResult> {
@@ -672,6 +677,7 @@ export class TitleService {
       readConfig: dependencies.readConfig ?? readAppConfig,
       getSecret: dependencies.getSecret ?? getSecret,
       openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      tempFileManager: dependencies.tempFileManager ?? tempFileManager,
     }
 
     try {
@@ -680,7 +686,7 @@ export class TitleService {
         throw new Error('workbench_root is required before title generation can run')
       }
 
-      await tempFileManager.createTaskDir('title', taskId)
+      await resolved.tempFileManager.createTaskDir('title', taskId)
       tempDirCreated = true
 
       const batchDirInfo = await stat(config.batchDir)
@@ -822,7 +828,9 @@ export class TitleService {
       }
 
       if (tempDirCreated) {
-        await tempFileManager.cleanupTask('title', taskId, { keepIfFailed: keepFailedTemp })
+        await resolved.tempFileManager.cleanupTask('title', taskId, {
+          keepIfFailed: keepFailedTemp,
+        })
       }
     }
   }

@@ -264,3 +264,81 @@ await window.api.generation.runExtract({
   promptCount: 1,
 })
 ```
+
+## Scenario: Client ComfyUI Txt2img UI
+
+### 1. Scope / Trigger
+
+- Trigger: generation txt2img tab, ComfyUI txt2img workflow selection, renderer IPC types, or text-to-image artifact writes.
+- Applies to: `packages/client/src/main/lib/generation-service.ts`, `packages/client/src/preload/index.ts`, `packages/client/src/renderer/src/components/generation-workbench.tsx`, renderer preload types, and ComfyUI workflow cache usage.
+
+### 2. Signatures
+
+- `window.api.generation.listComfyuiTxt2imgWorkflows(): Promise<ComfyuiWorkflowSummary[]>`
+- `window.api.generation.runComfyuiTxt2img(input: ComfyuiTxt2imgRunInput): Promise<string>`
+- `ComfyuiTxt2imgRunInput.prompts: string[]`
+- `ComfyuiTxt2imgRunInput.workflowId: string`
+- `ComfyuiTxt2imgRunInput.workflowVersion?: string`
+- `ComfyuiTxt2imgRunInput.width?: number`
+- `ComfyuiTxt2imgRunInput.height?: number`
+- `ComfyuiTxt2imgRunInput.concurrency?: number`
+- `GenerationProgress.capability` is `txt2img`.
+
+### 3. Contracts
+
+- Txt2img ComfyUI workflows are loaded from workflow cache category `txt2img` and filtered to `capability === 'txt2img'`.
+- Renderer must parse manual prompt text before launching and must not send reference images for txt2img.
+- Main process validates non-empty prompts, workflow id, Chenyu API key, and running ComfyUI instance before execution.
+- Workflow execution calls `ComfyuiChenyuAdapter.generate({ capability: 'txt2img', prompt, workflow_id, output.size_px, options })`.
+- Successful outputs are written under `{workbench_root}/02-生图/01-文生图/`.
+- `artifacts` rows for txt2img ComfyUI outputs must set `step='txt2img'`, `provider='comfyui-chenyu'`, and `model_or_workflow` to the workflow id.
+- Width and height are clamped to 256-4096 px; concurrency is clamped to 1-10.
+
+### 4. Validation & Error Matrix
+
+- Empty prompt list -> Chinese renderer-safe "prepare at least one prompt" error.
+- Missing workflow id -> "select ComfyUI txt2img workflow" error before queueing work.
+- Missing Chenyu key -> `HTTP_4XX`, non-retryable, provider `comfyui-chenyu`.
+- No running ComfyUI instance -> `CHENYU_INSTANCE_DOWN`, non-retryable.
+- ComfyUI transport failure -> propagated from `ComfyHttpClient` / `ComfyuiChenyuAdapter`.
+- Per-prompt generation failure -> record a failed prompt and continue other prompts.
+
+### 5. Good/Base/Bad Cases
+
+- Good: two manual prompts select one txt2img workflow, queue two ComfyUI runs, save PNG files to `01-文生图`, emit progress, and register artifacts.
+- Base: no txt2img workflows returns an empty list and the UI keeps execution blocked by workflow validation.
+- Bad: sending arbitrary reference images to txt2img, accepting an unfiltered non-txt2img workflow, or writing outputs without artifact registration.
+
+### 6. Tests Required
+
+- Unit test workflow listing filters category/capability to txt2img only.
+- Unit test `runComfyuiTxt2imgBatch` with fake workflow cache, fake adapter, fake DB, and real filesystem output.
+- Assert no reference images are uploaded for txt2img.
+- Assert outputs land under `02-生图/01-文生图` and artifacts use provider `comfyui-chenyu`.
+- Run `pnpm -F @tengyu-aipod/client test`, `type-check`, and `lint`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+await window.api.generation.runComfyuiTxt2img({
+  prompts,
+  workflowId: img2imgWorkflow.id,
+})
+```
+
+#### Correct
+
+```ts
+const workflows = await window.api.generation.listComfyuiTxt2imgWorkflows()
+const workflow = workflows.find((item) => item.id === selectedWorkflowId)
+await window.api.generation.runComfyuiTxt2img({
+  prompts,
+  workflowId: workflow.id,
+  workflowVersion: workflow.version,
+  width: 1024,
+  height: 1024,
+  concurrency: 1,
+})
+```

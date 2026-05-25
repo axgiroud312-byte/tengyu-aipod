@@ -66,7 +66,7 @@ function buildVariableState(variables: Skill['variables'], existing?: Record<str
 }
 
 function displayThreshold(threshold: DetectionThresholdConfig) {
-  return `Pass: 0-${threshold.passMax} | Review: ${threshold.passMax + 1}-${threshold.reviewMax} | Block: ${threshold.reviewMax + 1}-100`
+  return `通过：0-${threshold.passMax} | 复核：${threshold.passMax + 1}-${threshold.reviewMax} | 拦截：${threshold.reviewMax + 1}-100`
 }
 
 export function DetectionSettingsPanel({
@@ -173,7 +173,7 @@ export function DetectionSettingsPanel({
         }
         setSkillDetail(null)
         setVariables({})
-        setError(loadError instanceof Error ? loadError.message : '加载检测 Skill 失败')
+        setError(loadError instanceof Error ? loadError.message : '加载检测模板失败')
       }
     }
 
@@ -220,7 +220,7 @@ export function DetectionSettingsPanel({
 
   async function saveConfig() {
     if (!selectedSkill) {
-      setError('请先选择检测 Skill')
+      setError('请先选择检测模板')
       return
     }
 
@@ -277,7 +277,7 @@ export function DetectionSettingsPanel({
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-sm font-medium text-muted-foreground">侵权检测设置</p>
-          <h2 className="mt-1 text-lg font-semibold">阈值与 Skill 参数</h2>
+          <h2 className="mt-1 text-lg font-semibold">阈值与检测模板</h2>
           <p className="mt-1 text-sm text-muted-foreground">{displayThreshold(threshold)}</p>
         </div>
         <Button disabled={saving} onClick={() => void saveConfig()} type="button">
@@ -324,7 +324,7 @@ export function DetectionSettingsPanel({
             </label>
 
             <label className="block space-y-2 text-sm font-medium">
-              <span>Skill</span>
+              <span>检测模板</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 onChange={(event) => {
@@ -346,7 +346,7 @@ export function DetectionSettingsPanel({
                     </option>
                   ))
                 ) : (
-                  <option value="">暂无 detection skill</option>
+                  <option value="">暂无检测模板</option>
                 )}
               </select>
             </label>
@@ -360,7 +360,7 @@ export function DetectionSettingsPanel({
 
             <label className="block space-y-2 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <span>Pass 上限</span>
+                <span>通过上限</span>
                 <span className="font-mono text-xs text-muted-foreground">{threshold.passMax}</span>
               </div>
               <input
@@ -375,7 +375,7 @@ export function DetectionSettingsPanel({
 
             <label className="block space-y-2 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <span>Review 上限</span>
+                <span>复核上限</span>
                 <span className="font-mono text-xs text-muted-foreground">
                   {threshold.reviewMax}
                 </span>
@@ -393,7 +393,7 @@ export function DetectionSettingsPanel({
 
           <div className="space-y-3 rounded-md border p-4">
             <div>
-              <p className="text-sm font-medium">当前 Skill</p>
+              <p className="text-sm font-medium">当前模板</p>
               <p className="text-sm text-muted-foreground">{selectedSkillLabel}</p>
             </div>
             {skillDetail?.variables.length ? (
@@ -525,7 +525,7 @@ export function DetectionSettingsPanel({
                 })}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">当前 Skill 没有可配置变量。</p>
+              <p className="text-sm text-muted-foreground">当前模板没有可配置变量。</p>
             )}
           </div>
         </div>
@@ -536,11 +536,11 @@ export function DetectionSettingsPanel({
             <p className="mt-1 text-muted-foreground">{displayThreshold(threshold)}</p>
           </div>
           <div>
-            <p className="font-medium">Model</p>
+            <p className="font-medium">模型</p>
             <p className="mt-1 font-mono text-muted-foreground">{model}</p>
           </div>
           <div>
-            <p className="font-medium">Skill</p>
+            <p className="font-medium">检测模板</p>
             <p className="mt-1 text-muted-foreground">{selectedSkillLabel}</p>
           </div>
           <div>

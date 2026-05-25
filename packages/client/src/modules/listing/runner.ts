@@ -12,8 +12,12 @@ import {
   type ListingResult,
   type ListingStage,
   type ListingStatus,
+  type ListingTaskInput,
+  type ListingTaskStatus,
   type ListingTemplateConfig,
   type ListingTemplateKey,
+  type ListingWorkspaceInput,
+  type ListingWorkspaceStatus,
   SLICE_8_LISTING_TEMPLATES,
   WORKBENCH_DIRECTORIES,
   type WorkspaceResult,
@@ -22,6 +26,7 @@ import {
 } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
 import type { Browser as PlaywrightBrowser, Page as PlaywrightPage } from 'playwright'
+import { z } from 'zod'
 import { bitBrowserClient } from '../../main/lib/bit-browser-client'
 import {
   type BrowserProfileLockManager,
@@ -31,12 +36,15 @@ import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
 import { loadBatchAsListingItems } from '../../main/lib/listing-batch-loader'
 import { sheinWorkflow } from './platforms/dianxiaomi-shein/workflow'
 import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
+import { type ListingTaskListInput, SqliteListingTaskStore } from './task-store'
 
 const nodeRequire = createRequire(import.meta.url)
 type ElectronBrowserWindowConstructor = typeof import('electron').BrowserWindow
 
 export type ListingWorkspace = {
   profile_id: string
+  workspace_id?: string
+  task_id?: string
 }
 
 export type ListingRunConfig = {
@@ -102,11 +110,26 @@ export type ListingStatusStore = {
   close?(): void
 }
 
+export type ListingTaskStore = {
+  updateTaskStatus(
+    taskId: string,
+    status: ListingTaskStatus,
+    lastRunTaskId?: string | null,
+  ): Promise<unknown> | unknown
+  updateWorkspaceStatus(
+    workspaceId: string,
+    status: ListingWorkspaceStatus,
+    currentTaskId: string | null,
+  ): Promise<unknown> | unknown
+  close?(): void
+}
+
 export type ListingProgressEmitter = (progress: ListingProgress) => void
 
 export type ListingRunnerDependencies = {
   readConfig?: () => Promise<{ workbench_root?: string | undefined }>
   openStatusStore?: (workbenchRoot: string) => ListingStatusStore
+  openTaskStore?: (workbenchRoot: string) => ListingTaskStore
   cdp?: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
   locks?: BrowserProfileLockManager
   workflows?: Partial<Record<ListingPlatformKey, ListingWorkflow>>
@@ -194,6 +217,82 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_FAIL_STREAK_LIMIT = 3
 const DEFAULT_STAGE: ListingStage = 'enter_page'
 const DEFAULT_SUBMIT_MODE: ListingConfig['submitMode'] = 'save-draft'
+const listingPlatformKeySchema = z.enum(['temu-pop', 'shein'])
+const listingTemplateKeySchema = z.enum(['temu-clothing', 'temu-general', 'shein'])
+const listingSkuModeSchema = z.enum(['manual', 'one-click-generate'])
+const listingSubmitModeSchema = z.enum(['save-draft', 'publish'])
+const listingTaskStatusSchema = z.enum(['queued', 'running', 'paused', 'completed', 'failed'])
+const listingWorkspaceStatusSchema = z.enum(['idle', 'running', 'paused', 'failed', 'completed'])
+
+const listingWorkspaceInputSchema = z.object({
+  profile_id: z.string().min(1),
+  profile_name: z.string().min(1),
+  platform: listingPlatformKeySchema,
+})
+
+const listingWorkspaceRunSchema = z.object({
+  profile_id: z.string().min(1),
+  task_id: z.string().min(1).optional(),
+  workspace_id: z.string().min(1).optional(),
+})
+
+const listingTaskInputSchema = z.object({
+  workspace_id: z.string().min(1),
+  platform: listingPlatformKeySchema,
+  template_key: listingTemplateKeySchema,
+  draft_template_id: z.string().min(1),
+  shop_name: z.string().min(1),
+  batch_dir: z.string().min(1),
+  sku_mode: listingSkuModeSchema,
+  submit_mode: listingSubmitModeSchema,
+  max_attempts: z.number().int().min(1).max(5),
+  fail_streak_limit: z.number().int().min(1).max(10),
+  resume: z.boolean(),
+})
+
+const listingTaskListInputSchema = z
+  .object({
+    workspaceId: z.string().min(1).optional(),
+    status: listingTaskStatusSchema.optional(),
+  })
+  .optional()
+
+const listingTaskStatusInputSchema = z.object({
+  taskId: z.string().min(1),
+  status: listingTaskStatusSchema,
+  lastRunTaskId: z.string().min(1).nullable().optional(),
+})
+
+const listingTaskDeleteInputSchema = z.object({
+  taskId: z.string().min(1),
+})
+
+const listingWorkspaceStatusInputSchema = z.object({
+  workspaceId: z.string().min(1),
+  status: listingWorkspaceStatusSchema,
+  currentTaskId: z.string().min(1).nullable(),
+})
+
+const listingRunConfigSchema = z.object({
+  task_id: z.string().min(1).optional(),
+  batch_id: z.string().min(1).optional(),
+  batch_dir: z.string().min(1),
+  platform: listingPlatformKeySchema,
+  template: z.custom<ListingTemplateConfig>(isListingTemplateConfig),
+  workspaces: z.array(listingWorkspaceRunSchema).min(1),
+  submit_mode: listingSubmitModeSchema.optional(),
+  max_attempts: z.number().int().min(1).max(5).optional(),
+  timeout_ms: z.number().int().min(1_000).max(120_000).optional(),
+  fail_streak_limit: z.number().int().min(1).max(10).optional(),
+  resume: z.boolean().optional(),
+  retry_failed_only: z.boolean().optional(),
+  evidence_dir: z.string().min(1).optional(),
+})
+
+const listingRunRequestSchema = z.object({
+  config: listingRunConfigSchema,
+  items: z.array(z.custom<ListingItem>(isListingItemLike)),
+})
 
 export async function runLocalListingBatch(
   config: ListingRunConfig,
@@ -233,6 +332,7 @@ export async function runItemWithRetries(
 export class ListingRunner {
   private readonly readConfig: () => Promise<{ workbench_root?: string | undefined }>
   private readonly openStatusStore: (workbenchRoot: string) => ListingStatusStore
+  private readonly openTaskStore: (workbenchRoot: string) => ListingTaskStore
   private readonly cdp: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
   private readonly locks: BrowserProfileLockManager
   private readonly workflows: Partial<Record<ListingPlatformKey, ListingWorkflow>>
@@ -245,6 +345,7 @@ export class ListingRunner {
   constructor(dependencies: ListingRunnerDependencies = {}) {
     this.readConfig = dependencies.readConfig ?? readAppConfig
     this.openStatusStore = dependencies.openStatusStore ?? openWorkbenchListingStatusStore
+    this.openTaskStore = dependencies.openTaskStore ?? openWorkbenchListingTaskStore
     this.cdp = dependencies.cdp ?? cdpClient
     this.locks = dependencies.locks ?? browserProfileLocks
     this.workflows = dependencies.workflows ?? {}
@@ -271,6 +372,9 @@ export class ListingRunner {
     }
 
     const store = this.openStatusStore(workbenchRoot)
+    const taskStore = hasTaskBindings(resolved.workspaces)
+      ? this.openTaskStore(workbenchRoot)
+      : undefined
     const queues = assignItemsToWorkspaces(items, resolved.workspaces)
     const progress = createProgressSnapshot(items.length, queues)
 
@@ -278,7 +382,7 @@ export class ListingRunner {
       this.emitBatchProgress(resolved, progress, 'pending')
       const workspaceResults = await Promise.all(
         Array.from(queues.entries()).map(([profileId, queue]) =>
-          this.runWorkspaceQueue(profileId, queue, resolved, store, progress),
+          this.runWorkspaceQueue(profileId, queue, resolved, store, progress, taskStore),
         ),
       )
       const results = workspaceResults.flatMap((workspace) => workspace.results)
@@ -294,6 +398,7 @@ export class ListingRunner {
       }
     } finally {
       store.close?.()
+      taskStore?.close?.()
     }
   }
 
@@ -305,11 +410,15 @@ export class ListingRunner {
     const workbenchRoot = await readWorkbenchRoot(this.readConfig)
     const resolved = await this.resolveRunConfig(config, workbenchRoot)
     const store = this.openStatusStore(workbenchRoot)
+    const taskStore = hasTaskBindings(resolved.workspaces)
+      ? this.openTaskStore(workbenchRoot)
+      : undefined
     const progress = createProgressSnapshot(queue.length, new Map([[profileId, queue]]))
     try {
-      return await this.runWorkspaceQueue(profileId, queue, resolved, store, progress)
+      return await this.runWorkspaceQueue(profileId, queue, resolved, store, progress, taskStore)
     } finally {
       store.close?.()
+      taskStore?.close?.()
     }
   }
 
@@ -372,14 +481,18 @@ export class ListingRunner {
     config: ResolvedRunConfig,
     store: ListingStatusStore,
     progress: ProgressSnapshot,
+    taskStore?: ListingTaskStore,
   ): Promise<WorkspaceResult> {
-    const lock = this.locks.acquire(profileId, 'listing', config.task_id)
+    let lock: ReturnType<BrowserProfileLockManager['acquire']> | null = null
     let browser: PlaywrightBrowser | null = null
     let page: PlaywrightPage | null = null
     const results: ListingResult[] = []
     let failStreak = 0
+    const binding = workspaceBindingFor(config, profileId)
 
     try {
+      lock = this.locks.acquire(profileId, 'listing', config.task_id)
+      await markWorkspaceTaskRunning(taskStore, binding, config.task_id)
       browser = await this.cdp.connectToProfile(profileId)
       const context = await firstBrowserContext(browser)
       page = await context.newPage()
@@ -487,14 +600,17 @@ export class ListingRunner {
           break
         }
       }
+    } catch (error) {
+      await markWorkspaceTaskFailed(taskStore, binding, config.task_id)
+      throw error
     } finally {
       await page?.close().catch(() => undefined)
       await this.closeBrowser(profileId, browser)
-      lock.release()
+      lock?.release()
     }
 
     const runtime = progress.byWorkspace.get(profileId)
-    return {
+    const workspaceResult = {
       profileId,
       platform: config.platform,
       templateKey: config.template.key,
@@ -507,6 +623,8 @@ export class ListingRunner {
         runtime?.skippedCount ?? results.filter((result) => result.status === 'skipped').length,
       results,
     }
+    await markWorkspaceTaskFinished(taskStore, binding, config.task_id, workspaceResult)
+    return workspaceResult
   }
 
   private workflowFor(platform: ListingPlatformKey): ListingWorkflow {
@@ -668,6 +786,34 @@ export function registerListingRunnerIpc() {
   const ipcMain = electronIpcMain()
   ipcMain.handle('listing:list-templates', () => SLICE_8_LISTING_TEMPLATES.map((item) => item))
   ipcMain.handle('listing:list-profiles', () => bitBrowserClient.listProfiles())
+  ipcMain.handle('listing:list-saved-workspaces', async () =>
+    withListingTaskStore((store) => store.listWorkspaces()),
+  )
+  ipcMain.handle('listing:save-workspace', async (_event, input: unknown) =>
+    withListingTaskStore((store) => store.upsertWorkspace(parseListingWorkspaceInput(input))),
+  )
+  ipcMain.handle('listing:update-workspace-status', async (_event, input: unknown) => {
+    const parsed = parseListingWorkspaceStatusInput(input)
+    return withListingTaskStore((store) =>
+      store.updateWorkspaceStatus(parsed.workspaceId, parsed.status, parsed.currentTaskId),
+    )
+  })
+  ipcMain.handle('listing:list-tasks', async (_event, input: unknown) =>
+    withListingTaskStore((store) => store.listTasks(parseListingTaskListInput(input))),
+  )
+  ipcMain.handle('listing:create-task', async (_event, input: unknown) =>
+    withListingTaskStore((store) => store.createTask(parseListingTaskInput(input))),
+  )
+  ipcMain.handle('listing:update-task-status', async (_event, input: unknown) => {
+    const parsed = parseListingTaskStatusInput(input)
+    return withListingTaskStore((store) =>
+      store.updateTaskStatus(parsed.taskId, parsed.status, parsed.lastRunTaskId),
+    )
+  })
+  ipcMain.handle('listing:delete-task', async (_event, input: unknown) => {
+    const parsed = parseListingTaskDeleteInput(input)
+    return withListingTaskStore((store) => store.deleteTask(parsed.taskId))
+  })
   ipcMain.handle('listing:choose-batch-dir', async () => {
     const result = await electronDialog().showOpenDialog({
       properties: ['openDirectory'],
@@ -711,14 +857,10 @@ export function registerListingRunnerIpc() {
     return { ok: true }
   })
   ipcMain.handle('listing:run', async (_event, input: unknown) => {
-    if (!isListingRunRequest(input)) {
-      throw new AppErrorClass('HTTP_4XX', '上架任务参数不正确', false, {
-        kind: 'validation',
-      })
-    }
-    const taskId = input.config.task_id ?? randomUUID()
+    const runRequest = parseListingRunRequest(input)
+    const taskId = runRequest.config.task_id ?? randomUUID()
     void listingRunner
-      .runLocalListingBatch({ ...input.config, task_id: taskId }, input.items)
+      .runLocalListingBatch({ ...runRequest.config, task_id: taskId }, runRequest.items)
       .catch(() => null)
     return taskId
   })
@@ -737,6 +879,63 @@ function assignItemsToWorkspaces(items: ListingItem[], workspaces: ListingWorksp
     queues.get(workspace.profile_id)?.push(item)
   }
   return queues
+}
+
+function hasTaskBindings(workspaces: ListingWorkspace[]) {
+  return workspaces.some((workspace) => Boolean(workspace.workspace_id && workspace.task_id))
+}
+
+function workspaceBindingFor(config: ResolvedRunConfig, profileId: string) {
+  const workspace = config.workspaces.find((item) => item.profile_id === profileId)
+  if (!workspace?.workspace_id || !workspace.task_id) {
+    return null
+  }
+  return {
+    taskId: workspace.task_id,
+    workspaceId: workspace.workspace_id,
+  }
+}
+
+async function markWorkspaceTaskRunning(
+  store: ListingTaskStore | undefined,
+  binding: ReturnType<typeof workspaceBindingFor>,
+  runTaskId: string,
+) {
+  if (!store || !binding) {
+    return
+  }
+  await store.updateTaskStatus(binding.taskId, 'running', runTaskId)
+  await store.updateWorkspaceStatus(binding.workspaceId, 'running', binding.taskId)
+}
+
+async function markWorkspaceTaskFailed(
+  store: ListingTaskStore | undefined,
+  binding: ReturnType<typeof workspaceBindingFor>,
+  runTaskId: string,
+) {
+  if (!store || !binding) {
+    return
+  }
+  await store.updateTaskStatus(binding.taskId, 'failed', runTaskId)
+  await store.updateWorkspaceStatus(binding.workspaceId, 'failed', null)
+}
+
+async function markWorkspaceTaskFinished(
+  store: ListingTaskStore | undefined,
+  binding: ReturnType<typeof workspaceBindingFor>,
+  runTaskId: string,
+  result: WorkspaceResult,
+) {
+  if (!store || !binding) {
+    return
+  }
+  const hasFailedItems = result.failedCount > 0
+  await store.updateTaskStatus(binding.taskId, hasFailedItems ? 'failed' : 'completed', runTaskId)
+  await store.updateWorkspaceStatus(
+    binding.workspaceId,
+    hasFailedItems ? 'failed' : 'completed',
+    null,
+  )
 }
 
 function normalizeRunConfig(
@@ -962,6 +1161,22 @@ function openWorkbenchListingStatusStore(workbenchRoot: string) {
   return new SqliteListingStatusStore(new Database(workbenchDbPath(workbenchRoot)))
 }
 
+function openWorkbenchListingTaskStore(workbenchRoot: string) {
+  return new SqliteListingTaskStore(new Database(workbenchDbPath(workbenchRoot)))
+}
+
+async function withListingTaskStore<T>(
+  fn: (store: SqliteListingTaskStore) => T | Promise<T>,
+): Promise<T> {
+  const workbenchRoot = await readWorkbenchRoot(readAppConfig)
+  const store = openWorkbenchListingTaskStore(workbenchRoot)
+  try {
+    return await fn(store)
+  } finally {
+    store.close()
+  }
+}
+
 function ensureListingStatusTable(db: Pick<Database.Database, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS listing_status (
@@ -1028,14 +1243,73 @@ function isListingStatus(value: unknown): value is ListingStatus {
   )
 }
 
-function isListingRunRequest(value: unknown): value is {
+function parseListingRunRequest(input: unknown): {
   config: ListingRunConfig
   items: ListingItem[]
 } {
-  if (!isRecord(value) || !isRecord(value.config) || !Array.isArray(value.items)) {
-    return false
+  const parsed = listingRunRequestSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '上架任务参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
   }
-  return typeof value.config.batch_dir === 'string' && value.items.every(isListingItemLike)
+  return {
+    config: toListingRunConfig(parsed.data.config),
+    items: parsed.data.items,
+  }
+}
+
+function toListingRunConfig(config: z.infer<typeof listingRunConfigSchema>): ListingRunConfig {
+  const result: ListingRunConfig = {
+    batch_dir: config.batch_dir,
+    platform: config.platform,
+    template: config.template,
+    workspaces: config.workspaces.map(toListingWorkspace),
+  }
+  if (config.task_id !== undefined) {
+    result.task_id = config.task_id
+  }
+  if (config.batch_id !== undefined) {
+    result.batch_id = config.batch_id
+  }
+  if (config.submit_mode !== undefined) {
+    result.submit_mode = config.submit_mode
+  }
+  if (config.max_attempts !== undefined) {
+    result.max_attempts = config.max_attempts
+  }
+  if (config.timeout_ms !== undefined) {
+    result.timeout_ms = config.timeout_ms
+  }
+  if (config.fail_streak_limit !== undefined) {
+    result.fail_streak_limit = config.fail_streak_limit
+  }
+  if (config.resume !== undefined) {
+    result.resume = config.resume
+  }
+  if (config.retry_failed_only !== undefined) {
+    result.retry_failed_only = config.retry_failed_only
+  }
+  if (config.evidence_dir !== undefined) {
+    result.evidence_dir = config.evidence_dir
+  }
+  return result
+}
+
+function toListingWorkspace(
+  workspace: z.infer<typeof listingWorkspaceRunSchema>,
+): ListingWorkspace {
+  const result: ListingWorkspace = {
+    profile_id: workspace.profile_id,
+  }
+  if (workspace.task_id !== undefined) {
+    result.task_id = workspace.task_id
+  }
+  if (workspace.workspace_id !== undefined) {
+    result.workspace_id = workspace.workspace_id
+  }
+  return result
 }
 
 function isListingItemLike(value: unknown): value is ListingItem {
@@ -1045,6 +1319,26 @@ function isListingItemLike(value: unknown): value is ListingItem {
     typeof value.sku === 'string' &&
     typeof value.title === 'string'
   )
+}
+
+function isListingTemplateConfig(value: unknown): value is ListingTemplateConfig {
+  return (
+    isRecord(value) &&
+    isListingTemplateKey(value.key) &&
+    isListingPlatformKey(value.platform) &&
+    typeof value.label === 'string' &&
+    typeof value.editUrl === 'string' &&
+    typeof value.materialRootDir === 'string' &&
+    Array.isArray(value.excludedFolderNames) &&
+    value.excludedFolderNames.every((item) => typeof item === 'string') &&
+    (value.skuMode === 'manual' || value.skuMode === 'one-click-generate') &&
+    typeof value.uploadVideo === 'boolean' &&
+    Array.isArray(value.requiredImageGroups)
+  )
+}
+
+function isListingTemplateKey(value: unknown): value is ListingTemplateKey {
+  return value === 'temu-clothing' || value === 'temu-general' || value === 'shein'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -1103,6 +1397,101 @@ function parseListingStatusListInput(input: unknown): ListingStatusListInput {
     result.status = input.status
   }
   return result
+}
+
+function parseListingWorkspaceInput(input: unknown): ListingWorkspaceInput {
+  const parsed = listingWorkspaceInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '保存上架工作区参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
+
+function parseListingWorkspaceStatusInput(input: unknown): {
+  workspaceId: string
+  status: ListingWorkspaceStatus
+  currentTaskId: string | null
+} {
+  const parsed = listingWorkspaceStatusInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '更新上架工作区状态参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
+
+function parseListingTaskInput(input: unknown): ListingTaskInput {
+  const parsed = listingTaskInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '保存上架任务参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
+
+function parseListingTaskListInput(input: unknown): ListingTaskListInput {
+  const parsed = listingTaskListInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '读取上架任务参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  const data = parsed.data ?? {}
+  const result: ListingTaskListInput = {}
+  if (data.workspaceId !== undefined) {
+    result.workspaceId = data.workspaceId
+  }
+  if (data.status !== undefined) {
+    result.status = data.status
+  }
+  return result
+}
+
+function parseListingTaskStatusInput(input: unknown): {
+  taskId: string
+  status: ListingTaskStatus
+  lastRunTaskId?: string | null
+} {
+  const parsed = listingTaskStatusInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '更新上架任务状态参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  const result: {
+    taskId: string
+    status: ListingTaskStatus
+    lastRunTaskId?: string | null
+  } = {
+    taskId: parsed.data.taskId,
+    status: parsed.data.status,
+  }
+  if (parsed.data.lastRunTaskId !== undefined) {
+    result.lastRunTaskId = parsed.data.lastRunTaskId
+  }
+  return result
+}
+
+function parseListingTaskDeleteInput(input: unknown): {
+  taskId: string
+} {
+  const parsed = listingTaskDeleteInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '删除上架任务参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
 }
 
 function isListingPlatformKey(value: unknown): value is ListingPlatformKey {
