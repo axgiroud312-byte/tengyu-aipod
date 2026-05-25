@@ -74,3 +74,28 @@ export interface PsdTemplate {
 export interface PhotoshopScanTemplateRequest {
   psd_path: string
 }
+
+export type PhotoshopExportFormat = 'jpg' | 'png'
+
+export interface PhotoshopSoReplacement {
+  layer_path: string
+  input_image: string
+}
+
+export interface PhotoshopJob {
+  task_id: string
+  group_index: number
+  mockup_path: string
+  so_replacements: PhotoshopSoReplacement[]
+  clip_areas: PsdClipArea[]
+  output_paths: string[]
+  format: PhotoshopExportFormat
+  jpg_quality: number
+  result_file_path: string
+}
+
+export interface PhotoshopJsxJobFile {
+  jsx_path: string
+  result_file_path: string
+  content: string
+}

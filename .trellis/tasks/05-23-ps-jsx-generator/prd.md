@@ -10,6 +10,18 @@
 - `docs/spec/05-photoshop.md §7`
 - `references/photoshop/open-source-references.md`
 
+## 本机真实环境约束
+
+- Windows 10/11 + Photoshop 2023+；当前主理人已打开 Photoshop，后续执行类 task 必须通过真实 Photoshop COM。
+- 真实 PSD 模板占位：
+  - `C:\Users\niilo\Desktop\钥匙扣x.psd`
+  - `C:\Users\niilo\Desktop\mao 杯子.psd`
+- 真实印花素材目录：通过 `process.env.PS_MATERIAL_ROOT` 读取，主理人本机为 `C:\Users\niilo\Desktop\印花素材`。
+- 输出根目录：通过 `process.env.PS_OUTPUT_ROOT` 读取，主理人本机为 `C:\Users\niilo\Desktop\新建文件夹`。
+- `REAL_PS=1` 启用真实 Photoshop/COM 测试；`REAL_PS_MUTATE=1` 作为会覆盖输出或关闭未保存文档等破坏性操作的二级守护。
+- 本 task 只生成 JSX 字符串和 JSX 临时路径，不主动执行 COM；执行类后续 task 必须在 Windows 本机用真实 Photoshop 验证。
+- 禁止程序自动 quit Photoshop。
+
 ## 验收标准
 
 - [ ] `generateJsx(job: PhotoshopJob): string`
