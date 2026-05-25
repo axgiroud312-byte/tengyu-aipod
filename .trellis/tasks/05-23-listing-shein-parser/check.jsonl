@@ -1,1 +1,4 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/spec/07-listing.md", "reason": "Verify parser layer stays read-only and real tests are guarded."}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Verify no source DOM parser code was ported."}
+{"file": ".trellis/tasks/archive/2026-05/05-23-listing-shein-selectors/evidence/shein-selector-scout.json", "reason": "Check parser matches observed real Shein page anchors."}

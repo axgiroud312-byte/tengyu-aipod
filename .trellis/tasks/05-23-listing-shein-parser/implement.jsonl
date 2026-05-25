@@ -1,1 +1,5 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/spec/07-listing.md", "reason": "Parser must read real Shein DOM state and return serializable observed_state without ElementHandles."}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Dianxiaomi DOM parser must be rewritten, not ported from source project."}
+{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for page family and historical observations."}
+{"file": ".trellis/tasks/archive/2026-05/05-23-listing-shein-selectors/evidence/shein-selector-scout.json", "reason": "Real Shein selector scouting evidence for parser field anchors."}
