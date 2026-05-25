@@ -99,3 +99,14 @@ export interface PhotoshopJsxJobFile {
   result_file_path: string
   content: string
 }
+
+export interface PhotoshopPrintAsset {
+  id: string
+  file_path: string
+}
+
+export interface PhotoshopTaskGroup {
+  group_index: number
+  print_assets: PhotoshopPrintAsset[]
+  job: PhotoshopJob
+}
