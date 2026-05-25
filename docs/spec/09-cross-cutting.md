@@ -493,10 +493,27 @@ Step 4/4 — 完成
 
 ## 9. 国际化
 
-### 9.1 v1：中文 only
+### 9.1 v1：中文 only（但留好 i18n 钩子）
 
-- 全部 UI 文案直接写中文
-- 不引入 i18n 框架（节省复杂度）
+- v1 不引入 i18next 等框架（节省复杂度，v1.5 再做）
+- 但所有渲染进程 UI 字符串**必须**通过临时函数 `t()` 包裹，避免 v1.5 全量改造：
+
+  ```ts
+  // packages/client/src/renderer/src/locale/t.ts
+  // v1: 直接返回中文字面量；v1.5: 替换为 i18next 的 useTranslation
+  export const t = (s: string) => s;
+  ```
+
+  ```tsx
+  import { t } from '@/locale/t';
+  <Button>{t('开始采集')}</Button>
+  ```
+
+- 文案规则：
+  - 入参直接是中文字面量，**不**抽 key（v1.5 再用 i18next-parser 自动扫提取）
+  - 仅渲染进程（`.tsx` / 渲染进程 `.ts`）里写给用户看的字符串才包 `t()`
+  - 主进程错误消息、CLI 输出、日志、注释**不**包 `t()`（用户不直接看）
+  - 不在 `t()` 里做字符串拼接，模板化用 `t('已采集 {n} 张').replace('{n}', n)`，v1.5 切到 i18next 插值语法
 
 ### 9.2 v1.5：i18n
 
