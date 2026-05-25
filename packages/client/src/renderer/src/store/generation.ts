@@ -31,7 +31,7 @@ export const generationProviders: Array<{ key: GenerationProvider; label: string
 ]
 
 export const generationProviderMatrix: Record<GenerationCapability, GenerationProvider[]> = {
-  txt2img: ['grsai'],
+  txt2img: ['grsai', 'comfyui-chenyu'],
   img2img: ['grsai', 'comfyui-chenyu'],
   extract: ['grsai', 'comfyui-chenyu'],
   matting: ['comfyui-chenyu'],

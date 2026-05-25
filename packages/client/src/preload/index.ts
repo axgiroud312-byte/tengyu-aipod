@@ -43,6 +43,7 @@ import type {
   ComfyuiExtractRunInput,
   ComfyuiImg2imgRunInput,
   ComfyuiMattingRunInput,
+  ComfyuiTxt2imgRunInput,
   ExtractRunInput,
   ExtractSourcesResult,
   GenerationProgress,
@@ -145,6 +146,10 @@ const api = {
       ipcRenderer.invoke('generation:list-extract-sources') as Promise<ExtractSourcesResult>,
     listImg2imgSources: () =>
       ipcRenderer.invoke('generation:list-img2img-sources') as Promise<Img2imgSourcesResult>,
+    listComfyuiTxt2imgWorkflows: () =>
+      ipcRenderer.invoke('generation:list-comfyui-txt2img-workflows') as Promise<
+        ComfyuiWorkflowSummary[]
+      >,
     listComfyuiImg2imgWorkflows: () =>
       ipcRenderer.invoke('generation:list-comfyui-img2img-workflows') as Promise<
         ComfyuiWorkflowSummary[]
@@ -165,6 +170,8 @@ const api = {
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
       ipcRenderer.invoke('generation:run-txt2img', input) as Promise<string>,
+    runComfyuiTxt2img: (input: ComfyuiTxt2imgRunInput) =>
+      ipcRenderer.invoke('generation:run-comfyui-txt2img', input) as Promise<string>,
     runExtract: (input: ExtractRunInput) =>
       ipcRenderer.invoke('generation:run-extract', input) as Promise<string>,
     runComfyuiExtract: (input: ComfyuiExtractRunInput) =>

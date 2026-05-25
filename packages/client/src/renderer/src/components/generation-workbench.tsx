@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CircleDashed,
@@ -53,7 +54,7 @@ const providerNotes: Record<GenerationProvider, string> = {
 }
 
 const unavailableText: Record<GenerationCapability, string> = {
-  txt2img: 'ComfyUI 不提供文生图入口，请使用 Grsai。',
+  txt2img: '当前组合不可用，请切换实现方式。',
   img2img: '当前组合不可用，请切换实现方式。',
   extract: '当前组合不可用，请切换实现方式。',
   matting: 'Grsai 不内置透明底抠图，请使用 ComfyUI 或后续混合路径。',
@@ -104,6 +105,17 @@ const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string
   },
 ]
 
+const generationStepLabels: Record<string, string> = {
+  txt2img: '文生图',
+  img2img: '图生图',
+  extract: '提取',
+  'manual-import': '手动导入',
+}
+
+function generationStepLabel(step: string) {
+  return generationStepLabels[step] ?? step
+}
+
 function clampNumber(value: string, min: number, max: number, fallback: number) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) {
@@ -144,6 +156,10 @@ function workflowOptionKey(workflow: Pick<ComfyuiWorkflowSummary, 'id' | 'versio
   return `${workflow.id}@${workflow.version}`
 }
 
+function isGenerationCapabilityKey(value: string): value is GenerationCapability {
+  return generationCapabilities.some((capability) => capability.key === value)
+}
+
 function parseSkillOptionKey(value: string) {
   const [id = '', version = ''] = value.split('@')
   return { id, version }
@@ -180,7 +196,7 @@ function capabilityCopy(capability: GenerationCapability, provider: GenerationPr
   if (capability === 'txt2img') {
     return {
       title: '文生图表单占位',
-      description: '后续接入 AI 生成提示词 / 自己写双模式、提示词审稿、生图设置和进度面板。',
+      description: '后续接入智能生成提示词 / 自己写双模式、提示词审稿、生图设置和进度面板。',
     }
   }
 
@@ -199,7 +215,7 @@ function capabilityCopy(capability: GenerationCapability, provider: GenerationPr
       title: provider === 'grsai' ? 'Grsai 提取表单占位' : 'ComfyUI 提取工作流占位',
       description:
         provider === 'grsai'
-          ? '后续接入采集图多选、提取 skill、参考图提示词生成和图生图执行。'
+          ? '后续接入采集图多选、提取模板、参考图提示词生成和图生图执行。'
           : '后续接入提取工作流选择、源图上传和结果落盘。',
     }
   }
@@ -391,7 +407,7 @@ function GrsaiPromptGenerationPanel({
                   type="button"
                   variant={mode === 'ai' ? 'default' : 'secondary'}
                 >
-                  AI 生成提示词
+                  智能生成提示词
                 </Button>
                 <Button
                   onClick={() => setMode('manual')}
@@ -479,7 +495,7 @@ function GrsaiPromptGenerationPanel({
                   />
                 </label>
                 <label className="block space-y-2 text-sm font-medium">
-                  <span>LLM 模型</span>
+                  <span>语言模型</span>
                   <select
                     className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     onChange={(event) => setLlmModel(event.target.value)}
@@ -508,7 +524,7 @@ function GrsaiPromptGenerationPanel({
 
               <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
                 <label className="block space-y-2 text-sm font-medium">
-                  <span>Skill</span>
+                  <span>提示词模板</span>
                   <input
                     className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     onChange={(event) => setSkillId(event.target.value)}
@@ -689,6 +705,264 @@ function GrsaiPromptGenerationPanel({
   )
 }
 
+function ComfyuiTxt2imgPanel() {
+  const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
+  const [workflowKey, setWorkflowKey] = useState('')
+  const [manualText, setManualText] = useState('')
+  const [width, setWidth] = useState('1024')
+  const [height, setHeight] = useState('1024')
+  const [concurrency, setConcurrency] = useState('1')
+  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [result, setResult] = useState<GenerationRunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loadingWorkflows, setLoadingWorkflows] = useState(false)
+  const [running, setRunning] = useState(false)
+
+  useEffect(() => {
+    void loadWorkflows()
+  }, [])
+
+  useEffect(() => {
+    const offProgress = window.api.generation.onProgress((nextProgress) => {
+      if (nextProgress.capability !== 'txt2img') {
+        return
+      }
+      setProgress(nextProgress)
+    })
+    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
+      if (event.ok && event.result.taskId !== progress?.task_id) {
+        return
+      }
+      setRunning(false)
+      if (event.ok) {
+        setResult(event.result)
+        setError(null)
+        return
+      }
+      setError(event.error)
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [progress?.task_id])
+
+  const percent = progressPercent(progress)
+  const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
+
+  async function loadWorkflows() {
+    setLoadingWorkflows(true)
+    setError(null)
+    try {
+      const nextWorkflows = await window.api.generation.listComfyuiTxt2imgWorkflows()
+      setWorkflows(nextWorkflows)
+      setWorkflowKey(
+        (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      )
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 文生图工作流失败')
+    } finally {
+      setLoadingWorkflows(false)
+    }
+  }
+
+  async function startTxt2img() {
+    setError(null)
+    const prompts = await window.api.generation.parseManualPrompts(manualText)
+    if (prompts.length === 0) {
+      setError('请先填写至少一条提示词')
+      return
+    }
+    if (!selectedWorkflow) {
+      setError('请选择 ComfyUI 文生图工作流')
+      return
+    }
+
+    setResult(null)
+    setRunning(true)
+    const taskId = await window.api.generation.runComfyuiTxt2img({
+      prompts,
+      workflowId: selectedWorkflow.id,
+      workflowVersion: selectedWorkflow.version,
+      width: clampNumber(width, 256, 4096, 1024),
+      height: clampNumber(height, 256, 4096, 1024),
+      concurrency: clampNumber(concurrency, 1, 10, 1),
+    })
+    setProgress({
+      task_id: taskId,
+      capability: 'txt2img',
+      processed: 0,
+      total: prompts.length,
+      succeeded: 0,
+      failed: 0,
+    })
+  }
+
+  return (
+    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+      <div className="space-y-5">
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="font-semibold">提示词</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                文生图不接收源图，每行一条提示词。
+              </p>
+            </div>
+            <Button onClick={() => setManualText('')} type="button" variant="secondary">
+              清空
+            </Button>
+          </div>
+          <textarea
+            className="mt-4 min-h-56 w-full resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            onChange={(event) => setManualText(event.target.value)}
+            placeholder="例如：居中构图的复古花朵印花，白底，适合夏季 T 恤"
+            value={manualText}
+          />
+        </div>
+
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h4 className="font-semibold">ComfyUI 工作流</h4>
+              <p className="mt-1 text-sm text-muted-foreground">
+                工作流包由云端派发，本地只注入提示词和尺寸。
+              </p>
+            </div>
+            <Button onClick={() => void loadWorkflows()} type="button" variant="secondary">
+              {loadingWorkflows ? (
+                <Loader2 className="mr-2 h-4 w-4" />
+              ) : (
+                <CircleDashed className="mr-2 h-4 w-4" />
+              )}
+              刷新
+            </Button>
+          </div>
+          <label className="mt-4 block space-y-2 text-sm font-medium">
+            <span>工作流</span>
+            <select
+              className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              onChange={(event) => setWorkflowKey(event.target.value)}
+              value={workflowKey}
+            >
+              {workflows.map((workflow) => (
+                <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
+                  {workflow.name} · {workflow.version}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        {result ? (
+          <div className="rounded-md border bg-background p-4">
+            <h4 className="font-semibold">本次生成的印花</h4>
+            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+              {result.images.map((image) => (
+                <div className="rounded-md border bg-muted/30 p-2 text-sm" key={image.url}>
+                  <img
+                    alt={image.prompt}
+                    className="h-32 w-full rounded-sm object-cover"
+                    src={image.url}
+                  />
+                  <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                    {image.prompt}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+
+      <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
+        <div className="rounded-md border bg-background p-4">
+          <h4 className="font-semibold">生成参数</h4>
+          <div className="mt-4 grid gap-3">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="block space-y-2 text-sm font-medium">
+                <span>宽度</span>
+                <input
+                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  max={4096}
+                  min={256}
+                  onChange={(event) => setWidth(event.target.value)}
+                  type="number"
+                  value={width}
+                />
+              </label>
+              <label className="block space-y-2 text-sm font-medium">
+                <span>高度</span>
+                <input
+                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  max={4096}
+                  min={256}
+                  onChange={(event) => setHeight(event.target.value)}
+                  type="number"
+                  value={height}
+                />
+              </label>
+            </div>
+            <label className="block space-y-2 text-sm font-medium">
+              <span>并发</span>
+              <input
+                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                max={10}
+                min={1}
+                onChange={(event) => setConcurrency(event.target.value)}
+                type="number"
+                value={concurrency}
+              />
+            </label>
+            <Button disabled={running} onClick={() => void startTxt2img()} type="button">
+              {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+              开始生成
+            </Button>
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-background p-4">
+          <div className="flex items-center justify-between">
+            <h4 className="font-semibold">进度</h4>
+            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+          </div>
+          <div className="mt-4 h-2 rounded-full bg-muted">
+            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
+          </div>
+          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <dt className="text-muted-foreground">处理</dt>
+              <dd className="font-medium tabular-nums">
+                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">成功</dt>
+              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">失败</dt>
+              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">工作流</dt>
+              <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
+            </div>
+          </dl>
+          {error ? (
+            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+          ) : null}
+          {result ? (
+            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
+              完成：成功 {result.succeeded}，失败 {result.failed}
+            </div>
+          ) : null}
+        </div>
+      </aside>
+    </div>
+  )
+}
+
 function GrsaiExtractPanel() {
   const [sources, setSources] = useState<GenerationImageSource[]>([])
   const [sourceFolder, setSourceFolder] = useState('')
@@ -732,7 +1006,7 @@ function GrsaiExtractPanel() {
         setLlmModel(skill.recommendedModel ?? 'qwen3-vl-plus')
       })
       .catch((nextError) => {
-        setError(nextError instanceof Error ? nextError.message : '读取提取 Skill 失败')
+        setError(nextError instanceof Error ? nextError.message : '读取提取模板失败')
       })
   }, [selectedSkillKey])
 
@@ -790,7 +1064,7 @@ function GrsaiExtractPanel() {
         setSelectedSkillKey(skillOptionKey(first))
       }
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取提取 Skill 列表失败')
+      setError(nextError instanceof Error ? nextError.message : '读取提取模板列表失败')
     }
   }
 
@@ -815,7 +1089,7 @@ function GrsaiExtractPanel() {
   async function startExtract() {
     setError(null)
     if (!selectedSkill) {
-      setError('请选择提取 Skill')
+      setError('请选择提取模板')
       return
     }
     if (selectedPaths.length === 0) {
@@ -909,10 +1183,10 @@ function GrsaiExtractPanel() {
         </div>
 
         <div className="rounded-md border bg-background p-4">
-          <h4 className="font-semibold">提取 Skill</h4>
+          <h4 className="font-semibold">提取模板</h4>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
             <label className="block space-y-2 text-sm font-medium md:col-span-2">
-              <span>Skill</span>
+              <span>提示词模板</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 onChange={(event) => setSelectedSkillKey(event.target.value)}
@@ -981,7 +1255,7 @@ function GrsaiExtractPanel() {
           <h4 className="font-semibold">执行设置</h4>
           <div className="mt-4 grid gap-3">
             <label className="block space-y-2 text-sm font-medium">
-              <span>LLM 模型</span>
+              <span>语言模型</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                 onChange={(event) => setLlmModel(event.target.value)}
@@ -1248,7 +1522,7 @@ function ComfyuiImg2imgPanel() {
                     />
                     <span className="mt-2 block truncate font-medium">{source.name}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {source.step} · {source.relativePath}
+                      {generationStepLabel(source.step)} · {source.relativePath}
                     </span>
                   </span>
                 </label>
@@ -1802,7 +2076,7 @@ function ComfyuiMattingPanel() {
                     />
                     <span className="mt-2 block truncate font-medium">{source.name}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {source.step} · {source.relativePath}
+                      {generationStepLabel(source.step)} · {source.relativePath}
                     </span>
                   </span>
                 </label>
@@ -2044,24 +2318,27 @@ export function GenerationWorkbench() {
           </div>
         </div>
 
-        <div className="mt-5 grid grid-cols-4 gap-2">
-          {generationCapabilities.map((item) => {
-            const Icon = capabilityIcons[item.key]
-            const selected = activeCapability === item.key
-            return (
-              <Button
-                className="h-11 justify-start gap-2"
-                key={item.key}
-                onClick={() => setActiveCapability(item.key)}
-                type="button"
-                variant={selected ? 'default' : 'secondary'}
-              >
-                <Icon className="h-4 w-4" />
-                {item.label}
-              </Button>
-            )
-          })}
-        </div>
+        <Tabs
+          className="mt-5"
+          onValueChange={(value) => {
+            if (isGenerationCapabilityKey(value)) {
+              setActiveCapability(value)
+            }
+          }}
+          value={activeCapability}
+        >
+          <TabsList className="grid h-auto w-full grid-cols-4 p-1">
+            {generationCapabilities.map((item) => {
+              const Icon = capabilityIcons[item.key]
+              return (
+                <TabsTrigger className="h-10 gap-2" key={item.key} value={item.key}>
+                  <Icon className="h-4 w-4" />
+                  {item.label}
+                </TabsTrigger>
+              )
+            })}
+          </TabsList>
+        </Tabs>
       </div>
 
       <div className="rounded-md border bg-background p-5 shadow-sm">
@@ -2091,7 +2368,9 @@ export function GenerationWorkbench() {
           </div>
         </div>
 
-        {activeCapability === 'extract' && activeProvider === 'grsai' ? (
+        {activeCapability === 'txt2img' && activeProvider === 'comfyui-chenyu' ? (
+          <ComfyuiTxt2imgPanel />
+        ) : activeCapability === 'extract' && activeProvider === 'grsai' ? (
           <GrsaiExtractPanel />
         ) : activeCapability === 'extract' && activeProvider === 'comfyui-chenyu' ? (
           <ComfyuiExtractPanel />
