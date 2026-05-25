@@ -3,6 +3,12 @@ import { CollectionPage } from '@/features/collection/CollectionPage'
 import { DetectionPage } from '@/features/detection/DetectionPage'
 import { GenerationPage } from '@/features/generation/GenerationPage'
 import { ListingPage } from '@/features/listing/ListingPage'
+import {
+  type OnboardingApiKey,
+  type OnboardingApiKeys,
+  OnboardingPage,
+  type OnboardingStep,
+} from '@/features/onboarding/OnboardingPage'
 import { Shell } from '@/layout/Shell'
 import {
   type WorkbenchModule,
@@ -26,9 +32,7 @@ import {
   FileStack,
   FolderOpen,
   ImageIcon,
-  KeyRound,
   Loader2,
-  MonitorCheck,
   Play,
   PlayCircle,
   RefreshCw,
@@ -55,16 +59,8 @@ import type {
   TitleTaskEvent,
 } from '../../main/lib/title-service'
 
-type OnboardingStep = 1 | 2 | 3 | 4
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
-
-const apiKeyFields = [
-  { key: 'chenyu', label: '晨羽智云 API Key', placeholder: '用于 ComfyUI 生图' },
-  { key: 'grsai', label: 'Grsai API Key', placeholder: '用于付费生图' },
-  { key: 'bailian', label: '阿里云百炼 API Key', placeholder: '用于检测和标题' },
-  { key: 'bit_browser_url', label: '比特浏览器地址', placeholder: '127.0.0.1:54345' },
-]
 
 const titleModelPrices: Record<string, { input: number; output: number }> = {
   'qwen3-vl-flash': { input: 0.15, output: 1.5 },
@@ -1427,38 +1423,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   )
 }
 
-function StepHeader({ step }: { step: OnboardingStep }) {
-  const steps = [
-    { number: 1, label: '激活', icon: MonitorCheck },
-    { number: 2, label: '素材目录', icon: FolderOpen },
-    { number: 3, label: 'API Keys', icon: KeyRound },
-    { number: 4, label: '完成', icon: CheckCircle2 },
-  ]
-
-  return (
-    <div className="grid grid-cols-4 gap-3">
-      {steps.map((item) => {
-        const Icon = item.icon
-        const isCurrent = item.number === step
-        const isDone = item.number < step
-        return (
-          <div
-            className={`rounded-md border p-3 ${
-              isCurrent || isDone ? 'border-primary bg-muted' : 'bg-background'
-            }`}
-            key={item.number}
-          >
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Icon className="h-4 w-4" />第 {item.number} 步 共 4 步
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">{item.label}</div>
-          </div>
-        )
-      })}
-    </div>
-  )
-}
-
 function Onboarding() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -1471,7 +1435,7 @@ function Onboarding() {
   const [activationMessage, setActivationMessage] = useState<string | null>(null)
   const [isActivating, setIsActivating] = useState(false)
   const [workbenchRoot, setWorkbenchRoot] = useState('')
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({
+  const [apiKeys, setApiKeys] = useState<OnboardingApiKeys>({
     chenyu: '',
     grsai: '',
     bailian: '',
@@ -1543,11 +1507,18 @@ function Onboarding() {
   }
 
   async function saveApiKeys(nextStep: OnboardingStep = 4) {
-    const cleaned = Object.fromEntries(
-      Object.entries(apiKeys).map(([key, value]) => [key, value.trim()]),
-    )
+    const cleaned: OnboardingApiKeys = {
+      chenyu: apiKeys.chenyu.trim(),
+      grsai: apiKeys.grsai.trim(),
+      bailian: apiKeys.bailian.trim(),
+      bit_browser_url: apiKeys.bit_browser_url.trim(),
+    }
     await window.api.onboarding.saveApiKeys(cleaned)
     navigate(onboardingPath(nextStep))
+  }
+
+  function updateApiKey(key: OnboardingApiKey, value: string) {
+    setApiKeys((current) => ({ ...current, [key]: value }))
   }
 
   async function complete() {
@@ -1569,172 +1540,27 @@ function Onboarding() {
   }
 
   return (
-    <main className="min-h-screen bg-background px-8 py-10 text-foreground">
-      <div className="fixed right-8 top-6 z-20">
-        <ActivationBadge onEnterActivation={enterActivation} />
-      </div>
-      <section className="mx-auto max-w-5xl space-y-6">
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">首次启动</p>
-          <h1 className="text-3xl font-semibold tracking-normal">欢迎使用腾域 aipod</h1>
-        </div>
-        <StepHeader step={step} />
-
-        <div className="rounded-lg border bg-background p-6 shadow-sm">
-          {step === 1 ? (
-            <div className="space-y-5">
-              <div>
-                <h2 className="text-xl font-semibold">第 1 步 共 4 步：激活</h2>
-              </div>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>激活码</span>
-                <input
-                  className="h-11 w-full rounded-md border px-3 font-mono text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) =>
-                    setActivationCode(normalizeActivationCode(event.target.value))
-                  }
-                  placeholder="POD-XXXX-YYYY-ZZZZ"
-                  value={activationCode}
-                />
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>本机名称</span>
-                <input
-                  className="h-11 w-full rounded-md border px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setDeviceName(event.target.value)}
-                  value={deviceName}
-                />
-              </label>
-              {activationMessage ? (
-                <p className="text-sm text-muted-foreground">{activationMessage}</p>
-              ) : null}
-              <div className="flex items-center gap-3">
-                <Button
-                  disabled={!canActivate || isActivating}
-                  onClick={() => void activate()}
-                  type="button"
-                >
-                  {isActivating ? '激活中...' : '激活'}
-                </Button>
-                <a
-                  className="text-sm text-muted-foreground underline"
-                  href="https://example.com/support"
-                >
-                  联系客服微信
-                </a>
-              </div>
-            </div>
-          ) : null}
-
-          {step === 2 ? (
-            <div className="space-y-5">
-              <h2 className="text-xl font-semibold">第 2 步 共 4 步：素材总目录</h2>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>素材根目录</span>
-                <div className="flex gap-2">
-                  <input
-                    className="h-11 min-w-0 flex-1 rounded-md border px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onChange={(event) => setWorkbenchRoot(event.target.value)}
-                    value={workbenchRoot}
-                  />
-                  <Button
-                    onClick={() => void chooseWorkbenchRoot()}
-                    type="button"
-                    variant="secondary"
-                  >
-                    浏览...
-                  </Button>
-                </div>
-              </label>
-              <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-                软件会创建 01-采集、02-生图、03-检测、04-待套版印花、05-货号成品 和 .workbench。
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => navigate(onboardingPath(1))}
-                  type="button"
-                  variant="secondary"
-                >
-                  上一步
-                </Button>
-                <Button onClick={() => void saveWorkbenchRoot()} type="button">
-                  下一步
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {step === 3 ? (
-            <div className="space-y-5">
-              <h2 className="text-xl font-semibold">第 3 步 共 4 步：接口密钥</h2>
-              <div className="grid gap-4">
-                {apiKeyFields.map((field) => (
-                  <label className="block space-y-2 text-sm font-medium" key={field.key}>
-                    <span>{field.label}</span>
-                    <div className="flex gap-2">
-                      <input
-                        className="h-11 min-w-0 flex-1 rounded-md border px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) =>
-                          setApiKeys((current) => ({ ...current, [field.key]: event.target.value }))
-                        }
-                        placeholder={field.placeholder}
-                        type={field.key === 'bit_browser_url' ? 'text' : 'password'}
-                        value={apiKeys[field.key] ?? ''}
-                      />
-                      <Button
-                        onClick={() => setApiKeys((current) => ({ ...current, [field.key]: '' }))}
-                        type="button"
-                        variant="secondary"
-                      >
-                        跳过
-                      </Button>
-                      <Button type="button" variant="secondary">
-                        测试连接
-                      </Button>
-                    </div>
-                  </label>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={() => navigate(onboardingPath(2))}
-                  type="button"
-                  variant="secondary"
-                >
-                  上一步
-                </Button>
-                <Button onClick={() => void saveApiKeys()} type="button" variant="secondary">
-                  全部跳过
-                </Button>
-                <Button onClick={() => void saveApiKeys()} type="button">
-                  下一步
-                </Button>
-              </div>
-            </div>
-          ) : null}
-
-          {step === 4 ? (
-            <div className="space-y-5 text-center">
-              <CheckCircle2 className="mx-auto h-14 w-14 text-foreground" />
-              <div>
-                <h2 className="text-2xl font-semibold">软件已准备就绪</h2>
-              </div>
-              <div className="flex justify-center gap-2">
-                <Button asChild variant="secondary">
-                  <a href="https://example.com/tutorial">
-                    <PlayCircle className="mr-2 h-4 w-4" />
-                    查看教程视频
-                  </a>
-                </Button>
-                <Button onClick={() => void complete()} type="button">
-                  开始使用
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </section>
-    </main>
+    <OnboardingPage
+      activationBadge={<ActivationBadge onEnterActivation={enterActivation} />}
+      activationCode={activationCode}
+      activationMessage={activationMessage}
+      apiKeys={apiKeys}
+      canActivate={canActivate}
+      deviceName={deviceName}
+      isActivating={isActivating}
+      onActivate={() => void activate()}
+      onActivationCodeChange={(value) => setActivationCode(normalizeActivationCode(value))}
+      onApiKeyChange={updateApiKey}
+      onChooseWorkbenchRoot={() => void chooseWorkbenchRoot()}
+      onComplete={() => void complete()}
+      onDeviceNameChange={setDeviceName}
+      onNavigateStep={(nextStep) => navigate(onboardingPath(nextStep))}
+      onSaveApiKeys={() => void saveApiKeys()}
+      onSaveWorkbenchRoot={() => void saveWorkbenchRoot()}
+      onWorkbenchRootChange={setWorkbenchRoot}
+      step={step}
+      workbenchRoot={workbenchRoot}
+    />
   )
 }
 
