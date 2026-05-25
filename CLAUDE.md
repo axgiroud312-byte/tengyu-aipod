@@ -15,11 +15,13 @@
 
 - ✅ 文档体系完成（PRD / CONTEXT / 10 个 Spec / 8 个 ADR / 4 份 references/）
 - ✅ Trellis 108 个 task 全部建好 prd.md（见 ROADMAP.md）
-- 🟢 工程实施进行中：Codex 在隔壁终端按 ROADMAP 顺序跑 task
+- ✅ 切片 0-8 代码层归档完成，v1 全功能（采集 / 检测 / 生图 / PS 套版 / 标题 / 上架）已就位
+- 🟡 待主理人本机跑通完整链路 + 提供完整 fixture 矩阵，才正式放行 v1.0.0
+- ⏸ v1.5 增量（15 task）尚未启动：i18n / 多平台上架 / 编排引擎 / 自动更新 / 代码签名
 
 **切片 0 — 工程骨架**（5 task）：monorepo / shared / client electron / server next / CI
 **切片 1 — 激活码闭环**（9 task）→ v0.1.0
-**切片 2-8 + v1.5**：见 [ROADMAP.md](./ROADMAP.md)
+**切片 2-8 + v1.5**：见 [ROADMAP.md](./ROADMAP.md) / [CHANGELOG.md](./CHANGELOG.md)
 
 > 具体进度看 `git log --oneline` 或 SessionStart hook 注入的 active tasks——不要在本文件维护"task X 已完成"的状态。
 
