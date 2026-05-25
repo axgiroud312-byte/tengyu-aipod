@@ -1,7 +1,8 @@
 import { mkdir, readdir, rm, stat, utimes } from 'node:fs/promises'
 import { join } from 'node:path'
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
-import { readAppConfig } from '../onboarding'
+import { getWorkbenchRoot } from './workbench-config'
 
 export type TempModule =
   | 'collection'
@@ -12,19 +13,30 @@ export type TempModule =
   | 'title'
   | 'listing'
 
-type CleanupTaskOptions = {
-  keepIfFailed?: boolean
+type WorkbenchRootProvider = () => string | Promise<string>
+
+interface TempFileManagerOptions {
+  rootDir?: string
+  workbenchRootProvider?: WorkbenchRootProvider
+  now?: () => number
+  orphanTtlMs?: number
 }
 
-const ORPHAN_MAX_AGE_MS = 24 * 60 * 60 * 1000
-const FAILED_KEEP_MS = 60 * 60 * 1000
+interface CleanupTaskOptions {
+  keepIfFailed?: boolean
+  failedTtlMs?: number
+}
 
-async function tmpRoot() {
-  const config = await readAppConfig()
-  if (!config.workbench_root) {
-    throw new Error('workbench_root is required before temp files can be used')
+const DEFAULT_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000
+const DEFAULT_FAILED_TTL_MS = 60 * 60 * 1000
+const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{1,120}$/
+
+function assertSafeSegment(value: string, label: string): void {
+  if (!SAFE_SEGMENT_PATTERN.test(value)) {
+    throw new AppErrorClass('INVALID_INPUT', `${label} 只能包含字母、数字、下划线或短横线`, false, {
+      [label]: value,
+    })
   }
-  return join(config.workbench_root, '.workbench', 'tmp')
 }
 
 async function pathExists(path: string) {
@@ -53,25 +65,57 @@ async function dirSizeBytes(path: string): Promise<number> {
 }
 
 export class TempFileManager {
+  private readonly rootDir: string | undefined
+  private readonly workbenchRootProvider: WorkbenchRootProvider
+  private readonly now: () => number
+  private readonly orphanTtlMs: number
+  private readonly defaultFailedTtlMs: number
   private readonly delayedCleanup = new Map<string, NodeJS.Timeout>()
   private readonly sessionDirs = new Set<string>()
 
-  constructor(private readonly failedKeepMs = FAILED_KEEP_MS) {}
+  constructor(optionsOrFailedTtlMs: TempFileManagerOptions | number = {}) {
+    const options =
+      typeof optionsOrFailedTtlMs === 'number'
+        ? { failedTtlMs: optionsOrFailedTtlMs }
+        : optionsOrFailedTtlMs
 
-  async createTaskDir(module: TempModule, taskId: string) {
-    const dir = await this.getTaskDir(module, taskId)
-    await mkdir(dir, { recursive: true })
+    this.rootDir = options.rootDir
+    this.workbenchRootProvider = options.workbenchRootProvider ?? getWorkbenchRoot
+    this.now = options.now ?? Date.now
+    this.orphanTtlMs = options.orphanTtlMs ?? DEFAULT_ORPHAN_TTL_MS
+    this.defaultFailedTtlMs =
+      typeof optionsOrFailedTtlMs === 'number'
+        ? optionsOrFailedTtlMs
+        : DEFAULT_FAILED_TTL_MS
+  }
+
+  async rootPath(): Promise<string> {
+    if (this.rootDir) {
+      return this.rootDir
+    }
+    return join(await this.workbenchRootProvider(), '.workbench', 'tmp')
+  }
+
+  async createTaskDir(module: TempModule | string, taskId: string): Promise<string> {
+    const taskDir = await this.getTaskDir(module, taskId)
+    await mkdir(taskDir, { recursive: true })
     this.sessionDirs.add(`${module}/${taskId}`)
-    return dir
+    return taskDir
   }
 
-  async getTaskDir(module: TempModule, taskId: string) {
-    return join(await tmpRoot(), module, taskId)
+  async getTaskDir(module: TempModule | string, taskId: string): Promise<string> {
+    assertSafeSegment(module, 'module')
+    assertSafeSegment(taskId, 'task_id')
+    return join(await this.rootPath(), module, taskId)
   }
 
-  async cleanupTask(module: TempModule, taskId: string, options: CleanupTaskOptions = {}) {
+  async cleanupTask(
+    module: TempModule | string,
+    taskId: string,
+    options: CleanupTaskOptions = {},
+  ): Promise<void> {
     const key = `${module}/${taskId}`
-    const dir = await this.getTaskDir(module, taskId)
+    const taskDir = await this.getTaskDir(module, taskId)
     this.sessionDirs.delete(key)
 
     const existingTimer = this.delayedCleanup.get(key)
@@ -81,42 +125,56 @@ export class TempFileManager {
     }
 
     if (options.keepIfFailed) {
-      await this.markForDelayedCleanup(dir)
+      const failedTtlMs = options.failedTtlMs ?? this.defaultFailedTtlMs
+      await this.markForDelayedCleanup(taskDir)
       const timer = setTimeout(() => {
-        void rm(dir, { recursive: true, force: true }).finally(() => {
+        void rm(taskDir, { recursive: true, force: true }).finally(() => {
           this.delayedCleanup.delete(key)
         })
-      }, this.failedKeepMs)
+      }, failedTtlMs)
+      timer.unref?.()
       this.delayedCleanup.set(key, timer)
       return
     }
 
-    await rm(dir, { recursive: true, force: true })
+    await rm(taskDir, { recursive: true, force: true })
   }
 
-  async cleanupOrphans() {
-    const root = await tmpRoot()
-    const now = Date.now()
-    const modules = await readdir(root, { withFileTypes: true }).catch(() => [])
-
-    for (const moduleEntry of modules) {
-      if (!moduleEntry.isDirectory()) {
-        continue
-      }
-      const modulePath = join(root, moduleEntry.name)
-      const taskDirs = await readdir(modulePath, { withFileTypes: true }).catch(() => [])
-      for (const taskEntry of taskDirs) {
-        if (!taskEntry.isDirectory()) {
-          continue
-        }
-        const taskPath = join(modulePath, taskEntry.name)
-        const info = await stat(taskPath)
-        const modifiedAt = Number.isFinite(info.mtimeMs) ? info.mtimeMs : info.ctimeMs
-        if (now - modifiedAt > ORPHAN_MAX_AGE_MS) {
-          await rm(taskPath, { recursive: true, force: true })
-        }
-      }
+  async cleanupOrphans(): Promise<void> {
+    const root = await this.rootPath()
+    let modules: string[]
+    try {
+      modules = await readdir(root)
+    } catch {
+      return
     }
+
+    await Promise.all(
+      modules.map(async (module) => {
+        const moduleDir = join(root, module)
+        let taskIds: string[]
+        try {
+          taskIds = await readdir(moduleDir)
+        } catch {
+          return
+        }
+
+        await Promise.all(
+          taskIds.map(async (taskId) => {
+            const taskDir = join(moduleDir, taskId)
+            try {
+              const info = await stat(taskDir)
+              const modifiedAt = Number.isFinite(info.mtimeMs) ? info.mtimeMs : info.ctimeMs
+              if (this.now() - modifiedAt > this.orphanTtlMs) {
+                await rm(taskDir, { recursive: true, force: true })
+              }
+            } catch {
+              // Orphan cleanup is best effort.
+            }
+          }),
+        )
+      }),
+    )
   }
 
   async cleanupSession() {
@@ -126,13 +184,13 @@ export class TempFileManager {
         if (!module || !taskId) {
           return
         }
-        await this.cleanupTask(module as TempModule, taskId)
+        await this.cleanupTask(module, taskId)
       }),
     )
   }
 
   async cleanupAll() {
-    const root = await tmpRoot()
+    const root = await this.rootPath()
     this.clearTimers()
     this.sessionDirs.clear()
     await rm(root, { recursive: true, force: true })
@@ -140,7 +198,7 @@ export class TempFileManager {
   }
 
   async getDiskUsage(): Promise<Record<string, number>> {
-    const root = await tmpRoot()
+    const root = await this.rootPath()
     const usage: Record<string, number> = {}
     const modules = await readdir(root, { withFileTypes: true }).catch(() => [])
 

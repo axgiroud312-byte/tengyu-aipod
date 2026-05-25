@@ -1,9 +1,8 @@
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-let workbenchRoot = ''
+import { TempFileManager } from './temp-file-manager'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -11,36 +10,50 @@ vi.mock('electron', () => ({
   },
 }))
 
-vi.mock('../onboarding', () => ({
-  readAppConfig: () => ({ workbench_root: workbenchRoot }),
-}))
-
-const { TempFileManager } = await import('./temp-file-manager')
+let tempDir = ''
 
 beforeEach(async () => {
-  workbenchRoot = await import('node:fs/promises').then(({ mkdtemp }) =>
-    mkdtemp(join(tmpdir(), 'tengyu-temp-manager-')),
-  )
+  tempDir = await mkdtemp(join(tmpdir(), 'tengyu-temp-files-'))
   vi.useRealTimers()
 })
 
 afterEach(async () => {
   vi.useRealTimers()
-  await rm(workbenchRoot, { recursive: true, force: true })
+  await rm(tempDir, { recursive: true, force: true })
 })
 
 describe('TempFileManager', () => {
+  it('creates isolated task directories under module roots', async () => {
+    const manager = new TempFileManager({ rootDir: tempDir })
+
+    await expect(manager.createTaskDir('photoshop', 'scan-abc')).resolves.toBe(
+      join(tempDir, 'photoshop', 'scan-abc'),
+    )
+    const info = await stat(join(tempDir, 'photoshop', 'scan-abc'))
+    expect(info.isDirectory()).toBe(true)
+  })
+
   it('creates and resolves task directories under .workbench/tmp', async () => {
-    const manager = new TempFileManager()
+    const manager = new TempFileManager({
+      workbenchRootProvider: () => tempDir,
+    })
 
     const dir = await manager.createTaskDir('title', 'task-1')
 
-    expect(dir).toBe(join(workbenchRoot, '.workbench', 'tmp', 'title', 'task-1'))
+    expect(dir).toBe(join(tempDir, '.workbench', 'tmp', 'title', 'task-1'))
     await expect(stat(dir)).resolves.toMatchObject({ isDirectory: expect.any(Function) })
   })
 
+  it('rejects unsafe path segments', async () => {
+    const manager = new TempFileManager({ rootDir: tempDir })
+
+    await expect(manager.createTaskDir('photoshop', '../bad')).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    })
+  })
+
   it('cleans task directories immediately', async () => {
-    const manager = new TempFileManager()
+    const manager = new TempFileManager({ rootDir: tempDir })
     const dir = await manager.createTaskDir('detection', 'task-2')
     await writeFile(join(dir, 'image.jpg'), 'image')
 
@@ -62,22 +75,26 @@ describe('TempFileManager', () => {
   })
 
   it('cleans orphan task directories older than 24 hours', async () => {
-    const manager = new TempFileManager()
-    const oldDir = join(workbenchRoot, '.workbench', 'tmp', 'title', 'old')
-    const freshDir = join(workbenchRoot, '.workbench', 'tmp', 'title', 'fresh')
+    const oldDir = join(tempDir, 'photoshop', 'old-task')
+    const freshDir = join(tempDir, 'photoshop', 'fresh-task')
     await mkdir(oldDir, { recursive: true })
     await mkdir(freshDir, { recursive: true })
-    const oldDate = new Date(Date.now() - 25 * 60 * 60 * 1000)
-    await import('node:fs/promises').then(({ utimes }) => utimes(oldDir, oldDate, oldDate))
+    const oldDate = new Date(0)
+    await utimes(oldDir, oldDate, oldDate)
 
+    const manager = new TempFileManager({
+      rootDir: tempDir,
+      now: () => 48 * 60 * 60 * 1000,
+      orphanTtlMs: 24 * 60 * 60 * 1000,
+    })
     await manager.cleanupOrphans()
 
     await expect(stat(oldDir)).rejects.toThrow()
-    await expect(stat(freshDir)).resolves.toBeTruthy()
+    await expect(stat(freshDir)).resolves.toBeDefined()
   })
 
   it('reports disk usage by module', async () => {
-    const manager = new TempFileManager()
+    const manager = new TempFileManager({ rootDir: tempDir })
     const titleDir = await manager.createTaskDir('title', 'usage-title')
     const detectionDir = await manager.createTaskDir('detection', 'usage-detection')
     await writeFile(join(titleDir, 'a.bin'), Buffer.alloc(3))
@@ -90,13 +107,15 @@ describe('TempFileManager', () => {
   })
 
   it('cleans all temp files', async () => {
-    const manager = new TempFileManager()
+    const manager = new TempFileManager({
+      workbenchRootProvider: () => tempDir,
+    })
     const dir = await manager.createTaskDir('generation', 'task-3')
     await writeFile(join(dir, 'prompt.json'), '{}')
 
     await manager.cleanupAll()
 
     await expect(stat(dir)).rejects.toThrow()
-    await expect(stat(join(workbenchRoot, '.workbench', 'tmp'))).resolves.toBeTruthy()
+    await expect(stat(join(tempDir, '.workbench', 'tmp'))).resolves.toBeTruthy()
   })
 })

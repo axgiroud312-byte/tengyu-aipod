@@ -236,6 +236,25 @@ declare global {
           callback: (status: import('@tengyu-aipod/shared').ActivationBadgeState) => void,
         ) => () => void
       }
+      photoshop: {
+        getStatus: () => Promise<import('@tengyu-aipod/shared').PhotoshopStatus>
+        choosePrintFolder: () => Promise<
+          | { ok: true; data: { path: string } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+        chooseTemplates: () => Promise<
+          | { ok: true; data: { paths: string[] } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+        openPath: (path: string) => Promise<{ ok: true }>
+        scanTemplate: (
+          input: import('@tengyu-aipod/shared').PhotoshopScanTemplateRequest,
+        ) => Promise<import('@tengyu-aipod/shared').PsdTemplate>
+        listCachedTemplates: () => Promise<import('@tengyu-aipod/shared').PsdTemplate[]>
+        onProgress: (
+          callback: (progress: import('@tengyu-aipod/shared').PhotoshopProgressInfo) => void,
+        ) => () => void
+      }
     }
   }
 }

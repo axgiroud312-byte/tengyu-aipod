@@ -1,0 +1,4 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Primary PS module contract for JSX generation, path A replacement, clipping, export, result JSON, Windows-only behavior, and COM boundaries."}
+{"file":"references/photoshop/open-source-references.md","reason":"Action IDs and path A implementation notes for placedLayerReplaceContents and export behavior."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend/main-process conventions for the Electron main-process Photoshop generator."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking checklist for reuse and cross-layer boundaries."}

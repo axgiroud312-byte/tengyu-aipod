@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import os from 'node:os'
-import { dirname, join } from 'node:path'
 import { app, dialog, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
 import {
@@ -11,20 +9,17 @@ import {
   saveActivationSnapshot,
 } from './lib/activation-state'
 import { hasSecret, setSecret } from './lib/keychain'
+import {
+  defaultWorkbenchRoot,
+  ensureWorkbenchDirectories,
+  readAppConfig,
+  writeAppConfig,
+} from './lib/workbench-config'
 
-const MATERIAL_DIR_NAME = '腾域aipod素材'
-const CONFIG_FILE_NAME = 'app-config.json'
+export { readAppConfig }
+
 const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
 const DEV_SKIP_ACTIVATION_ENV = 'TENGYU_DEV_SKIP_ACTIVATION'
-
-const workbenchSubdirectories = [
-  '01-采集',
-  '02-生图',
-  '03-检测',
-  '04-待套版印花',
-  '05-货号成品',
-  '.workbench',
-]
 
 interface ActivateResponse {
   ok: boolean
@@ -41,10 +36,6 @@ interface ActivateResponse {
   }
 }
 
-interface AppConfig {
-  workbench_root?: string
-}
-
 const activationErrorMessages: Record<string, string> = {
   INVALID_INPUT: '激活码或设备信息格式不正确',
   INVALID_CODE: '激活码不存在，请检查后重试',
@@ -57,39 +48,8 @@ const activationErrorMessages: Record<string, string> = {
   INTERNAL_ERROR: '服务器暂时不可用，请稍后再试',
 }
 
-function configPath() {
-  return join(app.getPath('userData'), CONFIG_FILE_NAME)
-}
-
-function defaultWorkbenchRoot() {
-  return join(app.getPath('documents'), MATERIAL_DIR_NAME)
-}
-
 function shouldSkipActivationForDevelopment() {
   return process.env[DEV_SKIP_ACTIVATION_ENV] === '1' && !app.isPackaged
-}
-
-async function readConfig(): Promise<AppConfig> {
-  try {
-    return JSON.parse(await readFile(configPath(), 'utf8')) as AppConfig
-  } catch {
-    return {}
-  }
-}
-
-export async function readAppConfig() {
-  return readConfig()
-}
-
-async function writeConfig(config: AppConfig) {
-  await mkdir(dirname(configPath()), { recursive: true })
-  await writeFile(configPath(), JSON.stringify(config, null, 2), 'utf8')
-}
-
-async function ensureWorkbenchDirectories(root: string) {
-  await Promise.all(
-    workbenchSubdirectories.map((directory) => mkdir(join(root, directory), { recursive: true })),
-  )
 }
 
 async function ensureDevelopmentOnboardingBypass() {
@@ -97,10 +57,10 @@ async function ensureDevelopmentOnboardingBypass() {
     return
   }
 
-  const config = await readConfig()
-  const workbenchRoot = config.workbench_root ?? defaultWorkbenchRoot()
+  const config = await readAppConfig()
+  const workbenchRoot = config.workbench_root ?? (await defaultWorkbenchRoot())
   await ensureWorkbenchDirectories(workbenchRoot)
-  await writeConfig({ ...config, workbench_root: workbenchRoot })
+  await writeAppConfig({ ...config, workbench_root: workbenchRoot })
   await saveActivationSnapshot(
     {
       status: 'active',
@@ -136,12 +96,12 @@ function generateDeviceFingerprint() {
 export function registerOnboardingIpc() {
   ipcMain.handle('onboarding:get-state', async () => {
     await ensureDevelopmentOnboardingBypass()
-    const config = await readConfig()
+    const config = await readAppConfig()
     const activationState = await readActivationStateFile()
 
     return {
       needs_onboarding: !activationState.completed_at,
-      default_workbench_root: config.workbench_root ?? defaultWorkbenchRoot(),
+      default_workbench_root: config.workbench_root ?? (await defaultWorkbenchRoot()),
     }
   })
 
@@ -169,7 +129,7 @@ export function registerOnboardingIpc() {
         }
       }
 
-      const config = await readConfig()
+      const config = await readAppConfig()
       await setSecret('activation_token', result.data.activation_token)
       await saveActivationSnapshot(
         {
@@ -188,7 +148,7 @@ export function registerOnboardingIpc() {
           tokenCodeSuffix: extractActivationCodeSuffix(result.data.activation_token),
         },
       )
-      await writeConfig(config)
+      await writeAppConfig(config)
       void activationPoller.poll()
 
       return { ok: true, data: result.data }
@@ -198,7 +158,7 @@ export function registerOnboardingIpc() {
   ipcMain.handle('onboarding:choose-workbench-root', async () => {
     const result = await dialog.showOpenDialog({
       properties: ['openDirectory', 'createDirectory'],
-      defaultPath: defaultWorkbenchRoot(),
+      defaultPath: await defaultWorkbenchRoot(),
     })
     if (result.canceled || !result.filePaths[0]) {
       return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
@@ -209,19 +169,18 @@ export function registerOnboardingIpc() {
 
   ipcMain.handle('onboarding:save-workbench-root', async (_event, root: string) => {
     await ensureWorkbenchDirectories(root)
-    const config = await readConfig()
-    await writeConfig({ ...config, workbench_root: root })
+    const config = await readAppConfig()
+    await writeAppConfig({ ...config, workbench_root: root })
 
     return { ok: true, data: { path: root } }
   })
 
   ipcMain.handle('onboarding:save-api-keys', async (_event, apiKeys: Record<string, string>) => {
-    for (const [key, value] of Object.entries(apiKeys)) {
-      const trimmed = value.trim()
-      if (trimmed) {
-        await setSecret(key, trimmed)
-      }
-    }
+    await Promise.all(
+      Object.entries(apiKeys)
+        .filter(([, value]) => value.trim())
+        .map(([key, value]) => setSecret(key, value.trim())),
+    )
 
     return { ok: true }
   })

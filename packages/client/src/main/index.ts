@@ -13,6 +13,7 @@ import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
 import { registerTitleIpc } from './lib/title-service'
 import { registerOnboardingIpc } from './onboarding'
+import { registerPhotoshopIpc } from './photoshop/ipc'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
@@ -62,6 +63,7 @@ app.whenReady().then(() => {
   registerDetectionIpc()
   registerGenerationIpc()
   registerListingRunnerIpc()
+  registerPhotoshopIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
   createMainWindow()
   activationPoller.start()

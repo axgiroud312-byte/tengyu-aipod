@@ -1,0 +1,4 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Verify execution engine matches COM, retry, output validation, and workflow step requirements."}
+{"file":"references/photoshop/open-source-references.md","reason":"Verify path A execution remains aligned with Photoshop JSX behavior."}
+{"file":".trellis/spec/backend/index.md","reason":"Verify main-process code follows backend conventions."}
+{"file":".trellis/spec/guides/index.md","reason":"Verify reuse and cross-layer decisions."}

@@ -1,0 +1,4 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Primary multi-template batch contract for output layout, template name sanitization, grouping, and execution flow."}
+{"file":"references/photoshop/open-source-references.md","reason":"Context for real Photoshop batch behavior and path A limitations."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend/main-process conventions for batch orchestration."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking checklist for reuse and cross-layer boundaries."}

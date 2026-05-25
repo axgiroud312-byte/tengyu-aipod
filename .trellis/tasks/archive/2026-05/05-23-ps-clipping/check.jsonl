@@ -1,0 +1,5 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Primary acceptance source for clipping derivation and JSX duplicate/crop/saveAs behavior."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality and error-handling guideline index for reviewing main-process Photoshop code."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality guideline index for reviewing any renderer-facing type/API impacts."}
+{"file":".trellis/spec/guides/index.md","reason":"Cross-layer and reuse thinking guide index for final review."}
+{"file":".trellis/tasks/05-23-ps-clipping/prd.md","reason":"Task-specific environment, REAL_PS guard, path, and validation requirements to verify before completion."}
