@@ -1,15 +1,24 @@
 import { Button } from '@/components/ui/button'
 import { initializeActivationStore, useActivationStore } from '@/store/activation'
-import type { ActivationBadgeState, PhotoshopStatus } from '@tengyu-aipod/shared'
+import type {
+  ActivationBadgeState,
+  PhotoshopProgressInfo,
+  PhotoshopStatus,
+  PsdTemplate,
+} from '@tengyu-aipod/shared'
 import { APP_VERSION } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
   CheckCircle2,
+  ExternalLink,
+  FileStack,
   FolderOpen,
+  ImageIcon,
   KeyRound,
   MonitorCheck,
   PlayCircle,
   RefreshCw,
+  Settings2,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 
@@ -166,15 +175,117 @@ function PhotoshopStatusBar() {
   )
 }
 
+function templateLabel(path: string) {
+  return path.split(/[\\/]/).pop() ?? path
+}
+
+function progressPercent(progress: PhotoshopProgressInfo | null) {
+  if (!progress || progress.total_groups <= 0) {
+    return 0
+  }
+  return Math.round(((progress.completed + progress.skipped) / progress.total_groups) * 100)
+}
+
 function PhotoshopMockupPanel() {
   const [skipCompleted, setSkipCompleted] = useState(true)
+  const [printFolder, setPrintFolder] = useState('04-待套版印花')
+  const [templatePaths, setTemplatePaths] = useState<string[]>([])
+  const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
+  const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
+  const [format, setFormat] = useState<'jpg' | 'png'>('jpg')
+  const [maxRetries, setMaxRetries] = useState(1)
+  const [progress, setProgress] = useState<PhotoshopProgressInfo | null>(null)
+  const [scannedTemplates, setScannedTemplates] = useState<PsdTemplate[]>([])
+  const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
+  const [running, setRunning] = useState(false)
+  const isMac = navigator.platform.toLowerCase().includes('mac')
+
+  useEffect(() => {
+    return window.api.photoshop.onProgress((nextProgress) => {
+      setProgress(nextProgress)
+    })
+  }, [])
+
+  async function choosePrintFolder() {
+    const result = await window.api.photoshop.choosePrintFolder()
+    if (result.ok) {
+      setPrintFolder(result.data.path)
+    }
+  }
+
+  async function chooseTemplates() {
+    const result = await window.api.photoshop.chooseTemplates()
+    if (result.ok) {
+      setTemplatePaths(result.data.paths)
+      setScannedTemplates([])
+    }
+  }
+
+  async function prepareMockups() {
+    setRunning(true)
+    setMessage('正在扫描模板...')
+    setProgress({
+      task_id: 'ui-preview',
+      total_groups: Math.max(templatePaths.length, 1),
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      current_group: null,
+      current_stage: 'task_start',
+      verified_outputs: 0,
+    })
+    try {
+      const templates: PsdTemplate[] = []
+      for (let index = 0; index < templatePaths.length; index += 1) {
+        const template = await window.api.photoshop.scanTemplate({
+          psd_path: templatePaths[index] ?? '',
+        })
+        templates.push(template)
+        setProgress({
+          task_id: 'ui-preview',
+          total_groups: templatePaths.length,
+          completed: index + 1,
+          failed: 0,
+          skipped: 0,
+          current_group: index,
+          current_stage: 'group_complete',
+          verified_outputs: templates.reduce((count, item) => count + item.clip_areas.length, 0),
+        })
+      }
+      setScannedTemplates(templates)
+      setMessage('模板已扫描，执行入口将在全链路任务中接入')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+      setProgress((current) =>
+        current
+          ? { ...current, failed: current.failed + 1, current_stage: 'group_complete' }
+          : null,
+      )
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  if (isMac) {
+    return (
+      <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-950">
+        <div className="flex items-start gap-3">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
+          <div>
+            <h2 className="text-base font-semibold tracking-normal">PS 套版仅 Windows 可用</h2>
+            <p className="mt-1 text-sm">请在 Windows 电脑使用 Photoshop COM 套版功能。</p>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   return (
-    <div className="rounded-md border p-4">
-      <div className="flex items-center justify-between gap-4">
-        <div>
+    <div className="space-y-4 rounded-md border p-4">
+      <div className="flex items-start justify-between gap-4">
+        <div className="space-y-1">
           <h2 className="text-base font-semibold tracking-normal">PS 套版</h2>
-          <p className="mt-1 text-sm text-muted-foreground">批量任务默认跳过已完成输出</p>
+          <p className="text-sm text-muted-foreground">选择印花、模板和导出策略</p>
         </div>
         <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
           <input
@@ -185,6 +296,171 @@ function PhotoshopMockupPanel() {
           />
           跳过已完成
         </label>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
+        <label className="space-y-2 text-sm font-medium">
+          <span className="flex items-center gap-2">
+            <ImageIcon className="h-4 w-4" />
+            印花文件夹
+          </span>
+          <div className="flex gap-2">
+            <input
+              className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              onChange={(event) => setPrintFolder(event.target.value)}
+              value={printFolder}
+            />
+            <Button
+              className="h-10 px-3"
+              onClick={() => void choosePrintFolder()}
+              type="button"
+              variant="secondary"
+            >
+              <FolderOpen className="h-4 w-4" />
+            </Button>
+          </div>
+        </label>
+
+        <div className="space-y-2 text-sm font-medium">
+          <span className="flex items-center gap-2">
+            <FileStack className="h-4 w-4" />
+            PSD/PSB 模板
+          </span>
+          <div className="flex gap-2">
+            <div className="min-h-10 min-w-0 flex-1 rounded-md border px-3 py-2 text-sm text-muted-foreground">
+              {templatePaths.length > 0
+                ? templatePaths.map(templateLabel).join('，')
+                : '未选择模板'}
+            </div>
+            <Button
+              className="h-10 px-3"
+              onClick={() => void chooseTemplates()}
+              type="button"
+              variant="secondary"
+            >
+              选择
+            </Button>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-5">
+        <label className="space-y-2 text-sm font-medium">
+          <span>替换范围</span>
+          <select
+            className="h-10 w-full rounded-md border px-3"
+            onChange={(event) => setReplaceRange(event.target.value as typeof replaceRange)}
+            value={replaceRange}
+          >
+            <option value="auto">auto</option>
+            <option value="top">top</option>
+            <option value="all">all</option>
+          </select>
+        </label>
+        <label className="space-y-2 text-sm font-medium">
+          <span>适配方式</span>
+          <select className="h-10 w-full rounded-md border px-3" disabled value="fit">
+            <option value="fit">fit</option>
+          </select>
+        </label>
+        <label className="space-y-2 text-sm font-medium">
+          <span>裁切模式</span>
+          <select
+            className="h-10 w-full rounded-md border px-3"
+            onChange={(event) => setClipMode(event.target.value as typeof clipMode)}
+            value={clipMode}
+          >
+            <option value="auto">auto</option>
+            <option value="guides">guides</option>
+            <option value="none">none</option>
+          </select>
+        </label>
+        <label className="space-y-2 text-sm font-medium">
+          <span>格式</span>
+          <select
+            className="h-10 w-full rounded-md border px-3"
+            onChange={(event) => setFormat(event.target.value as typeof format)}
+            value={format}
+          >
+            <option value="jpg">jpg</option>
+            <option value="png">png</option>
+          </select>
+        </label>
+        <label className="space-y-2 text-sm font-medium">
+          <span>失败重试</span>
+          <input
+            className="h-10 w-full rounded-md border px-3"
+            min={0}
+            max={5}
+            onChange={(event) => setMaxRetries(Number(event.target.value))}
+            type="number"
+            value={maxRetries}
+          />
+        </label>
+      </div>
+
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Settings2 className="h-4 w-4" />
+          <span>{message}</span>
+        </div>
+        <Button
+          disabled={running || templatePaths.length === 0}
+          onClick={() => void prepareMockups()}
+          type="button"
+        >
+          <PlayCircle className="mr-2 h-4 w-4" />
+          {running ? '处理中...' : '开始套版'}
+        </Button>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
+        <div className="rounded-md bg-muted p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="font-medium">执行进度</span>
+            <span>{progressPercent(progress)}%</span>
+          </div>
+          <div className="mt-3 h-2 overflow-hidden rounded-full bg-background">
+            <div
+              className="h-full bg-foreground"
+              style={{ width: `${progressPercent(progress)}%` }}
+            />
+          </div>
+          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-muted-foreground">
+            <span>完成 {progress?.completed ?? 0}</span>
+            <span>失败 {progress?.failed ?? 0}</span>
+            <span>跳过 {progress?.skipped ?? 0}</span>
+            <span>输出 {progress?.verified_outputs ?? 0}</span>
+          </div>
+        </div>
+
+        <div className="rounded-md border p-3">
+          <p className="text-sm font-medium">预览</p>
+          <div className="mt-3 grid grid-cols-2 gap-2">
+            {scannedTemplates.length > 0 ? (
+              scannedTemplates.map((template) => (
+                <button
+                  className="rounded-md border p-2 text-left text-xs hover:bg-muted"
+                  key={template.id}
+                  onDoubleClick={() => void window.api.photoshop.openPath(template.file_path)}
+                  type="button"
+                >
+                  <span className="block truncate font-medium">
+                    {templateLabel(template.file_path)}
+                  </span>
+                  <span className="mt-1 block text-muted-foreground">
+                    {template.clip_areas.length} 张裁切
+                  </span>
+                  <ExternalLink className="mt-2 h-3.5 w-3.5 text-muted-foreground" />
+                </button>
+              ))
+            ) : (
+              <div className="col-span-2 rounded-md bg-muted p-3 text-xs text-muted-foreground">
+                完成扫描后显示模板预览
+              </div>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   )

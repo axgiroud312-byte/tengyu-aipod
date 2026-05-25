@@ -62,6 +62,18 @@ const api = {
   },
   photoshop: {
     getStatus: () => ipcRenderer.invoke('photoshop:get-status') as Promise<PhotoshopStatus>,
+    choosePrintFolder: () =>
+      ipcRenderer.invoke('photoshop:choose-print-folder') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    chooseTemplates: () =>
+      ipcRenderer.invoke('photoshop:choose-templates') as Promise<
+        | { ok: true; data: { paths: string[] } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    openPath: (path: string) =>
+      ipcRenderer.invoke('photoshop:open-path', { path }) as Promise<{ ok: true }>,
     scanTemplate: (input: PhotoshopScanTemplateRequest) =>
       ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
     listCachedTemplates: () =>
