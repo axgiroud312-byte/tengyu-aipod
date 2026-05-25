@@ -13,6 +13,12 @@ import {
   OnboardingPage,
   type OnboardingStep,
 } from '@/features/onboarding/OnboardingPage'
+import {
+  type TitleExistingStrategy,
+  type TitleFormState,
+  TitlePage,
+  type TitlePageState,
+} from '@/features/title/TitlePage'
 import { Shell } from '@/layout/Shell'
 import {
   type WorkbenchModule,
@@ -30,17 +36,13 @@ import type {
 } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
-  Calculator,
   CheckCircle2,
   ExternalLink,
   FileStack,
   FolderOpen,
   ImageIcon,
-  Loader2,
-  Play,
   PlayCircle,
   RefreshCw,
-  RotateCcw,
   Settings2,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
@@ -62,8 +64,6 @@ import type {
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
-
-type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
 
 const defaultCollectionProfiles: CollectionProfileOption[] = [
@@ -77,12 +77,6 @@ const defaultCollectionPageState: CollectionPageState = {
   mode: 'click',
   outputDir: '',
   scrollKeywords: '',
-}
-
-const titleModelPrices: Record<string, { input: number; output: number }> = {
-  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
-  'qwen3-vl-plus': { input: 1, output: 10 },
-  'qwen-vl-max': { input: 1.6, output: 4 },
 }
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
@@ -145,20 +139,6 @@ function parsePositiveNumber(value: string, fallback: number) {
 function parseNonNegativeNumber(value: string, fallback: number) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
-}
-
-function estimateTitleCost(imageCount: number, model: string, compression: boolean) {
-  const price = titleModelPrices[model] ?? { input: 1, output: 10 }
-  const imageTokens = compression ? 256 : 1024
-  const outputTokens = 80
-  return (imageCount * (imageTokens * price.input + outputTokens * price.output)) / 1_000_000
-}
-
-function progressPercent(progress: TitleProgress | null) {
-  if (!progress || progress.total === 0) {
-    return 0
-  }
-  return Math.round((progress.processed / progress.total) * 100)
 }
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
@@ -841,27 +821,65 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     }
   }, [])
 
-  const existingTitleCount = scanResult ? Object.keys(scanResult.existingTitles).length : 0
-  const pendingEstimateCount = scanResult
-    ? existingStrategy === 'skip'
-      ? Math.max(0, scanResult.skuCount - existingTitleCount)
-      : scanResult.skuCount
-    : 0
-  const estimatedCost = estimateTitleCost(pendingEstimateCount, model, compression)
-  const percent = progressPercent(progress)
-  const isRunning = Boolean(progress && progress.processed < progress.total && !result)
-  const progressStatusText = isRetryingFailed
-    ? '失败重试中'
-    : isRunning
-      ? '处理中'
-      : result
-        ? '完成'
-        : taskId
-          ? '等待任务结果'
-          : '未开始'
-  const canRun = Boolean(batchDir.trim()) && !isRunning
-  const successRows = result?.results.filter((item) => item.status === 'success') ?? []
-  const failedRows = result?.results.filter((item) => item.status === 'failed') ?? []
+  const titlePageState: TitlePageState = {
+    batchDir,
+    platform,
+    language,
+    model,
+    imageIndex,
+    extraRequirement,
+    existingStrategy,
+    maxRetries,
+    concurrency,
+    compression,
+    maxSize,
+    scanResult,
+    progress,
+    taskId,
+    result,
+    isRetryingFailed,
+  }
+
+  function updateTitleFormState(
+    key: keyof TitleFormState,
+    value: TitleFormState[keyof TitleFormState],
+  ) {
+    switch (key) {
+      case 'batchDir':
+        if (typeof value === 'string') setBatchDir(value)
+        return
+      case 'platform':
+        if (typeof value === 'string') setPlatform(value)
+        return
+      case 'language':
+        if (typeof value === 'string') setLanguage(value)
+        return
+      case 'model':
+        if (typeof value === 'string') setModel(value)
+        return
+      case 'imageIndex':
+        if (typeof value === 'string') setImageIndex(value)
+        return
+      case 'extraRequirement':
+        if (typeof value === 'string') setExtraRequirement(value)
+        return
+      case 'existingStrategy':
+        if (value === 'skip' || value === 'regenerate') setExistingStrategy(value)
+        return
+      case 'maxRetries':
+        if (typeof value === 'string') setMaxRetries(value)
+        return
+      case 'concurrency':
+        if (typeof value === 'string') setConcurrency(value)
+        return
+      case 'compression':
+        setCompression(value === true)
+        return
+      case 'maxSize':
+        if (typeof value === 'string') setMaxSize(value)
+        return
+    }
+  }
 
   async function chooseBatchDir() {
     const selected = await window.api.title.chooseBatchDir()
@@ -934,12 +952,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     setResult(null)
     setIsRetryingFailed(true)
     setTitleError(null)
+    const failedCount = result?.results.filter((item) => item.status === 'failed').length ?? 0
     const nextTaskId = await window.api.title.retryFailed({ task_id: taskId })
     setTaskId(nextTaskId)
     setProgress({
       task_id: nextTaskId,
       processed: 0,
-      total: failedRows.length,
+      total: failedCount,
       succeeded: 0,
       failed: 0,
       skipped: 0,
@@ -1077,393 +1096,52 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
             </Button>
           </div>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="space-y-6">
-              {activeModule === 'collection' ? (
-                <CollectionPage
-                  error={collectionError}
-                  onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
-                  onRefreshProfiles={refreshCollectionProfiles}
-                  onRefreshRecords={() => void refreshCollectionRecords()}
-                  onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
-                  onStartSession={() => void startCollectionSession()}
-                  onStateChange={updateCollectionPageState}
-                  onStopSession={() => void stopCollectionSession()}
-                  profiles={collectionProfiles}
-                  records={collectionRecords}
-                  retryingRecordId={retryingRecordId}
-                  session={collectionSession}
-                  starting={isStartingCollection}
-                  state={collectionPageState}
-                  stopping={isStoppingCollection}
-                />
-              ) : activeModule === 'title' ? (
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="grid gap-5">
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>货号批次目录</span>
-                      <div className="flex gap-2">
-                        <input
-                          className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setBatchDir(event.target.value)}
-                          placeholder="选择 05-货号成品 下的一个批次目录"
-                          value={batchDir}
-                        />
-                        <Button
-                          onClick={() => void chooseBatchDir()}
-                          type="button"
-                          variant="secondary"
-                        >
-                          <FolderOpen className="mr-2 h-4 w-4" />
-                          选择
-                        </Button>
-                        <Button
-                          onClick={() => void scanBatchDir()}
-                          type="button"
-                          variant="secondary"
-                        >
-                          扫描
-                        </Button>
-                      </div>
-                    </label>
-
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>平台</span>
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setPlatform(event.target.value)}
-                          value={platform}
-                        >
-                          {platforms.map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>语言</span>
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setLanguage(event.target.value)}
-                          value={language}
-                        >
-                          {languages.map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>模型</span>
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setModel(event.target.value)}
-                          value={model}
-                        >
-                          {models.map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>标题额外要求</span>
-                      <textarea
-                        className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setExtraRequirement(event.target.value)}
-                        placeholder="例如：强调原创设计、节日主题、含 vintage 关键词"
-                        value={extraRequirement}
-                      />
-                    </label>
-
-                    <div className="grid gap-4 md:grid-cols-4">
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>取第几张图</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          min={1}
-                          onChange={(event) => setImageIndex(event.target.value)}
-                          type="number"
-                          value={imageIndex}
-                        />
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>失败重试</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          max={5}
-                          min={0}
-                          onChange={(event) => setMaxRetries(event.target.value)}
-                          type="number"
-                          value={maxRetries}
-                        />
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>并发数</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          max={10}
-                          min={1}
-                          onChange={(event) => setConcurrency(event.target.value)}
-                          type="number"
-                          value={concurrency}
-                        />
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>最大边长</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          min={256}
-                          onChange={(event) => setMaxSize(event.target.value)}
-                          type="number"
-                          value={maxSize}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <fieldset className="rounded-md border p-4">
-                        <legend className="px-1 text-sm font-medium">已有标题策略</legend>
-                        <div className="mt-2 flex gap-4 text-sm">
-                          <label className="inline-flex items-center gap-2">
-                            <input
-                              checked={existingStrategy === 'skip'}
-                              onChange={() => setExistingStrategy('skip')}
-                              type="radio"
-                            />
-                            跳过已有
-                          </label>
-                          <label className="inline-flex items-center gap-2">
-                            <input
-                              checked={existingStrategy === 'regenerate'}
-                              onChange={() => setExistingStrategy('regenerate')}
-                              type="radio"
-                            />
-                            重新生成
-                          </label>
-                        </div>
-                      </fieldset>
-                      <fieldset className="rounded-md border p-4">
-                        <legend className="px-1 text-sm font-medium">图像预处理</legend>
-                        <div className="mt-2 space-y-2 text-sm">
-                          <label className="inline-flex items-center gap-2 text-muted-foreground">
-                            <input checked disabled type="checkbox" />
-                            透明底自动加白
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              checked={compression}
-                              onChange={(event) => setCompression(event.target.checked)}
-                              type="checkbox"
-                            />
-                            压缩图片节省 token
-                          </label>
-                        </div>
-                      </fieldset>
-                    </div>
-
-                    {titleError ? (
-                      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                        {titleError}
-                      </div>
-                    ) : null}
-
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Calculator className="h-4 w-4" />
-                        预估 {pendingEstimateCount} 张图，约 ¥
-                        <span className="tabular-nums">{estimatedCost.toFixed(4)}</span>
-                      </div>
-                      <Button disabled={!canRun} onClick={() => void runTitleBatch()} type="button">
-                        {isRunning ? (
-                          <Loader2 className="mr-2 h-4 w-4" />
-                        ) : (
-                          <Play className="mr-2 h-4 w-4" />
-                        )}
-                        开始生成标题
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : activeModule === 'generation' ? (
-                <GenerationPage />
-              ) : activeModule === 'listing' ? (
-                <ListingPage />
-              ) : activeModule === 'ps' ? (
-                <div className="space-y-6">
-                  <PhotoshopStatusBar />
-                  <PhotoshopMockupPanel />
-                </div>
-              ) : (
-                <DetectionPage />
-              )}
-
-              {activeModule === 'title' ? (
-                <>
-                  {result ? (
-                    <div className="rounded-md border bg-background p-5 shadow-sm">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h2 className="text-lg font-semibold text-balance">生成结果</h2>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            成功 {result.succeeded} 个，失败 {result.failed} 个，跳过{' '}
-                            {result.skipped} 个
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            onClick={() => void openPath(result.xlsxPath)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            打开 xlsx
-                          </Button>
-                          <Button
-                            onClick={() => void openPath(batchDir)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            打开批次目录
-                          </Button>
-                        </div>
-                      </div>
-                      {openMessage ? (
-                        <p className="mt-3 text-sm text-red-700">{openMessage}</p>
-                      ) : null}
-                      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-md border">
-                          <div className="border-b px-3 py-2 text-sm font-medium">
-                            成功列表（{successRows.length}）
-                          </div>
-                          <div className="max-h-56 overflow-auto p-2">
-                            {successRows.length ? (
-                              successRows.map((item) => (
-                                <div
-                                  className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md px-2 py-2 text-sm"
-                                  key={item.skuCode}
-                                >
-                                  <span className="font-mono text-xs text-muted-foreground">
-                                    {item.skuCode}
-                                  </span>
-                                  <span className="truncate">{item.title}</span>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                                暂无成功项
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="rounded-md border">
-                          <div className="flex items-center justify-between border-b px-3 py-2 text-sm font-medium">
-                            <span>失败列表（{failedRows.length}）</span>
-                            <Button
-                              className="h-8 px-2"
-                              disabled={!failedRows.length}
-                              onClick={() => void retryFailed()}
-                              type="button"
-                              variant="secondary"
-                            >
-                              <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                              重试失败
-                            </Button>
-                          </div>
-                          <div className="max-h-56 overflow-auto p-2">
-                            {failedRows.length ? (
-                              failedRows.map((item) => (
-                                <div className="rounded-md px-2 py-2 text-sm" key={item.skuCode}>
-                                  <div className="font-mono text-xs text-muted-foreground">
-                                    {item.skuCode}
-                                  </div>
-                                  <div className="mt-1 text-red-700">{item.error}</div>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                                没有失败项
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-            {activeModule === 'title' ? (
-              <aside className="space-y-6">
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <h2 className="text-lg font-semibold text-balance">批次概览</h2>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">货号文件夹</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        {scanResult?.skuCount ?? 0}
-                      </dd>
-                    </div>
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">已有标题</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        {existingTitleCount}
-                      </dd>
-                    </div>
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">预计生成</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        {pendingEstimateCount}
-                      </dd>
-                    </div>
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">预计费用</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        ¥{estimatedCost.toFixed(4)}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-balance">执行进度</h2>
-                    <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-                  </div>
-                  <div className="mt-4 h-2 rounded-full bg-muted">
-                    <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-                  </div>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <dt className="text-muted-foreground">处理中</dt>
-                      <dd className="mt-1 font-medium tabular-nums">
-                        {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">跳过</dt>
-                      <dd className="mt-1 font-medium tabular-nums">{progress?.skipped ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">成功</dt>
-                      <dd className="mt-1 font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">失败</dt>
-                      <dd className="mt-1 font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-                    </div>
-                  </dl>
-                  <div className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                    {progressStatusText}
-                  </div>
-                </div>
-              </aside>
-            ) : null}
+          <div className="space-y-6">
+            {activeModule === 'collection' ? (
+              <CollectionPage
+                error={collectionError}
+                onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
+                onRefreshProfiles={refreshCollectionProfiles}
+                onRefreshRecords={() => void refreshCollectionRecords()}
+                onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
+                onStartSession={() => void startCollectionSession()}
+                onStateChange={updateCollectionPageState}
+                onStopSession={() => void stopCollectionSession()}
+                profiles={collectionProfiles}
+                records={collectionRecords}
+                retryingRecordId={retryingRecordId}
+                session={collectionSession}
+                starting={isStartingCollection}
+                state={collectionPageState}
+                stopping={isStoppingCollection}
+              />
+            ) : activeModule === 'title' ? (
+              <TitlePage
+                languages={languages}
+                models={models}
+                onChooseBatchDir={() => void chooseBatchDir()}
+                onOpenPath={(path) => void openPath(path)}
+                onRetryFailed={() => void retryFailed()}
+                onRunBatch={() => void runTitleBatch()}
+                onScanBatchDir={() => void scanBatchDir()}
+                onStateChange={updateTitleFormState}
+                openMessage={openMessage}
+                platforms={platforms}
+                state={titlePageState}
+                titleError={titleError}
+              />
+            ) : activeModule === 'generation' ? (
+              <GenerationPage />
+            ) : activeModule === 'listing' ? (
+              <ListingPage />
+            ) : activeModule === 'ps' ? (
+              <div className="space-y-6">
+                <PhotoshopStatusBar />
+                <PhotoshopMockupPanel />
+              </div>
+            ) : (
+              <DetectionPage />
+            )}
           </div>
         )}
       </div>

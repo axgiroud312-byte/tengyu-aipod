@@ -25,11 +25,67 @@ export const WORKBENCH_DIRECTORIES = {
   metadata: '.workbench',
 } as const
 
-export const DETECTION_MODEL_PRICES = {
-  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
+export const VISION_MODEL_PRICES = {
   'qwen3-vl-plus': { input: 1, output: 10 },
+  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
   'qwen-vl-max': { input: 1.6, output: 4 },
+  'qwen-vl-plus': { input: 0.8, output: 2 },
+  'qwen3.6-plus': { input: 2, output: 12 },
 } as const
+
+export type VisionModelKey = keyof typeof VISION_MODEL_PRICES
+
+export type VisionModelOption = {
+  key: VisionModelKey
+  label: string
+  inputPrice: number
+  outputPrice: number
+  recommendedFor: 'title' | 'detection' | 'general'
+}
+
+const VISION_MODEL_OPTIONS: VisionModelOption[] = [
+  {
+    key: 'qwen3-vl-plus',
+    label: 'qwen3-vl-plus',
+    inputPrice: VISION_MODEL_PRICES['qwen3-vl-plus'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen3-vl-plus'].output,
+    recommendedFor: 'title',
+  },
+  {
+    key: 'qwen3-vl-flash',
+    label: 'qwen3-vl-flash',
+    inputPrice: VISION_MODEL_PRICES['qwen3-vl-flash'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen3-vl-flash'].output,
+    recommendedFor: 'detection',
+  },
+  {
+    key: 'qwen-vl-max',
+    label: 'qwen-vl-max',
+    inputPrice: VISION_MODEL_PRICES['qwen-vl-max'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen-vl-max'].output,
+    recommendedFor: 'general',
+  },
+  {
+    key: 'qwen-vl-plus',
+    label: 'qwen-vl-plus',
+    inputPrice: VISION_MODEL_PRICES['qwen-vl-plus'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen-vl-plus'].output,
+    recommendedFor: 'general',
+  },
+  {
+    key: 'qwen3.6-plus',
+    label: 'qwen3.6-plus',
+    inputPrice: VISION_MODEL_PRICES['qwen3.6-plus'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen3.6-plus'].output,
+    recommendedFor: 'general',
+  },
+]
+
+export function listVisionModels(): VisionModelOption[] {
+  return VISION_MODEL_OPTIONS.map((model) => ({ ...model }))
+}
+
+export const DETECTION_MODEL_PRICES = VISION_MODEL_PRICES
 
 export type DetectionModel = keyof typeof DETECTION_MODEL_PRICES
 

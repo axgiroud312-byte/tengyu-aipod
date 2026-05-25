@@ -1,7 +1,7 @@
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
+import { type Skill, type SkillSummary, listVisionModels } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -165,6 +165,12 @@ describe('title service utilities', () => {
 })
 
 describe('TitleService', () => {
+  it('uses the shared vision model list', () => {
+    const service = new TitleService()
+
+    expect(service.listModels()).toEqual(listVisionModels())
+  })
+
   it('runs a title batch with skip mode, retries empty responses, writes xlsx and registers skus', async () => {
     const batchDir = join(tempRoot, 'batch')
     await createSku(batchDir, 'SKU1', ['1.png'])
