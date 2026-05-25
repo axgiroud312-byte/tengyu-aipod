@@ -3,7 +3,7 @@
   "name": "ps-clipping",
   "title": "ps clipping",
   "description": "裁切区推导 none/auto/guides",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

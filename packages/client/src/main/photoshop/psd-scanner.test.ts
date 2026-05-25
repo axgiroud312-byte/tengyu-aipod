@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path'
 import type { PsdTemplate } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TempFileManager } from '../lib/temp-file-manager'
-import { PsdScanner } from './psd-scanner'
+import { PsdScanner, deriveClipAreas } from './psd-scanner'
 
 let tempDir = ''
 
@@ -52,6 +52,95 @@ async function writeFakePsd(name = 'template.psd') {
 }
 
 describe('PsdScanner', () => {
+  it('derives a full-document clip area for none mode', () => {
+    expect(
+      deriveClipAreas(
+        {
+          doc_size: { w: 1000, h: 800 },
+          guides: { horizontal: [400], vertical: [500] },
+          smart_objects: [],
+          layers: [],
+        },
+        'none',
+      ),
+    ).toEqual([{ x: 0, y: 0, w: 1000, h: 800, is_full: true }])
+  })
+
+  it('derives a guide grid for guides mode', () => {
+    expect(
+      deriveClipAreas(
+        {
+          doc_size: { w: 1000, h: 800 },
+          guides: { horizontal: [400], vertical: [500] },
+          smart_objects: [],
+          layers: [],
+        },
+        'guides',
+      ),
+    ).toEqual([
+      { x: 0, y: 0, w: 500, h: 400, is_full: false },
+      { x: 500, y: 0, w: 500, h: 400, is_full: false },
+      { x: 0, y: 400, w: 500, h: 400, is_full: false },
+      { x: 500, y: 400, w: 500, h: 400, is_full: false },
+    ])
+  })
+
+  it('falls back to smart object ancestor bounds for auto mode without guides', () => {
+    expect(
+      deriveClipAreas(
+        {
+          doc_size: { w: 1000, h: 800 },
+          guides: { horizontal: [], vertical: [] },
+          smart_objects: [
+            {
+              name: 'print',
+              path: 'SKU A/print',
+              sort_order: 0,
+              is_top_level: false,
+              bounds: [120, 140, 420, 540],
+              shared_indicator: 'print-a',
+            },
+          ],
+          layers: [
+            {
+              name: 'SKU A',
+              path: 'SKU A',
+              typename: 'LayerSet',
+              is_group: true,
+              is_smart_object: false,
+              is_text: false,
+              bounds: [100, 120, 500, 620],
+            },
+          ],
+        },
+        'auto',
+      ),
+    ).toEqual([{ x: 100, y: 120, w: 400, h: 500, is_full: false }])
+  })
+
+  it('falls back to full-document clipping when auto has no guides or ancestors', () => {
+    expect(
+      deriveClipAreas(
+        {
+          doc_size: { w: 1000, h: 800 },
+          guides: { horizontal: [], vertical: [] },
+          smart_objects: [
+            {
+              name: 'print',
+              path: 'print',
+              sort_order: 0,
+              is_top_level: true,
+              bounds: [120, 140, 420, 540],
+              shared_indicator: 'print-a',
+            },
+          ],
+          layers: [],
+        },
+        'auto',
+      ),
+    ).toEqual([{ x: 0, y: 0, w: 1000, h: 800, is_full: true }])
+  })
+
   it('scans a PSD through JSX and stores the template cache', async () => {
     const psdPath = await writeFakePsd()
     const scanner = createScanner({

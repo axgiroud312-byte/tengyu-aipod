@@ -9,6 +9,7 @@ export interface PhotoshopStatus {
 }
 
 export type SmartObjectMode = 'single' | 'shared' | 'independent' | 'none'
+export type PhotoshopClipMode = 'none' | 'auto' | 'guides'
 
 export type PsdBounds = [number, number, number, number]
 

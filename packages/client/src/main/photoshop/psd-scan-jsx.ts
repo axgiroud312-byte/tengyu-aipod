@@ -222,7 +222,6 @@ function scanPsd() {
       }
     }
 
-    result.clip_areas = deriveClipAreas(result.guides, docSize);
     writeResult(result);
   } catch (error) {
     writeResult({ ok: false, error: String(error), file: PSD_PATH });

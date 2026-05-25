@@ -1,6 +1,7 @@
 import type {
   PhotoshopBatchResult,
   PhotoshopBatchTemplateResult,
+  PhotoshopClipMode,
   PhotoshopExportFormat,
   PhotoshopJobResult,
   PhotoshopPrintAsset,
@@ -12,7 +13,7 @@ import {
   sanitizeTemplateName,
 } from '@tengyu-aipod/shared'
 import { type PhotoshopExecutionEngine, photoshopExecutionEngine } from './execution-engine'
-import { type PsdScanner, psdScanner } from './psd-scanner'
+import { type PsdScanner, deriveClipAreas, psdScanner } from './psd-scanner'
 
 export interface PhotoshopBatchConfig {
   taskId: string
@@ -20,6 +21,7 @@ export interface PhotoshopBatchConfig {
   replaceRange?: GroupPhotoshopTasksOptions['replaceRange']
   format?: PhotoshopExportFormat
   jpgQuality?: number
+  clipMode?: PhotoshopClipMode
   maxRetries?: number
 }
 
@@ -77,7 +79,20 @@ export class PhotoshopMultiBatchRunner {
       if (config.jpgQuality !== undefined) {
         groupOptions.jpgQuality = config.jpgQuality
       }
-      const groups = groupTasks(prints, template, groupOptions)
+      const clipMode = config.clipMode ?? 'auto'
+      const templateWithClipAreas: PsdTemplate = {
+        ...template,
+        clip_areas: deriveClipAreas(
+          {
+            doc_size: template.doc_size,
+            guides: template.guides,
+            smart_objects: template.smart_objects,
+            layers: template.layers,
+          },
+          clipMode,
+        ),
+      }
+      const groups = groupTasks(prints, templateWithClipAreas, groupOptions)
       groupsTotal += groups.length
 
       const templateOutputs: string[] = []

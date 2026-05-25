@@ -114,6 +114,35 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(result.outputs[0]).toBe('C:\\Users\\niilo\\Desktop\\新建文件夹/cup_front_/img2/01.jpg')
   })
 
+  it('applies the requested clipping mode before creating Photoshop jobs', async () => {
+    const template = createTemplate('C:\\templates\\guide-template.psd', 'tpl-guides')
+    template.guides = { horizontal: [500], vertical: [250, 750] }
+
+    const executedClipCounts: number[] = []
+    await runBatch(
+      createPrints().slice(0, 1),
+      [template.file_path],
+      {
+        taskId: 'batch-guides',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        clipMode: 'guides',
+      },
+      {
+        scanner: {
+          scanPsd: async () => template,
+        },
+        engine: {
+          runJob: async (job) => {
+            executedClipCounts.push(job.clip_areas.length)
+            return createCompletedJobResult(job.output_paths)
+          },
+        },
+      },
+    )
+
+    expect(executedClipCounts).toEqual([6])
+  })
+
   it('runs a small real multi-template Photoshop batch when REAL_PS=1', async () => {
     if (process.env.REAL_PS !== '1') {
       return

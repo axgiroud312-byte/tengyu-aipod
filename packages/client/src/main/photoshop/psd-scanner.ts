@@ -4,6 +4,7 @@ import { access, readFile, writeFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import {
   AppErrorClass,
+  type PhotoshopClipMode,
   type PsdBounds,
   type PsdClipArea,
   type PsdGuides,
@@ -136,14 +137,18 @@ function uniqueSorted(values: number[], maxValue: number): number[] {
   )
 }
 
-export function deriveClipAreas(
+function fullClipArea(docSize: { w: number; h: number }): PsdClipArea {
+  return { x: 0, y: 0, w: docSize.w, h: docSize.h, is_full: true }
+}
+
+function deriveClipAreasFromGuides(
   guides: PsdGuides,
   docSize: { w: number; h: number },
 ): PsdClipArea[] {
   const vertical = uniqueSorted(guides.vertical, docSize.w)
   const horizontal = uniqueSorted(guides.horizontal, docSize.h)
   if (vertical.length === 0 && horizontal.length === 0) {
-    return [{ x: 0, y: 0, w: docSize.w, h: docSize.h, is_full: true }]
+    return []
   }
 
   const xs = [0, ...vertical, docSize.w]
@@ -162,7 +167,84 @@ export function deriveClipAreas(
       }
     }
   }
-  return areas.length > 0 ? areas : [{ x: 0, y: 0, w: docSize.w, h: docSize.h, is_full: true }]
+  return areas
+}
+
+function areaFromBounds(bounds: PsdBounds): PsdClipArea | null {
+  const [left, top, right, bottom] = bounds
+  const width = right - left
+  const height = bottom - top
+  if (width <= 0 || height <= 0) {
+    return null
+  }
+  return { x: left, y: top, w: width, h: height, is_full: false }
+}
+
+function deriveClipAreasFromSoAncestors(
+  smartObjects: PsdSmartObject[],
+  layers: PsdLayerInfo[] = [],
+): PsdClipArea[] {
+  const groupLayers = layers.filter((layer) => layer.is_group && layer.bounds)
+  const areas: PsdClipArea[] = []
+
+  for (const smartObject of smartObjects) {
+    const ancestors = groupLayers
+      .filter((layer) => smartObject.path.startsWith(`${layer.path}/`))
+      .sort((left, right) => right.path.length - left.path.length)
+    const nearestBounds = ancestors[0]?.bounds
+    if (!nearestBounds) {
+      continue
+    }
+    const area = areaFromBounds(nearestBounds)
+    if (!area) {
+      continue
+    }
+    const isDuplicate = areas.some(
+      (existing) =>
+        existing.x === area.x &&
+        existing.y === area.y &&
+        existing.w === area.w &&
+        existing.h === area.h,
+    )
+    if (!isDuplicate) {
+      areas.push(area)
+    }
+  }
+
+  return areas
+}
+
+interface ClipAreaSource {
+  doc_size: { w: number; h: number }
+  guides: PsdGuides
+  smart_objects?: PsdSmartObject[]
+  layers?: PsdLayerInfo[]
+}
+
+export function deriveClipAreas(
+  scanResult: ClipAreaSource,
+  mode: PhotoshopClipMode = 'auto',
+): PsdClipArea[] {
+  if (mode === 'none') {
+    return [fullClipArea(scanResult.doc_size)]
+  }
+
+  const guideAreas = deriveClipAreasFromGuides(scanResult.guides, scanResult.doc_size)
+  if (guideAreas.length > 0) {
+    return guideAreas
+  }
+
+  if (mode === 'auto') {
+    const ancestorAreas = deriveClipAreasFromSoAncestors(
+      scanResult.smart_objects ?? [],
+      scanResult.layers ?? [],
+    )
+    if (ancestorAreas.length > 0) {
+      return ancestorAreas
+    }
+  }
+
+  return [fullClipArea(scanResult.doc_size)]
 }
 
 function normalizeGuides(value: unknown): PsdGuides {
@@ -205,9 +287,9 @@ function normalizeSmartObjects(value: unknown): PsdSmartObject[] {
   })
 }
 
-function normalizeClipAreas(value: unknown, guides: PsdGuides, docSize: { w: number; h: number }) {
+function normalizeClipAreas(value: unknown, scanResult: ClipAreaSource) {
   if (!Array.isArray(value) || value.length === 0) {
-    return deriveClipAreas(guides, docSize)
+    return deriveClipAreas(scanResult, 'auto')
   }
 
   return value.map((item, index) => {
@@ -222,7 +304,8 @@ function normalizeClipAreas(value: unknown, guides: PsdGuides, docSize: { w: num
       h: asFiniteNumber(area.h, `clip_areas[${index}].h`),
       is_full:
         area.is_full === true ||
-        `${area.x},${area.y},${area.w},${area.h}` === `0,0,${docSize.w},${docSize.h}` ||
+        `${area.x},${area.y},${area.w},${area.h}` ===
+          `0,0,${scanResult.doc_size.w},${scanResult.doc_size.h}` ||
         area.name === FULL_AREA_FLAG,
     }
   })
@@ -286,7 +369,13 @@ export function buildPsdTemplateFromScanResult(
   }
   const smartObjects = normalizeSmartObjects(raw.smart_objects)
   const guides = normalizeGuides(raw.guides)
-  const clipAreas = normalizeClipAreas(raw.clip_areas, guides, docSize)
+  const layers = normalizeLayers(raw.layers)
+  const clipAreas = normalizeClipAreas(raw.clip_areas, {
+    doc_size: docSize,
+    guides,
+    smart_objects: smartObjects,
+    layers,
+  })
   const mode = detectSmartObjectMode(smartObjects)
 
   return {
@@ -300,7 +389,7 @@ export function buildPsdTemplateFromScanResult(
     mode,
     representative_so_count: representativeSoCount(smartObjects),
     scanned_at: options.scannedAt,
-    layers: normalizeLayers(raw.layers),
+    layers,
     text_layers: normalizeTextLayers(raw.text_layers),
   }
 }
