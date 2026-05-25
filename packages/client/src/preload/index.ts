@@ -2,7 +2,13 @@ import type {
   ActivationBadgeState,
   ListingItem,
   ListingProgress,
+  ListingTaskInput,
+  ListingTaskRecord,
+  ListingTaskStatus,
   ListingTemplateConfig,
+  ListingWorkspaceInput,
+  ListingWorkspaceRecord,
+  ListingWorkspaceStatus,
   PhotoshopProgressInfo,
   PhotoshopScanTemplateRequest,
   PhotoshopStatus,
@@ -298,6 +304,31 @@ const api = {
     listTemplates: () =>
       ipcRenderer.invoke('listing:list-templates') as Promise<ListingTemplateConfig[]>,
     listProfiles: () => ipcRenderer.invoke('listing:list-profiles') as Promise<BitBrowserProfile[]>,
+    listSavedWorkspaces: () =>
+      ipcRenderer.invoke('listing:list-saved-workspaces') as Promise<ListingWorkspaceRecord[]>,
+    saveWorkspace: (input: ListingWorkspaceInput) =>
+      ipcRenderer.invoke('listing:save-workspace', input) as Promise<ListingWorkspaceRecord>,
+    updateWorkspaceStatus: (input: {
+      workspaceId: string
+      status: ListingWorkspaceStatus
+      currentTaskId: string | null
+    }) =>
+      ipcRenderer.invoke(
+        'listing:update-workspace-status',
+        input,
+      ) as Promise<ListingWorkspaceRecord | null>,
+    listTasks: (input?: { workspaceId?: string; status?: ListingTaskStatus }) =>
+      ipcRenderer.invoke('listing:list-tasks', input) as Promise<ListingTaskRecord[]>,
+    createTask: (input: ListingTaskInput) =>
+      ipcRenderer.invoke('listing:create-task', input) as Promise<ListingTaskRecord>,
+    updateTaskStatus: (input: {
+      taskId: string
+      status: ListingTaskStatus
+      lastRunTaskId?: string | null
+    }) =>
+      ipcRenderer.invoke('listing:update-task-status', input) as Promise<ListingTaskRecord | null>,
+    deleteTask: (input: { taskId: string }) =>
+      ipcRenderer.invoke('listing:delete-task', input) as Promise<void>,
     chooseBatchDir: () =>
       ipcRenderer.invoke('listing:choose-batch-dir') as Promise<
         | { ok: true; data: { path: string } }

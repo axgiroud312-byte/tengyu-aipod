@@ -206,6 +206,28 @@ declare global {
           batchDir: string
           templateKey: string
         }) => Promise<import('../../main/lib/listing-batch-loader').ListingBatchLoadResult>
+        listSavedWorkspaces: () => Promise<import('@tengyu-aipod/shared').ListingWorkspaceRecord[]>
+        saveWorkspace: (
+          input: import('@tengyu-aipod/shared').ListingWorkspaceInput,
+        ) => Promise<import('@tengyu-aipod/shared').ListingWorkspaceRecord>
+        updateWorkspaceStatus: (input: {
+          workspaceId: string
+          status: import('@tengyu-aipod/shared').ListingWorkspaceStatus
+          currentTaskId: string | null
+        }) => Promise<import('@tengyu-aipod/shared').ListingWorkspaceRecord | null>
+        listTasks: (input?: {
+          workspaceId?: string
+          status?: import('@tengyu-aipod/shared').ListingTaskStatus
+        }) => Promise<import('@tengyu-aipod/shared').ListingTaskRecord[]>
+        createTask: (
+          input: import('@tengyu-aipod/shared').ListingTaskInput,
+        ) => Promise<import('@tengyu-aipod/shared').ListingTaskRecord>
+        updateTaskStatus: (input: {
+          taskId: string
+          status: import('@tengyu-aipod/shared').ListingTaskStatus
+          lastRunTaskId?: string | null
+        }) => Promise<import('@tengyu-aipod/shared').ListingTaskRecord | null>
+        deleteTask: (input: { taskId: string }) => Promise<void>
         listStatus: (input: {
           batchDir: string
           platform?: string
