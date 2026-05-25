@@ -190,6 +190,16 @@ declare global {
         ) => () => void
       }
       listing: {
+        listTemplates: () => Promise<import('@tengyu-aipod/shared').ListingTemplateConfig[]>
+        listProfiles: () => Promise<import('../../main/lib/bit-browser-client').BitBrowserProfile[]>
+        chooseBatchDir: () => Promise<
+          | { ok: true; data: { path: string } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+        scanBatchDir: (input: {
+          batchDir: string
+          templateKey: string
+        }) => Promise<import('../../main/lib/listing-batch-loader').ListingBatchLoadResult>
         run: (input: {
           config: import('../../modules/listing/runner').ListingRunConfig
           items: import('@tengyu-aipod/shared').ListingItem[]

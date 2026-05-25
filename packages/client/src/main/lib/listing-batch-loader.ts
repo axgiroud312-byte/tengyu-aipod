@@ -17,6 +17,12 @@ export type ListingBatchLoaderOptions = {
   excludedFolderNames?: string[]
 }
 
+export type ListingBatchLoadResult = ListingMaterialScanResult & {
+  listingItems: ListingItem[]
+  skuFolderCount: number
+  titledSkuCount: number
+}
+
 type CollectedMaterialFiles = {
   imageGroups: ListingImageGroups
   variantGroups: ListingVariantGroup[]
@@ -38,7 +44,7 @@ const GROUP_NAME_ALIASES: Record<ListingImageGroup, string[]> = {
 export async function loadBatchAsListingItems(
   batchDir: string,
   options: ListingBatchLoaderOptions = {},
-): Promise<ListingMaterialScanResult & { listingItems: ListingItem[] }> {
+): Promise<ListingBatchLoadResult> {
   const template = options.template ?? inferTemplate(batchDir)
   const excludedFolderNames = new Set([
     ...template.excludedFolderNames,
@@ -89,6 +95,8 @@ export async function loadBatchAsListingItems(
     items,
     listingItems,
     warnings,
+    skuFolderCount: folders.length,
+    titledSkuCount: folders.filter((folder) => titles.has(folder.name)).length,
   }
 }
 

@@ -13,6 +13,7 @@ import {
   type ListingStatus,
   type ListingTemplateConfig,
   type ListingTemplateKey,
+  SLICE_8_LISTING_TEMPLATES,
   WORKBENCH_DIRECTORIES,
   type WorkspaceResult,
   createListingFailure,
@@ -20,11 +21,13 @@ import {
 } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
 import type { Browser as PlaywrightBrowser, Page as PlaywrightPage } from 'playwright'
+import { bitBrowserClient } from '../../main/lib/bit-browser-client'
 import {
   type BrowserProfileLockManager,
   browserProfileLocks,
 } from '../../main/lib/browser-profile-lock'
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
+import { loadBatchAsListingItems } from '../../main/lib/listing-batch-loader'
 import { sheinWorkflow } from './platforms/dianxiaomi-shein/workflow'
 import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
 
@@ -623,6 +626,28 @@ export class SqliteListingStatusStore implements ListingStatusStore {
 
 export function registerListingRunnerIpc() {
   const ipcMain = electronIpcMain()
+  ipcMain.handle('listing:list-templates', () => SLICE_8_LISTING_TEMPLATES.map((item) => item))
+  ipcMain.handle('listing:list-profiles', () => bitBrowserClient.listProfiles())
+  ipcMain.handle('listing:choose-batch-dir', async () => {
+    const result = await electronDialog().showOpenDialog({
+      properties: ['openDirectory'],
+      title: '选择上架素材批次目录',
+    })
+    if (result.canceled || !result.filePaths[0]) {
+      return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
+    }
+    return { ok: true, data: { path: result.filePaths[0] } }
+  })
+  ipcMain.handle('listing:scan-batch-dir', (_event, input: unknown) => {
+    if (!isRecord(input) || typeof input.batchDir !== 'string') {
+      throw new AppErrorClass('HTTP_4XX', '上架批次扫描参数不正确', false, {
+        kind: 'validation',
+      })
+    }
+    return loadBatchAsListingItems(input.batchDir, {
+      template: listingTemplateByKey(input.templateKey),
+    })
+  })
   ipcMain.handle('listing:run', async (_event, input: unknown) => {
     if (!isListingRunRequest(input)) {
       throw new AppErrorClass('HTTP_4XX', '上架任务参数不正确', false, {
@@ -975,10 +1000,19 @@ function electronIpcMain() {
   return (nodeRequire('electron') as typeof import('electron')).ipcMain
 }
 
+function electronDialog() {
+  return (nodeRequire('electron') as typeof import('electron')).dialog
+}
+
 function emitListingProgress(progress: ListingProgress) {
   for (const window of electronBrowserWindow().getAllWindows()) {
     window.webContents.send('listing:progress', progress)
   }
+}
+
+function listingTemplateByKey(value: unknown) {
+  const template = SLICE_8_LISTING_TEMPLATES.find((item) => item.key === value)
+  return template ?? SLICE_8_LISTING_TEMPLATES[0]
 }
 
 function electronBrowserWindow(): ElectronBrowserWindowConstructor {

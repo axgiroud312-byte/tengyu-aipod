@@ -28,9 +28,10 @@ import type {
 } from '../../main/lib/title-service'
 import { DetectionWorkbench } from './components/detection-workbench'
 import { GenerationWorkbench } from './components/generation-workbench'
+import { ListingWorkbench } from './components/listing-workbench'
 
 type OnboardingStep = 1 | 2 | 3 | 4
-type WorkbenchModule = 'collection' | 'title' | 'generation' | 'detection'
+type WorkbenchModule = 'collection' | 'title' | 'generation' | 'detection' | 'listing'
 type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
 
@@ -160,6 +161,8 @@ function moduleTitle(module: WorkbenchModule) {
       return '标题生成模块'
     case 'generation':
       return '生图模块'
+    case 'listing':
+      return '上架模块'
     default:
       return '侵权检测模块'
   }
@@ -173,6 +176,8 @@ function moduleDescription(module: WorkbenchModule) {
       return '从货号成品图批量生成跨境标题'
     case 'generation':
       return '按文生图、图生图、提取、抠图组织生产路径'
+    case 'listing':
+      return '批量操作店小秘草稿并保留真实页面证据'
     default:
       return '批量检测印花风险并流转结果'
   }
@@ -680,6 +685,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                   >
                     侵权检测
                   </Button>
+                  <Button
+                    onClick={() => setActiveModule('listing')}
+                    type="button"
+                    variant={activeModule === 'listing' ? 'default' : 'secondary'}
+                  >
+                    上架
+                  </Button>
                 </div>
               </div>
 
@@ -997,6 +1009,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                 </div>
               ) : activeModule === 'generation' ? (
                 <GenerationWorkbench />
+              ) : activeModule === 'listing' ? (
+                <ListingWorkbench />
               ) : (
                 <DetectionWorkbench />
               )}

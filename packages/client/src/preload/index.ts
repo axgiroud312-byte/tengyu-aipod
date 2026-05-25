@@ -2,10 +2,12 @@ import type {
   ActivationBadgeState,
   ListingItem,
   ListingProgress,
+  ListingTemplateConfig,
   Skill,
   SkillSummary,
 } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { BitBrowserProfile } from '../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../main/lib/browser-profile-lock'
 import type {
   CollectionClickEvent,
@@ -48,6 +50,7 @@ import type {
   Txt2imgPromptDraft,
   Txt2imgRunInput,
 } from '../main/lib/generation-service'
+import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 import type { ListingRunConfig } from '../modules/listing/runner'
 
@@ -282,6 +285,16 @@ const api = {
     },
   },
   listing: {
+    listTemplates: () =>
+      ipcRenderer.invoke('listing:list-templates') as Promise<ListingTemplateConfig[]>,
+    listProfiles: () => ipcRenderer.invoke('listing:list-profiles') as Promise<BitBrowserProfile[]>,
+    chooseBatchDir: () =>
+      ipcRenderer.invoke('listing:choose-batch-dir') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    scanBatchDir: (input: { batchDir: string; templateKey: string }) =>
+      ipcRenderer.invoke('listing:scan-batch-dir', input) as Promise<ListingBatchLoadResult>,
     run: (input: { config: ListingRunConfig; items: ListingItem[] }) =>
       ipcRenderer.invoke('listing:run', input) as Promise<string>,
     onProgress: (callback: (progress: ListingProgress) => void) => {
