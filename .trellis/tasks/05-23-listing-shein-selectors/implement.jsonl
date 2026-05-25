@@ -1,1 +1,4 @@
 {"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/spec/07-listing.md", "reason": "Shein selector contracts must follow listing four-layer boundaries and real browser baseline."}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Confirms framework reference is allowed while Dianxiaomi DOM code must be rewritten."}
+{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Source project is research context only; do not port DOM code."}
