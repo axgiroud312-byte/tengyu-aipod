@@ -5,6 +5,7 @@ import {
   AccordionTrigger,
 } from '@/components/ui/accordion'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import type {
   ListingItem,
   ListingPlatformKey,
@@ -14,11 +15,20 @@ import type {
   ListingTemplateConfig,
   ListingTemplateKey,
 } from '@tengyu-aipod/shared'
-import { AlertTriangle, CheckCircle2, FolderOpen, Loader2, Play, RefreshCw } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  FolderOpen,
+  Loader2,
+  Play,
+  RefreshCw,
+  RotateCcw,
+} from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BitBrowserProfile } from '../../../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../../../main/lib/browser-profile-lock'
 import type { ListingBatchLoadResult } from '../../../main/lib/listing-batch-loader'
+import type { ListingStatusRow } from '../../../modules/listing/runner'
 
 type WorkspaceProgress = {
   status: ListingProgress['status']
@@ -106,6 +116,10 @@ function warningTitleMissing(warning: string) {
   return warning.includes('无标题')
 }
 
+function isTerminalListingStatus(status: ListingProgress['status']) {
+  return status === 'success' || status === 'failed' || status === 'skipped'
+}
+
 export function ListingWorkbench() {
   const [templates, setTemplates] = useState<ListingTemplateConfig[]>([])
   const [templateKey, setTemplateKey] = useState<ListingTemplateKey>('temu-clothing')
@@ -121,12 +135,16 @@ export function ListingWorkbench() {
   const [locks, setLocks] = useState<BrowserProfileHolder[]>([])
   const [selectedProfileIds, setSelectedProfileIds] = useState<string[]>([])
   const [scanResult, setScanResult] = useState<ListingBatchLoadResult | null>(null)
+  const [statusRows, setStatusRows] = useState<ListingStatusRow[]>([])
   const [progress, setProgress] = useState<ListingProgress | null>(null)
   const [workspaceProgress, setWorkspaceProgress] = useState<Record<string, WorkspaceProgress>>({})
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
+  const [statusLoading, setStatusLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [retryingSku, setRetryingSku] = useState<string | null>(null)
+  const [openingEvidencePath, setOpeningEvidencePath] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
@@ -186,6 +204,10 @@ export function ListingWorkbench() {
   const itemCount = scanResult?.listingItems.length ?? 0
   const warningCount = scanResult?.warnings.length ?? 0
   const titleWarningCount = scanResult?.warnings.filter(warningTitleMissing).length ?? 0
+  const failedRows = useMemo(
+    () => statusRows.filter((row) => row.status === 'failed'),
+    [statusRows],
+  )
   const estimatedMinutes = Math.max(
     0,
     Math.ceil((itemCount * 4) / Math.max(1, selectedProfileIds.length)),
@@ -197,6 +219,32 @@ export function ListingWorkbench() {
     targetShopName.trim().length > 0 &&
     draftTemplateId.trim().length > 0 &&
     !starting
+
+  const refreshStatusRows = useCallback(async () => {
+    if (!batchDir.trim()) {
+      setStatusRows([])
+      return
+    }
+    setStatusLoading(true)
+    try {
+      const rows = await window.api.listing.listStatus({
+        batchDir: batchDir.trim(),
+        platform: selectedPlatform,
+      })
+      setStatusRows(rows)
+      setError(null)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError))
+    } finally {
+      setStatusLoading(false)
+    }
+  }, [batchDir, selectedPlatform])
+
+  useEffect(() => {
+    if (progress && isTerminalListingStatus(progress.status)) {
+      void refreshStatusRows()
+    }
+  }, [progress, refreshStatusRows])
 
   function handleProgress(nextProgress: ListingProgress) {
     setProgress(nextProgress)
@@ -224,6 +272,7 @@ export function ListingWorkbench() {
     if (result.ok) {
       setBatchDir(result.data.path)
       setScanResult(null)
+      setStatusRows([])
     }
   }
 
@@ -240,6 +289,7 @@ export function ListingWorkbench() {
         templateKey,
       })
       setScanResult(result)
+      await refreshStatusRows()
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
     } finally {
@@ -282,6 +332,7 @@ export function ListingWorkbench() {
     setError(null)
     setProgress(null)
     setWorkspaceProgress({})
+    setStatusRows([])
     try {
       const editUrl = editUrlFromTemplate(selectedTemplate, draftTemplateId)
       const template: ListingTemplateConfig = {
@@ -318,6 +369,95 @@ export function ListingWorkbench() {
     }
   }
 
+  async function openEvidence(row: ListingStatusRow) {
+    if (!row.evidence_dir) {
+      setError('这条失败记录还没有证据目录')
+      return
+    }
+    setOpeningEvidencePath(row.evidence_dir)
+    try {
+      const result = await window.api.listing.openPath({ path: row.evidence_dir })
+      setError(result.ok ? null : result.error.message)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError))
+    } finally {
+      setOpeningEvidencePath(null)
+    }
+  }
+
+  async function retryFailedRows(rows: ListingStatusRow[], retryLabel: string) {
+    if (!selectedTemplate || !scanResult) {
+      setError('请先扫描批次，再重试失败货号')
+      return
+    }
+    if (!targetShopName.trim() || !draftTemplateId.trim()) {
+      setError('请先填写店铺名和模板 ID，再重试失败货号')
+      return
+    }
+    const itemBySku = new Map(scanResult.listingItems.map((item) => [item.sku, item]))
+    const rowsByWorkspace = new Map<string, ListingStatusRow[]>()
+    for (const row of rows) {
+      if (!itemBySku.has(row.sku_code)) {
+        continue
+      }
+      rowsByWorkspace.set(row.workspace_id, [...(rowsByWorkspace.get(row.workspace_id) ?? []), row])
+    }
+    const retryWorkspaceIds = Array.from(rowsByWorkspace.keys())
+    if (retryWorkspaceIds.length === 0) {
+      setError('没有匹配当前批次的失败货号')
+      return
+    }
+
+    setRetryingSku(retryLabel)
+    setStarting(true)
+    setError(null)
+    setProgress(null)
+    setWorkspaceProgress({})
+    try {
+      setSelectedProfileIds((current) => Array.from(new Set([...current, ...retryWorkspaceIds])))
+      const template: ListingTemplateConfig = {
+        ...selectedTemplate,
+        editUrl: editUrlFromTemplate(selectedTemplate, draftTemplateId),
+        skuMode,
+      }
+      const taskIds: string[] = []
+      for (const [profileId, workspaceRows] of rowsByWorkspace.entries()) {
+        const retryItems: ListingItem[] = workspaceRows
+          .map((row) => itemBySku.get(row.sku_code))
+          .filter((item): item is ListingItem => Boolean(item))
+          .map((item) => ({
+            ...item,
+            platform: template.platform,
+            templateKey: template.key,
+            editUrl: template.editUrl,
+            targetShopName: targetShopName.trim(),
+          }))
+        const taskId = await window.api.listing.run({
+          config: {
+            batch_dir: batchDir.trim(),
+            platform: template.platform,
+            template,
+            workspaces: [{ profile_id: profileId }],
+            submit_mode: submitMode,
+            max_attempts: parseIntInput(maxAttempts, 2, 1, 5),
+            fail_streak_limit: parseIntInput(failStreakLimit, 3, 1, 10),
+            resume: true,
+            retry_failed_only: true,
+            timeout_ms: 30_000,
+          },
+          items: retryItems,
+        })
+        taskIds.push(taskId)
+      }
+      setRunningTaskId(taskIds.join(', '))
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : String(nextError))
+    } finally {
+      setStarting(false)
+      setRetryingSku(null)
+    }
+  }
+
   function selectPlatform(platform: ListingPlatformKey) {
     const nextTemplate = templates.find((template) => template.platform === platform)
     if (!nextTemplate) {
@@ -328,6 +468,7 @@ export function ListingWorkbench() {
     setDraftTemplateId(templateIdFromUrl(nextTemplate.editUrl))
     setSkuMode(nextTemplate.skuMode)
     setScanResult(null)
+    setStatusRows([])
   }
 
   function selectTemplate(nextTemplateKey: ListingTemplateKey) {
@@ -340,6 +481,7 @@ export function ListingWorkbench() {
     setDraftTemplateId(templateIdFromUrl(nextTemplate.editUrl))
     setSkuMode(nextTemplate.skuMode)
     setScanResult(null)
+    setStatusRows([])
   }
 
   function toggleProfile(profileId: string) {
@@ -380,6 +522,7 @@ export function ListingWorkbench() {
                   onChange={(event) => {
                     setBatchDir(event.target.value)
                     setScanResult(null)
+                    setStatusRows([])
                   }}
                   placeholder="/Users/.../05-货号成品/批次"
                   value={batchDir}
@@ -583,9 +726,11 @@ export function ListingWorkbench() {
                 const selected = selectedProfileIds.includes(profile.id)
                 return (
                   <label
-                    className={`flex items-start gap-3 rounded-md border p-3 text-sm ${
-                      selected ? 'border-primary bg-muted' : 'bg-background'
-                    } ${locked ? 'opacity-70' : ''}`}
+                    className={cn(
+                      'flex items-start gap-3 rounded-md border p-3 text-sm',
+                      selected ? 'border-primary bg-muted' : 'bg-background',
+                      locked ? 'opacity-70' : null,
+                    )}
                     key={profile.id}
                   >
                     <input
@@ -665,6 +810,104 @@ export function ListingWorkbench() {
             ) : (
               <div className="px-3 py-8 text-center text-sm text-muted-foreground">
                 选择 profile 后显示每个工作区进度。
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-md border bg-background p-5 shadow-sm">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-semibold text-balance">失败列表</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                {failedRows.length
+                  ? `当前批次有 ${failedRows.length} 个失败货号`
+                  : '当前批次没有失败货号'}
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                disabled={statusLoading || !batchDir.trim()}
+                onClick={() => void refreshStatusRows()}
+                type="button"
+                variant="secondary"
+              >
+                {statusLoading ? (
+                  <Loader2 className="mr-2 size-4" />
+                ) : (
+                  <RefreshCw className="mr-2 size-4" />
+                )}
+                刷新
+              </Button>
+              <Button
+                disabled={!failedRows.length || starting || retryingSku !== null}
+                onClick={() => void retryFailedRows(failedRows, '全部失败货号')}
+                type="button"
+                variant="secondary"
+              >
+                {retryingSku === '全部失败货号' ? (
+                  <Loader2 className="mr-2 size-4" />
+                ) : (
+                  <RotateCcw className="mr-2 size-4" />
+                )}
+                全部重试失败
+              </Button>
+            </div>
+          </div>
+
+          <div className="mt-4 max-h-72 overflow-auto rounded-md border">
+            {failedRows.length ? (
+              <div className="divide-y">
+                {failedRows.map((row) => (
+                  <div
+                    className="grid gap-3 p-3 text-sm lg:grid-cols-[120px_140px_minmax(0,1fr)_190px]"
+                    key={`${row.workspace_id}-${row.sku_code}`}
+                  >
+                    <div className="min-w-0">
+                      <div className="truncate font-mono text-xs text-muted-foreground">
+                        {row.sku_code}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {row.workspace_id}
+                      </div>
+                    </div>
+                    <div className="font-mono text-xs text-red-700">
+                      {row.last_error_code ?? 'UNKNOWN'}
+                    </div>
+                    <div className="min-w-0 text-red-700">
+                      <p className="line-clamp-2 text-pretty">{row.last_error ?? '上架失败'}</p>
+                    </div>
+                    <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
+                      <Button
+                        className="h-8 px-2"
+                        disabled={!row.evidence_dir || openingEvidencePath === row.evidence_dir}
+                        onClick={() => void openEvidence(row)}
+                        type="button"
+                        variant="secondary"
+                      >
+                        查看证据
+                      </Button>
+                      <Button
+                        className="h-8 px-2"
+                        disabled={starting || retryingSku !== null}
+                        onClick={() => void retryFailedRows([row], row.sku_code)}
+                        type="button"
+                        variant="secondary"
+                      >
+                        {retryingSku === row.sku_code ? (
+                          <Loader2 className="mr-2 size-3.5" />
+                        ) : (
+                          <RotateCcw className="mr-2 size-3.5" />
+                        )}
+                        重试该货号
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="px-3 py-8 text-center text-sm text-muted-foreground">
+                扫描或执行完成后显示失败货号。
               </div>
             )}
           </div>

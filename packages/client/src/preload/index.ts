@@ -52,7 +52,7 @@ import type {
 } from '../main/lib/generation-service'
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
-import type { ListingRunConfig } from '../modules/listing/runner'
+import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
@@ -295,6 +295,12 @@ const api = {
       >,
     scanBatchDir: (input: { batchDir: string; templateKey: string }) =>
       ipcRenderer.invoke('listing:scan-batch-dir', input) as Promise<ListingBatchLoadResult>,
+    listStatus: (input: { batchDir: string; platform?: string; status?: string }) =>
+      ipcRenderer.invoke('listing:list-status', input) as Promise<ListingStatusRow[]>,
+    openPath: (input: { path: string }) =>
+      ipcRenderer.invoke('listing:open-path', input) as Promise<
+        { ok: true } | { ok: false; error: { code: string; message: string } }
+      >,
     run: (input: { config: ListingRunConfig; items: ListingItem[] }) =>
       ipcRenderer.invoke('listing:run', input) as Promise<string>,
     onProgress: (callback: (progress: ListingProgress) => void) => {

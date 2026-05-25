@@ -200,6 +200,14 @@ declare global {
           batchDir: string
           templateKey: string
         }) => Promise<import('../../main/lib/listing-batch-loader').ListingBatchLoadResult>
+        listStatus: (input: {
+          batchDir: string
+          platform?: string
+          status?: string
+        }) => Promise<import('../../modules/listing/runner').ListingStatusRow[]>
+        openPath: (input: { path: string }) => Promise<
+          { ok: true } | { ok: false; error: { code: string; message: string } }
+        >
         run: (input: {
           config: import('../../modules/listing/runner').ListingRunConfig
           items: import('@tengyu-aipod/shared').ListingItem[]

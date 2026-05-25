@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   AppErrorClass,
   type ListingConfig,
+  type ListingErrorCode,
   type ListingFailure,
   type ListingItem,
   type ListingPlatformKey,
@@ -83,9 +84,16 @@ export type ListingStatusRow = {
   draft_template_id: string | null
   retry_count: number
   last_attempted_at: number | null
+  last_error_code?: string | null
   last_error: string | null
   evidence_dir: string | null
   created_at: number
+}
+
+export type ListingStatusListInput = {
+  batchDir: string
+  platform?: ListingPlatformKey
+  status?: ListingStatus
 }
 
 export type ListingStatusStore = {
@@ -150,6 +158,7 @@ type ListingStatusUpsert = ListingStatusKey & {
   status: ListingStatus
   retryCount: number
   lastAttemptedAt: number
+  lastErrorCode?: ListingErrorCode | string | null
   lastError?: string | null
   evidenceDir?: string | null
   draftTemplateId?: string | null
@@ -402,6 +411,7 @@ export class ListingRunner {
           status: 'uploading',
           retryCount,
           lastAttemptedAt: this.now(),
+          lastErrorCode: null,
           lastError: null,
           evidenceDir: evidenceDirFor(config, profileId, item),
         })
@@ -428,6 +438,7 @@ export class ListingRunner {
             status: 'success',
             retryCount: result.attemptCount,
             lastAttemptedAt: this.now(),
+            lastErrorCode: null,
             evidenceDir: result.evidenceDir ?? evidenceDirFor(config, profileId, item),
           })
         } else {
@@ -437,6 +448,7 @@ export class ListingRunner {
             status: 'failed',
             retryCount: result.attemptCount,
             lastAttemptedAt: this.now(),
+            lastErrorCode: result.failure?.code ?? null,
             lastError: result.failure?.message ?? '上架失败',
             evidenceDir: result.evidenceDir ?? evidenceDirFor(config, profileId, item),
           })
@@ -466,6 +478,7 @@ export class ListingRunner {
               status: 'skipped',
               retryCount: 0,
               lastAttemptedAt: this.now(),
+              lastErrorCode: pausedFailure.code,
               lastError: pausedFailure.message,
               evidenceDir: evidenceDirFor(config, profileId, remaining),
             })
@@ -575,6 +588,30 @@ export class SqliteListingStatusStore implements ListingStatusStore {
     return isListingStatusRow(row) ? row : null
   }
 
+  list(args: ListingStatusListInput): ListingStatusRow[] {
+    const filters = ['batch_path = ?']
+    const params: string[] = [args.batchDir]
+    if (args.platform) {
+      filters.push('platform = ?')
+      params.push(args.platform)
+    }
+    if (args.status) {
+      filters.push('status = ?')
+      params.push(args.status)
+    }
+    const rows = this.db
+      .prepare(
+        `
+        SELECT *
+        FROM listing_status
+        WHERE ${filters.join(' AND ')}
+        ORDER BY last_attempted_at DESC, sku_code ASC
+      `,
+      )
+      .all(...params)
+    return rows.filter(isListingStatusRow)
+  }
+
   upsert(args: ListingStatusUpsert): void {
     const now = Date.now()
     this.db
@@ -590,15 +627,17 @@ export class SqliteListingStatusStore implements ListingStatusStore {
           draft_template_id,
           retry_count,
           last_attempted_at,
+          last_error_code,
           last_error,
           evidence_dir,
           created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(batch_path, sku_code, platform, workspace_id) DO UPDATE SET
           status = excluded.status,
           draft_template_id = excluded.draft_template_id,
           retry_count = excluded.retry_count,
           last_attempted_at = excluded.last_attempted_at,
+          last_error_code = excluded.last_error_code,
           last_error = excluded.last_error,
           evidence_dir = excluded.evidence_dir
       `,
@@ -613,6 +652,7 @@ export class SqliteListingStatusStore implements ListingStatusStore {
         args.draftTemplateId ?? null,
         args.retryCount,
         args.lastAttemptedAt,
+        args.lastErrorCode ?? null,
         args.lastError ?? null,
         args.evidenceDir ?? null,
         now,
@@ -647,6 +687,28 @@ export function registerListingRunnerIpc() {
     return loadBatchAsListingItems(input.batchDir, {
       template: listingTemplateByKey(input.templateKey),
     })
+  })
+  ipcMain.handle('listing:list-status', async (_event, input: unknown) => {
+    const listInput = parseListingStatusListInput(input)
+    const workbenchRoot = await readWorkbenchRoot(readAppConfig)
+    const store = openWorkbenchListingStatusStore(workbenchRoot)
+    try {
+      return store.list(listInput)
+    } finally {
+      store.close()
+    }
+  })
+  ipcMain.handle('listing:open-path', async (_event, input: unknown) => {
+    if (!isRecord(input) || typeof input.path !== 'string') {
+      throw new AppErrorClass('HTTP_4XX', '打开上架证据路径参数不正确', false, {
+        kind: 'validation',
+      })
+    }
+    const error = await electronShell().openPath(input.path)
+    if (error) {
+      return { ok: false, error: { code: 'OPEN_PATH_FAILED', message: error } }
+    }
+    return { ok: true }
   })
   ipcMain.handle('listing:run', async (_event, input: unknown) => {
     if (!isListingRunRequest(input)) {
@@ -912,12 +974,18 @@ function ensureListingStatusTable(db: Pick<Database.Database, 'exec'>) {
       draft_template_id TEXT,
       retry_count INTEGER NOT NULL DEFAULT 0,
       last_attempted_at INTEGER,
+      last_error_code TEXT,
       last_error TEXT,
       evidence_dir TEXT,
       created_at INTEGER NOT NULL,
       UNIQUE(batch_path, sku_code, platform, workspace_id)
     );
   `)
+  try {
+    db.exec('ALTER TABLE listing_status ADD COLUMN last_error_code TEXT;')
+  } catch {
+    // Existing databases may already have the column.
+  }
 }
 
 async function readWorkbenchRoot(
@@ -1004,6 +1072,10 @@ function electronDialog() {
   return (nodeRequire('electron') as typeof import('electron')).dialog
 }
 
+function electronShell() {
+  return (nodeRequire('electron') as typeof import('electron')).shell
+}
+
 function emitListingProgress(progress: ListingProgress) {
   for (const window of electronBrowserWindow().getAllWindows()) {
     window.webContents.send('listing:progress', progress)
@@ -1013,6 +1085,28 @@ function emitListingProgress(progress: ListingProgress) {
 function listingTemplateByKey(value: unknown) {
   const template = SLICE_8_LISTING_TEMPLATES.find((item) => item.key === value)
   return template ?? SLICE_8_LISTING_TEMPLATES[0]
+}
+
+function parseListingStatusListInput(input: unknown): ListingStatusListInput {
+  if (!isRecord(input) || typeof input.batchDir !== 'string') {
+    throw new AppErrorClass('HTTP_4XX', '读取上架状态参数不正确', false, {
+      kind: 'validation',
+    })
+  }
+  const result: ListingStatusListInput = {
+    batchDir: input.batchDir,
+  }
+  if (isListingPlatformKey(input.platform)) {
+    result.platform = input.platform
+  }
+  if (isListingStatus(input.status)) {
+    result.status = input.status
+  }
+  return result
+}
+
+function isListingPlatformKey(value: unknown): value is ListingPlatformKey {
+  return value === 'temu-pop' || value === 'shein'
 }
 
 function electronBrowserWindow(): ElectronBrowserWindowConstructor {

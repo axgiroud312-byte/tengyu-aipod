@@ -40,6 +40,7 @@ class FakeStatusStore implements ListingStatusStore {
       draft_template_id: record.draftTemplateId ?? null,
       retry_count: record.retryCount,
       last_attempted_at: record.lastAttemptedAt,
+      last_error_code: record.lastErrorCode ?? null,
       last_error: record.lastError ?? null,
       evidence_dir: record.evidenceDir ?? null,
       created_at: existing?.created_at ?? 1,
@@ -257,6 +258,7 @@ describe('listing runner', () => {
         draft_template_id: null,
         retry_count: 1,
         last_attempted_at: 1,
+        last_error_code: null,
         last_error: null,
         evidence_dir: null,
         created_at: 1,
@@ -343,6 +345,7 @@ describe('listing runner', () => {
     expect(store.rows.get('/tmp/batch::SKU-2::temu-pop::profile-a')).toMatchObject({
       status: 'success',
       retry_count: 1,
+      last_error_code: null,
       evidence_dir: '/tmp/evidence/evidence/profile-a/SKU-2',
     })
   })
@@ -416,6 +419,7 @@ describe('listing runner', () => {
     expect(store.rows.get('/tmp/batch::SKU-1::temu-pop::profile-a')).toMatchObject({
       status: 'failed',
       retry_count: 1,
+      last_error_code: 'DRAFT_NOT_FOUND',
       last_error: '草稿模板不存在',
     })
   })
@@ -537,6 +541,7 @@ describe('listing runner', () => {
     expect(workflow.runListingItem).toHaveBeenCalledTimes(2)
     expect(store.rows.get('/tmp/batch::SKU-3::temu-pop::profile-a')).toMatchObject({
       status: 'skipped',
+      last_error_code: 'CONSECUTIVE_FAILURES',
       last_error: '连续 2 次失败，工作区暂停',
     })
   })
@@ -591,6 +596,7 @@ function statusRow(
     draft_template_id: null,
     retry_count: 0,
     last_attempted_at: 1,
+    last_error_code: null,
     last_error: null,
     evidence_dir: null,
     created_at: 1,

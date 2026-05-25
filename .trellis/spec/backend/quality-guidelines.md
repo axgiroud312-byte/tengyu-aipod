@@ -89,6 +89,57 @@ const isLoading = await visibleCount(page.locator('#dPageLoading, .d-module-load
 const hasFailure = await page.locator('.ant-message-error, .ant-notification-notice-error').count() > 0
 ```
 
+### Scenario: Listing Failure Retry Contract
+
+#### 1. Scope / Trigger
+- Trigger: listing failure list UI, failed-only retry controls, listing status IPC, evidence folder opening, or `listing_status` schema changes.
+- Boundary: renderer code must request status rows through preload IPC; it must not open sqlite directly or bypass `ListingRunner`.
+
+#### 2. Signatures
+- IPC: `listing:list-status(input: { batchDir: string; platform?: ListingPlatformKey; status?: ListingStatus }): Promise<ListingStatusRow[]>`
+- IPC: `listing:open-path(input: { path: string }): Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }>`
+- Runner retry config: `ListingRunConfig.retry_failed_only?: boolean`
+- DB row field: `listing_status.last_error_code TEXT`
+
+#### 3. Contracts
+- Failure lists read `listing_status` rows keyed by `batch_path`, `sku_code`, `platform`, and `workspace_id`.
+- Failed-only retry must pass `resume: true` and `retry_failed_only: true`; the runner then runs only rows whose existing status is `failed`.
+- Single-row retry must preserve the failed row's `workspace_id`; multi-workspace retries must group rows per workspace so round-robin assignment cannot point a SKU at the wrong status key.
+- Evidence links open through main-process `shell.openPath`, not through renderer filesystem access.
+- Success or uploading status writes must clear `last_error_code`; failed and skipped rows must persist the structured listing failure code.
+
+#### 4. Validation & Error Matrix
+- Missing `batchDir` in `listing:list-status` -> validation `AppErrorClass`.
+- Missing `path` in `listing:open-path` -> validation `AppErrorClass`.
+- `shell.openPath` returns an error string -> `{ ok: false, error: { code: 'OPEN_PATH_FAILED', message } }`.
+- `retry_failed_only` sees a non-failed existing row -> runner skips that item instead of mutating the real page.
+- Missing matching scanned listing item for a failed row -> UI must stop before launching retry.
+
+#### 5. Good/Base/Bad Cases
+- Good: UI scans the batch, reads failed rows through IPC, opens evidence, and retries failed SKUs through `listing:run`.
+- Base: no failed rows returns an empty list and disables retry actions.
+- Bad: renderer imports `better-sqlite3`, retries all scanned SKUs without `retry_failed_only`, or launches a multi-workspace retry that changes each row's `workspace_id`.
+
+#### 6. Tests Required
+- Runner tests assert failed rows store `last_error_code`, success clears it, and fail-streak skipped rows store `CONSECUTIVE_FAILURES`.
+- Default client tests must keep real Dianxiaomi tests skipped unless `REAL_LISTING=1`.
+- Quality gates: `pnpm -F @tengyu-aipod/client build`, `pnpm -F @tengyu-aipod/client test`, `pnpm -F @tengyu-aipod/client type-check`, `pnpm -F @tengyu-aipod/client lint`, root `pnpm test`, `pnpm type-check`, `pnpm lint`, and `git diff --check`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+await window.api.listing.run({ config: { retry_failed_only: false }, items: allItems })
+```
+
+Correct:
+```ts
+await window.api.listing.run({
+  config: { resume: true, retry_failed_only: true, workspaces: [{ profile_id: row.workspace_id }] },
+  items: [item],
+})
+```
+
 ---
 
 ## Testing Requirements
