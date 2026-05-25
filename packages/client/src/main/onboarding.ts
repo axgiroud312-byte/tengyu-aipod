@@ -15,6 +15,7 @@ import { hasSecret, setSecret } from './lib/keychain'
 const MATERIAL_DIR_NAME = '腾域aipod素材'
 const CONFIG_FILE_NAME = 'app-config.json'
 const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
+const DEV_SKIP_ACTIVATION_ENV = 'TENGYU_DEV_SKIP_ACTIVATION'
 
 const workbenchSubdirectories = [
   '01-采集',
@@ -64,6 +65,10 @@ function defaultWorkbenchRoot() {
   return join(app.getPath('documents'), MATERIAL_DIR_NAME)
 }
 
+function shouldSkipActivationForDevelopment() {
+  return process.env[DEV_SKIP_ACTIVATION_ENV] === '1' && !app.isPackaged
+}
+
 async function readConfig(): Promise<AppConfig> {
   try {
     return JSON.parse(await readFile(configPath(), 'utf8')) as AppConfig
@@ -87,6 +92,32 @@ async function ensureWorkbenchDirectories(root: string) {
   )
 }
 
+async function ensureDevelopmentOnboardingBypass() {
+  if (!shouldSkipActivationForDevelopment()) {
+    return
+  }
+
+  const config = await readConfig()
+  const workbenchRoot = config.workbench_root ?? defaultWorkbenchRoot()
+  await ensureWorkbenchDirectories(workbenchRoot)
+  await writeConfig({ ...config, workbench_root: workbenchRoot })
+  await saveActivationSnapshot(
+    {
+      status: 'active',
+      days_remaining: 3650,
+      max_devices: 99,
+      used_devices: 1,
+      device_name: '开发测试',
+      customer: { name: '开发测试', has_contact: false },
+    },
+    {
+      lastServerCheck: Date.now(),
+      tokenCodeSuffix: 'DEV',
+    },
+  )
+  await markOnboardingComplete()
+}
+
 function generateDeviceFingerprint() {
   const cpu = os.cpus()[0]?.model ?? ''
   const platform = os.platform()
@@ -104,6 +135,7 @@ function generateDeviceFingerprint() {
 
 export function registerOnboardingIpc() {
   ipcMain.handle('onboarding:get-state', async () => {
+    await ensureDevelopmentOnboardingBypass()
     const config = await readConfig()
     const activationState = await readActivationStateFile()
 
