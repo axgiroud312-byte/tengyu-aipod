@@ -8,6 +8,29 @@
 
 参考文档（按重要性排序）：
 - `docs/spec/05-photoshop.md §3`
+- `docs/spec/05-photoshop.md §13-14`
+- `docs/adr/0007-photoshop-windows-only-v1.md`
+- `docs/adr/0008-temp-file-manager-and-cleanup.md`
+
+## 本机真实环境
+
+- Windows + Photoshop：主理人 Windows 本机，Photoshop 已打开，真实 COM 版本读取为 `27.7.0`。
+- 真实 PSD 模板：
+  - `C:\Users\niilo\Desktop\钥匙扣x.psd`
+  - `C:\Users\niilo\Desktop\mao 杯子.psd`
+- 印花素材根目录：通过 `process.env.PS_MATERIAL_ROOT` 读取，当前本机路径为 `C:\Users\niilo\Desktop\印花素材`，不要 hardcode 到业务逻辑。
+- 输出根目录：通过 `process.env.PS_OUTPUT_ROOT` 读取，当前本机路径为 `C:\Users\niilo\Desktop\新建文件夹`。
+- 真实 Photoshop 测试守护：
+  - `REAL_PS=1` 才运行真实 Photoshop / COM 扫描测试。
+  - `REAL_PS_MUTATE=1` 才允许覆盖输出文件或关闭未保存测试文档。
+  - 本 task 扫描 PSD 会打开模板并由扫描 JSX 关闭自己打开的 PSD 且不保存；禁止程序 quit Photoshop。
+
+## 平台与分层约束
+
+- Photoshop COM 调用只允许在 Electron 主进程。
+- Windows-only 逻辑必须用 `process.platform === 'win32'` 守护；非 Windows 通过 `AppError` 优雅失败，不能因为 COM / Windows 依赖 import 失败导致 build 挂掉。
+- JSX 临时文件、扫描结果 JSON 必须写入 `.workbench/tmp/photoshop/{taskId}/`，不要污染 01-05 业务目录。
+- 缓存写入本地 `.workbench/workbench.db` 的 `psd_templates` 表；同一 PSD hash 命中时直接返回缓存。
 
 ## 验收标准
 

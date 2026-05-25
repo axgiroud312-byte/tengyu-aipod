@@ -1,4 +1,9 @@
-import type { ActivationBadgeState, PhotoshopStatus } from '@tengyu-aipod/shared'
+import type {
+  ActivationBadgeState,
+  PhotoshopScanTemplateRequest,
+  PhotoshopStatus,
+  PsdTemplate,
+} from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
@@ -56,6 +61,10 @@ const api = {
   },
   photoshop: {
     getStatus: () => ipcRenderer.invoke('photoshop:get-status') as Promise<PhotoshopStatus>,
+    scanTemplate: (input: PhotoshopScanTemplateRequest) =>
+      ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
+    listCachedTemplates: () =>
+      ipcRenderer.invoke('photoshop:list-cached-templates') as Promise<PsdTemplate[]>,
   },
 }
 

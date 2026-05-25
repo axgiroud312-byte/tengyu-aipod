@@ -42,6 +42,10 @@ declare global {
       }
       photoshop: {
         getStatus: () => Promise<import('@tengyu-aipod/shared').PhotoshopStatus>
+        scanTemplate: (
+          input: import('@tengyu-aipod/shared').PhotoshopScanTemplateRequest,
+        ) => Promise<import('@tengyu-aipod/shared').PsdTemplate>
+        listCachedTemplates: () => Promise<import('@tengyu-aipod/shared').PsdTemplate[]>
       }
     }
   }

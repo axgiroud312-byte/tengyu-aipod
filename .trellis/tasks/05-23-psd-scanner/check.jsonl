@@ -1,1 +1,5 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file":"docs/spec/05-photoshop.md","reason":"Verify scan result fields, hash cache, COM/JSX execution, temp paths, and psd_templates persistence."}
+{"file":"docs/adr/0007-photoshop-windows-only-v1.md","reason":"Verify Windows guard and non-Windows behavior."}
+{"file":"docs/adr/0008-temp-file-manager-and-cleanup.md","reason":"Verify scanner writes only temp JSX/result files under .workbench/tmp/photoshop."}
+{"file":".trellis/spec/backend/index.md","reason":"Main-process quality verification context."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify AppError usage and error messages."}
