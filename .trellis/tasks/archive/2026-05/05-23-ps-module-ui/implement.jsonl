@@ -1,0 +1,5 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Defines PS module UI states, inputs, config controls, progress panel, preview behavior, and Windows-only handling."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for renderer UI and state changes."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for IPC contracts touched by the UI."}
+{"file":".trellis/spec/guides/index.md","reason":"Thinking guide index for cross-layer UI-to-IPC data flow."}
+{"file":".trellis/tasks/05-23-ps-module-ui/prd.md","reason":"Task-specific Windows + Photoshop 2023+ requirements, REAL_PS guards, and real local PSD/material/output paths."}

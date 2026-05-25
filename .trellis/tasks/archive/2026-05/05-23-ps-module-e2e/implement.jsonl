@@ -1,0 +1,5 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Defines PS module E2E expectations, output layout, skip-completed behavior, and Windows-only COM constraints."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for validating main-process Photoshop execution and IPC behavior."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for validating renderer-facing PS module behavior."}
+{"file":".trellis/spec/guides/index.md","reason":"Thinking guide index for cross-layer E2E verification."}
+{"file":".trellis/tasks/05-23-ps-module-e2e/prd.md","reason":"Task-specific Windows + Photoshop 2023+ requirements, REAL_PS guards, and real local PSD/material/output paths."}

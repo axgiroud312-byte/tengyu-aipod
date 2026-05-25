@@ -1,9 +1,20 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   type ActivationStateFile,
   buildActivationBadgeState,
   extractActivationCodeSuffix,
 } from './activation-state'
+
+vi.mock('electron', () => ({
+  app: {
+    getPath: (name: string) => {
+      if (name !== 'userData') {
+        throw new Error(`unexpected path: ${name}`)
+      }
+      return ''
+    },
+  },
+}))
 
 const DAY_MS = 24 * 60 * 60 * 1000
 const now = Date.UTC(2026, 4, 23)

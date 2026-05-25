@@ -1,4 +1,10 @@
-import type { ActivationBadgeState } from '@tengyu-aipod/shared'
+import type {
+  ActivationBadgeState,
+  PhotoshopProgressInfo,
+  PhotoshopScanTemplateRequest,
+  PhotoshopStatus,
+  PsdTemplate,
+} from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
 
 const api = {
@@ -51,6 +57,35 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('activation:status-changed', listener)
+      }
+    },
+  },
+  photoshop: {
+    getStatus: () => ipcRenderer.invoke('photoshop:get-status') as Promise<PhotoshopStatus>,
+    choosePrintFolder: () =>
+      ipcRenderer.invoke('photoshop:choose-print-folder') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    chooseTemplates: () =>
+      ipcRenderer.invoke('photoshop:choose-templates') as Promise<
+        | { ok: true; data: { paths: string[] } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    openPath: (path: string) =>
+      ipcRenderer.invoke('photoshop:open-path', { path }) as Promise<{ ok: true }>,
+    scanTemplate: (input: PhotoshopScanTemplateRequest) =>
+      ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
+    listCachedTemplates: () =>
+      ipcRenderer.invoke('photoshop:list-cached-templates') as Promise<PsdTemplate[]>,
+    onProgress: (callback: (progress: PhotoshopProgressInfo) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: PhotoshopProgressInfo) => {
+        callback(progress)
+      }
+      ipcRenderer.on('photoshop:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('photoshop:progress', listener)
       }
     },
   },

@@ -1,5 +1,7 @@
 export * from './activation'
 export * from './constants'
 export * from './errors'
+export * from './photoshop-grouping'
+export * from './photoshop'
 export * from './schemas'
 export * from './types'

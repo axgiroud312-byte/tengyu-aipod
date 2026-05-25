@@ -2,7 +2,9 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
+import { tempFileManager } from './lib/temp-file-manager'
 import { registerOnboardingIpc } from './onboarding'
+import { registerPhotoshopIpc } from './photoshop/ipc'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 
@@ -34,6 +36,8 @@ app.whenReady().then(() => {
   ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
   ipcMain.handle('activation:sync-status', () => activationPoller.poll())
   registerOnboardingIpc()
+  registerPhotoshopIpc()
+  void tempFileManager.cleanupOrphans()
   createMainWindow()
   activationPoller.start()
 

@@ -159,6 +159,8 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 
 ## 切片 7 — PS 套版（12 task，Windows-only）
 
+状态：✅ 已完成并归档。PS 套版切片已完成 12 个 task，本地 Windows + Photoshop COM 真实测试已跑通可执行范围；完整手动矩阵受本机 fixture 数量限制，详见 `ps-module-e2e` 归档证据。
+
 | # | Task | Slug | 优先级 |
 |---|---|---|---|
 | 61 | PS 状态检测 | ps-status-checker | P0 |
@@ -174,7 +176,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 71 | PS 模块 UI | ps-module-ui | P0 |
 | 72 | PS 手动 E2E | ps-module-e2e | P1 |
 
-**v0.7.0 发版**
+**v0.7.0 发版**：已具备 PS 套版能力。
 
 ## 切片 8 — 上架（20 task）
 
@@ -204,6 +206,8 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 92 | 上架手动 E2E | listing-module-e2e | P1 |
 
 **v1.0.0 发版（v1 全功能）**
+
+当前收口状态：⚠️ 未放行。当前仓库代码树还没有采集、检测、生图、上架模块的可执行实现，无法真实跑通“采集 → 检测 → 生图 → 套版 → 上架”全链路 E2E。v1.0.0 只能在切片 8 和全链路验证完成后标记为全功能发布。
 
 ## v1.5 — 增量（15 task）
 

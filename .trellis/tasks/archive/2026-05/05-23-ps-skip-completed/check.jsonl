@@ -1,0 +1,5 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Primary acceptance source for skip-completed criteria and Photoshop job persistence behavior."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality and error-handling guideline index for reviewing skip-completed persistence code."}
+{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality guideline index for reviewing renderer-facing skip_completed toggle impact."}
+{"file":".trellis/spec/guides/index.md","reason":"Cross-layer and reuse thinking guide index for final review."}
+{"file":".trellis/tasks/05-23-ps-skip-completed/prd.md","reason":"Task-specific environment, REAL_PS guard, path, and validation requirements to verify before completion."}

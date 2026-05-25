@@ -1,0 +1,6 @@
+{"file":"docs/spec/05-photoshop.md","reason":"PSD scanning flow, scan result shape, psd_templates cache schema, IPC names, and Windows-only Photoshop behavior."}
+{"file":"docs/adr/0007-photoshop-windows-only-v1.md","reason":"Windows-only guard requirement and non-Windows graceful failure behavior."}
+{"file":"docs/adr/0008-temp-file-manager-and-cleanup.md","reason":"JSX/result JSON temp files must use .workbench/tmp/photoshop task directories and 24h cleanup."}
+{"file":".trellis/spec/backend/index.md","reason":"Main-process service and IPC guideline index."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"AppError and actionable error behavior guidance."}
+{"note":"REAL_PS evidence: `$env:REAL_PS='1'; pnpm -F @tengyu-aipod/client exec vitest run src/main/photoshop/psd-scanner.test.ts --reporter=verbose` passed on Windows. The test scanned `C:\\Users\\niilo\\Desktop\\钥匙扣x.psd` and `C:\\Users\\niilo\\Desktop\\mao 杯子.psd` through real Photoshop COM. REAL_PS_MUTATE was not set; the JSX closes only the PSD document opened by the scan with DONOTSAVECHANGES and never quits Photoshop."}

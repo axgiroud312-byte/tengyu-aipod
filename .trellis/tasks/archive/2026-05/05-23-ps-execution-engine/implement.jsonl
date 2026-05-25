@@ -1,0 +1,4 @@
+{"file":"docs/spec/05-photoshop.md","reason":"Primary execution engine contract for JSX generation, COM execution, output verification, retry, and error handling."}
+{"file":"references/photoshop/open-source-references.md","reason":"Context for real Photoshop path A behavior and known JSX execution pitfalls."}
+{"file":".trellis/spec/backend/index.md","reason":"Backend/main-process conventions for the Electron Photoshop execution engine."}
+{"file":".trellis/spec/guides/index.md","reason":"Shared thinking checklist for reuse and cross-layer boundaries."}
