@@ -4,7 +4,12 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { TempFileManager } from './temp-file-manager'
 
+const electronAppGetPath = vi.hoisted(() => vi.fn())
+
 vi.mock('electron', () => ({
+  app: {
+    getPath: electronAppGetPath,
+  },
   ipcMain: {
     handle: vi.fn(),
   },
@@ -14,6 +19,7 @@ let tempDir = ''
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'tengyu-temp-files-'))
+  electronAppGetPath.mockImplementation(() => tempDir)
   vi.useRealTimers()
 })
 

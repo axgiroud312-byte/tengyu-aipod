@@ -2,13 +2,14 @@ import { mkdir, writeFile } from 'node:fs/promises'
 import { resolve } from 'node:path'
 import { type Page, chromium } from 'playwright'
 import { describe, expect, it } from 'vitest'
-import { type BitBrowserProfile, bitBrowserClient } from '../../../../main/lib/bit-browser-client'
+import { bitBrowserClient } from '../../../../main/lib/bit-browser-client'
+import { locatorForSelector } from '../_commons/page-locator'
+import { findBitBrowserProfile2_1111 } from '../_commons/test-helpers'
 import {
   type ListingSelector,
   SHEIN_REQUIRED_REAL_SELECTOR_KEYS,
   SHEIN_SELECTORS,
   SHEIN_TEMPLATE_URLS,
-  selectorToLocator,
 } from './selectors'
 
 const runRealListing = process.env.REAL_LISTING === '1'
@@ -16,7 +17,7 @@ const describeReal = runRealListing ? describe : describe.skip
 const evidenceDir = resolve(
   process.cwd(),
   '../..',
-  '.trellis/tasks/05-23-listing-shein-selectors/evidence',
+  '.trellis/tasks/05-26-listing-platforms-commons-refactor/evidence/shein-selectors',
 )
 
 describeReal('Dianxiaomi Shein selectors on the real edit page', () => {
@@ -69,24 +70,6 @@ describeReal('Dianxiaomi Shein selectors on the real edit page', () => {
   }, 120_000)
 })
 
-async function findBitBrowserProfile2_1111(): Promise<BitBrowserProfile> {
-  const profiles = await bitBrowserClient.listProfiles()
-  const profile = profiles.find((item) => {
-    const candidates = [
-      item.id,
-      item.name,
-      item.remark,
-      item.seq === undefined ? undefined : String(item.seq),
-      item.seq === undefined ? undefined : `${item.seq}-${item.name}`,
-    ]
-    return candidates.some((candidate) => candidate === '2-1111')
-  })
-  if (!profile) {
-    throw new Error('BitBrowser profile 2-1111 not found')
-  }
-  return profile
-}
-
 async function waitForSheinEditorReady(page: Page): Promise<void> {
   await page.locator('#productBasicInfo').waitFor({ state: 'attached', timeout: 60_000 })
   await page.locator('#productInfo').waitFor({ state: 'attached', timeout: 60_000 })
@@ -106,27 +89,4 @@ async function firstSelectorHit(
     }
   }
   return null
-}
-
-function locatorForSelector(page: Page, selector: ListingSelector) {
-  const { type, value } = selectorToLocator(selector)
-  if (type === 'css') {
-    return page.locator(value)
-  }
-  if (type === 'text') {
-    return page.getByText(value)
-  }
-  if (type === 'label') {
-    return page.getByLabel(value)
-  }
-  if (type === 'placeholder') {
-    return page.getByPlaceholder(value)
-  }
-  if (type === 'role') {
-    const match = value.match(/^([a-z]+)(?:\[name="(.+)"\])?$/)
-    const role = match?.[1] ?? value
-    const name = match?.[2]
-    return page.getByRole(role as Parameters<Page['getByRole']>[0], name ? { name } : undefined)
-  }
-  return page.locator(value)
 }

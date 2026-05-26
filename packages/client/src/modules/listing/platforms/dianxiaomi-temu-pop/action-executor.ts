@@ -1,12 +1,22 @@
 import { stat } from 'node:fs/promises'
-import type { ListingErrorCode } from '@tengyu-aipod/shared'
-import type { FileChooser, Locator, Page } from 'playwright'
+import {
+  ListingActionError,
+  type ListingActionErrorOptions,
+  type ListingSelector,
+} from '@tengyu-aipod/shared'
+import type { Locator, Page } from 'playwright'
+import { handleFileChooserWithRetry } from '../_commons/file-upload'
+import { locateBySelectorsWithFallback } from '../_commons/page-locator'
+import { waitForState as waitForParsedState } from '../_commons/page-wait'
 import {
   type TemuPopDraftPageState,
   type TemuPopTextFieldState,
   parseDraftPage,
 } from './page-parser'
-import { type ListingSelector, TEMU_POP_SELECTORS, selectorToLocator } from './selectors'
+import { TEMU_POP_SELECTORS } from './selectors'
+
+export { ListingActionError }
+export type { ListingActionErrorOptions }
 
 export type TemuPopActionName =
   | 'replaceShopName'
@@ -17,48 +27,6 @@ export type TemuPopActionName =
   | 'uploadCarouselImages'
   | 'uploadVideo'
   | 'generateSkuCode'
-
-export type ListingActionErrorOptions = {
-  action: TemuPopActionName
-  code: ListingErrorCode
-  message: string
-  selector?: ListingSelector | string | null
-  beforeState?: TemuPopDraftPageState
-  afterState?: TemuPopDraftPageState
-  pageText?: string | null
-  evidencePath?: string | null
-  cause?: unknown
-}
-
-export class ListingActionError extends Error {
-  readonly action: TemuPopActionName
-  readonly code: ListingErrorCode
-  readonly retryable: boolean
-  readonly selector: string | null
-  readonly url: string | null
-  readonly beforeState: TemuPopDraftPageState | undefined
-  readonly afterState: TemuPopDraftPageState | undefined
-  readonly pageText: string | null
-  readonly evidencePath: string | null
-  override readonly cause?: unknown
-
-  constructor(options: ListingActionErrorOptions) {
-    super(options.message)
-    this.name = 'ListingActionError'
-    this.action = options.action
-    this.code = options.code
-    this.retryable = isRetryableListingActionCode(options.code)
-    this.selector = options.selector ? String(options.selector) : null
-    this.url = options.afterState?.url ?? options.beforeState?.url ?? null
-    this.beforeState = options.beforeState
-    this.afterState = options.afterState
-    this.pageText = options.pageText ?? null
-    this.evidencePath = options.evidencePath ?? null
-    if (options.cause !== undefined) {
-      this.cause = options.cause
-    }
-  }
-}
 
 export type UploadActionResult = {
   action: 'uploaded'
@@ -441,12 +409,9 @@ async function locateFirst(
   selectors: readonly ListingSelector[],
   action: TemuPopActionName,
 ): Promise<{ selector: ListingSelector; locator: Locator }> {
-  for (const selector of selectors) {
-    const locator = locatorForSelector(page, selector).first()
-    if ((await locator.count().catch(() => 0)) === 0) {
-      continue
-    }
-    return { selector, locator }
+  const hit = await locateBySelectorsWithFallback(page, selectors)
+  if (hit) {
+    return hit
   }
   throw new ListingActionError({
     action,
@@ -466,51 +431,32 @@ async function setFilesThroughDropdown(
     'uploadMaterialImages' | 'uploadCarouselImages' | 'uploadVideo'
   >,
 ): Promise<void> {
-  await trigger.scrollIntoViewIfNeeded().catch(() => undefined)
-  const chooserPromise = page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null)
-  await trigger.click({ timeout: DEFAULT_ACTION_TIMEOUT_MS })
-  const directChooser = await waitForFileChooserCandidate(chooserPromise, 300)
-  if (directChooser) {
-    await directChooser.setFiles(files)
-    await page.waitForTimeout(UPLOAD_SETTLE_MS)
-    return
-  }
-
-  const menuItem = page
-    .locator('.ant-dropdown:not(.ant-dropdown-hidden), .ant-popover, .ant-select-dropdown')
-    .getByText(localMenuText, { exact: false })
-    .last()
-  const visible = await menuItem
-    .isVisible({ timeout: DEFAULT_ACTION_TIMEOUT_MS })
-    .catch(() => false)
-  if (!visible) {
-    throw actionFailure({
-      action,
-      code: 'SELECTOR_NOT_FOUND',
-      message: `未找到上传菜单项：${localMenuText}`,
-      pageText: await pageTextExcerpt(page),
+  try {
+    await handleFileChooserWithRetry(page, trigger, files, {
+      menuTexts: [localMenuText],
+      globalInputSelector: '#localFileUploadInp',
+      actionTimeoutMs: DEFAULT_ACTION_TIMEOUT_MS,
+      settleMs: UPLOAD_SETTLE_MS,
+      requireMenuMatch: true,
     })
-  }
-  await menuItem.click({ timeout: DEFAULT_ACTION_TIMEOUT_MS })
-
-  const menuChooser = await chooserPromise
-  if (menuChooser) {
-    await menuChooser.setFiles(files)
-    await page.waitForTimeout(UPLOAD_SETTLE_MS)
-    return
-  }
-
-  const globalInput = page.locator('#localFileUploadInp').first()
-  if ((await globalInput.count().catch(() => 0)) === 0) {
+  } catch (error) {
+    if (error instanceof Error && error.message === 'MENU_NOT_FOUND') {
+      throw actionFailure({
+        action,
+        code: 'SELECTOR_NOT_FOUND',
+        message: `未找到上传菜单项：${localMenuText}`,
+        pageText: await pageTextExcerpt(page),
+        cause: error,
+      })
+    }
     throw actionFailure({
       action,
       code: 'FILE_CHOOSER_TIMEOUT',
       message: '未打开文件选择器，也未找到全局本地上传 input',
       pageText: await pageTextExcerpt(page),
+      cause: error,
     })
   }
-  await globalInput.setInputFiles(files)
-  await page.waitForTimeout(UPLOAD_SETTLE_MS)
 }
 
 async function selectVisibleOption(
@@ -545,16 +491,7 @@ async function waitForState(
   predicate: (state: TemuPopDraftPageState) => boolean,
   timeoutMs: number,
 ): Promise<TemuPopDraftPageState> {
-  const deadline = Date.now() + timeoutMs
-  let latest = await parseDraftPage(page)
-  while (Date.now() < deadline) {
-    latest = await parseDraftPage(page)
-    if (predicate(latest)) {
-      return latest
-    }
-    await page.waitForTimeout(250)
-  }
-  return latest
+  return waitForParsedState(page, () => parseDraftPage(page), predicate, timeoutMs)
 }
 
 async function requireExistingFiles(
@@ -635,41 +572,6 @@ function actionFailure(options: ListingActionErrorOptions): ListingActionError {
   return new ListingActionError(options)
 }
 
-function locatorForSelector(page: Page, selector: ListingSelector): Locator {
-  const { type, value } = selectorToLocator(selector)
-  if (type === 'css') {
-    return page.locator(value)
-  }
-  if (type === 'text') {
-    return page.getByText(value)
-  }
-  if (type === 'label') {
-    return page.getByLabel(value)
-  }
-  if (type === 'placeholder') {
-    return page.getByPlaceholder(value)
-  }
-  if (type === 'role') {
-    const match = value.match(/^([a-z]+)(?:\[name="(.+)"\])?$/)
-    const role = match?.[1] ?? value
-    const name = match?.[2]
-    return page.getByRole(role as Parameters<Page['getByRole']>[0], name ? { name } : undefined)
-  }
-  return page.locator(value)
-}
-
-async function waitForFileChooserCandidate(
-  chooserPromise: Promise<FileChooser | null>,
-  timeoutMs: number,
-): Promise<FileChooser | null> {
-  return Promise.race([
-    chooserPromise,
-    new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), timeoutMs)
-    }),
-  ])
-}
-
 async function readSkuTableText(page: Page): Promise<string> {
   return page
     .locator('#skuDataInfo')
@@ -698,16 +600,4 @@ function normalizeRequiredValue(value: string, action: TemuPopActionName): strin
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, '').toLowerCase()
-}
-
-function isRetryableListingActionCode(code: ListingErrorCode): boolean {
-  return (
-    code === 'TIMEOUT' ||
-    code === 'BLOCKING_MODAL' ||
-    code === 'PAGE_NOT_READY' ||
-    code === 'FILE_CHOOSER_TIMEOUT' ||
-    code === 'FIELD_VALUE_MISMATCH' ||
-    code === 'UPLOAD_COUNT_MISMATCH' ||
-    code === 'UNKNOWN'
-  )
 }

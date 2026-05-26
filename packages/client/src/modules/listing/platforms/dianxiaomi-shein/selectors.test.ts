@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { selectorToLocator } from '../_commons/page-locator'
 import {
   SHEIN_REQUIRED_REAL_SELECTOR_KEYS,
   SHEIN_SELECTORS,
+  SHEIN_SELECTOR_RECORDS,
   SHEIN_TEMPLATE_URLS,
   type SheinSelectorKey,
-  selectorToLocator,
 } from './selectors'
 
 describe('Dianxiaomi Shein selectors contract', () => {
@@ -45,5 +46,19 @@ describe('Dianxiaomi Shein selectors contract', () => {
       type: 'role',
       value: 'button[name="保存"]',
     })
+  })
+
+  it('stores selectors as selector records with dispatch-ready metadata', () => {
+    expect(SHEIN_SELECTOR_RECORDS).toHaveLength(Object.keys(SHEIN_SELECTORS).length)
+    for (const record of SHEIN_SELECTOR_RECORDS) {
+      expect(record).toMatchObject({
+        key: expect.any(String),
+        name: expect.any(String),
+        primary: expect.any(String),
+        version: '1.0.0',
+        createdAt: '2026-05-26T00:00:00.000Z',
+      })
+      expect(record.fallbacks.length, record.key).toBeGreaterThanOrEqual(1)
+    }
   })
 })

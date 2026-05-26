@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { control, imageSection, textField, toast } from '../_commons/test-helpers'
 import type { TemuPopDraftPageState } from './page-parser'
 
 describe('Temu PopTemu page parser contract', () => {
@@ -48,37 +49,3 @@ describe('Temu PopTemu page parser contract', () => {
     expect(JSON.parse(JSON.stringify(state))).toEqual(state)
   })
 })
-
-function textField(value: string) {
-  return {
-    found: true,
-    current_value: value,
-    is_disabled: false,
-    selector: 'css=.example',
-  } as const
-}
-
-function imageSection(count: number) {
-  return {
-    found: true,
-    count,
-    selector: 'css=.example',
-  } as const
-}
-
-function control(text: string) {
-  return {
-    found: true,
-    enabled: true,
-    text,
-    selector: 'css=.example',
-  } as const
-}
-
-function toast(message: string | null) {
-  return {
-    found: message !== null,
-    message,
-    selector: message === null ? null : ('css=.example' as const),
-  }
-}

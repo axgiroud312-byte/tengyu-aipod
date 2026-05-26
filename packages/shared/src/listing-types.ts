@@ -81,6 +81,33 @@ export const LISTING_ERROR_CODE_TO_APP_ERROR_CODE = {
   UNKNOWN: ErrorCode.HTTP_5XX,
 } as const satisfies Record<ListingErrorCode, (typeof ErrorCode)[keyof typeof ErrorCode]>
 
+export type ListingSelector =
+  | `css=${string}`
+  | `text=${string}`
+  | `label=${string}`
+  | `placeholder=${string}`
+  | `role=${string}`
+
+export interface SelectorRecord<TKey extends string = string> {
+  key: TKey
+  name: string
+  primary: ListingSelector
+  fallbacks: readonly ListingSelector[]
+  version: string
+  createdAt: string
+}
+
+export function lookupSelector<TKey extends string>(
+  records: readonly SelectorRecord<TKey>[],
+  key: TKey,
+): SelectorRecord<TKey> {
+  const record = records.find((item) => item.key === key)
+  if (!record) {
+    throw new Error(`Selector record not found: ${key}`)
+  }
+  return record
+}
+
 export interface ListingImageGroups {
   sku: string[]
   carousel: string[]
@@ -228,6 +255,64 @@ export interface ListingFailure {
   screenshotPath?: string
   domSnapshotPath?: string
   cause?: string
+}
+
+export type ListingActionErrorOptions = {
+  action: string
+  code: ListingErrorCode
+  message: string
+  selector?: ListingSelector | string | null
+  beforeState?: unknown
+  afterState?: unknown
+  pageText?: string | null
+  evidencePath?: string | null
+  cause?: unknown
+}
+
+export class ListingActionError extends Error {
+  readonly action: string
+  readonly code: ListingErrorCode
+  readonly retryable: boolean
+  readonly selector: string | null
+  readonly url: string | null
+  readonly beforeState: unknown
+  readonly afterState: unknown
+  readonly pageText: string | null
+  readonly evidencePath: string | null
+  override readonly cause?: unknown
+
+  constructor(options: ListingActionErrorOptions) {
+    super(options.message)
+    this.name = 'ListingActionError'
+    this.action = options.action
+    this.code = options.code
+    this.retryable = isListingRetryable(options.code)
+    this.selector = options.selector ? String(options.selector) : null
+
+    const afterUrl =
+      typeof options.afterState === 'object' &&
+      options.afterState !== null &&
+      'url' in options.afterState &&
+      typeof options.afterState.url === 'string'
+        ? options.afterState.url
+        : null
+    const beforeUrl =
+      typeof options.beforeState === 'object' &&
+      options.beforeState !== null &&
+      'url' in options.beforeState &&
+      typeof options.beforeState.url === 'string'
+        ? options.beforeState.url
+        : null
+
+    this.url = afterUrl ?? beforeUrl
+    this.beforeState = options.beforeState
+    this.afterState = options.afterState
+    this.pageText = options.pageText ?? null
+    this.evidencePath = options.evidencePath ?? null
+    if (options.cause !== undefined) {
+      this.cause = options.cause
+    }
+  }
 }
 
 export interface ListingResult {
