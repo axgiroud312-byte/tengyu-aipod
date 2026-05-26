@@ -1,0 +1,7 @@
+{"file": "docs/spec/02-collection.md", "reason": "采集模块完整 spec：§4 点击 / §5 滚动 / §6 平台规则 / §7 比特浏览器集成 / §8 UI / §9 DB / §13 IPC 清单 / §14 错误码——本任务对照基线"}
+{"file": "docs/spec/00-overview.md", "reason": "全局编码规则：TS strict 禁 any / IPC 命名 module:action + zod / AppError 结构 / 主-渲染进程职责边界"}
+{"file": "docs/spec/09-cross-cutting.md", "reason": "profile 锁约束 / 暂停场景 / 跨平台注入差异（Mac/Win）"}
+{"file": "docs/adr/0003-skill-and-provider-cloud-dispatch.md", "reason": "云端派发边界——明确本任务 platform-rules 走本地 fallback、不接 /api/platform-rules 的依据"}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "profile 锁机制——采集与上架共享 browser-profile-lock"}
+{"file": "docs/adr/0008-temp-file-manager-and-cleanup.md", "reason": "新增 collection:delete-record IPC 删除采集文件时遵循的清理规则"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端编码规范索引：renderer / preload / IPC 暴露格式 / vite-env.d.ts 类型补"}
