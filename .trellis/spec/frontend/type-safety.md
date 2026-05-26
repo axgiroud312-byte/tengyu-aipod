@@ -178,6 +178,90 @@ export const PLATFORM_SELECTORS = {
 } as const satisfies Record<SelectorKey, readonly ListingSelector[]>
 ```
 
+### Scenario: Listing Platform Commons and Selector Records
+
+#### 1. Scope / Trigger
+- Trigger: creating or modifying listing platform selector, parser, executor, workflow, real test, or cross-platform helper code under `packages/client/src/modules/listing/platforms/**`.
+- Boundary: shared listing types live in `packages/shared/src/listing-types.ts`; cross-platform Playwright helper functions live in `packages/client/src/modules/listing/platforms/_commons/`; platform-specific DOM state and business actions stay in each platform directory.
+
+#### 2. Signatures
+- Shared selector type: ``ListingSelector = `css=${string}` | `text=${string}` | `label=${string}` | `placeholder=${string}` | `role=${string}```
+- Shared selector record: `SelectorRecord<TKey extends string = string>`
+- Required selector record fields: `key`, `name`, `primary`, `fallbacks`, `version`, `createdAt`
+- Shared helper: `lookupSelector(records, key): SelectorRecord`
+- Platform selector exports: `PLATFORM_SELECTOR_RECORDS satisfies readonly SelectorRecord<PlatformSelectorKey>[]`
+- Platform compatibility map: `PLATFORM_SELECTORS = selectorRecordMap(PLATFORM_SELECTOR_RECORDS)`
+- Common helper home: `packages/client/src/modules/listing/platforms/_commons/*.ts`
+
+#### 3. Contracts
+- `SelectorRecord[]` is the primary storage format for platform selectors. Plain `Record<key, selectors[]>` may exist only as a derived compatibility map.
+- `primary` is the first selector attempted; `fallbacks` preserve fallback order.
+- `version` and `createdAt` are required so v1.5 selector dispatch can replace local records with remote versioned records without another data-shape migration.
+- Platform selector files must not import Playwright, Electron, filesystem modules, BitBrowser clients, runner code, parser code, executor code, or workflow code.
+- Reusable primitives such as selector-to-locator conversion, fallback locating, editor ready waits, file chooser upload, toast feedback, action error classification, and test fixtures belong in `_commons`.
+- `_commons` must stay function-based. Do not introduce inheritance, platform base classes, or mixins for listing actions.
+- Business actions stay platform-local unless the observed state, target state, transition, success evidence, and failure policy are all identical across platforms.
+
+#### 4. Validation & Error Matrix
+- Missing selector prefix -> selector unit test failure.
+- Missing selector record metadata -> selector unit test failure.
+- Platform reimplements a helper already present in `_commons` -> review failure; replace with `_commons` import.
+- `_commons` function without same-name unit test -> test coverage failure.
+- Business action extracted only because function names match but DOM state differs -> refactor rejection; keep action platform-local.
+- Remote selector dispatch attempted inside this layer before v1.5 contract exists -> out-of-scope rejection.
+
+#### 5. Good/Base/Bad Cases
+- Good: `selectors.ts` exports `TEMU_POP_SELECTOR_RECORDS` and derives `TEMU_POP_SELECTORS` with `selectorRecordMap`.
+- Good: `page-parser.ts` calls `_commons/locateBySelectorsWithFallback` instead of defining its own fallback loop.
+- Base: parser/executor can keep platform-specific state types and action functions while using `_commons` locator/wait/upload primitives.
+- Bad: copying `selectorToLocator`, `waitUntilVisible`, or `ListingActionError` into a new platform folder.
+- Bad: adding a `BaseListingPlatformExecutor` class that hides platform-specific parser/action verification.
+
+#### 6. Tests Required
+- `packages/shared/src/listing-types.test.ts` covers `SelectorRecord`, `lookupSelector`, and `ListingActionError`.
+- Every `_commons/*.ts` file has a same-name `.test.ts`.
+- Platform selector tests assert selector records and derived maps stay aligned.
+- Parser/executor/workflow tests continue to assert serializable state, structured action errors, mutation guards, and stage evidence.
+- Quality gates: `pnpm -F @tengyu-aipod/client test`, `pnpm -F @tengyu-aipod/client type-check`, `pnpm -F @tengyu-aipod/client lint`, `pnpm -F @tengyu-aipod/client build`, plus root `pnpm test`, `pnpm type-check`, and `pnpm lint`.
+- Guarded real tests use `REAL_LISTING=1` and write evidence under the current task's `evidence/` directory.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+export const SHEIN_SELECTORS = {
+  title_input: ['css=#productInfo input', 'label=产品标题'],
+}
+```
+
+Correct:
+```ts
+export const SHEIN_SELECTOR_RECORDS = [
+  {
+    key: 'title_input',
+    name: '产品标题输入框',
+    primary: 'css=#productInfo input',
+    fallbacks: ['label=产品标题'],
+    version: '1.0.0',
+    createdAt: '2026-05-26T00:00:00.000Z',
+  },
+] satisfies readonly SelectorRecord<SheinSelectorKey>[]
+
+export const SHEIN_SELECTORS = selectorRecordMap(SHEIN_SELECTOR_RECORDS)
+```
+
+Wrong:
+```ts
+function selectorToLocator(page: Page, selector: ListingSelector) {
+  // copied into a platform folder
+}
+```
+
+Correct:
+```ts
+import { locatorForSelector } from '../_commons/page-locator'
+```
+
 ### Scenario: Listing Platform Page Parser Contract
 
 #### 1. Scope / Trigger
