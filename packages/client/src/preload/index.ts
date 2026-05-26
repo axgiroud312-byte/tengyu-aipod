@@ -67,9 +67,18 @@ import type {
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
+import type { ChooseDirectoryInput, ChooseDirectoryResult, OpenPathResult } from '../main/dialog'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
+  dialog: {
+    chooseDirectory: (input?: ChooseDirectoryInput) =>
+      ipcRenderer.invoke('dialog:choose-directory', input) as Promise<ChooseDirectoryResult>,
+  },
+  shell: {
+    openPath: (path: string) =>
+      ipcRenderer.invoke('shell:open-path', { path }) as Promise<OpenPathResult>,
+  },
   onboarding: {
     getState: () =>
       ipcRenderer.invoke('onboarding:get-state') as Promise<{

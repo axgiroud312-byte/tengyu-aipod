@@ -4,6 +4,14 @@ declare global {
   interface Window {
     api: {
       ping: () => Promise<string>
+      dialog: {
+        chooseDirectory: (
+          input?: import('../../main/dialog').ChooseDirectoryInput,
+        ) => Promise<import('../../main/dialog').ChooseDirectoryResult>
+      }
+      shell: {
+        openPath: (path: string) => Promise<import('../../main/dialog').OpenPathResult>
+      }
       onboarding: {
         getState: () => Promise<{
           needs_onboarding: boolean
