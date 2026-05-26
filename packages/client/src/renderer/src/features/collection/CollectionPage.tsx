@@ -20,6 +20,7 @@ import {
   Trash2,
   TriangleAlert,
 } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import type { CollectionRecordRow } from '../../../../main/lib/collection-record-store'
 import type { CollectionSession } from '../../../../main/lib/collection-session-manager'
 import type { CollectionMode } from '../../../../main/lib/collection-session-manager'
@@ -145,6 +146,10 @@ function platformLabel(value: string, platforms: CollectionPlatformOption[]) {
   return platforms.find((item) => item.key === value)?.label ?? value
 }
 
+function platformEntryUrl(value: string, platforms: CollectionPlatformOption[]) {
+  return platforms.find((item) => item.key === value)?.detail ?? null
+}
+
 function fileNameFromPath(path: string | null | undefined) {
   if (!path) {
     return '未保存'
@@ -178,11 +183,39 @@ function sessionBadgeVariant(session: CollectionSession | null) {
   return 'secondary'
 }
 
-function currentSessionSummary(session: CollectionSession | null, records: CollectionRecordRow[]) {
+function currentSessionSummary(
+  session: CollectionSession | null,
+  records: CollectionRecordRow[],
+  platforms: CollectionPlatformOption[],
+) {
   const failedCount = records.filter((record) => record.status === 'failed').length
   const successCount = records.filter((record) => record.status === 'success').length
-  const latestUrl = records[0]?.pageUrl ?? session?.output_dir ?? '-'
+  const latestUrl =
+    records[0]?.pageUrl ?? (session ? platformEntryUrl(session.platform, platforms) : null) ?? '-'
   return { failedCount, successCount, latestUrl }
+}
+
+function relativeTimeLabel(timestamp: number, now: number) {
+  const seconds = Math.max(0, Math.floor((now - timestamp) / 1000))
+  if (seconds < 60) {
+    return `${seconds} 秒前`
+  }
+  const minutes = Math.floor(seconds / 60)
+  if (minutes < 60) {
+    return `${minutes} 分钟前`
+  }
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) {
+    return `${hours} 小时前`
+  }
+  return `${Math.floor(hours / 24)} 天前`
+}
+
+function latestRecordLabel(record: CollectionRecordRow | undefined, now: number) {
+  if (!record) {
+    return '0 张 · 等待用户在浏览器内操作'
+  }
+  return `最近一张 ${relativeTimeLabel(record.createdAt, now)}`
 }
 
 export function CollectionPage({
@@ -210,8 +243,22 @@ export function CollectionPage({
 }: CollectionPageProps) {
   const isIdle = !session
   const isPaused = session?.status === 'paused'
-  const summary = currentSessionSummary(session, records)
+  const sessionId = session?.id
+  const [relativeNow, setRelativeNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (!sessionId) {
+      return
+    }
+    const timer = window.setInterval(() => {
+      setRelativeNow(Date.now())
+    }, 5000)
+    return () => {
+      window.clearInterval(timer)
+    }
+  }, [sessionId])
+  const summary = currentSessionSummary(session, records, platforms)
   const currentPlatformLabel = platformLabel(state.platform, platforms)
+  const recentRecords = records.slice(0, 20)
 
   return (
     <div className="space-y-6">
@@ -332,7 +379,7 @@ export function CollectionPage({
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    未打开的环境也可以选择，开始时会自动拉起并刷新当前页。
+                    未打开的环境也可以选择，开始时只打开或前置平台采集页。
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -498,7 +545,7 @@ export function CollectionPage({
 
                   <div className="grid gap-2 rounded-md border bg-background p-4 text-sm">
                     <div className="text-xs text-muted-foreground">
-                      开始后会自动刷新当前页，让采集脚本生效。
+                      开始后只会打开或前置所选平台的采集页。
                     </div>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">成功</span>
@@ -582,6 +629,42 @@ export function CollectionPage({
               <Card className="shadow-sm">
                 <CardHeader className="flex-row items-start justify-between space-y-0 p-5">
                   <div className="space-y-1">
+                    <CardTitle className="text-lg">采集进度</CardTitle>
+                    <p className="text-sm text-muted-foreground">
+                      {session
+                        ? `${platformLabel(session.platform, platforms)} · ${session.profile_id}`
+                        : '无活动会话'}
+                    </p>
+                  </div>
+                  <Badge variant={sessionBadgeVariant(session)}>
+                    {sessionStatusLabel(session?.status)}
+                  </Badge>
+                </CardHeader>
+                <CardContent className="p-5 pt-0">
+                  <div className="grid gap-4 rounded-md border bg-muted/40 p-4 md:grid-cols-[180px_minmax(0,1fr)]">
+                    <div>
+                      <div className="text-xs text-muted-foreground">已采集</div>
+                      <div className="mt-1 text-3xl font-semibold tabular-nums">
+                        {records.length}
+                        <span className="ml-1 text-base font-medium">张</span>
+                      </div>
+                    </div>
+                    <div className="min-w-0 space-y-2">
+                      <div className="text-sm font-medium">
+                        {latestRecordLabel(records[0], relativeNow)}
+                      </div>
+                      <div className="flex items-start gap-2 text-sm text-muted-foreground">
+                        <Globe2 className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+                        <span className="break-all">{summary.latestUrl}</span>
+                      </div>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
+              <Card className="shadow-sm">
+                <CardHeader className="flex-row items-start justify-between space-y-0 p-5">
+                  <div className="space-y-1">
                     <CardTitle className="text-lg">最近保存</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {session
@@ -596,8 +679,8 @@ export function CollectionPage({
                 </CardHeader>
                 <CardContent className="p-5 pt-0">
                   <div className="mt-4 space-y-3">
-                    {records.length ? (
-                      records.map((record) => (
+                    {recentRecords.length ? (
+                      recentRecords.map((record) => (
                         <div
                           className="grid gap-3 rounded-md border px-3 py-3 text-sm md:grid-cols-[96px_minmax(0,1fr)_auto]"
                           key={record.id}

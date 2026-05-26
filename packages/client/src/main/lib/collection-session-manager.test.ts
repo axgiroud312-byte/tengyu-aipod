@@ -13,11 +13,19 @@ type InsertedSession = CollectionSession & { task_id: string | null }
 class FakePage {
   bindings = new Map<string, (_source: unknown, data: unknown) => Promise<unknown>>()
   scripts: string[] = []
+  gotos: Array<{ url: string; options: unknown }> = []
   reloads = 0
+  bringToFronts = 0
   closed = false
+
+  constructor(private currentUrl = 'about:blank') {}
 
   isClosed() {
     return this.closed
+  }
+
+  url() {
+    return this.currentUrl
   }
 
   async exposeBinding(
@@ -33,6 +41,15 @@ class FakePage {
 
   async reload() {
     this.reloads += 1
+  }
+
+  async goto(url: string, options: unknown) {
+    this.currentUrl = url
+    this.gotos.push({ url, options })
+  }
+
+  async bringToFront() {
+    this.bringToFronts += 1
   }
 }
 
@@ -225,9 +242,10 @@ describe('CollectionSessionManager', () => {
     ])
   })
 
-  it('injects current pages, reloads them once, wires new tabs, and pauses on disconnect', async () => {
-    const currentPage = new FakePage()
-    const context = new FakeContext([currentPage])
+  it('reuses an allowed current page without reloading other tabs, wires allowed new tabs, and pauses on disconnect', async () => {
+    const currentPage = new FakePage('https://temu.com/goods/1')
+    const unrelatedPage = new FakePage('https://www.dianxiaomi.com/dashboard')
+    const context = new FakeContext([unrelatedPage, currentPage])
     const browser = new FakeBrowser([context])
     const dispatch = vi.fn().mockResolvedValue(null)
     const { manager, cdp, events } = createManager({ browser, dispatch })
@@ -244,14 +262,18 @@ describe('CollectionSessionManager', () => {
         script: expect.stringContaining('__poseidonSendToHost'),
       }),
     )
-    expect(currentPage.reloads).toBe(1)
+    expect(currentPage.reloads).toBe(0)
+    expect(currentPage.gotos).toEqual([])
+    expect(currentPage.bringToFronts).toBe(1)
+    expect(unrelatedPage.reloads).toBe(0)
+    expect(cdp.injectPageScript).not.toHaveBeenCalledWith(unrelatedPage, expect.anything())
 
     await currentPage.bindings.get('__poseidonSendToHost')?.(
       {},
       {
         kind: 'click',
         img: 'https://img.temu.com/a.jpg',
-        page: 'https://www.temu.com/goods/1',
+        page: 'https://temu.com/goods/1',
       },
     )
     expect(dispatch).toHaveBeenCalledWith(
@@ -262,7 +284,8 @@ describe('CollectionSessionManager', () => {
       }),
     )
 
-    const newPage = await context.newPage()
+    const newPage = new FakePage('https://www.temu.com/goods/2')
+    context.emit('page', newPage)
     await Promise.resolve()
     await Promise.resolve()
     expect(cdp.injectPageScript).toHaveBeenCalledWith(
@@ -273,6 +296,12 @@ describe('CollectionSessionManager', () => {
     )
     expect(newPage.reloads).toBe(0)
 
+    const disallowedNewPage = new FakePage('https://www.dianxiaomi.com/order')
+    context.emit('page', disallowedNewPage)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(cdp.injectPageScript).not.toHaveBeenCalledWith(disallowedNewPage, expect.anything())
+
     browser.disconnectOnly()
     expect(manager.getActiveSession()).toMatchObject({
       status: 'paused',
@@ -282,6 +311,38 @@ describe('CollectionSessionManager', () => {
       type: 'session-paused',
       reason: 'browser_closed',
     })
+  })
+
+  it('opens one entry page when no existing tab matches the platform domains', async () => {
+    const unrelatedPage = new FakePage('https://www.dianxiaomi.com/dashboard')
+    const context = new FakeContext([unrelatedPage])
+    const browser = new FakeBrowser([context])
+    const { manager, cdp } = createManager({ browser })
+
+    await manager.startSession({
+      platform: 'temu',
+      profile_id: 'profile-1',
+      mode: 'click',
+    })
+
+    expect(context.pages()).toHaveLength(2)
+    const targetPage = context.pages()[1]
+    if (!targetPage) {
+      throw new Error('expected a new collection page')
+    }
+    expect(targetPage.gotos).toEqual([
+      { url: 'https://www.temu.com', options: { waitUntil: 'domcontentloaded' } },
+    ])
+    expect(targetPage.reloads).toBe(0)
+    expect(targetPage.bringToFronts).toBe(1)
+    expect(unrelatedPage.reloads).toBe(0)
+    expect(cdp.injectPageScript).toHaveBeenCalledTimes(1)
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(
+      targetPage,
+      expect.objectContaining({
+        script: expect.stringContaining('__poseidonSendToHost'),
+      }),
+    )
   })
 
   it('lists real BitBrowser profiles with online status joined from open profile ids', async () => {

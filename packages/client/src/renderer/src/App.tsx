@@ -635,7 +635,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       }
       const records = await window.api.collection.listRecords({
         session_id: session.id,
-        limit: 20,
+        limit: 10_000,
       })
       setCollectionRecords(records)
       setCollectionError(null)

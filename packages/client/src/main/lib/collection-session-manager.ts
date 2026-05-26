@@ -22,7 +22,7 @@ import {
 } from './collection-injected-script'
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -313,14 +313,12 @@ export class CollectionSessionManager {
     const context = await firstBrowserContext(browser)
     runtime.context = context
 
-    const pages = context.pages()
-    for (const page of pages) {
-      await this.wirePage(runtime, page)
-      await page.reload().catch(() => null)
-    }
+    const targetPage = await this.acquireCollectionPage(context, runtime.platformRule)
+    await this.wirePage(runtime, targetPage)
+    await targetPage.bringToFront().catch(() => null)
 
     const pageHandler = (page: Page) => {
-      void this.wirePage(runtime, page).catch(() => null)
+      void this.wireIfAllowed(runtime, page).catch(() => null)
     }
     context.on('page', pageHandler)
     runtime.pageHandler = pageHandler
@@ -330,6 +328,29 @@ export class CollectionSessionManager {
         this.handleBrowserClosed()
       }
     })
+  }
+
+  private async acquireCollectionPage(
+    context: BrowserContext,
+    rule: CollectionPlatformRule,
+  ): Promise<Page> {
+    const existing = context
+      .pages()
+      .find((page) => !page.isClosed() && isAllowedDomain(page.url(), rule.allowed_domains))
+    if (existing) {
+      return existing
+    }
+
+    const page = await context.newPage()
+    await page.goto(rule.entry_url, { waitUntil: 'domcontentloaded' }).catch(() => null)
+    return page
+  }
+
+  private async wireIfAllowed(runtime: SessionRuntime, page: Page): Promise<void> {
+    if (!isAllowedDomain(page.url(), runtime.platformRule.allowed_domains)) {
+      return
+    }
+    await this.wirePage(runtime, page)
   }
 
   private async wirePage(runtime: SessionRuntime, page: Page): Promise<void> {
@@ -393,6 +414,27 @@ async function readAppConfig() {
 
 async function firstBrowserContext(browser: Browser): Promise<BrowserContext> {
   return browser.contexts()[0] ?? (await browser.newContext())
+}
+
+function isAllowedDomain(url: string, allowedDomains: string[]): boolean {
+  let hostname: string
+  try {
+    hostname = new URL(url).hostname.toLowerCase()
+  } catch {
+    return false
+  }
+
+  return allowedDomains.some((domain) => {
+    const normalized = domain.trim().toLowerCase()
+    if (!normalized) {
+      return false
+    }
+    if (normalized.startsWith('*.')) {
+      const suffix = normalized.slice(1)
+      return hostname.endsWith(suffix) && hostname.length > suffix.length
+    }
+    return hostname === normalized
+  })
 }
 
 function ensureCollectionSessionTable(db: Pick<SqliteDatabase, 'exec'>) {
