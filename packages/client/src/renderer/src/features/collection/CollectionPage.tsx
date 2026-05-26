@@ -17,6 +17,7 @@ import {
   Search,
   ShieldAlert,
   StopCircle,
+  Trash2,
   TriangleAlert,
 } from 'lucide-react'
 import type { CollectionRecordRow } from '../../../../main/lib/collection-record-store'
@@ -25,15 +26,13 @@ import type { CollectionMode } from '../../../../main/lib/collection-session-man
 import type { CollectionPauseReason } from '../../../../main/lib/collection-session-manager'
 import type { CollectionSessionStatus } from '../../../../main/lib/collection-session-manager'
 
-export type CollectionPlatformKey =
-  | 'temu'
-  | 'ozon'
-  | 'shein'
-  | 'tiktok'
-  | 'shopee'
-  | '1688'
-  | 'mercado'
-  | 'custom'
+export type CollectionPlatformKey = string
+
+export interface CollectionPlatformOption {
+  key: CollectionPlatformKey
+  label: string
+  detail: string
+}
 
 export interface CollectionProfileOption {
   id: string
@@ -54,11 +53,15 @@ interface CollectionPageProps {
   session: CollectionSession | null
   records: CollectionRecordRow[]
   error: string | null
+  platforms: CollectionPlatformOption[]
   profiles: CollectionProfileOption[]
   state: CollectionPageState
   starting: boolean
   stopping: boolean
+  resuming: boolean
+  refreshingProfiles: boolean
   retryingRecordId: string | null
+  deletingRecordId: string | null
   onStateChange: <K extends keyof CollectionPageState>(
     key: K,
     value: CollectionPageState[K],
@@ -66,25 +69,12 @@ interface CollectionPageProps {
   onRefreshProfiles: () => void
   onStartSession: () => void
   onStopSession: () => void
+  onResumeSession: () => void
   onRetryRecord: (recordId: string) => void
+  onDeleteRecord: (recordId: string) => void
   onRefreshRecords: () => void
   onOutputDirBrowse: () => void
 }
-
-const platformOptions: Array<{
-  key: CollectionPlatformKey
-  label: string
-  detail: string
-}> = [
-  { key: 'temu', label: 'Temu', detail: '识别商品详情页' },
-  { key: 'ozon', label: 'Ozon', detail: '识别商品详情页' },
-  { key: 'shein', label: 'Shein', detail: '商品页含 -p-' },
-  { key: 'tiktok', label: 'TikTok Shop', detail: '识别商品详情页' },
-  { key: 'shopee', label: 'Shopee', detail: '识别商品详情页' },
-  { key: '1688', label: '1688', detail: '识别商品详情页' },
-  { key: 'mercado', label: 'Mercado Libre', detail: '识别商品详情页' },
-  { key: 'custom', label: '自定义', detail: '本地自定义规则' },
-]
 
 function collectionStatusLabel(status: CollectionRecordRow['status']) {
   switch (status) {
@@ -151,8 +141,8 @@ function pauseReasonLabel(reason: CollectionPauseReason | undefined) {
   }
 }
 
-function platformLabel(value: string) {
-  return platformOptions.find((item) => item.key === value)?.label ?? value
+function platformLabel(value: string, platforms: CollectionPlatformOption[]) {
+  return platforms.find((item) => item.key === value)?.label ?? value
 }
 
 function fileNameFromPath(path: string | null | undefined) {
@@ -199,22 +189,29 @@ export function CollectionPage({
   session,
   records,
   error,
+  platforms,
   profiles,
   state,
   starting,
   stopping,
+  resuming,
+  refreshingProfiles,
   retryingRecordId,
+  deletingRecordId,
   onStateChange,
   onRefreshProfiles,
   onStartSession,
   onStopSession,
+  onResumeSession,
   onRetryRecord,
+  onDeleteRecord,
   onRefreshRecords,
   onOutputDirBrowse,
 }: CollectionPageProps) {
   const isIdle = !session
   const isPaused = session?.status === 'paused'
   const summary = currentSessionSummary(session, records)
+  const currentPlatformLabel = platformLabel(state.platform, platforms)
 
   return (
     <div className="space-y-6">
@@ -227,7 +224,7 @@ export function CollectionPage({
               </Badge>
               {session ? (
                 <span className="text-sm font-medium">
-                  {platformLabel(session.platform)} ·{' '}
+                  {platformLabel(session.platform, platforms)} ·{' '}
                   {session.mode === 'click' ? '点击采集' : '滚动采集'}
                 </span>
               ) : null}
@@ -253,6 +250,12 @@ export function CollectionPage({
                   <RefreshCw className="mr-2 h-4 w-4" />
                   刷新清单
                 </Button>
+                {isPaused ? (
+                  <Button disabled={resuming} onClick={onResumeSession} type="button">
+                    <PlayCircle className="mr-2 h-4 w-4" />
+                    {resuming ? '恢复中...' : '恢复'}
+                  </Button>
+                ) : null}
                 <Button disabled={stopping} onClick={onStopSession} type="button">
                   <StopCircle className="mr-2 h-4 w-4" />
                   {stopping ? '停止中...' : '停止会话'}
@@ -281,32 +284,36 @@ export function CollectionPage({
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <RadioGroup
-                    className="grid grid-cols-2 gap-2"
-                    onValueChange={(value) =>
-                      onStateChange('platform', value as CollectionPlatformKey)
-                    }
-                    value={state.platform}
-                  >
-                    {platformOptions.map((item) => (
-                      <label
-                        className={cn(
-                          'flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm transition-colors',
-                          state.platform === item.key
-                            ? 'border-primary bg-primary/5'
-                            : 'border-border hover:bg-muted',
-                        )}
-                        htmlFor={`collection-platform-${item.key}`}
-                        key={item.key}
-                      >
-                        <RadioGroupItem id={`collection-platform-${item.key}`} value={item.key} />
-                        <div className="min-w-0">
-                          <div className="font-medium">{item.label}</div>
-                          <div className="text-xs text-muted-foreground">{item.detail}</div>
-                        </div>
-                      </label>
-                    ))}
-                  </RadioGroup>
+                  {platforms.length ? (
+                    <RadioGroup
+                      className="grid grid-cols-2 gap-2"
+                      onValueChange={(value) => onStateChange('platform', value)}
+                      value={state.platform}
+                    >
+                      {platforms.map((item) => (
+                        <label
+                          className={cn(
+                            'flex cursor-pointer items-center gap-3 rounded-md border px-3 py-2 text-sm transition-colors',
+                            state.platform === item.key
+                              ? 'border-primary bg-primary/5'
+                              : 'border-border hover:bg-muted',
+                          )}
+                          htmlFor={`collection-platform-${item.key}`}
+                          key={item.key}
+                        >
+                          <RadioGroupItem id={`collection-platform-${item.key}`} value={item.key} />
+                          <div className="min-w-0">
+                            <div className="font-medium">{item.label}</div>
+                            <div className="text-xs text-muted-foreground">{item.detail}</div>
+                          </div>
+                        </label>
+                      ))}
+                    </RadioGroup>
+                  ) : (
+                    <div className="rounded-md border border-dashed bg-background p-4 text-sm text-muted-foreground">
+                      暂无平台规则。
+                    </div>
+                  )}
                 </CardContent>
               </Card>
 
@@ -314,13 +321,18 @@ export function CollectionPage({
                 <CardHeader className="space-y-2">
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle className="text-lg">2. 选择比特浏览器环境</CardTitle>
-                    <Button onClick={onRefreshProfiles} type="button" variant="secondary">
+                    <Button
+                      disabled={refreshingProfiles}
+                      onClick={onRefreshProfiles}
+                      type="button"
+                      variant="secondary"
+                    >
                       <RefreshCw className="mr-2 h-4 w-4" />
-                      刷新列表
+                      {refreshingProfiles ? '刷新中...' : '刷新列表'}
                     </Button>
                   </div>
                   <p className="text-sm text-muted-foreground">
-                    选择一个已经登录的平台环境，采集会话会独占这个浏览器环境。
+                    未打开的环境也可以选择，开始时会自动拉起并刷新当前页。
                   </p>
                 </CardHeader>
                 <CardContent className="space-y-4">
@@ -344,7 +356,7 @@ export function CollectionPage({
                             <div className="flex items-center gap-2">
                               <span className="font-medium">{profile.label}</span>
                               <Badge variant={profile.online ? 'default' : 'secondary'}>
-                                {profile.online ? '已登录' : '未登录'}
+                                {profile.online ? '已打开' : '未打开'}
                               </Badge>
                             </div>
                             <div className="truncate text-xs text-muted-foreground">
@@ -472,7 +484,7 @@ export function CollectionPage({
                   <div className="space-y-2 rounded-md border bg-muted/40 p-4 text-sm">
                     <div className="flex items-center gap-2">
                       <Globe2 className="h-4 w-4 text-primary" />
-                      <span className="font-medium">{platformLabel(state.platform)}</span>
+                      <span className="font-medium">{currentPlatformLabel}</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <History className="h-4 w-4 text-primary" />
@@ -485,6 +497,9 @@ export function CollectionPage({
                   </div>
 
                   <div className="grid gap-2 rounded-md border bg-background p-4 text-sm">
+                    <div className="text-xs text-muted-foreground">
+                      开始后会自动刷新当前页，让采集脚本生效。
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-muted-foreground">成功</span>
                       <span className="font-medium tabular-nums">{summary.successCount}</span>
@@ -548,8 +563,13 @@ export function CollectionPage({
                     <div className="rounded-md border border-amber-200 bg-background p-3 text-sm">
                       暂停后不会丢失当前会话清单，下次恢复后继续监听。
                     </div>
-                    <Button disabled type="button" variant="secondary">
-                      恢复功能待接入
+                    <Button
+                      disabled={resuming}
+                      onClick={onResumeSession}
+                      type="button"
+                      variant="secondary"
+                    >
+                      {resuming ? '恢复中...' : '恢复'}
                     </Button>
                   </CardContent>
                 </Card>
@@ -565,7 +585,7 @@ export function CollectionPage({
                     <CardTitle className="text-lg">最近保存</CardTitle>
                     <p className="text-sm text-muted-foreground">
                       {session
-                        ? `${platformLabel(session.platform)} · ${session.profile_id}`
+                        ? `${platformLabel(session.platform, platforms)} · ${session.profile_id}`
                         : '无活动会话'}
                     </p>
                   </div>
@@ -624,6 +644,16 @@ export function CollectionPage({
                                 重试
                               </Button>
                             ) : null}
+                            <Button
+                              className="h-8 px-2"
+                              disabled={deletingRecordId === record.id}
+                              onClick={() => onDeleteRecord(record.id)}
+                              type="button"
+                              variant="destructive"
+                            >
+                              <Trash2 className="mr-2 h-3.5 w-3.5" />
+                              {deletingRecordId === record.id ? '删除中' : '删除'}
+                            </Button>
                           </div>
                         </div>
                       ))
@@ -642,7 +672,7 @@ export function CollectionPage({
                 <CardTitle className="text-lg">当前会话</CardTitle>
                 <p className="text-sm text-muted-foreground">
                   {session
-                    ? `${platformLabel(session.platform)} · ${
+                    ? `${platformLabel(session.platform, platforms)} · ${
                         session.mode === 'click' ? '点击采集' : '滚动采集'
                       }`
                     : '当前没有活动会话'}
@@ -686,6 +716,17 @@ export function CollectionPage({
                     </div>
                   )}
                 </div>
+                {isPaused ? (
+                  <Button
+                    className="w-full"
+                    disabled={resuming}
+                    onClick={onResumeSession}
+                    type="button"
+                  >
+                    <PlayCircle className="mr-2 h-4 w-4" />
+                    {resuming ? '恢复中...' : '恢复采集'}
+                  </Button>
+                ) : null}
               </CardContent>
             </Card>
           </>

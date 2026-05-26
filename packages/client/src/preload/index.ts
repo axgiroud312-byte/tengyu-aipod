@@ -17,7 +17,11 @@ import type {
   SkillSummary,
 } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
-import type { BitBrowserProfile } from '../main/lib/bit-browser-client'
+import type {
+  BitBrowserCdpEndpoint,
+  BitBrowserProfile,
+  BitBrowserProfileWithStatus,
+} from '../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../main/lib/browser-profile-lock'
 import type {
   CollectionClickEvent,
@@ -110,10 +114,18 @@ const api = {
       }>,
   },
   collection: {
+    listPlatforms: () =>
+      ipcRenderer.invoke('collection:list-platforms') as Promise<CollectionPlatformRule[]>,
+    listProfiles: () =>
+      ipcRenderer.invoke('collection:list-profiles') as Promise<BitBrowserProfileWithStatus[]>,
     startSession: (input: CollectionSessionConfig) =>
       ipcRenderer.invoke('collection:start-session', input) as Promise<CollectionSession>,
     stopSession: () =>
       ipcRenderer.invoke('collection:stop-session') as Promise<CollectionSession | null>,
+    resumeSession: () =>
+      ipcRenderer.invoke('collection:resume-session') as Promise<CollectionSession | null>,
+    openProfile: (input: { profile_id: string }) =>
+      ipcRenderer.invoke('collection:open-profile', input) as Promise<BitBrowserCdpEndpoint>,
     handleClick: (input: { event: CollectionClickEvent; platformRule: CollectionPlatformRule }) =>
       ipcRenderer.invoke('collection:handle-click', input) as Promise<CollectionClickResult>,
     handleScroll: (input: {
@@ -144,6 +156,11 @@ const api = {
     }) => ipcRenderer.invoke('collection:list-records', input) as Promise<CollectionRecordRow[]>,
     retryRecord: (input: { record_id: string }) =>
       ipcRenderer.invoke('collection:retry-record', input) as Promise<CollectionScrollResult>,
+    deleteRecord: (input: { record_id: string }) =>
+      ipcRenderer.invoke('collection:delete-record', input) as Promise<{
+        ok: true
+        record_id: string
+      }>,
   },
   generation: {
     generatePrompts: (input: GenerationPromptInput) =>

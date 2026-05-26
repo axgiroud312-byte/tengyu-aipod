@@ -4,13 +4,24 @@ import { join } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
 import type { BrowserWindow, ipcMain } from 'electron'
+import type { Browser, BrowserContext, Page } from 'playwright'
 import { z } from 'zod'
+import {
+  type BitBrowserClient,
+  type BitBrowserProfileWithStatus,
+  bitBrowserClient,
+} from './bit-browser-client'
 import {
   type BrowserProfileLockHandle,
   type BrowserProfileLockManager,
   browserProfileLocks,
 } from './browser-profile-lock'
-import { type CDPClient, cdpClient } from './cdp-client'
+import { type CDPClient, type CollectionBindingPayload, cdpClient } from './cdp-client'
+import {
+  type CollectionPlatformRule,
+  createCollectionInjectedScript,
+} from './collection-injected-script'
+import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
 
 const nodeRequire = createRequire(import.meta.url)
@@ -49,13 +60,20 @@ export type CollectionSessionEvent =
 
 type CollectionDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 type ReadAppConfig = () => Promise<{ workbench_root?: string | undefined }>
+type DispatchCollectionEvent = (
+  payload: CollectionBindingPayload,
+  context: { platformRule: CollectionPlatformRule; mode: CollectionMode },
+) => Promise<unknown> | unknown
 
 export type CollectionSessionManagerDependencies = {
   readConfig?: ReadAppConfig
   openDatabase?: (workbenchRoot: string) => CollectionDatabase
-  cdp?: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
+  cdp?: Pick<CDPClient, 'connectToProfile' | 'disconnect' | 'injectPageScript'>
+  bitBrowser?: Pick<BitBrowserClient, 'listProfiles' | 'listOpenProfileIds' | 'openProfile'>
   locks?: BrowserProfileLockManager
   emitEvent?: (event: CollectionSessionEvent) => void
+  dispatchCollectionEvent?: DispatchCollectionEvent
+  getPlatformRule?: (key: string) => CollectionPlatformRule
   randomId?: () => string
   now?: () => number
 }
@@ -65,6 +83,11 @@ type SessionRuntime = {
   lock: BrowserProfileLockHandle
   workbenchRoot: string
   goodsSku: Map<string, string>
+  platformRule: CollectionPlatformRule
+  wiredPages: WeakSet<Page>
+  browser: Browser | undefined
+  context: BrowserContext | undefined
+  pageHandler: ((page: Page) => void) | undefined
 }
 
 const CollectionSessionConfigSchema = z
@@ -88,9 +111,15 @@ export class CollectionSessionManager {
   private active: SessionRuntime | null = null
   private readonly readConfig: ReadAppConfig
   private readonly openDatabase: (workbenchRoot: string) => CollectionDatabase
-  private readonly cdp: Pick<CDPClient, 'connectToProfile' | 'disconnect'>
+  private readonly cdp: Pick<CDPClient, 'connectToProfile' | 'disconnect' | 'injectPageScript'>
+  private readonly bitBrowser: Pick<
+    BitBrowserClient,
+    'listProfiles' | 'listOpenProfileIds' | 'openProfile'
+  >
   private readonly locks: BrowserProfileLockManager
   private readonly emitEvent: ((event: CollectionSessionEvent) => void) | undefined
+  private readonly dispatchCollectionEvent: DispatchCollectionEvent
+  private readonly findPlatformRule: (key: string) => CollectionPlatformRule
   private readonly randomId: () => string
   private readonly now: () => number
 
@@ -98,8 +127,11 @@ export class CollectionSessionManager {
     this.readConfig = dependencies.readConfig ?? readAppConfig
     this.openDatabase = dependencies.openDatabase ?? openWorkbenchDatabase
     this.cdp = dependencies.cdp ?? cdpClient
+    this.bitBrowser = dependencies.bitBrowser ?? bitBrowserClient
     this.locks = dependencies.locks ?? browserProfileLocks
     this.emitEvent = dependencies.emitEvent
+    this.dispatchCollectionEvent = dependencies.dispatchCollectionEvent ?? dispatchCollectionPayload
+    this.findPlatformRule = dependencies.getPlatformRule ?? getPlatformRule
     this.randomId = dependencies.randomId ?? randomUUID
     this.now = dependencies.now ?? Date.now
   }
@@ -113,6 +145,7 @@ export class CollectionSessionManager {
     }
 
     const workbenchRoot = await readWorkbenchRoot(this.readConfig)
+    const platformRule = this.findPlatformRule(config.platform)
     const session: CollectionSession = {
       id: this.randomId(),
       platform: config.platform,
@@ -123,16 +156,27 @@ export class CollectionSessionManager {
       started_at: this.now(),
     }
     const lock = this.locks.acquire(config.profile_id, 'collection', session.id)
-    this.active = { session, lock, workbenchRoot, goodsSku: new Map() }
+    this.active = {
+      session,
+      lock,
+      workbenchRoot,
+      goodsSku: new Map(),
+      platformRule,
+      wiredPages: new WeakSet(),
+      browser: undefined,
+      context: undefined,
+      pageHandler: undefined,
+    }
 
     try {
       writeSession(workbenchRoot, this.openDatabase, session)
-      await this.cdp.connectToProfile(config.profile_id)
+      await this.connectAndWire(this.active)
       const activeSession = this.updateActiveSession({ status: 'active' })
       writeSession(workbenchRoot, this.openDatabase, activeSession)
       this.emit({ type: 'session-started', session: activeSession })
       return activeSession
     } catch (error) {
+      await this.cdp.disconnect(config.profile_id).catch(() => null)
       lock.release()
       this.active = null
       throw error
@@ -147,6 +191,7 @@ export class CollectionSessionManager {
     const runtime = this.active
     const stopping = this.updateActiveSession({ status: 'stopping' })
     writeSession(runtime.workbenchRoot, this.openDatabase, stopping)
+    this.detachPageHandler(runtime)
     await this.cdp.disconnect(runtime.session.profile_id).catch(() => null)
     runtime.lock.release()
 
@@ -209,14 +254,31 @@ export class CollectionSessionManager {
     return paused
   }
 
-  resume(): CollectionSession | null {
+  async resume(): Promise<CollectionSession | null> {
     if (!this.active || this.active.session.status !== 'paused') {
       return null
     }
+    await this.connectAndWire(this.active)
     const active = this.updateActiveSession({ status: 'active' }, { clearPauseReason: true })
     writeSession(this.active.workbenchRoot, this.openDatabase, active)
     this.emit({ type: 'session-resumed', session: active })
     return active
+  }
+
+  async listProfiles(): Promise<BitBrowserProfileWithStatus[]> {
+    const [profiles, openProfileIds] = await Promise.all([
+      this.bitBrowser.listProfiles(),
+      this.bitBrowser.listOpenProfileIds(),
+    ])
+    const openProfileIdSet = new Set(openProfileIds)
+    return profiles.map((profile) => ({
+      ...profile,
+      online: openProfileIdSet.has(profile.id),
+    }))
+  }
+
+  openProfile(profileId: string) {
+    return this.bitBrowser.openProfile(profileId)
   }
 
   handleBrowserClosed() {
@@ -242,6 +304,61 @@ export class CollectionSessionManager {
     const next = options.clearPauseReason ? withoutPauseReason(merged) : merged
     this.active = { ...this.active, session: next }
     return next
+  }
+
+  private async connectAndWire(runtime: SessionRuntime): Promise<void> {
+    this.detachPageHandler(runtime)
+    const browser = await this.cdp.connectToProfile(runtime.session.profile_id)
+    runtime.browser = browser
+    const context = await firstBrowserContext(browser)
+    runtime.context = context
+
+    const pages = context.pages()
+    for (const page of pages) {
+      await this.wirePage(runtime, page)
+      await page.reload().catch(() => null)
+    }
+
+    const pageHandler = (page: Page) => {
+      void this.wirePage(runtime, page).catch(() => null)
+    }
+    context.on('page', pageHandler)
+    runtime.pageHandler = pageHandler
+
+    browser.on('disconnected', () => {
+      if (this.active?.session.id === runtime.session.id) {
+        this.handleBrowserClosed()
+      }
+    })
+  }
+
+  private async wirePage(runtime: SessionRuntime, page: Page): Promise<void> {
+    if (page.isClosed() || runtime.wiredPages.has(page)) {
+      return
+    }
+    runtime.wiredPages.add(page)
+    try {
+      await this.cdp.injectPageScript(page, {
+        script: createCollectionInjectedScript({ platformRule: runtime.platformRule }),
+        onEvent: async (payload) => {
+          await this.dispatchCollectionEvent(payload, {
+            platformRule: runtime.platformRule,
+            mode: runtime.session.mode,
+          })
+        },
+      })
+    } catch (error) {
+      runtime.wiredPages.delete(page)
+      throw error
+    }
+  }
+
+  private detachPageHandler(runtime: SessionRuntime): void {
+    if (runtime.context && runtime.pageHandler) {
+      runtime.context.off('page', runtime.pageHandler)
+    }
+    runtime.pageHandler = undefined
+    runtime.context = undefined
   }
 
   private emit(event: CollectionSessionEvent) {
@@ -272,6 +389,10 @@ async function readWorkbenchRoot(readConfig: ReadAppConfig) {
 
 async function readAppConfig() {
   return (await import('../onboarding')).readAppConfig()
+}
+
+async function firstBrowserContext(browser: Browser): Promise<BrowserContext> {
+  return browser.contexts()[0] ?? (await browser.newContext())
 }
 
 function ensureCollectionSessionTable(db: Pick<Database.Database, 'exec'>) {
@@ -355,12 +476,26 @@ function emitCollectionEvent(event: CollectionSessionEvent) {
   }
 }
 
+async function dispatchCollectionPayload(
+  payload: CollectionBindingPayload,
+  context: { platformRule: CollectionPlatformRule; mode: CollectionMode },
+) {
+  const { collectionClickService } = await import('./collection-click-service')
+  return collectionClickService.dispatch(payload, context)
+}
+
 export const collectionSessionManager = new CollectionSessionManager({
   emitEvent: emitCollectionEvent,
 })
 
+const CollectionProfileInputSchema = z.object({
+  profile_id: z.string().min(1),
+})
+
 export function registerCollectionSessionIpc() {
   const ipcMain = electronIpcMain()
+  ipcMain.handle('collection:list-platforms', () => listPlatformRules())
+  ipcMain.handle('collection:list-profiles', () => collectionSessionManager.listProfiles())
   ipcMain.handle('collection:start-session', (_event, input: unknown) => {
     const parsed = CollectionSessionConfigSchema.safeParse(input)
     if (!parsed.success) {
@@ -372,7 +507,18 @@ export function registerCollectionSessionIpc() {
     return collectionSessionManager.startSession(parsed.data)
   })
   ipcMain.handle('collection:stop-session', () => collectionSessionManager.stopSession())
+  ipcMain.handle('collection:resume-session', () => collectionSessionManager.resume())
   ipcMain.handle('collection:get-active-session', () => collectionSessionManager.getActiveSession())
+  ipcMain.handle('collection:open-profile', (_event, input: unknown) => {
+    const parsed = CollectionProfileInputSchema.safeParse(input)
+    if (!parsed.success) {
+      throw new AppErrorClass('HTTP_4XX', '比特浏览器环境参数不正确', false, {
+        kind: 'validation',
+        issues: parsed.error.issues,
+      })
+    }
+    return collectionSessionManager.openProfile(parsed.data.profile_id)
+  })
 }
 
 function electronIpcMain(): typeof ipcMain {
