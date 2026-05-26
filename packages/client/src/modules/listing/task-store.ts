@@ -9,9 +9,9 @@ import type {
   ListingWorkspaceRecord,
   ListingWorkspaceStatus,
 } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
+import type { SqliteDatabase } from '../../main/lib/sqlite'
 
-export type ListingTaskStoreDatabase = Pick<Database.Database, 'close' | 'exec' | 'prepare'>
+export type ListingTaskStoreDatabase = Pick<SqliteDatabase, 'close' | 'exec' | 'prepare'>
 
 export type ListingTaskListInput = {
   workspaceId?: string
@@ -32,7 +32,7 @@ export class SqliteListingTaskStore {
         ORDER BY updated_at DESC, profile_name ASC
       `,
       )
-      .all()
+      .all() as unknown[]
     return rows.filter(isListingWorkspaceRecord)
   }
 
@@ -224,7 +224,7 @@ export class SqliteListingTaskStore {
   }
 }
 
-export function ensureListingOrchestrationTables(db: Pick<Database.Database, 'exec'>): void {
+export function ensureListingOrchestrationTables(db: Pick<SqliteDatabase, 'exec'>): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS listing_workspaces (
       id TEXT PRIMARY KEY,

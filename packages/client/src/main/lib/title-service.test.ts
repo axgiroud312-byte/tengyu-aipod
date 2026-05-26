@@ -2,9 +2,9 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { type Skill, type SkillSummary, listVisionModels } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { SqliteDatabase } from './sqlite'
 import { TempFileManager } from './temp-file-manager'
 import {
   type TitleBatchConfig,
@@ -17,7 +17,7 @@ import {
   writeTitlesXlsx,
 } from './title-service'
 
-type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 let workbenchRoot = ''
 let tempRoot = ''

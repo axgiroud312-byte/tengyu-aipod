@@ -131,8 +131,8 @@ vi.mock('electron', () => ({
   },
 }))
 
-vi.mock('better-sqlite3', () => ({
-  default: FakeDatabase,
+vi.mock('./sqlite', () => ({
+  openSqliteDatabase: (path: string) => new FakeDatabase(path),
 }))
 
 vi.mock('../onboarding', () => ({

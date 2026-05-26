@@ -1,17 +1,17 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { openSqliteDatabase, type SqliteDatabase } from '../../main/lib/sqlite'
 import { SqliteListingTaskStore } from './task-store'
 
 let tempDir: string
-let db: Database.Database
+let db: SqliteDatabase
 let store: SqliteListingTaskStore
 
 beforeEach(async () => {
   tempDir = await mkdtemp(join(tmpdir(), 'tengyu-listing-task-store-'))
-  db = new Database(join(tempDir, 'workbench.db'))
+  db = openSqliteDatabase(join(tempDir, 'workbench.db'))
   store = new SqliteListingTaskStore(db)
 })
 

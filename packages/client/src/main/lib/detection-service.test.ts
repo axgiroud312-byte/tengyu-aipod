@@ -2,7 +2,6 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { type Skill, listVisionModels } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   type DetectionBatchConfig,
@@ -10,9 +9,10 @@ import {
   classifyRisk,
   parseDetectionResponse,
 } from './detection-service'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 import { TempFileManager } from './temp-file-manager'
 
-type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 type FakeDetectionRow = {
   id: string
@@ -150,7 +150,7 @@ function createSqliteDependencies() {
   return {
     readConfig: async () => ({ workbench_root: workbenchRoot }),
     openDatabase: (_workbenchRoot: string) =>
-      new Database(join(workbenchRoot, '.workbench', 'workbench.db')),
+      openSqliteDatabase(join(workbenchRoot, '.workbench', 'workbench.db')),
   }
 }
 
@@ -167,7 +167,7 @@ async function initializeDetectionSqlite(
 }
 
 function seedDetectionResult(
-  db: Database.Database,
+  db: SqliteDatabase,
   input: {
     artifactId: string
     detectionId: string

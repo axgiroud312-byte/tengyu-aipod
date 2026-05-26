@@ -11,7 +11,6 @@ import {
   WORKBENCH_DIRECTORIES,
   listVisionModels,
 } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
@@ -21,6 +20,7 @@ import {
   type PreprocessOptions,
   SharpPreprocessPool,
 } from './preprocess-pool'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -154,7 +154,7 @@ type DetectionServiceDependencies = {
   preprocessPool?: Pick<SharpPreprocessPool, 'process' | 'close'>
   readConfig?: ReadAppConfig
   getSecret?: (key: string) => Promise<string | null>
-  openDatabase?: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+  openDatabase?: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
   emitProgress?: (progress: DetectionProgress) => void
   tempFileManager?: DetectionTempFileManager
 }
@@ -384,10 +384,10 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-function ensureDetectionTables(db: Pick<Database.Database, 'exec'>) {
+function ensureDetectionTables(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
@@ -462,7 +462,7 @@ async function scanImageFolder(folder: string): Promise<DetectionImageInfo[]> {
 }
 
 function registerSourceArtifact(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     identity: ImageIdentity
     imagePath: string
@@ -504,7 +504,7 @@ function registerSourceArtifact(
 }
 
 function readCachedDetection(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: { artifactId: string; model: string; skill: SkillSummary },
 ) {
   ensureDetectionTables(db)
@@ -540,7 +540,7 @@ function readCachedDetection(
 }
 
 function registerDetectionResult(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     taskId: string
     identity: ImageIdentity
@@ -603,7 +603,7 @@ async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
 }
 
 async function registerPromotedArtifact(
-  db: Pick<Database.Database, 'prepare'>,
+  db: Pick<SqliteDatabase, 'prepare'>,
   input: {
     targetPath: string
     taskId: string
@@ -798,7 +798,7 @@ export class DetectionService {
     try {
       ensureDetectionTables(db)
       const conditions: string[] = []
-      const params: unknown[] = []
+      const params: string[] = []
       if (input.task_id) {
         conditions.push('dr.task_id = ?')
         params.push(input.task_id)
@@ -974,8 +974,8 @@ export class DetectionService {
       }
       const info = db
         .prepare('DELETE FROM detection_results WHERE artifact_id = ?')
-        .run(input.artifact_id) as { changes: number }
-      return info.changes
+        .run(input.artifact_id) as { changes: number | bigint }
+      return Number(info.changes)
     } finally {
       db.close()
     }
@@ -1131,7 +1131,7 @@ export class DetectionService {
     maxRetries: number
     workbenchRoot: string
     preprocessPool: Pick<SharpPreprocessPool, 'process'>
-    openDatabase: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+    openDatabase: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
   }): Promise<DetectionImageResult> {
     let identity: ImageIdentity
     try {

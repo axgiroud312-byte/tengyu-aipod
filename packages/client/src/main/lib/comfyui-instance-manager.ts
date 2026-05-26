@@ -1,6 +1,5 @@
 import { join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import { ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 import {
@@ -12,6 +11,7 @@ import {
   ChenyuInstanceStatus,
   type ChenyuPod,
 } from './chenyu-cloud-client'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 
 export type ComfyuiInstanceState = 'none' | 'starting' | 'running' | 'shutting_down' | 'stopped'
 
@@ -60,7 +60,7 @@ export type ComfyuiInstanceManagerDependencies = {
   now?: () => number
 }
 
-type ComfyuiInstanceDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type ComfyuiInstanceDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 type ComfyuiInstanceRow = {
   provider: 'chenyu'
@@ -85,10 +85,10 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-function ensureComfyuiInstanceTable(db: Pick<Database.Database, 'exec'>) {
+function ensureComfyuiInstanceTable(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS comfyui_instances (
       id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -336,7 +336,7 @@ function priceHour(item: { price?: { hour?: number } }) {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0
 }
 
-function saveInstanceRecord(db: Pick<Database.Database, 'prepare'>, record: ComfyuiInstanceRecord) {
+function saveInstanceRecord(db: Pick<SqliteDatabase, 'prepare'>, record: ComfyuiInstanceRecord) {
   db.prepare(
     `
       INSERT INTO comfyui_instances (
@@ -385,7 +385,7 @@ function saveInstanceRecord(db: Pick<Database.Database, 'prepare'>, record: Comf
   )
 }
 
-function readInstanceRecord(db: Pick<Database.Database, 'prepare'>): ComfyuiInstanceRecord | null {
+function readInstanceRecord(db: Pick<SqliteDatabase, 'prepare'>): ComfyuiInstanceRecord | null {
   const row = db
     .prepare(
       `
@@ -411,7 +411,7 @@ function readInstanceRecord(db: Pick<Database.Database, 'prepare'>): ComfyuiInst
   return row ?? null
 }
 
-function clearInstanceRecord(db: Pick<Database.Database, 'prepare'>) {
+function clearInstanceRecord(db: Pick<SqliteDatabase, 'prepare'>) {
   db.prepare('DELETE FROM comfyui_instances WHERE id = 1').run()
 }
 

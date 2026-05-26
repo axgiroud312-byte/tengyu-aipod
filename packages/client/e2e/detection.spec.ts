@@ -3,11 +3,11 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { expect, test } from '@playwright/test'
 import type { Skill } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
 import sharp from 'sharp'
 import { openCollectionDatabase as openWorkbenchDatabase } from '../src/main/lib/collection-record-store'
 import { type DetectionBatchConfig, DetectionService } from '../src/main/lib/detection-service'
 import { SharpPreprocessPool } from '../src/main/lib/preprocess-pool'
+import type { SqliteDatabase } from '../src/main/lib/sqlite'
 
 const detectionSkill: Skill = {
   id: 'infringement-v2-e2e',
@@ -23,7 +23,7 @@ const detectionSkill: Skill = {
   variables: [],
 }
 
-type OpenDatabase = (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type OpenDatabase = (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 async function createInputImages(root: string) {
   const inputDir = join(root, '02-生图', '03-提取', 'detection-e2e')

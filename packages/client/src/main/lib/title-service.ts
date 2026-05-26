@@ -8,7 +8,6 @@ import {
   type SkillSummary,
   listVisionModels,
 } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
@@ -21,6 +20,7 @@ import {
   SharpPreprocessPool,
 } from './preprocess-pool'
 import { skillCacheManager } from './skill-cache'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 
 export type ExistingTitleStrategy = 'skip' | 'regenerate'
@@ -100,7 +100,7 @@ type TitleServiceDependencies = {
   preprocessPool?: Pick<SharpPreprocessPool, 'process' | 'close'>
   readConfig?: typeof readAppConfig
   getSecret?: typeof getSecret
-  openDatabase?: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+  openDatabase?: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
   tempFileManager?: TitleTempFileManager
   emitProgress?: (progress: TitleProgress) => void
 }
@@ -460,10 +460,10 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-function ensureSkuTable(db: Pick<Database.Database, 'exec'>) {
+function ensureSkuTable(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS skus (
       code TEXT PRIMARY KEY,
@@ -481,7 +481,7 @@ function ensureSkuTable(db: Pick<Database.Database, 'exec'>) {
 }
 
 function registerSkuTitles(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     templateBatch: string
     titles: Map<string, string>
@@ -535,7 +535,7 @@ function registerSkuTitles(
 }
 
 function readSkuTitle(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: { skuCode: string; batchDir: string },
 ) {
   ensureSkuTable(db)

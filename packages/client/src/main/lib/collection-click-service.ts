@@ -3,7 +3,6 @@ import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { extname, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
 import type { BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
 import type { CollectionBindingPayload } from './cdp-client'
@@ -23,6 +22,7 @@ import {
   type CollectionSessionManager,
   collectionSessionManager,
 } from './collection-session-manager'
+import type { SqliteDatabase } from './sqlite'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -82,7 +82,7 @@ export type CollectionClickServiceDependencies = {
     'assignSessionSku' | 'getActiveSession' | 'getSessionSku' | 'requestSku'
   >
   downloadImage?: (url: string) => Promise<Buffer>
-  openDatabase?: (workbenchRoot: string) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+  openDatabase?: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
   randomId?: () => string
   now?: () => number
   readFile?: typeof readFile
@@ -101,7 +101,7 @@ export class CollectionClickService {
   private readonly downloadImage: (url: string) => Promise<Buffer>
   private readonly openDatabase: (
     workbenchRoot: string,
-  ) => Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+  ) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
   private readonly randomId: () => string
   private readonly now: () => number
   private readonly readFile: typeof readFile

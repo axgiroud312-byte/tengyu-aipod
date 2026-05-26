@@ -24,7 +24,6 @@ import {
   createListingFailure,
   listingFailureFromAppError,
 } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import type { Browser as PlaywrightBrowser, Page as PlaywrightPage } from 'playwright'
 import { z } from 'zod'
 import { bitBrowserClient } from '../../main/lib/bit-browser-client'
@@ -34,6 +33,7 @@ import {
 } from '../../main/lib/browser-profile-lock'
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
 import { loadBatchAsListingItems } from '../../main/lib/listing-batch-loader'
+import { openSqliteDatabase, type SqliteDatabase } from '../../main/lib/sqlite'
 import { sheinWorkflow } from './platforms/dianxiaomi-shein/workflow'
 import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
 import { type ListingTaskListInput, SqliteListingTaskStore } from './task-store'
@@ -686,7 +686,7 @@ export class ListingRunner {
 }
 
 export class SqliteListingStatusStore implements ListingStatusStore {
-  constructor(private readonly db: Pick<Database.Database, 'exec' | 'prepare' | 'close'>) {
+  constructor(private readonly db: Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>) {
     ensureListingStatusTable(this.db)
   }
 
@@ -1158,11 +1158,11 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchListingStatusStore(workbenchRoot: string) {
-  return new SqliteListingStatusStore(new Database(workbenchDbPath(workbenchRoot)))
+  return new SqliteListingStatusStore(openSqliteDatabase(workbenchDbPath(workbenchRoot)))
 }
 
 function openWorkbenchListingTaskStore(workbenchRoot: string) {
-  return new SqliteListingTaskStore(new Database(workbenchDbPath(workbenchRoot)))
+  return new SqliteListingTaskStore(openSqliteDatabase(workbenchDbPath(workbenchRoot)))
 }
 
 async function withListingTaskStore<T>(
@@ -1177,7 +1177,7 @@ async function withListingTaskStore<T>(
   }
 }
 
-function ensureListingStatusTable(db: Pick<Database.Database, 'exec'>) {
+function ensureListingStatusTable(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS listing_status (
       id TEXT PRIMARY KEY,

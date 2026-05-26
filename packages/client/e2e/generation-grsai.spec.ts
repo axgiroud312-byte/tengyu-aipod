@@ -2,7 +2,6 @@ import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { DatabaseSync } from 'node:sqlite'
 import {
   type ElectronApplication,
   type Page,
@@ -11,6 +10,7 @@ import {
   test,
 } from '@playwright/test'
 import sharp from 'sharp'
+import { openSqliteDatabase } from '../src/main/lib/sqlite'
 
 type MockState = {
   bailianCalls: number
@@ -408,7 +408,7 @@ async function runExtractThroughIpc(
 }
 
 function readArtifactRows(workbenchRoot: string) {
-  const db = new DatabaseSync(join(workbenchRoot, '.workbench', 'workbench.db'), { readOnly: true })
+  const db = openSqliteDatabase(join(workbenchRoot, '.workbench', 'workbench.db'))
   try {
     return db
       .prepare(

@@ -9,6 +9,7 @@ import { registerCollectionSessionIpc } from './lib/collection-session-manager'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
 import { registerGenerationIpc } from './lib/generation-service'
+import { runNativeSmoke } from './lib/native-smoke'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
 import { registerTitleIpc } from './lib/title-service'
@@ -49,6 +50,13 @@ function createMainWindow(): void {
 }
 
 app.whenReady().then(() => {
+  try {
+    runNativeSmoke()
+  } catch {
+    app.quit()
+    return
+  }
+
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
   ipcMain.handle('activation:sync-status', () => activationPoller.poll())

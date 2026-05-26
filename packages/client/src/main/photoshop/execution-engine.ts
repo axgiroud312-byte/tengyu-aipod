@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
 import { AppErrorClass, type PhotoshopJob, type PhotoshopJobResult } from '@tengyu-aipod/shared'
-import { type BetterSqliteDatabase, getDefaultWorkbenchDatabase } from '../lib/workbench-db'
+import type { SqliteDatabase } from '../lib/sqlite'
+import { getDefaultWorkbenchDatabase } from '../lib/workbench-db'
 import { type PhotoshopComAdapter, photoshopComAdapter } from './com-adapter'
 import { writePhotoshopJobJsx } from './jsx-generator'
 
@@ -67,7 +68,7 @@ const noopRecorder: WorkflowStepRecorder = {
   async recordFailed() {},
 }
 
-type DatabaseProvider = () => BetterSqliteDatabase | Promise<BetterSqliteDatabase>
+type DatabaseProvider = () => SqliteDatabase | Promise<SqliteDatabase>
 
 export async function hashOutputFile(path: string): Promise<string> {
   return new Promise((resolveHash, reject) => {
@@ -107,7 +108,7 @@ interface ArtifactRow {
 }
 
 interface ShouldSkipJobOptions {
-  db?: BetterSqliteDatabase
+  db?: SqliteDatabase
   dbProvider?: DatabaseProvider
   accessFile?: AccessFn
   hashFile?: HashFileFn
@@ -117,7 +118,7 @@ export async function shouldSkipJob(
   job: PhotoshopJob,
   options: ShouldSkipJobOptions = {},
 ): Promise<boolean> {
-  const dbProvider = options.db ? () => options.db as BetterSqliteDatabase : options.dbProvider
+  const dbProvider = options.db ? () => options.db as SqliteDatabase : options.dbProvider
   if (!dbProvider) {
     return false
   }
@@ -159,14 +160,14 @@ export async function shouldSkipJob(
   }
 
   const placeholders = job.output_paths.map(() => '?').join(',')
-  const artifactRows = db
-    .prepare(
-      `SELECT file_path, file_hash
+    const artifactRows = db
+      .prepare(
+        `SELECT file_path, file_hash
        FROM artifacts
        WHERE provider = 'photoshop'
          AND file_path IN (${placeholders})`,
-    )
-    .all(...job.output_paths) as ArtifactRow[]
+      )
+      .all(...job.output_paths) as unknown as ArtifactRow[]
   const expectedHashes = new Map(artifactRows.map((row) => [row.file_path, row.file_hash]))
   if (!job.output_paths.every((outputPath) => expectedHashes.has(outputPath))) {
     return false
@@ -189,13 +190,13 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
 
   constructor(
     options: {
-      db?: BetterSqliteDatabase
+      db?: SqliteDatabase
       dbProvider?: DatabaseProvider
       hashFile?: HashFileFn
     } = {},
   ) {
     this.dbProvider = options.db
-      ? () => options.db as BetterSqliteDatabase
+      ? () => options.db as SqliteDatabase
       : (options.dbProvider ?? getDefaultWorkbenchDatabase)
     this.hashFile = options.hashFile ?? hashOutputFile
   }
@@ -300,7 +301,7 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
         step_id: this.stepId(job),
         provider: 'photoshop',
         file_path: output,
-        file_hash: outputHashes[output],
+        file_hash: outputHashes[output]!,
         created_at: Date.now(),
       })
     }
@@ -329,7 +330,7 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
     })
   }
 
-  private async db(): Promise<BetterSqliteDatabase> {
+  private async db(): Promise<SqliteDatabase> {
     const db = await this.dbProvider()
     if (!this.schemaReady) {
       this.ensureSchema(db)
@@ -338,7 +339,7 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
     return db
   }
 
-  private ensureSchema(db: BetterSqliteDatabase): void {
+  private ensureSchema(db: SqliteDatabase): void {
     db.exec(`
       CREATE TABLE IF NOT EXISTS workflow_steps (
         id TEXT PRIMARY KEY,

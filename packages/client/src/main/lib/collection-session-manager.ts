@@ -2,7 +2,6 @@ import { randomUUID } from 'node:crypto'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { Browser, BrowserContext, Page } from 'playwright'
 import { z } from 'zod'
@@ -23,6 +22,7 @@ import {
 } from './collection-injected-script'
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -58,7 +58,7 @@ export type CollectionSessionEvent =
   | { type: 'sku-required'; session: CollectionSession; goods_link: string; image_url: string }
   | { type: 'image-saved'; record: unknown }
 
-type CollectionDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type CollectionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 type ReadAppConfig = () => Promise<{ workbench_root?: string | undefined }>
 type DispatchCollectionEvent = (
   payload: CollectionBindingPayload,
@@ -376,7 +376,7 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
 async function readWorkbenchRoot(readConfig: ReadAppConfig) {
@@ -395,7 +395,7 @@ async function firstBrowserContext(browser: Browser): Promise<BrowserContext> {
   return browser.contexts()[0] ?? (await browser.newContext())
 }
 
-function ensureCollectionSessionTable(db: Pick<Database.Database, 'exec'>) {
+function ensureCollectionSessionTable(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS collection_sessions (
       id TEXT PRIMARY KEY,

@@ -1,7 +1,7 @@
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
 import { ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 
 export type DetectionThresholdConfig = {
   passMax: number
@@ -39,7 +39,7 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
 function clampScore(value: number) {
@@ -58,7 +58,7 @@ function normalizeThreshold(threshold?: Partial<DetectionThresholdConfig>) {
   }
 }
 
-function ensureDetectionConfigTable(db: Pick<Database.Database, 'exec'>) {
+function ensureDetectionConfigTable(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS detection_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),

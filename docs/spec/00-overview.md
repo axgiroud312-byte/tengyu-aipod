@@ -15,7 +15,7 @@
 | 状态管理 | Zustand（轻量）|
 | 路由 | React Router |
 | 主进程 IPC | electron 原生 + zod 验证 |
-| 数据库 | better-sqlite3（同步、性能好）|
+| 数据库 | node:sqlite（Electron 内置、同步、ABI 跟随 Electron）|
 | 浏览器自动化 | playwright + playwright-extra |
 | 图像处理 | sharp（C++ libvips）|
 | Excel | exceljs / xlsx |

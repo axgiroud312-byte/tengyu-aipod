@@ -53,6 +53,17 @@ export const photoshopAdapter = process.platform === 'win32'
   : createUnsupportedAdapter('PS 套版仅 Windows 可用')
 ```
 
+### 1.4 Native 兼容矩阵
+
+| 模块 | 类型 | 兼容性来源 | 当前状态 |
+|---|---|---|---|
+| `node:sqlite` | Electron 内置 | 与 Electron 内置 Node 同生命周期 | ✅ |
+| `sharp` | 外部 native | 官方 prebuild（覆盖 Electron 主流版本） | ✅ |
+| （未来新增） | 待定 | 必须先论证不能用 Electron 内置或 WASM 方案 | 待 ADR |
+
+**红线**：新增 native 依赖前，必须先在 ADR 论证为什么不能使用 Electron 内置能力
+或 WASM 方案，并同步更新本兼容矩阵。
+
 ## 2. 并发与队列
 
 ### 2.1 全局并发上限

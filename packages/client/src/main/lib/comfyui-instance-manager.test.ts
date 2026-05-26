@@ -1,4 +1,3 @@
-import type Database from 'better-sqlite3'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChenyuInstanceStatus, type ChenyuServerMapEntry } from './chenyu-cloud-client'
 import {
@@ -7,8 +6,9 @@ import {
   extractComfyuiUrl,
   stateFromChenyuStatus,
 } from './comfyui-instance-manager'
+import type { SqliteDatabase } from './sqlite'
 
-type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 type Statement = {
   run: (...values: unknown[]) => void
   get: () => unknown

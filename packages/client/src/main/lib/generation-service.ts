@@ -1,6 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
-import { createRequire } from 'node:module'
 import { basename, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -9,7 +8,6 @@ import {
   type Skill,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
-import Database from 'better-sqlite3'
 import { BrowserWindow, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 import { ChenyuCloudClient } from './chenyu-cloud-client'
@@ -31,6 +29,7 @@ import {
   promptGeneratorService,
 } from './prompt-generator-service'
 import { skillCacheManager } from './skill-cache'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 import { type TempFileManager, tempFileManager } from './temp-file-manager'
 
 export type Txt2imgPromptDraft = {
@@ -171,7 +170,7 @@ export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & 
   maskModel?: string
 }
 
-type GenerationDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 type Img2imgReference = {
   artifactId: string
   printId: string
@@ -198,7 +197,6 @@ type GenerationServiceDependencies = {
 
 const DEFAULT_GENERATION_MODEL: GrsaiModel = 'nano-banana-2'
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
-const nodeRequire = createRequire(import.meta.url)
 
 function clampInt(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) {
@@ -244,23 +242,10 @@ function workbenchDbPath(workbenchRoot: string) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  try {
-    return new Database(workbenchDbPath(workbenchRoot))
-  } catch (error) {
-    return openNodeSqliteDatabase(workbenchDbPath(workbenchRoot), error)
-  }
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-function openNodeSqliteDatabase(path: string, betterSqliteError: unknown): GenerationDatabase {
-  try {
-    const { DatabaseSync } = nodeRequire('node:sqlite') as typeof import('node:sqlite')
-    return new DatabaseSync(path) as unknown as GenerationDatabase
-  } catch (error) {
-    throw betterSqliteError instanceof Error ? betterSqliteError : error
-  }
-}
-
-function ensureGenerationTables(db: Pick<Database.Database, 'exec'>) {
+function ensureGenerationTables(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
@@ -413,7 +398,7 @@ function rowString(row: Record<string, unknown>, key: string) {
   return typeof value === 'string' ? value : ''
 }
 
-function readImg2imgArtifactRows(db: Pick<Database.Database, 'prepare'>) {
+function readImg2imgArtifactRows(db: Pick<SqliteDatabase, 'prepare'>) {
   return db
     .prepare(`
       SELECT id, print_id, step, file_path
@@ -425,7 +410,7 @@ function readImg2imgArtifactRows(db: Pick<Database.Database, 'prepare'>) {
 }
 
 function registerPrintSourceArtifact(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     identity: Awaited<ReturnType<typeof imageIdentity>>
     imagePath: string
@@ -468,7 +453,7 @@ function registerPrintSourceArtifact(
 }
 
 async function ensureFolderPrintArtifacts(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   folders: Array<{
     path: string
     step: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>
@@ -529,7 +514,7 @@ async function sourceFromArtifactRow(
 }
 
 async function readReferenceForArtifact(
-  db: Pick<Database.Database, 'prepare'>,
+  db: Pick<SqliteDatabase, 'prepare'>,
   workbenchRoot: string,
   collectionFolder: string,
   artifactId: string,
@@ -564,7 +549,7 @@ async function readReferenceForArtifact(
 }
 
 function registerSourceArtifact(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     identity: Awaited<ReturnType<typeof imageIdentity>>
     imagePath: string
@@ -606,7 +591,7 @@ function registerSourceArtifact(
 }
 
 async function registerExtractArtifact(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     taskId: string
     printId: string
@@ -1886,7 +1871,7 @@ export async function runComfyuiImg2imgBatch(
   }
 }
 
-function currentComfyuiUrl(workbenchRoot: string, db: Pick<Database.Database, 'prepare'>) {
+function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prepare'>) {
   try {
     const row = db.prepare('SELECT comfyui_url FROM comfyui_instances WHERE id = 1').get() as
       | { comfyui_url?: string }

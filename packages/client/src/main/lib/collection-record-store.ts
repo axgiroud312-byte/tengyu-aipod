@@ -1,6 +1,6 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import Database from 'better-sqlite3'
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 
 export type CollectionRecordStatus = 'success' | 'skipped' | 'failed'
 
@@ -20,7 +20,7 @@ export type CollectionRecordInput = {
 
 export type CollectionRecordRow = CollectionRecordInput
 
-export type CollectionDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+export type CollectionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 export type CollectionRecordQuery = {
   sessionId: string
@@ -33,10 +33,10 @@ export function workbenchDbPath(workbenchRoot: string) {
 }
 
 export function openCollectionDatabase(workbenchRoot: string) {
-  return new Database(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-export function ensureCollectionRecordTables(db: Pick<Database.Database, 'exec'>) {
+export function ensureCollectionRecordTables(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS collection_records (
       id TEXT PRIMARY KEY,
@@ -58,7 +58,7 @@ export function ensureCollectionRecordTables(db: Pick<Database.Database, 'exec'>
 }
 
 export function insertCollectionRecord(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   record: CollectionRecordInput,
 ) {
   ensureCollectionRecordTables(db)
@@ -92,7 +92,7 @@ export function insertCollectionRecord(
 }
 
 export function updateCollectionRecord(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   record: CollectionRecordInput,
 ) {
   ensureCollectionRecordTables(db)
@@ -123,7 +123,7 @@ export function updateCollectionRecord(
 }
 
 export function getCollectionRecord(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   recordId: string,
 ): CollectionRecordRow | null {
   ensureCollectionRecordTables(db)
@@ -134,15 +134,15 @@ export function getCollectionRecord(
 }
 
 export function deleteCollectionRecord(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   recordId: string,
 ) {
   ensureCollectionRecordTables(db)
-  return db.prepare('DELETE FROM collection_records WHERE id = ?').run(recordId).changes
+  return Number(db.prepare('DELETE FROM collection_records WHERE id = ?').run(recordId).changes)
 }
 
 export function listCollectionRecords(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   query: CollectionRecordQuery,
 ): CollectionRecordRow[] {
   ensureCollectionRecordTables(db)
@@ -160,7 +160,7 @@ export function listCollectionRecords(
 }
 
 export async function exportCollectionManifest(
-  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   outputDir: string,
   sessionId: string,
 ) {

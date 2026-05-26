@@ -2,7 +2,6 @@ import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   listComfyuiExtractWorkflows,
@@ -19,8 +18,9 @@ import {
   runExtractBatch,
   runMixedMattingBatch,
 } from './generation-service'
+import type { SqliteDatabase } from './sqlite'
 
-type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
+type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 let tempRoot = ''
 let workbenchRoot = ''

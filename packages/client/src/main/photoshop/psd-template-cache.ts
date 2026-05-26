@@ -7,7 +7,8 @@ import type {
   PsdTextLayer,
   SmartObjectMode,
 } from '@tengyu-aipod/shared'
-import { type BetterSqliteDatabase, getDefaultWorkbenchDatabase } from '../lib/workbench-db'
+import type { SqliteDatabase } from '../lib/sqlite'
+import { getDefaultWorkbenchDatabase } from '../lib/workbench-db'
 
 export interface PsdTemplateCache {
   findByHash(fileHash: string): Promise<PsdTemplate | null>
@@ -31,7 +32,7 @@ interface PsdTemplateRow {
   text_layers: string
 }
 
-type DatabaseProvider = () => BetterSqliteDatabase | Promise<BetterSqliteDatabase>
+type DatabaseProvider = () => SqliteDatabase | Promise<SqliteDatabase>
 
 function parseJson<T>(value: string): T {
   return JSON.parse(value) as T
@@ -41,9 +42,9 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
   private readonly dbProvider: DatabaseProvider
   private schemaReady = false
 
-  constructor(options: { db?: BetterSqliteDatabase; dbProvider?: DatabaseProvider } = {}) {
+  constructor(options: { db?: SqliteDatabase; dbProvider?: DatabaseProvider } = {}) {
     this.dbProvider = options.db
-      ? () => options.db as BetterSqliteDatabase
+      ? () => options.db as SqliteDatabase
       : (options.dbProvider ?? getDefaultWorkbenchDatabase)
   }
 
@@ -107,12 +108,12 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
     const db = await this.db()
     const rows = db
       .prepare('SELECT * FROM psd_templates ORDER BY scanned_at DESC')
-      .all() as PsdTemplateRow[]
+      .all() as unknown as PsdTemplateRow[]
 
     return rows.map((row) => this.fromRow(row))
   }
 
-  private async db(): Promise<BetterSqliteDatabase> {
+  private async db(): Promise<SqliteDatabase> {
     const db = await this.dbProvider()
     if (!this.schemaReady) {
       this.ensureSchema(db)
@@ -121,7 +122,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
     return db
   }
 
-  private ensureSchema(db: BetterSqliteDatabase): void {
+  private ensureSchema(db: SqliteDatabase): void {
     db.exec(`
       CREATE TABLE IF NOT EXISTS psd_templates (
         id TEXT PRIMARY KEY,

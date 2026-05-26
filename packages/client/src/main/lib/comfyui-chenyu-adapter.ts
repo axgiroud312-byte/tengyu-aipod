@@ -7,11 +7,11 @@ import {
   type ComfyuiWorkflowSlot,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
-import type Database from 'better-sqlite3'
 import type { ComfyHistoryEntry, ComfyHttpClient } from './comfy-http-client'
 import type { ComfyuiInstanceSummary } from './comfyui-instance-manager'
 import type { CachedComfyuiWorkflow, ComfyuiWorkflowCategory } from './comfyui-workflow-cache'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
+import type { SqliteDatabase } from './sqlite'
 
 export type ComfyuiWorkflowCache = {
   get(
@@ -21,7 +21,7 @@ export type ComfyuiWorkflowCache = {
   ): Promise<CachedComfyuiWorkflow>
 }
 
-export type ComfyuiExecutionDatabase = Pick<Database.Database, 'exec' | 'prepare'>
+export type ComfyuiExecutionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'>
 
 export type ComfyuiChenyuAdapterOptions = {
   instanceManager: {
@@ -267,7 +267,7 @@ function providerFromParams(params: Record<string, unknown>) {
   return params.artifactProvider === 'grsai+comfyui-mask' ? 'grsai+comfyui-mask' : 'comfyui-chenyu'
 }
 
-function ensureArtifactsTable(db: Pick<Database.Database, 'exec'>) {
+function ensureArtifactsTable(db: Pick<SqliteDatabase, 'exec'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS artifacts (
       id TEXT PRIMARY KEY,
@@ -291,7 +291,7 @@ function ensureArtifactsTable(db: Pick<Database.Database, 'exec'>) {
 }
 
 async function registerComfyuiArtifact(
-  db: Pick<Database.Database, 'prepare'>,
+  db: Pick<SqliteDatabase, 'prepare'>,
   input: {
     taskId: string
     printId: string

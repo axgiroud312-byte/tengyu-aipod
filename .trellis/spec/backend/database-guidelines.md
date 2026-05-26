@@ -68,6 +68,71 @@ git add packages/server/prisma/schema.prisma packages/server/prisma/migrations
 
 ---
 
+## Scenario: Client SQLite Runtime
+
+### 1. Scope / Trigger
+
+- Trigger: any main-process SQLite access, SQLite dependency change, native database driver change, or client startup native smoke change.
+- Applies to: `packages/client/src/main/**`, `packages/client/src/modules/listing/**`, and E2E tests that inspect the workbench SQLite database.
+
+### 2. Signatures
+
+- Central module: `packages/client/src/main/lib/sqlite.ts`
+- Type alias: `SqliteDatabase`
+- Open function: `openSqliteDatabase(path: string): SqliteDatabase`
+- Workbench API: `openWorkbenchDatabase`, `getDefaultWorkbenchDatabase`, `closeDefaultWorkbenchDatabase`
+- Guard script: `node packages/client/scripts/check-native-abi.mjs`
+
+### 3. Contracts
+
+- Only `packages/client/src/main/lib/sqlite.ts` may import `node:sqlite` directly.
+- Consumers must import `SqliteDatabase` from the central module and use structural picks such as `Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>`.
+- `openSqliteDatabase` creates the parent directory and enables WAL via `PRAGMA journal_mode = WAL`.
+- Do not install `better-sqlite3`, `@types/better-sqlite3`, or `@electron/rebuild`.
+- Existing `.workbench/workbench.db` files do not need migration; SQLite files are driver-compatible.
+
+### 4. Validation & Error Matrix
+
+- Direct `node:sqlite` import outside `main/lib/sqlite.ts` -> reject the change.
+- `better-sqlite3` dependency or import -> reject the change.
+- New `.node` binary under `packages/client/node_modules` -> `check-native-abi.mjs` must either prove N-API compatibility or match Electron's ABI.
+- Startup SQLite failure -> `runNativeSmoke()` logs, shows an Electron error box, throws `AppErrorClass`, and the main process quits before IPC registration.
+
+### 5. Good/Base/Bad Cases
+
+- Good: a service accepts `Pick<SqliteDatabase, 'exec' | 'prepare'>` and receives a DB from `openSqliteDatabase`.
+- Base: tests use `openSqliteDatabase(':memory:')` or a temp workbench DB path.
+- Bad: a service imports `DatabaseSync` directly, imports `better-sqlite3`, or adds an ORM while touching the SQLite path.
+
+### 6. Tests Required
+
+- `rg "better-sqlite3" packages/client/src packages/client/e2e` returns no rows.
+- `rg "node:sqlite" packages/client/src packages/client/e2e` only reports `packages/client/src/main/lib/sqlite.ts`.
+- `node packages/client/scripts/check-native-abi.mjs` exits 0 in the current workspace.
+- `pnpm -F @tengyu-aipod/client type-check`
+- `pnpm -F @tengyu-aipod/client test`
+- Relevant E2E specs that inspect SQLite, especially `e2e/detection.spec.ts`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+import { DatabaseSync } from 'node:sqlite'
+
+const db = new DatabaseSync(path)
+```
+
+#### Correct
+
+```ts
+import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+
+const db: SqliteDatabase = openSqliteDatabase(path)
+```
+
+---
+
 ## Query Patterns
 
 <!-- How should queries be written? Batch operations? -->
