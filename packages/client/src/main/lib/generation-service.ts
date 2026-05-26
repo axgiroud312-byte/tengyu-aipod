@@ -60,6 +60,16 @@ export type Txt2imgRunInput = {
   concurrency: number
 }
 
+export type ComfyuiTxt2imgRunInput = {
+  prompts: string[]
+  workflowId: string
+  workflowVersion?: string
+  width?: number
+  height?: number
+  concurrency?: number
+  taskId?: string
+}
+
 export type GenerationProgress = {
   task_id: string
   capability: GenerationCapability
@@ -754,6 +764,16 @@ export async function listComfyuiImg2imgWorkflows(
   return workflows.filter((workflow) => workflow.capability === 'img2img')
 }
 
+export async function listComfyuiTxt2imgWorkflows(
+  dependencies: {
+    workflowCache?: Pick<typeof comfyuiWorkflowCacheManager, 'listWorkflows'>
+  } = {},
+): Promise<ComfyuiWorkflowSummary[]> {
+  const workflowCache = dependencies.workflowCache ?? comfyuiWorkflowCacheManager
+  const workflows = await workflowCache.listWorkflows('txt2img')
+  return workflows.filter((workflow) => workflow.capability === 'txt2img')
+}
+
 export async function listComfyuiExtractWorkflows(
   dependencies: {
     workflowCache?: Pick<typeof comfyuiWorkflowCacheManager, 'listWorkflows'>
@@ -887,6 +907,42 @@ export async function runComfyuiImg2img(
   const taskId = input.taskId ?? `img2img_${randomUUID()}`
   void runComfyuiImg2imgBatch(
     { ...input, taskId, sourceArtifactIds },
+    {
+      ...dependencies,
+      getSecret: async () => apiKey,
+    },
+  )
+    .then((result) => {
+      emitCompleted({ ok: true, result })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
+  return taskId
+}
+
+export async function runComfyuiTxt2img(
+  input: ComfyuiTxt2imgRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const prompts = input.prompts.map((prompt) => prompt.trim()).filter(Boolean)
+  if (prompts.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先准备至少一条提示词', false)
+  }
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 文生图工作流', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = input.taskId ?? `txt2img_comfy_${randomUUID()}`
+  void runComfyuiTxt2imgBatch(
+    { ...input, taskId, prompts },
     {
       ...dependencies,
       getSecret: async () => apiKey,
@@ -1631,6 +1687,104 @@ export async function runMixedMattingBatch(
   }
 }
 
+export async function runComfyuiTxt2imgBatch(
+  input: ComfyuiTxt2imgRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const prompts = input.prompts.map((prompt) => prompt.trim()).filter(Boolean)
+  if (prompts.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先准备至少一条提示词', false)
+  }
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 文生图工作流', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = input.taskId ?? `txt2img_comfy_${randomUUID()}`
+  const result: GenerationRunResult = {
+    taskId,
+    total: prompts.length,
+    succeeded: 0,
+    failed: 0,
+    images: [],
+    failures: [],
+  }
+  const emit = dependencies.emitProgress ?? emitProgress
+  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+
+  try {
+    ensureGenerationTables(db)
+    const concurrency = clampInt(input.concurrency ?? 1, 1, 10, 1)
+    const controller = new GenerationConcurrencyController({ workers: concurrency })
+    const adapter =
+      dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
+      new ComfyuiChenyuAdapter({
+        instanceManager: new ComfyuiInstanceManager({
+          chenyu: new ChenyuCloudClient(apiKey),
+        }),
+        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+        workbenchRoot,
+        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      })
+
+    await Promise.all(
+      prompts.map((prompt, index) =>
+        controller.run(`${taskId}-${index}`, async () => {
+          emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
+          try {
+            const response = await adapter.generate({
+              capability: 'txt2img',
+              prompt,
+              workflow_id: input.workflowId.trim(),
+              output: {
+                format: 'png',
+                size_px: {
+                  width: clampInt(input.width ?? 1024, 256, 4096, 1024),
+                  height: clampInt(input.height ?? 1024, 256, 4096, 1024),
+                },
+              },
+              options: {
+                taskId,
+                width: clampInt(input.width ?? 1024, 256, 4096, 1024),
+                height: clampInt(input.height ?? 1024, 256, 4096, 1024),
+                ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+              },
+            } satisfies GenerateRequest)
+            if (response.status !== 'succeeded') {
+              throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 文生图失败', true)
+            }
+            result.succeeded += response.images.length
+            result.images.push(
+              ...response.images.map((image) => ({
+                prompt,
+                url: image.url,
+                ...(image.local_path ? { localPath: image.local_path } : {}),
+              })),
+            )
+          } catch (error) {
+            result.failed += 1
+            result.failures.push({ prompt, error: appErrorMessage(error) })
+          } finally {
+            emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
+          }
+        }),
+      ),
+    )
+
+    return result
+  } finally {
+    db.close()
+  }
+}
+
 export async function runComfyuiImg2imgBatch(
   input: ComfyuiImg2imgRunInput,
   dependencies: GenerationServiceDependencies = {},
@@ -1764,6 +1918,24 @@ function emitImg2imgProgress(
   })
 }
 
+function emitTxt2imgProgress(
+  result: GenerationRunResult,
+  taskId: string,
+  total: number,
+  emit: (progress: GenerationProgress) => void,
+  currentPrompt?: string,
+) {
+  emit({
+    task_id: taskId,
+    capability: 'txt2img',
+    processed: result.succeeded + result.failed,
+    total,
+    succeeded: result.succeeded,
+    failed: result.failed,
+    ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
+  })
+}
+
 function emitMattingProgress(
   result: GenerationRunResult,
   taskId: string,
@@ -1809,6 +1981,7 @@ export function registerGenerationIpc() {
   )
   ipcMain.handle('generation:list-extract-sources', () => listExtractSources())
   ipcMain.handle('generation:list-img2img-sources', () => listImg2imgSources())
+  ipcMain.handle('generation:list-comfyui-txt2img-workflows', () => listComfyuiTxt2imgWorkflows())
   ipcMain.handle('generation:list-comfyui-img2img-workflows', () => listComfyuiImg2imgWorkflows())
   ipcMain.handle('generation:list-comfyui-extract-workflows', () => listComfyuiExtractWorkflows())
   ipcMain.handle('generation:list-comfyui-matting-workflows', () => listComfyuiMattingWorkflows())
@@ -1819,6 +1992,9 @@ export function registerGenerationIpc() {
     parseManualPrompts(text),
   )
   ipcMain.handle('generation:run-txt2img', (_event, input: Txt2imgRunInput) => runTxt2img(input))
+  ipcMain.handle('generation:run-comfyui-txt2img', (_event, input: ComfyuiTxt2imgRunInput) =>
+    runComfyuiTxt2img(input),
+  )
   ipcMain.handle('generation:run-extract', (_event, input: ExtractRunInput) => runExtract(input))
   ipcMain.handle('generation:run-comfyui-extract', (_event, input: ComfyuiExtractRunInput) =>
     runComfyuiExtract(input),

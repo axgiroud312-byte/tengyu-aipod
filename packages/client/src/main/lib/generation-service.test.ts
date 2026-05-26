@@ -9,11 +9,13 @@ import {
   listComfyuiImg2imgWorkflows,
   listComfyuiMattingWorkflows,
   listComfyuiMixedMattingWorkflows,
+  listComfyuiTxt2imgWorkflows,
   listExtractSources,
   listImg2imgSources,
   runComfyuiExtractBatch,
   runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
+  runComfyuiTxt2imgBatch,
   runExtractBatch,
   runMixedMattingBatch,
 } from './generation-service'
@@ -237,7 +239,90 @@ describe('generation extract service', () => {
   })
 })
 
-describe('generation comfyui extract service', () => {
+describe('generation comfyui service', () => {
+  it('lists only txt2img ComfyUI workflows', async () => {
+    const result = await listComfyuiTxt2imgWorkflows({
+      workflowCache: {
+        listWorkflows: vi.fn().mockResolvedValue([
+          {
+            id: 'txt2img-v1',
+            version: '1.0.0',
+            name: 'Text To Print',
+            capability: 'txt2img',
+            requiredModels: [],
+          },
+          {
+            id: 'extract-v1',
+            version: '1.0.0',
+            name: 'Extract',
+            capability: 'extract',
+            requiredModels: [],
+          },
+        ]),
+      },
+    })
+
+    expect(result.map((workflow) => workflow.id)).toEqual(['txt2img-v1'])
+  })
+
+  it('runs ComfyUI txt2img with workflow dimensions', async () => {
+    const fakeDb = createFakeDb()
+    const progress: unknown[] = []
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiTxt2imgBatch(
+      {
+        prompts: ['centered floral print'],
+        workflowId: 'txt2img-v1',
+        workflowVersion: '1.0.0',
+        width: 1280,
+        height: 1536,
+        concurrency: 1,
+        taskId: 'txt2img-comfy-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+        emitProgress: (item) => progress.push(item),
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'txt2img-comfy-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+    })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'txt2img',
+        prompt: 'centered floral print',
+        workflow_id: 'txt2img-v1',
+        output: expect.objectContaining({
+          size_px: { width: 1280, height: 1536 },
+        }),
+        options: expect.objectContaining({
+          taskId: 'txt2img-comfy-task',
+          width: 1280,
+          height: 1536,
+          workflowVersion: '1.0.0',
+        }),
+      }),
+    )
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        task_id: 'txt2img-comfy-task',
+        capability: 'txt2img',
+        processed: 1,
+      }),
+    )
+  })
+
   it('lists only extract ComfyUI workflows', async () => {
     const result = await listComfyuiExtractWorkflows({
       workflowCache: {

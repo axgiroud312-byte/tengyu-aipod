@@ -17,7 +17,7 @@
 
 | 能力 | comfyui-chenyu | grsai |
 |---|---|---|
-| 文生图 | ❌（ComfyUI 用户不做文生图）| ✅ |
+| 文生图 | ✅（文生图工作流可选）| ✅ |
 | 图生图 | ✅（多个工作流可选）| ✅（5 种生成方式）|
 | 提取 | ✅（提取工作流）| ✅（图生图 + 提取 skill）|
 | 抠图 | ✅（抠图工作流 / 混合路径）| ❌（不内置）|
@@ -308,14 +308,14 @@ GET /api/skills/{id}                                → PaidSkill (full)
 
 缓存 30 分钟刷新一次。
 
-## 4. 文生图能力（仅 grsai 实现）
+## 4. 文生图能力（Grsai / ComfyUI）
 
 ### 4.1 UI
 
 ```
 [Tab: 文生图]
 
-实现方式：● 付费（Grsai）  ○ ComfyUI 免费（不可用）
+实现方式：● 付费（Grsai）  ○ ComfyUI 晨羽
 
 模式：
   ┌─────────────────────────────┐
@@ -356,6 +356,13 @@ GET /api/skills/{id}                                → PaidSkill (full)
 
   [开始生图]
 
+【ComfyUI 生成设置】
+  工作流：[文生图工作流 ▼]
+  尺寸：宽 [1024] × 高 [1024]
+  并发：[1] (1-10)
+
+  [开始生成]
+
 【自己写提示词模式】
   [textarea，每行一条提示词，或粘贴 JSON 数组]
   [开始生图]
@@ -371,12 +378,12 @@ GET /api/skills/{id}                                → PaidSkill (full)
     ↓
   通用解析器拆成数组 → UI 审稿
     ↓
-  用户勾选/编辑/添加 → 点"开始生图"
+  用户勾选/编辑/添加 → 选择 Grsai 或 ComfyUI → 点"开始生图"
     ↓
-  并发池调 Grsai → 落到 02-生图/01-文生图/
+  并发池调对应 provider → 落到 02-生图/01-文生图/
 
 [自己写模式]
-  用户填提示词 → 跳过 LLM → 直接进入并发池 → 调 Grsai
+  用户填提示词 → 跳过 LLM → 直接进入并发池 → 调对应 provider
 ```
 
 ### 4.3 印花 ID 生成
@@ -389,8 +396,8 @@ GET /api/skills/{id}                                → PaidSkill (full)
   id: artifact_id,
   print_id: 'pri_abc123def456',
   step: 'txt2img',
-  provider: 'grsai',
-  model_or_workflow: 'nano-banana-2',
+  provider: 'grsai' | 'comfyui-chenyu',
+  model_or_workflow: 'nano-banana-2' | 'txt2img-workflow-id',
   skill_id: 'txt2img-print-prompt-v3',
   skill_version: '3.0.1',
   source_artifact_ids: '[]',  // 文生图无来源

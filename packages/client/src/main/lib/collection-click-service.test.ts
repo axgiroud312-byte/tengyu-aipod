@@ -22,6 +22,18 @@ const platformRule: CollectionPlatformRule = {
   original_image_resolver: { type: 'src_replace', config: { from: '_thumb', to: '_original' } },
 }
 
+const COLLECTION_TEST_NOW = 1_779_610_000_000
+
+function looseImagePath(ext: '.jpg' | '.png' | '.webp') {
+  return `/tmp/wb/01-采集/散图池/temu-${localTimestampSlug(COLLECTION_TEST_NOW)}-001${ext}`
+}
+
+function localTimestampSlug(value: number) {
+  const date = new Date(value)
+  const pad = (item: number) => String(item).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
 function activeSession(overrides: Partial<CollectionSession> = {}): CollectionSession {
   return {
     id: 'session-1',
@@ -199,7 +211,7 @@ function createService(
     downloadImage: vi.fn(async () => options.image ?? Buffer.from('image-bytes')),
     openDatabase: () => db as never,
     randomId: () => `record-${db.records.length + 1}`,
-    now: () => 1_779_610_000_000,
+    now: () => COLLECTION_TEST_NOW,
     readFile: fs.readFile as never,
     readdir: fs.readdir as never,
     writeFile: fs.writeFile as never,
@@ -318,7 +330,7 @@ describe('CollectionClickService', () => {
       ),
     ).resolves.toMatchObject({
       status: 'success',
-      savedPath: '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.png',
+      savedPath: looseImagePath('.png'),
     })
   })
 
@@ -410,13 +422,10 @@ describe('CollectionClickService', () => {
       ),
     ).resolves.toMatchObject({
       status: 'success',
-      savedPath: '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.webp',
+      savedPath: looseImagePath('.webp'),
     })
 
-    expect(fs.writeFile).toHaveBeenCalledWith(
-      '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.webp',
-      Buffer.from('image-bytes'),
-    )
+    expect(fs.writeFile).toHaveBeenCalledWith(looseImagePath('.webp'), Buffer.from('image-bytes'))
     expect(db.records[0]?.slice(0, 8)).toEqual([
       'record-1',
       'session-1',
@@ -424,7 +433,7 @@ describe('CollectionClickService', () => {
       'https://img.temu.com/a.webp',
       'https://www.temu.com/goods/1',
       'https://www.temu.com/search?q=shirt',
-      '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.webp',
+      looseImagePath('.webp'),
       'success',
     ])
   })
@@ -506,12 +515,9 @@ describe('CollectionClickService', () => {
 
     await expect(service.retryRecord('record-1')).resolves.toMatchObject({
       status: 'success',
-      savedPath: '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.jpg',
+      savedPath: looseImagePath('.jpg'),
     })
-    expect(fs.writeFile).toHaveBeenCalledWith(
-      '/tmp/wb/01-采集/散图池/temu-20260524-160640-001.jpg',
-      Buffer.from('image-bytes'),
-    )
+    expect(fs.writeFile).toHaveBeenCalledWith(looseImagePath('.jpg'), Buffer.from('image-bytes'))
     expect(db.records[0]?.[7]).toBe('success')
     expect(db.records[0]?.[8]).toBeNull()
   })

@@ -1,30 +1,46 @@
 import { Button } from '@/components/ui/button'
-import { initializeActivationStore, useActivationStore } from '@/store/activation'
-import type {
-  ActivationBadgeState,
-  PhotoshopProgressInfo,
-  PhotoshopStatus,
-  PsdTemplate,
-} from '@tengyu-aipod/shared'
-import { APP_VERSION } from '@tengyu-aipod/shared'
 import {
-  AlertTriangle,
-  Calculator,
-  CheckCircle2,
-  ExternalLink,
-  FileStack,
-  FolderOpen,
-  ImageIcon,
-  KeyRound,
-  Loader2,
-  MonitorCheck,
-  Play,
-  PlayCircle,
-  RefreshCw,
-  RotateCcw,
-  Settings2,
-} from 'lucide-react'
+  CollectionPage,
+  type CollectionPageState,
+  type CollectionProfileOption,
+} from '@/features/collection/CollectionPage'
+import { DetectionPage } from '@/features/detection/DetectionPage'
+import { GenerationPage } from '@/features/generation/GenerationPage'
+import { ListingPage } from '@/features/listing/ListingPage'
+import {
+  type OnboardingApiKey,
+  type OnboardingApiKeys,
+  OnboardingPage,
+  type OnboardingStep,
+} from '@/features/onboarding/OnboardingPage'
+import { PhotoshopPage } from '@/features/photoshop/PhotoshopPage'
+import {
+  type TitleExistingStrategy,
+  type TitleFormState,
+  TitlePage,
+  type TitlePageState,
+} from '@/features/title/TitlePage'
+import { Shell } from '@/layout/Shell'
+import {
+  type WorkbenchModule,
+  getStoredWorkbenchRoute,
+  isWorkbenchRoute,
+  moduleFromPath,
+  workbenchModules,
+} from '@/layout/navigation'
+import { initializeActivationStore, useActivationStore } from '@/store/activation'
+import type { ActivationBadgeState } from '@tengyu-aipod/shared'
+import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  HashRouter,
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useNavigate,
+  useParams,
+} from 'react-router-dom'
 import type { CollectionRecordRow } from '../../main/lib/collection-record-store'
 import type { CollectionSession } from '../../main/lib/collection-session-manager'
 import type { CollectionSessionEvent } from '../../main/lib/collection-session-manager'
@@ -34,26 +50,19 @@ import type {
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
-import { DetectionWorkbench } from './components/detection-workbench'
-import { GenerationWorkbench } from './components/generation-workbench'
-import { ListingWorkbench } from './components/listing-workbench'
-
-type OnboardingStep = 1 | 2 | 3 | 4
-type WorkbenchModule = 'collection' | 'title' | 'generation' | 'detection' | 'listing' | 'ps'
-type TitleExistingStrategy = NonNullable<TitleBatchConfig['existingStrategy']>
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
 
-const apiKeyFields = [
-  { key: 'chenyu', label: '晨羽智云 API Key', placeholder: '用于 ComfyUI 生图' },
-  { key: 'grsai', label: 'Grsai API Key', placeholder: '用于付费生图' },
-  { key: 'bailian', label: '阿里云百炼 API Key', placeholder: '用于检测和标题' },
-  { key: 'bit_browser_url', label: '比特浏览器地址', placeholder: '127.0.0.1:54345' },
+const defaultCollectionProfiles: CollectionProfileOption[] = [
+  { id: 'profile-001', label: '主店环境', detail: 'Temu 主店环境', online: true },
+  { id: 'profile-002', label: '备用环境', detail: '可手动改写编号', online: false },
 ]
 
-const titleModelPrices: Record<string, { input: number; output: number }> = {
-  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
-  'qwen3-vl-plus': { input: 1, output: 10 },
-  'qwen-vl-max': { input: 1.6, output: 4 },
+const defaultCollectionPageState: CollectionPageState = {
+  platform: 'temu',
+  profileId: '',
+  mode: 'click',
+  outputDir: '',
+  scrollKeywords: '',
 }
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
@@ -118,465 +127,21 @@ function parseNonNegativeNumber(value: string, fallback: number) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
-function estimateTitleCost(imageCount: number, model: string, compression: boolean) {
-  const price = titleModelPrices[model] ?? { input: 1, output: 10 }
-  const imageTokens = compression ? 256 : 1024
-  const outputTokens = 80
-  return (imageCount * (imageTokens * price.input + outputTokens * price.output)) / 1_000_000
+function parseOnboardingStep(value: string | undefined): OnboardingStep {
+  const parsed = Number(value)
+  return parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 ? parsed : 1
 }
 
-function progressPercent(progress: TitleProgress | null) {
-  if (!progress || progress.total === 0) {
-    return 0
-  }
-  return Math.round((progress.processed / progress.total) * 100)
+function onboardingPath(step: OnboardingStep) {
+  return `/onboarding/${step}`
 }
 
-function collectionStatusLabel(status: CollectionRecordRow['status']) {
-  switch (status) {
-    case 'success':
-      return '成功'
-    case 'skipped':
-      return '跳过'
-    default:
-      return '失败'
-  }
-}
-
-function collectionStatusClassName(status: CollectionRecordRow['status']) {
-  switch (status) {
-    case 'success':
-      return 'text-emerald-700'
-    case 'skipped':
-      return 'text-amber-700'
-    default:
-      return 'text-red-700'
-  }
-}
-
-function fileNameFromPath(path: string | null | undefined) {
-  if (!path) {
-    return '未保存'
-  }
-  return path.split(/[\\/]/).at(-1) || path
-}
-
-function moduleTitle(module: WorkbenchModule) {
-  switch (module) {
-    case 'collection':
-      return '采集模块'
-    case 'title':
-      return '标题生成模块'
-    case 'generation':
-      return '生图模块'
-    case 'ps':
-      return 'PS 套版模块'
-    case 'listing':
-      return '上架模块'
-    default:
-      return '侵权检测模块'
-  }
-}
-
-function moduleDescription(module: WorkbenchModule) {
-  switch (module) {
-    case 'collection':
-      return '查看当前采集会话的保存记录和失败重试'
-    case 'title':
-      return '从货号成品图批量生成跨境标题'
-    case 'generation':
-      return '按文生图、图生图、提取、抠图组织生产路径'
-    case 'ps':
-      return '扫描 PSD 模板并准备 Photoshop 套版执行'
-    case 'listing':
-      return '批量操作店小秘草稿并保留真实页面证据'
-    default:
-      return '批量检测印花风险并流转结果'
-  }
-}
-
-function photoshopStatusLabel(status: PhotoshopStatus | null) {
-  if (!status) {
-    return '检测中'
-  }
-  if (status.com_connected) {
-    return `已连接${status.version ? ` · v${status.version}` : ''}`
-  }
-  if (status.running) {
-    return '运行中 · COM 未连接'
-  }
-  if (status.installed) {
-    return '已安装 · 未启动'
-  }
-  return '仅支持 Windows / 未安装'
-}
-
-function photoshopStatusTone(status: PhotoshopStatus | null) {
-  if (!status) {
-    return 'border-border bg-muted text-muted-foreground'
-  }
-  if (status.com_connected) {
-    return 'border-emerald-200 bg-emerald-50 text-emerald-800'
-  }
-  if (status.running || status.installed) {
-    return 'border-amber-200 bg-amber-50 text-amber-900'
-  }
-  return 'border-red-200 bg-red-50 text-red-800'
-}
-
-function photoshopStatusDot(status: PhotoshopStatus | null) {
-  if (!status) {
-    return 'bg-muted-foreground'
-  }
-  if (status.com_connected) {
-    return 'bg-emerald-500'
-  }
-  if (status.running || status.installed) {
-    return 'bg-amber-500'
-  }
-  return 'bg-red-500'
-}
-
-function PhotoshopStatusBar() {
-  const [status, setStatus] = useState<PhotoshopStatus | null>(null)
-  const [checking, setChecking] = useState(false)
-
-  const refreshStatus = useCallback(async () => {
-    setChecking(true)
-    try {
-      const nextStatus = await window.api.photoshop.getStatus()
-      setStatus(nextStatus)
-    } finally {
-      setChecking(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    void refreshStatus()
-    const timer = window.setInterval(() => {
-      void refreshStatus()
-    }, 30_000)
-
-    return () => window.clearInterval(timer)
-  }, [refreshStatus])
-
+function isForceOnboardingState(state: unknown) {
   return (
-    <div
-      className={`flex items-center justify-between gap-3 rounded-md border px-4 py-3 text-sm ${photoshopStatusTone(
-        status,
-      )}`}
-    >
-      <div className="flex min-w-0 items-center gap-2">
-        <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${photoshopStatusDot(status)}`} />
-        <div className="min-w-0">
-          <p className="font-medium">Photoshop 状态：{photoshopStatusLabel(status)}</p>
-          {status?.error_message ? (
-            <p className="truncate text-xs opacity-80">{status.error_message}</p>
-          ) : null}
-        </div>
-      </div>
-      <Button
-        className="h-8 shrink-0 px-3"
-        disabled={checking}
-        onClick={() => void refreshStatus()}
-        type="button"
-        variant="secondary"
-      >
-        <RefreshCw className="mr-2 h-3.5 w-3.5" />
-        刷新状态
-      </Button>
-    </div>
-  )
-}
-
-function templateLabel(path: string) {
-  return path.split(/[\\/]/).pop() ?? path
-}
-
-function photoshopProgressPercent(progress: PhotoshopProgressInfo | null) {
-  if (!progress || progress.total_groups <= 0) {
-    return 0
-  }
-  return Math.round(((progress.completed + progress.skipped) / progress.total_groups) * 100)
-}
-
-function PhotoshopMockupPanel() {
-  const [skipCompleted, setSkipCompleted] = useState(true)
-  const [printFolder, setPrintFolder] = useState('04-待套版印花')
-  const [templatePaths, setTemplatePaths] = useState<string[]>([])
-  const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
-  const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
-  const [format, setFormat] = useState<'jpg' | 'png'>('jpg')
-  const [maxRetries, setMaxRetries] = useState(1)
-  const [progress, setProgress] = useState<PhotoshopProgressInfo | null>(null)
-  const [scannedTemplates, setScannedTemplates] = useState<PsdTemplate[]>([])
-  const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
-  const [running, setRunning] = useState(false)
-  const isMac = navigator.platform.toLowerCase().includes('mac')
-
-  useEffect(() => {
-    return window.api.photoshop.onProgress((nextProgress) => {
-      setProgress(nextProgress)
-    })
-  }, [])
-
-  async function choosePrintFolder() {
-    const result = await window.api.photoshop.choosePrintFolder()
-    if (result.ok) {
-      setPrintFolder(result.data.path)
-    }
-  }
-
-  async function chooseTemplates() {
-    const result = await window.api.photoshop.chooseTemplates()
-    if (result.ok) {
-      setTemplatePaths(result.data.paths)
-      setScannedTemplates([])
-    }
-  }
-
-  async function prepareMockups() {
-    setRunning(true)
-    setMessage('正在扫描模板...')
-    setProgress({
-      task_id: 'ui-preview',
-      total_groups: Math.max(templatePaths.length, 1),
-      completed: 0,
-      failed: 0,
-      skipped: 0,
-      current_group: null,
-      current_stage: 'task_start',
-      verified_outputs: 0,
-    })
-    try {
-      const templates: PsdTemplate[] = []
-      for (let index = 0; index < templatePaths.length; index += 1) {
-        const template = await window.api.photoshop.scanTemplate({
-          psd_path: templatePaths[index] ?? '',
-        })
-        templates.push(template)
-        setProgress({
-          task_id: 'ui-preview',
-          total_groups: templatePaths.length,
-          completed: index + 1,
-          failed: 0,
-          skipped: 0,
-          current_group: index,
-          current_stage: 'group_complete',
-          verified_outputs: templates.reduce((count, item) => count + item.clip_areas.length, 0),
-        })
-      }
-      setScannedTemplates(templates)
-      setMessage('模板已扫描，执行入口将在全链路任务中接入')
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error))
-      setProgress((current) =>
-        current
-          ? { ...current, failed: current.failed + 1, current_stage: 'group_complete' }
-          : null,
-      )
-    } finally {
-      setRunning(false)
-    }
-  }
-
-  if (isMac) {
-    return (
-      <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-950">
-        <div className="flex items-start gap-3">
-          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
-          <div>
-            <h2 className="text-base font-semibold tracking-normal">PS 套版仅 Windows 可用</h2>
-            <p className="mt-1 text-sm">请在 Windows 电脑使用 Photoshop COM 套版功能。</p>
-          </div>
-        </div>
-      </div>
-    )
-  }
-
-  return (
-    <div className="space-y-4 rounded-md border p-4">
-      <div className="flex items-start justify-between gap-4">
-        <div className="space-y-1">
-          <h2 className="text-base font-semibold tracking-normal">PS 套版</h2>
-          <p className="text-sm text-muted-foreground">选择印花、模板和导出策略</p>
-        </div>
-        <label className="flex shrink-0 items-center gap-2 text-sm font-medium">
-          <input
-            checked={skipCompleted}
-            className="h-4 w-4"
-            onChange={(event) => setSkipCompleted(event.target.checked)}
-            type="checkbox"
-          />
-          跳过已完成
-        </label>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-[1fr_1fr]">
-        <label className="space-y-2 text-sm font-medium">
-          <span className="flex items-center gap-2">
-            <ImageIcon className="h-4 w-4" />
-            印花文件夹
-          </span>
-          <div className="flex gap-2">
-            <input
-              className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              onChange={(event) => setPrintFolder(event.target.value)}
-              value={printFolder}
-            />
-            <Button
-              className="h-10 px-3"
-              onClick={() => void choosePrintFolder()}
-              type="button"
-              variant="secondary"
-            >
-              <FolderOpen className="h-4 w-4" />
-            </Button>
-          </div>
-        </label>
-
-        <div className="space-y-2 text-sm font-medium">
-          <span className="flex items-center gap-2">
-            <FileStack className="h-4 w-4" />
-            PSD/PSB 模板
-          </span>
-          <div className="flex gap-2">
-            <div className="min-h-10 min-w-0 flex-1 rounded-md border px-3 py-2 text-sm text-muted-foreground">
-              {templatePaths.length > 0
-                ? templatePaths.map(templateLabel).join('，')
-                : '未选择模板'}
-            </div>
-            <Button
-              className="h-10 px-3"
-              onClick={() => void chooseTemplates()}
-              type="button"
-              variant="secondary"
-            >
-              选择
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <div className="grid gap-3 md:grid-cols-5">
-        <label className="space-y-2 text-sm font-medium">
-          <span>替换范围</span>
-          <select
-            className="h-10 w-full rounded-md border px-3"
-            onChange={(event) => setReplaceRange(event.target.value as typeof replaceRange)}
-            value={replaceRange}
-          >
-            <option value="auto">auto</option>
-            <option value="top">top</option>
-            <option value="all">all</option>
-          </select>
-        </label>
-        <label className="space-y-2 text-sm font-medium">
-          <span>适配方式</span>
-          <select className="h-10 w-full rounded-md border px-3" disabled value="fit">
-            <option value="fit">fit</option>
-          </select>
-        </label>
-        <label className="space-y-2 text-sm font-medium">
-          <span>裁切模式</span>
-          <select
-            className="h-10 w-full rounded-md border px-3"
-            onChange={(event) => setClipMode(event.target.value as typeof clipMode)}
-            value={clipMode}
-          >
-            <option value="auto">auto</option>
-            <option value="guides">guides</option>
-            <option value="none">none</option>
-          </select>
-        </label>
-        <label className="space-y-2 text-sm font-medium">
-          <span>格式</span>
-          <select
-            className="h-10 w-full rounded-md border px-3"
-            onChange={(event) => setFormat(event.target.value as typeof format)}
-            value={format}
-          >
-            <option value="jpg">jpg</option>
-            <option value="png">png</option>
-          </select>
-        </label>
-        <label className="space-y-2 text-sm font-medium">
-          <span>失败重试</span>
-          <input
-            className="h-10 w-full rounded-md border px-3"
-            min={0}
-            max={5}
-            onChange={(event) => setMaxRetries(Number(event.target.value))}
-            type="number"
-            value={maxRetries}
-          />
-        </label>
-      </div>
-
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Settings2 className="h-4 w-4" />
-          <span>{message}</span>
-        </div>
-        <Button
-          disabled={running || templatePaths.length === 0}
-          onClick={() => void prepareMockups()}
-          type="button"
-        >
-          <PlayCircle className="mr-2 h-4 w-4" />
-          {running ? '处理中...' : '开始套版'}
-        </Button>
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-        <div className="rounded-md bg-muted p-4">
-          <div className="flex items-center justify-between text-sm">
-            <span className="font-medium">执行进度</span>
-            <span>{photoshopProgressPercent(progress)}%</span>
-          </div>
-          <div className="mt-3 h-2 overflow-hidden rounded-full bg-background">
-            <div
-              className="h-full bg-foreground"
-              style={{ width: `${photoshopProgressPercent(progress)}%` }}
-            />
-          </div>
-          <div className="mt-3 grid grid-cols-4 gap-2 text-xs text-muted-foreground">
-            <span>完成 {progress?.completed ?? 0}</span>
-            <span>失败 {progress?.failed ?? 0}</span>
-            <span>跳过 {progress?.skipped ?? 0}</span>
-            <span>输出 {progress?.verified_outputs ?? 0}</span>
-          </div>
-        </div>
-
-        <div className="rounded-md border p-3">
-          <p className="text-sm font-medium">预览</p>
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {scannedTemplates.length > 0 ? (
-              scannedTemplates.map((template) => (
-                <button
-                  className="rounded-md border p-2 text-left text-xs hover:bg-muted"
-                  key={template.id}
-                  onDoubleClick={() => void window.api.photoshop.openPath(template.file_path)}
-                  type="button"
-                >
-                  <span className="block truncate font-medium">
-                    {templateLabel(template.file_path)}
-                  </span>
-                  <span className="mt-1 block text-muted-foreground">
-                    {template.clip_areas.length} 张裁切
-                  </span>
-                  <ExternalLink className="mt-2 h-3.5 w-3.5 text-muted-foreground" />
-                </button>
-              ))
-            ) : (
-              <div className="col-span-2 rounded-md bg-muted p-3 text-xs text-muted-foreground">
-                完成扫描后显示模板预览
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
+    typeof state === 'object' &&
+    state !== null &&
+    'forceOnboarding' in state &&
+    (state as { forceOnboarding?: unknown }).forceOnboarding === true
   )
 }
 
@@ -717,7 +282,8 @@ function ActivationBadge({
 
 function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
   const status = useActivationStore((state) => state.status)
-  const [activeModule, setActiveModule] = useState<WorkbenchModule>('title')
+  const location = useLocation()
+  const activeModule = moduleFromPath(location.pathname) ?? 'title'
   const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
   const [languages, setLanguages] = useState<Array<{ key: string; label: string }>>([])
   const [models, setModels] = useState<Array<{ key: string; label: string }>>([])
@@ -752,6 +318,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [collectionRecords, setCollectionRecords] = useState<CollectionRecordRow[]>([])
   const [collectionError, setCollectionError] = useState<string | null>(null)
   const [retryingRecordId, setRetryingRecordId] = useState<string | null>(null)
+  const [collectionPageState, setCollectionPageState] = useState<CollectionPageState>(
+    defaultCollectionPageState,
+  )
+  const [collectionProfiles, setCollectionProfiles] =
+    useState<CollectionProfileOption[]>(defaultCollectionProfiles)
+  const [isStartingCollection, setIsStartingCollection] = useState(false)
+  const [isStoppingCollection, setIsStoppingCollection] = useState(false)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
 
@@ -790,6 +363,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       if (
         event.type === 'image-saved' ||
         event.type === 'session-started' ||
+        event.type === 'session-paused' ||
+        event.type === 'session-resumed' ||
         event.type === 'session-stopped'
       ) {
         void refreshCollectionRecords()
@@ -847,27 +422,65 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     }
   }, [])
 
-  const existingTitleCount = scanResult ? Object.keys(scanResult.existingTitles).length : 0
-  const pendingEstimateCount = scanResult
-    ? existingStrategy === 'skip'
-      ? Math.max(0, scanResult.skuCount - existingTitleCount)
-      : scanResult.skuCount
-    : 0
-  const estimatedCost = estimateTitleCost(pendingEstimateCount, model, compression)
-  const percent = progressPercent(progress)
-  const isRunning = Boolean(progress && progress.processed < progress.total && !result)
-  const progressStatusText = isRetryingFailed
-    ? '失败重试中'
-    : isRunning
-      ? '处理中'
-      : result
-        ? '完成'
-        : taskId
-          ? '等待任务结果'
-          : '未开始'
-  const canRun = Boolean(batchDir.trim()) && !isRunning
-  const successRows = result?.results.filter((item) => item.status === 'success') ?? []
-  const failedRows = result?.results.filter((item) => item.status === 'failed') ?? []
+  const titlePageState: TitlePageState = {
+    batchDir,
+    platform,
+    language,
+    model,
+    imageIndex,
+    extraRequirement,
+    existingStrategy,
+    maxRetries,
+    concurrency,
+    compression,
+    maxSize,
+    scanResult,
+    progress,
+    taskId,
+    result,
+    isRetryingFailed,
+  }
+
+  function updateTitleFormState(
+    key: keyof TitleFormState,
+    value: TitleFormState[keyof TitleFormState],
+  ) {
+    switch (key) {
+      case 'batchDir':
+        if (typeof value === 'string') setBatchDir(value)
+        return
+      case 'platform':
+        if (typeof value === 'string') setPlatform(value)
+        return
+      case 'language':
+        if (typeof value === 'string') setLanguage(value)
+        return
+      case 'model':
+        if (typeof value === 'string') setModel(value)
+        return
+      case 'imageIndex':
+        if (typeof value === 'string') setImageIndex(value)
+        return
+      case 'extraRequirement':
+        if (typeof value === 'string') setExtraRequirement(value)
+        return
+      case 'existingStrategy':
+        if (value === 'skip' || value === 'regenerate') setExistingStrategy(value)
+        return
+      case 'maxRetries':
+        if (typeof value === 'string') setMaxRetries(value)
+        return
+      case 'concurrency':
+        if (typeof value === 'string') setConcurrency(value)
+        return
+      case 'compression':
+        setCompression(value === true)
+        return
+      case 'maxSize':
+        if (typeof value === 'string') setMaxSize(value)
+        return
+    }
+  }
 
   async function chooseBatchDir() {
     const selected = await window.api.title.chooseBatchDir()
@@ -940,12 +553,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     setResult(null)
     setIsRetryingFailed(true)
     setTitleError(null)
+    const failedCount = result?.results.filter((item) => item.status === 'failed').length ?? 0
     const nextTaskId = await window.api.title.retryFailed({ task_id: taskId })
     setTaskId(nextTaskId)
     setProgress({
       task_id: nextTaskId,
       processed: 0,
-      total: failedRows.length,
+      total: failedCount,
       succeeded: 0,
       failed: 0,
       skipped: 0,
@@ -973,6 +587,61 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       setCollectionError(null)
     } catch (error) {
       setCollectionError(error instanceof Error ? error.message : '读取采集记录失败')
+    }
+  }
+
+  function updateCollectionPageState<K extends keyof CollectionPageState>(
+    key: K,
+    value: CollectionPageState[K],
+  ) {
+    setCollectionPageState((current) => ({ ...current, [key]: value }))
+  }
+
+  function refreshCollectionProfiles() {
+    setCollectionProfiles(defaultCollectionProfiles)
+    setCollectionError(null)
+  }
+
+  async function startCollectionSession() {
+    const profileId = collectionPageState.profileId.trim()
+    if (!profileId) {
+      setCollectionError('请先选择或填写比特浏览器环境编号')
+      return
+    }
+    setIsStartingCollection(true)
+    setCollectionError(null)
+    try {
+      const session = await window.api.collection.startSession({
+        platform: collectionPageState.platform,
+        profile_id: profileId,
+        mode: collectionPageState.mode,
+        ...(collectionPageState.outputDir.trim()
+          ? { output_dir: collectionPageState.outputDir.trim() }
+          : {}),
+      })
+      setCollectionSession(session)
+      await refreshCollectionRecords()
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '启动采集会话失败')
+    } finally {
+      setIsStartingCollection(false)
+    }
+  }
+
+  async function stopCollectionSession() {
+    setIsStoppingCollection(true)
+    setCollectionError(null)
+    try {
+      const session = await window.api.collection.stopSession()
+      setCollectionSession(session)
+      if (!session) {
+        setCollectionRecords([])
+      }
+      await refreshCollectionRecords()
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '停止采集会话失败')
+    } finally {
+      setIsStoppingCollection(false)
     }
   }
 
@@ -1013,16 +682,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   }
 
   return (
-    <main className="min-h-screen bg-background text-foreground">
-      <header className="flex h-16 items-center justify-between border-b px-8">
-        <div>
-          <p className="text-sm font-medium text-muted-foreground">Workbench</p>
-          <h1 className="text-lg font-semibold tracking-normal">腾域 aipod</h1>
-        </div>
-        <ActivationBadge onEnterActivation={onEnterActivation} />
-      </header>
-
-      <section className="mx-auto w-full max-w-7xl space-y-6 px-8 py-6">
+    <Shell activationBadge={<ActivationBadge onEnterActivation={onEnterActivation} />}>
+      <div className="space-y-6">
         {isBlocked ? (
           <div className="mt-20 max-w-xl space-y-5 rounded-md border border-red-200 bg-red-50 p-6 text-red-900">
             <div className="space-y-2">
@@ -1036,557 +697,52 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
             </Button>
           </div>
         ) : (
-          <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-            <div className="space-y-6">
-              <div className="rounded-md border bg-background p-5 shadow-sm">
-                <div className="flex items-start justify-between gap-6">
-                  <div className="space-y-1">
-                    <p className="text-sm font-medium text-muted-foreground">
-                      {moduleTitle(activeModule)}
-                    </p>
-                    <h1 className="text-2xl font-semibold text-balance">
-                      {moduleDescription(activeModule)}
-                    </h1>
-                  </div>
-                  <div className="rounded-md border bg-muted px-3 py-2 text-right text-xs text-muted-foreground">
-                    <div>版本</div>
-                    <div className="mt-1 font-mono text-foreground">{APP_VERSION}</div>
-                  </div>
-                </div>
-                <div className="mt-4 flex gap-2">
-                  <Button
-                    onClick={() => setActiveModule('collection')}
-                    type="button"
-                    variant={activeModule === 'collection' ? 'default' : 'secondary'}
-                  >
-                    采集
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('title')}
-                    type="button"
-                    variant={activeModule === 'title' ? 'default' : 'secondary'}
-                  >
-                    标题生成
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('generation')}
-                    type="button"
-                    variant={activeModule === 'generation' ? 'default' : 'secondary'}
-                  >
-                    生图
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('detection')}
-                    type="button"
-                    variant={activeModule === 'detection' ? 'default' : 'secondary'}
-                  >
-                    侵权检测
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('listing')}
-                    type="button"
-                    variant={activeModule === 'listing' ? 'default' : 'secondary'}
-                  >
-                    上架
-                  </Button>
-                  <Button
-                    onClick={() => setActiveModule('ps')}
-                    type="button"
-                    variant={activeModule === 'ps' ? 'default' : 'secondary'}
-                  >
-                    PS 套版
-                  </Button>
-                </div>
-              </div>
-
-              {activeModule === 'collection' ? (
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <h2 className="text-lg font-semibold text-balance">当前采集记录</h2>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        {collectionSession
-                          ? `${collectionSession.platform} · ${collectionSession.mode === 'click' ? '点击模式' : '滚动模式'}`
-                          : '当前没有活动采集会话'}
-                      </p>
-                    </div>
-                    <Button
-                      onClick={() => void refreshCollectionRecords()}
-                      type="button"
-                      variant="secondary"
-                    >
-                      <RefreshCw className="mr-2 h-4 w-4" />
-                      刷新
-                    </Button>
-                  </div>
-
-                  {collectionError ? (
-                    <div className="mt-4 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                      {collectionError}
-                    </div>
-                  ) : null}
-
-                  <div className="mt-5 grid gap-4 lg:grid-cols-[minmax(0,1fr)_280px]">
-                    <div className="rounded-md border">
-                      <div className="border-b px-3 py-2 text-sm font-medium">
-                        最近保存（{collectionRecords.length}）
-                      </div>
-                      <div className="max-h-96 overflow-auto p-2">
-                        {collectionRecords.length ? (
-                          collectionRecords.map((record) => (
-                            <div
-                              className="grid gap-3 rounded-md px-2 py-3 text-sm md:grid-cols-[96px_minmax(0,1fr)_auto]"
-                              key={record.id}
-                            >
-                              {record.savedPath && record.status !== 'failed' ? (
-                                <img
-                                  alt=""
-                                  className="h-16 w-24 rounded-md border object-cover"
-                                  src={`file://${record.savedPath}`}
-                                />
-                              ) : (
-                                <div className="flex h-16 w-24 items-center justify-center rounded-md border bg-muted text-xs text-muted-foreground">
-                                  无预览
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <div className="truncate font-medium">
-                                  {fileNameFromPath(record.savedPath)}
-                                </div>
-                                <div className="mt-1 truncate text-xs text-muted-foreground">
-                                  {record.goodsLink ?? record.pageUrl}
-                                </div>
-                                {record.reason ? (
-                                  <div className="mt-1 text-xs text-red-700">{record.reason}</div>
-                                ) : null}
-                              </div>
-                              <div className="flex items-center gap-2 md:justify-end">
-                                <span
-                                  className={`text-xs font-medium ${collectionStatusClassName(record.status)}`}
-                                >
-                                  {collectionStatusLabel(record.status)}
-                                </span>
-                                {record.status === 'failed' ? (
-                                  <Button
-                                    className="h-8 px-2"
-                                    disabled={retryingRecordId === record.id}
-                                    onClick={() => void retryCollectionRecord(record.id)}
-                                    type="button"
-                                    variant="secondary"
-                                  >
-                                    <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                                    重试
-                                  </Button>
-                                ) : null}
-                              </div>
-                            </div>
-                          ))
-                        ) : (
-                          <div className="px-2 py-10 text-center text-sm text-muted-foreground">
-                            暂无采集记录
-                          </div>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="rounded-md border p-4">
-                      <h3 className="text-sm font-medium">当前会话</h3>
-                      <dl className="mt-3 space-y-3 text-sm">
-                        <div>
-                          <dt className="text-muted-foreground">状态</dt>
-                          <dd className="mt-1 font-medium">
-                            {collectionSession?.status ?? '未开始'}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground">输出目录</dt>
-                          <dd className="mt-1 break-all text-xs">
-                            {collectionSession?.output_dir ?? '-'}
-                          </dd>
-                        </div>
-                        <div>
-                          <dt className="text-muted-foreground">失败记录</dt>
-                          <dd className="mt-1 font-medium tabular-nums">
-                            {
-                              collectionRecords.filter((record) => record.status === 'failed')
-                                .length
-                            }
-                          </dd>
-                        </div>
-                      </dl>
-                    </div>
-                  </div>
-                </div>
-              ) : activeModule === 'title' ? (
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="grid gap-5">
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>货号批次目录</span>
-                      <div className="flex gap-2">
-                        <input
-                          className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setBatchDir(event.target.value)}
-                          placeholder="选择 05-货号成品 下的一个批次目录"
-                          value={batchDir}
-                        />
-                        <Button
-                          onClick={() => void chooseBatchDir()}
-                          type="button"
-                          variant="secondary"
-                        >
-                          <FolderOpen className="mr-2 h-4 w-4" />
-                          选择
-                        </Button>
-                        <Button
-                          onClick={() => void scanBatchDir()}
-                          type="button"
-                          variant="secondary"
-                        >
-                          扫描
-                        </Button>
-                      </div>
-                    </label>
-
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>平台</span>
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setPlatform(event.target.value)}
-                          value={platform}
-                        >
-                          {platforms.map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>语言</span>
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setLanguage(event.target.value)}
-                          value={language}
-                        >
-                          {languages.map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>模型</span>
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          onChange={(event) => setModel(event.target.value)}
-                          value={model}
-                        >
-                          {models.map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
-                    </div>
-
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>标题额外要求</span>
-                      <textarea
-                        className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setExtraRequirement(event.target.value)}
-                        placeholder="例如：强调原创设计、节日主题、含 vintage 关键词"
-                        value={extraRequirement}
-                      />
-                    </label>
-
-                    <div className="grid gap-4 md:grid-cols-4">
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>取第几张图</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          min={1}
-                          onChange={(event) => setImageIndex(event.target.value)}
-                          type="number"
-                          value={imageIndex}
-                        />
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>失败重试</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          max={5}
-                          min={0}
-                          onChange={(event) => setMaxRetries(event.target.value)}
-                          type="number"
-                          value={maxRetries}
-                        />
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>并发数</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          max={10}
-                          min={1}
-                          onChange={(event) => setConcurrency(event.target.value)}
-                          type="number"
-                          value={concurrency}
-                        />
-                      </label>
-                      <label className="block space-y-2 text-sm font-medium">
-                        <span>最大边长</span>
-                        <input
-                          className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                          min={256}
-                          onChange={(event) => setMaxSize(event.target.value)}
-                          type="number"
-                          value={maxSize}
-                        />
-                      </label>
-                    </div>
-
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <fieldset className="rounded-md border p-4">
-                        <legend className="px-1 text-sm font-medium">已有标题策略</legend>
-                        <div className="mt-2 flex gap-4 text-sm">
-                          <label className="inline-flex items-center gap-2">
-                            <input
-                              checked={existingStrategy === 'skip'}
-                              onChange={() => setExistingStrategy('skip')}
-                              type="radio"
-                            />
-                            跳过已有
-                          </label>
-                          <label className="inline-flex items-center gap-2">
-                            <input
-                              checked={existingStrategy === 'regenerate'}
-                              onChange={() => setExistingStrategy('regenerate')}
-                              type="radio"
-                            />
-                            重新生成
-                          </label>
-                        </div>
-                      </fieldset>
-                      <fieldset className="rounded-md border p-4">
-                        <legend className="px-1 text-sm font-medium">图像预处理</legend>
-                        <div className="mt-2 space-y-2 text-sm">
-                          <label className="inline-flex items-center gap-2 text-muted-foreground">
-                            <input checked disabled type="checkbox" />
-                            透明底自动加白
-                          </label>
-                          <label className="flex items-center gap-2">
-                            <input
-                              checked={compression}
-                              onChange={(event) => setCompression(event.target.checked)}
-                              type="checkbox"
-                            />
-                            压缩图片节省 token
-                          </label>
-                        </div>
-                      </fieldset>
-                    </div>
-
-                    {titleError ? (
-                      <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
-                        {titleError}
-                      </div>
-                    ) : null}
-
-                    <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
-                      <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                        <Calculator className="h-4 w-4" />
-                        预估 {pendingEstimateCount} 张图，约 ¥
-                        <span className="tabular-nums">{estimatedCost.toFixed(4)}</span>
-                      </div>
-                      <Button disabled={!canRun} onClick={() => void runTitleBatch()} type="button">
-                        {isRunning ? (
-                          <Loader2 className="mr-2 h-4 w-4" />
-                        ) : (
-                          <Play className="mr-2 h-4 w-4" />
-                        )}
-                        开始生成标题
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              ) : activeModule === 'generation' ? (
-                <GenerationWorkbench />
-              ) : activeModule === 'listing' ? (
-                <ListingWorkbench />
-              ) : activeModule === 'ps' ? (
-                <div className="space-y-6">
-                  <PhotoshopStatusBar />
-                  <PhotoshopMockupPanel />
-                </div>
-              ) : (
-                <DetectionWorkbench />
-              )}
-
-              {activeModule === 'title' ? (
-                <>
-                  {result ? (
-                    <div className="rounded-md border bg-background p-5 shadow-sm">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <h2 className="text-lg font-semibold text-balance">生成结果</h2>
-                          <p className="mt-1 text-sm text-muted-foreground">
-                            成功 {result.succeeded} 个，失败 {result.failed} 个，跳过{' '}
-                            {result.skipped} 个
-                          </p>
-                        </div>
-                        <div className="flex gap-2">
-                          <Button
-                            onClick={() => void openPath(result.xlsxPath)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            打开 xlsx
-                          </Button>
-                          <Button
-                            onClick={() => void openPath(batchDir)}
-                            type="button"
-                            variant="secondary"
-                          >
-                            打开批次目录
-                          </Button>
-                        </div>
-                      </div>
-                      {openMessage ? (
-                        <p className="mt-3 text-sm text-red-700">{openMessage}</p>
-                      ) : null}
-                      <div className="mt-5 grid gap-4 lg:grid-cols-2">
-                        <div className="rounded-md border">
-                          <div className="border-b px-3 py-2 text-sm font-medium">
-                            成功列表（{successRows.length}）
-                          </div>
-                          <div className="max-h-56 overflow-auto p-2">
-                            {successRows.length ? (
-                              successRows.map((item) => (
-                                <div
-                                  className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md px-2 py-2 text-sm"
-                                  key={item.skuCode}
-                                >
-                                  <span className="font-mono text-xs text-muted-foreground">
-                                    {item.skuCode}
-                                  </span>
-                                  <span className="truncate">{item.title}</span>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                                暂无成功项
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                        <div className="rounded-md border">
-                          <div className="flex items-center justify-between border-b px-3 py-2 text-sm font-medium">
-                            <span>失败列表（{failedRows.length}）</span>
-                            <Button
-                              className="h-8 px-2"
-                              disabled={!failedRows.length}
-                              onClick={() => void retryFailed()}
-                              type="button"
-                              variant="secondary"
-                            >
-                              <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                              重试失败
-                            </Button>
-                          </div>
-                          <div className="max-h-56 overflow-auto p-2">
-                            {failedRows.length ? (
-                              failedRows.map((item) => (
-                                <div className="rounded-md px-2 py-2 text-sm" key={item.skuCode}>
-                                  <div className="font-mono text-xs text-muted-foreground">
-                                    {item.skuCode}
-                                  </div>
-                                  <div className="mt-1 text-red-700">{item.error}</div>
-                                </div>
-                              ))
-                            ) : (
-                              <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                                没有失败项
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ) : null}
-                </>
-              ) : null}
-            </div>
-            {activeModule === 'title' ? (
-              <aside className="space-y-6">
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <h2 className="text-lg font-semibold text-balance">批次概览</h2>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">货号文件夹</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        {scanResult?.skuCount ?? 0}
-                      </dd>
-                    </div>
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">已有标题</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        {existingTitleCount}
-                      </dd>
-                    </div>
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">预计生成</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        {pendingEstimateCount}
-                      </dd>
-                    </div>
-                    <div className="rounded-md bg-muted p-3">
-                      <dt className="text-muted-foreground">预计费用</dt>
-                      <dd className="mt-1 text-xl font-semibold tabular-nums">
-                        ¥{estimatedCost.toFixed(4)}
-                      </dd>
-                    </div>
-                  </dl>
-                </div>
-
-                <div className="rounded-md border bg-background p-5 shadow-sm">
-                  <div className="flex items-center justify-between">
-                    <h2 className="text-lg font-semibold text-balance">执行进度</h2>
-                    <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-                  </div>
-                  <div className="mt-4 h-2 rounded-full bg-muted">
-                    <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-                  </div>
-                  <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                    <div>
-                      <dt className="text-muted-foreground">处理中</dt>
-                      <dd className="mt-1 font-medium tabular-nums">
-                        {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-                      </dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">跳过</dt>
-                      <dd className="mt-1 font-medium tabular-nums">{progress?.skipped ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">成功</dt>
-                      <dd className="mt-1 font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-                    </div>
-                    <div>
-                      <dt className="text-muted-foreground">失败</dt>
-                      <dd className="mt-1 font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-                    </div>
-                  </dl>
-                  <div className="mt-4 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                    {progressStatusText}
-                  </div>
-                </div>
-              </aside>
-            ) : null}
+          <div className="space-y-6">
+            {activeModule === 'collection' ? (
+              <CollectionPage
+                error={collectionError}
+                onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
+                onRefreshProfiles={refreshCollectionProfiles}
+                onRefreshRecords={() => void refreshCollectionRecords()}
+                onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
+                onStartSession={() => void startCollectionSession()}
+                onStateChange={updateCollectionPageState}
+                onStopSession={() => void stopCollectionSession()}
+                profiles={collectionProfiles}
+                records={collectionRecords}
+                retryingRecordId={retryingRecordId}
+                session={collectionSession}
+                starting={isStartingCollection}
+                state={collectionPageState}
+                stopping={isStoppingCollection}
+              />
+            ) : activeModule === 'title' ? (
+              <TitlePage
+                languages={languages}
+                models={models}
+                onChooseBatchDir={() => void chooseBatchDir()}
+                onOpenPath={(path) => void openPath(path)}
+                onRetryFailed={() => void retryFailed()}
+                onRunBatch={() => void runTitleBatch()}
+                onScanBatchDir={() => void scanBatchDir()}
+                onStateChange={updateTitleFormState}
+                openMessage={openMessage}
+                platforms={platforms}
+                state={titlePageState}
+                titleError={titleError}
+              />
+            ) : activeModule === 'generation' ? (
+              <GenerationPage />
+            ) : activeModule === 'listing' ? (
+              <ListingPage />
+            ) : activeModule === 'ps' ? (
+              <PhotoshopPage />
+            ) : (
+              <DetectionPage />
+            )}
           </div>
         )}
-      </section>
+      </div>
       {pendingCollectionSku && isCollectionSkuPromptExpanded ? (
         <div className="fixed bottom-5 right-5 z-40 w-96 rounded-md border bg-background p-4 text-sm shadow-xl">
           <div className="space-y-1">
@@ -1629,79 +785,60 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           </span>
         </button>
       ) : null}
-    </main>
-  )
-}
-
-function StepHeader({ step }: { step: OnboardingStep }) {
-  const steps = [
-    { number: 1, label: '激活', icon: MonitorCheck },
-    { number: 2, label: '素材目录', icon: FolderOpen },
-    { number: 3, label: 'API Keys', icon: KeyRound },
-    { number: 4, label: '完成', icon: CheckCircle2 },
-  ]
-
-  return (
-    <div className="grid grid-cols-4 gap-3">
-      {steps.map((item) => {
-        const Icon = item.icon
-        const isCurrent = item.number === step
-        const isDone = item.number < step
-        return (
-          <div
-            className={`rounded-md border p-3 ${
-              isCurrent || isDone ? 'border-primary bg-muted' : 'bg-background'
-            }`}
-            key={item.number}
-          >
-            <div className="flex items-center gap-2 text-sm font-medium">
-              <Icon className="h-4 w-4" />
-              Step {item.number}/4
-            </div>
-            <div className="mt-1 text-xs text-muted-foreground">{item.label}</div>
-          </div>
-        )
-      })}
-    </div>
+    </Shell>
   )
 }
 
 function Onboarding() {
-  const [step, setStep] = useState<OnboardingStep>(1)
+  const navigate = useNavigate()
+  const location = useLocation()
+  const params = useParams()
+  const step = parseOnboardingStep(params.step)
+  const requestedStep = params.step
+  const forceOnboarding = isForceOnboardingState(location.state)
   const [activationCode, setActivationCode] = useState('')
   const [deviceName, setDeviceName] = useState(defaultDeviceName)
   const [activationMessage, setActivationMessage] = useState<string | null>(null)
   const [isActivating, setIsActivating] = useState(false)
   const [workbenchRoot, setWorkbenchRoot] = useState('')
-  const [apiKeys, setApiKeys] = useState<Record<string, string>>({
+  const [apiKeys, setApiKeys] = useState<OnboardingApiKeys>({
     chenyu: '',
     grsai: '',
     bailian: '',
     bit_browser_url: '127.0.0.1:54345',
   })
+  const [isStateLoaded, setIsStateLoaded] = useState(false)
   const [ready, setReady] = useState(false)
 
   function enterActivation() {
     setReady(false)
-    setStep(1)
+    navigate(onboardingPath(1), { replace: true, state: { forceOnboarding: true } })
   }
 
   useEffect(() => {
     async function loadState() {
       const state = await window.api.onboarding.getState()
       setWorkbenchRoot(state.default_workbench_root)
-      if (!state.needs_onboarding) {
+      if (!state.needs_onboarding && !forceOnboarding) {
         setReady(true)
+        navigate(getStoredWorkbenchRoute(), { replace: true })
       }
+      setIsStateLoaded(true)
     }
 
     void loadState()
-  }, [])
+  }, [forceOnboarding, navigate])
 
   const canActivate = useMemo(
     () => /^POD-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(activationCode),
     [activationCode],
   )
+
+  useEffect(() => {
+    if (requestedStep && onboardingPath(step) !== `/onboarding/${requestedStep}`) {
+      navigate(onboardingPath(step), { replace: true })
+    }
+  }, [navigate, requestedStep, step])
 
   async function activate() {
     setActivationMessage(null)
@@ -1720,7 +857,7 @@ function Onboarding() {
     setActivationMessage(
       `激活成功，可用设备 ${result.data.used_devices}/${result.data.max_devices}`,
     )
-    setStep(2)
+    navigate(onboardingPath(2))
   }
 
   async function chooseWorkbenchRoot() {
@@ -1732,185 +869,121 @@ function Onboarding() {
 
   async function saveWorkbenchRoot() {
     await window.api.onboarding.saveWorkbenchRoot(workbenchRoot)
-    setStep(3)
+    navigate(onboardingPath(3))
   }
 
   async function saveApiKeys(nextStep: OnboardingStep = 4) {
-    const cleaned = Object.fromEntries(
-      Object.entries(apiKeys).map(([key, value]) => [key, value.trim()]),
-    )
+    const cleaned: OnboardingApiKeys = {
+      chenyu: apiKeys.chenyu.trim(),
+      grsai: apiKeys.grsai.trim(),
+      bailian: apiKeys.bailian.trim(),
+      bit_browser_url: apiKeys.bit_browser_url.trim(),
+    }
     await window.api.onboarding.saveApiKeys(cleaned)
-    setStep(nextStep)
+    navigate(onboardingPath(nextStep))
+  }
+
+  function updateApiKey(key: OnboardingApiKey, value: string) {
+    setApiKeys((current) => ({ ...current, [key]: value }))
   }
 
   async function complete() {
     await window.api.onboarding.complete()
     setReady(true)
+    navigate(getStoredWorkbenchRoute(), { replace: true })
   }
 
   if (ready) {
     return <MainWorkbench onEnterActivation={enterActivation} />
   }
 
+  if (!isStateLoaded) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
+        正在读取启动状态...
+      </main>
+    )
+  }
+
   return (
-    <main className="min-h-screen bg-background px-8 py-10 text-foreground">
-      <div className="fixed right-8 top-6 z-20">
-        <ActivationBadge onEnterActivation={enterActivation} />
-      </div>
-      <section className="mx-auto max-w-5xl space-y-6">
-        <div className="space-y-2">
-          <p className="text-sm font-medium text-muted-foreground">首次启动</p>
-          <h1 className="text-3xl font-semibold tracking-normal">欢迎使用腾域 aipod</h1>
-        </div>
-        <StepHeader step={step} />
+    <OnboardingPage
+      activationBadge={<ActivationBadge onEnterActivation={enterActivation} />}
+      activationCode={activationCode}
+      activationMessage={activationMessage}
+      apiKeys={apiKeys}
+      canActivate={canActivate}
+      deviceName={deviceName}
+      isActivating={isActivating}
+      onActivate={() => void activate()}
+      onActivationCodeChange={(value) => setActivationCode(normalizeActivationCode(value))}
+      onApiKeyChange={updateApiKey}
+      onChooseWorkbenchRoot={() => void chooseWorkbenchRoot()}
+      onComplete={() => void complete()}
+      onDeviceNameChange={setDeviceName}
+      onNavigateStep={(nextStep) => navigate(onboardingPath(nextStep))}
+      onSaveApiKeys={() => void saveApiKeys()}
+      onSaveWorkbenchRoot={() => void saveWorkbenchRoot()}
+      onWorkbenchRootChange={setWorkbenchRoot}
+      step={step}
+      workbenchRoot={workbenchRoot}
+    />
+  )
+}
 
-        <div className="rounded-lg border bg-background p-6 shadow-sm">
-          {step === 1 ? (
-            <div className="space-y-5">
-              <div>
-                <h2 className="text-xl font-semibold">Step 1/4 - 激活</h2>
-              </div>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>激活码</span>
-                <input
-                  className="h-11 w-full rounded-md border px-3 font-mono text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) =>
-                    setActivationCode(normalizeActivationCode(event.target.value))
-                  }
-                  placeholder="POD-XXXX-YYYY-ZZZZ"
-                  value={activationCode}
-                />
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>本机名称</span>
-                <input
-                  className="h-11 w-full rounded-md border px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setDeviceName(event.target.value)}
-                  value={deviceName}
-                />
-              </label>
-              {activationMessage ? (
-                <p className="text-sm text-muted-foreground">{activationMessage}</p>
-              ) : null}
-              <div className="flex items-center gap-3">
-                <Button
-                  disabled={!canActivate || isActivating}
-                  onClick={() => void activate()}
-                  type="button"
-                >
-                  {isActivating ? '激活中...' : '激活'}
-                </Button>
-                <a
-                  className="text-sm text-muted-foreground underline"
-                  href="https://example.com/support"
-                >
-                  联系客服微信
-                </a>
-              </div>
-            </div>
-          ) : null}
+function WorkbenchRoute() {
+  const navigate = useNavigate()
+  const location = useLocation()
+  const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
 
-          {step === 2 ? (
-            <div className="space-y-5">
-              <h2 className="text-xl font-semibold">Step 2/4 - 素材总目录</h2>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>素材根目录</span>
-                <div className="flex gap-2">
-                  <input
-                    className="h-11 min-w-0 flex-1 rounded-md border px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onChange={(event) => setWorkbenchRoot(event.target.value)}
-                    value={workbenchRoot}
-                  />
-                  <Button
-                    onClick={() => void chooseWorkbenchRoot()}
-                    type="button"
-                    variant="secondary"
-                  >
-                    浏览...
-                  </Button>
-                </div>
-              </label>
-              <div className="rounded-md bg-muted p-4 text-sm text-muted-foreground">
-                软件会创建 01-采集、02-生图、03-检测、04-待套版印花、05-货号成品 和 .workbench。
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => setStep(1)} type="button" variant="secondary">
-                  上一步
-                </Button>
-                <Button onClick={() => void saveWorkbenchRoot()} type="button">
-                  下一步
-                </Button>
-              </div>
-            </div>
-          ) : null}
+  useEffect(() => {
+    async function loadState() {
+      const state = await window.api.onboarding.getState()
+      setNeedsOnboarding(state.needs_onboarding)
+      if (state.needs_onboarding) {
+        navigate(onboardingPath(1), { replace: true })
+      }
+    }
 
-          {step === 3 ? (
-            <div className="space-y-5">
-              <h2 className="text-xl font-semibold">Step 3/4 - API Keys</h2>
-              <div className="grid gap-4">
-                {apiKeyFields.map((field) => (
-                  <label className="block space-y-2 text-sm font-medium" key={field.key}>
-                    <span>{field.label}</span>
-                    <div className="flex gap-2">
-                      <input
-                        className="h-11 min-w-0 flex-1 rounded-md border px-3 text-base outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) =>
-                          setApiKeys((current) => ({ ...current, [field.key]: event.target.value }))
-                        }
-                        placeholder={field.placeholder}
-                        type={field.key === 'bit_browser_url' ? 'text' : 'password'}
-                        value={apiKeys[field.key] ?? ''}
-                      />
-                      <Button
-                        onClick={() => setApiKeys((current) => ({ ...current, [field.key]: '' }))}
-                        type="button"
-                        variant="secondary"
-                      >
-                        跳过
-                      </Button>
-                      <Button type="button" variant="secondary">
-                        测试连接
-                      </Button>
-                    </div>
-                  </label>
-                ))}
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => setStep(2)} type="button" variant="secondary">
-                  上一步
-                </Button>
-                <Button onClick={() => void saveApiKeys()} type="button" variant="secondary">
-                  全部跳过
-                </Button>
-                <Button onClick={() => void saveApiKeys()} type="button">
-                  下一步
-                </Button>
-              </div>
-            </div>
-          ) : null}
+    void loadState()
+  }, [navigate])
 
-          {step === 4 ? (
-            <div className="space-y-5 text-center">
-              <CheckCircle2 className="mx-auto h-14 w-14 text-foreground" />
-              <div>
-                <h2 className="text-2xl font-semibold">软件已准备就绪</h2>
-              </div>
-              <div className="flex justify-center gap-2">
-                <Button asChild variant="secondary">
-                  <a href="https://example.com/tutorial">
-                    <PlayCircle className="mr-2 h-4 w-4" />
-                    查看教程视频
-                  </a>
-                </Button>
-                <Button onClick={() => void complete()} type="button">
-                  开始使用
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      </section>
-    </main>
+  if (needsOnboarding === null) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
+        正在读取启动状态...
+      </main>
+    )
+  }
+
+  if (needsOnboarding) {
+    return null
+  }
+
+  const activePath = isWorkbenchRoute(location.pathname)
+    ? location.pathname
+    : getStoredWorkbenchRoute()
+
+  if (activePath !== location.pathname) {
+    return <Navigate replace to={activePath} />
+  }
+
+  return (
+    <MainWorkbench
+      onEnterActivation={() =>
+        navigate(onboardingPath(1), { replace: true, state: { forceOnboarding: true } })
+      }
+    />
+  )
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route element={<Navigate replace to={getStoredWorkbenchRoute()} />} path="/" />
+      <Route element={<Onboarding />} path="/onboarding/:step" />
+      <Route element={<WorkbenchRoute />} path="/*" />
+      <Route element={<Navigate replace to={getStoredWorkbenchRoute()} />} path="*" />
+    </Routes>
   )
 }
 
@@ -1927,5 +1000,9 @@ export function App() {
     }
   }, [])
 
-  return <Onboarding />
+  return (
+    <HashRouter>
+      <AppRoutes />
+    </HashRouter>
+  )
 }
