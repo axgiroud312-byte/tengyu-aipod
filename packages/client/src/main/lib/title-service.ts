@@ -9,7 +9,7 @@ import {
   listVisionModels,
 } from '@tengyu-aipod/shared'
 import Database from 'better-sqlite3'
-import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { readAppConfig } from '../onboarding'
@@ -942,16 +942,6 @@ export function registerTitleIpc() {
   ipcMain.handle('title:list-platforms', () => titleService.listPlatforms())
   ipcMain.handle('title:list-languages', () => titleService.listLanguages())
   ipcMain.handle('title:list-models', () => titleService.listModels())
-  ipcMain.handle('title:choose-batch-dir', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-      title: '选择货号批次目录',
-    })
-    if (result.canceled || !result.filePaths[0]) {
-      return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
-    }
-    return { ok: true, data: { path: result.filePaths[0] } }
-  })
   ipcMain.handle('title:scan-batch-dir', (_event, input: { batchDir: string }) =>
     titleService.scanBatchDir(input.batchDir),
   )

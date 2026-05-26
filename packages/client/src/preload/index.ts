@@ -17,6 +17,7 @@ import type {
   SkillSummary,
 } from '@tengyu-aipod/shared'
 import { contextBridge, ipcRenderer } from 'electron'
+import type { ChooseDirectoryInput, ChooseDirectoryResult, OpenPathResult } from '../main/dialog'
 import type {
   BitBrowserCdpEndpoint,
   BitBrowserProfile,
@@ -67,7 +68,6 @@ import type {
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
-import type { ChooseDirectoryInput, ChooseDirectoryResult, OpenPathResult } from '../main/dialog'
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
@@ -85,11 +85,6 @@ const api = {
         needs_onboarding: boolean
         default_workbench_root: string
       }>,
-    chooseWorkbenchRoot: () =>
-      ipcRenderer.invoke('onboarding:choose-workbench-root') as Promise<
-        | { ok: true; data: { path: string } }
-        | { ok: false; error: { code: string; message: string } }
-      >,
     saveWorkbenchRoot: (path: string) =>
       ipcRenderer.invoke('onboarding:save-workbench-root', path) as Promise<{
         ok: true
@@ -286,11 +281,6 @@ const api = {
       ipcRenderer.invoke('title:list-languages') as Promise<Array<{ key: string; label: string }>>,
     listModels: () =>
       ipcRenderer.invoke('title:list-models') as Promise<Array<{ key: string; label: string }>>,
-    chooseBatchDir: () =>
-      ipcRenderer.invoke('title:choose-batch-dir') as Promise<
-        | { ok: true; data: { path: string } }
-        | { ok: false; error: { code: string; message: string } }
-      >,
     scanBatchDir: (input: { batchDir: string }) =>
       ipcRenderer.invoke('title:scan-batch-dir', input) as Promise<{
         skuCount: number
@@ -355,11 +345,6 @@ const api = {
       ipcRenderer.invoke('listing:update-task-status', input) as Promise<ListingTaskRecord | null>,
     deleteTask: (input: { taskId: string }) =>
       ipcRenderer.invoke('listing:delete-task', input) as Promise<void>,
-    chooseBatchDir: () =>
-      ipcRenderer.invoke('listing:choose-batch-dir') as Promise<
-        | { ok: true; data: { path: string } }
-        | { ok: false; error: { code: string; message: string } }
-      >,
     scanBatchDir: (input: { batchDir: string; templateKey: string }) =>
       ipcRenderer.invoke('listing:scan-batch-dir', input) as Promise<ListingBatchLoadResult>,
     listStatus: (input: { batchDir: string; platform?: string; status?: string }) =>
@@ -411,11 +396,6 @@ const api = {
   },
   photoshop: {
     getStatus: () => ipcRenderer.invoke('photoshop:get-status') as Promise<PhotoshopStatus>,
-    choosePrintFolder: () =>
-      ipcRenderer.invoke('photoshop:choose-print-folder') as Promise<
-        | { ok: true; data: { path: string } }
-        | { ok: false; error: { code: string; message: string } }
-      >,
     chooseTemplates: () =>
       ipcRenderer.invoke('photoshop:choose-templates') as Promise<
         | { ok: true; data: { paths: string[] } }

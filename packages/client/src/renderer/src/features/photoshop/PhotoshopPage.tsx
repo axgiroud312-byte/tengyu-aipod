@@ -1,9 +1,9 @@
+import { DirectoryPicker } from '@/components/directory-picker'
 import { Button } from '@/components/ui/button'
 import type { PhotoshopProgressInfo, PhotoshopStatus, PsdTemplate } from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
   ExternalLink,
-  FolderOpen,
   ImageIcon,
   PlayCircle,
   RefreshCw,
@@ -149,13 +149,6 @@ export function PhotoshopPage() {
     })
   }, [])
 
-  async function choosePrintFolder() {
-    const result = await window.api.photoshop.choosePrintFolder()
-    if (result.ok) {
-      setPrintFolder(result.data.path)
-    }
-  }
-
   async function chooseTemplates() {
     const result = await window.api.photoshop.chooseTemplates()
     if (result.ok) {
@@ -238,26 +231,18 @@ export function PhotoshopPage() {
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <p className="text-sm font-medium text-muted-foreground">印花文件夹</p>
             <h2 className="mt-1 text-lg font-semibold">待套版印花</h2>
-            <label className="mt-4 block space-y-2 text-sm font-medium">
+            <label className="mt-4 block space-y-2 text-sm font-medium" htmlFor="ps-print-folder">
               <span className="flex items-center gap-2">
                 <ImageIcon className="h-4 w-4" />
                 输入目录
               </span>
-              <div className="flex gap-2">
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setPrintFolder(event.target.value)}
-                  value={printFolder}
-                />
-                <Button
-                  className="h-10 px-3"
-                  onClick={() => void choosePrintFolder()}
-                  type="button"
-                  variant="secondary"
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </Button>
-              </div>
+              <DirectoryPicker
+                id="ps-print-folder"
+                onChange={setPrintFolder}
+                showOpen={false}
+                title="选择印花输入目录"
+                value={printFolder}
+              />
             </label>
           </div>
 

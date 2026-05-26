@@ -814,16 +814,6 @@ export function registerListingRunnerIpc() {
     const parsed = parseListingTaskDeleteInput(input)
     return withListingTaskStore((store) => store.deleteTask(parsed.taskId))
   })
-  ipcMain.handle('listing:choose-batch-dir', async () => {
-    const result = await electronDialog().showOpenDialog({
-      properties: ['openDirectory'],
-      title: '选择上架素材批次目录',
-    })
-    if (result.canceled || !result.filePaths[0]) {
-      return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
-    }
-    return { ok: true, data: { path: result.filePaths[0] } }
-  })
   ipcMain.handle('listing:scan-batch-dir', (_event, input: unknown) => {
     if (!isRecord(input) || typeof input.batchDir !== 'string') {
       throw new AppErrorClass('HTTP_4XX', '上架批次扫描参数不正确', false, {
@@ -1360,10 +1350,6 @@ function isListingFailureLike(error: unknown): error is ListingFailure {
 
 function electronIpcMain() {
   return (nodeRequire('electron') as typeof import('electron')).ipcMain
-}
-
-function electronDialog() {
-  return (nodeRequire('electron') as typeof import('electron')).dialog
 }
 
 function electronShell() {

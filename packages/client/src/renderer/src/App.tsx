@@ -536,16 +536,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     }
   }
 
-  async function chooseBatchDir() {
-    const selected = await window.api.title.chooseBatchDir()
-    if (!selected.ok) {
-      return
-    }
-    setBatchDir(selected.data.path)
-    setTitleError(null)
-    await scanBatchDir(selected.data.path)
-  }
-
   async function scanBatchDir(path = batchDir) {
     if (!path.trim()) {
       setTitleError('请先选择货号批次目录')
@@ -815,7 +805,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               <TitlePage
                 languages={languages}
                 models={models}
-                onChooseBatchDir={() => void chooseBatchDir()}
                 onOpenPath={(path) => void openPath(path)}
                 onRetryFailed={() => void retryFailed()}
                 onRunBatch={() => void runTitleBatch()}
@@ -955,13 +944,6 @@ function Onboarding() {
     navigate(onboardingPath(2))
   }
 
-  async function chooseWorkbenchRoot() {
-    const result = await window.api.onboarding.chooseWorkbenchRoot()
-    if (result.ok) {
-      setWorkbenchRoot(result.data.path)
-    }
-  }
-
   async function saveWorkbenchRoot() {
     await window.api.onboarding.saveWorkbenchRoot(workbenchRoot)
     navigate(onboardingPath(3))
@@ -1012,7 +994,6 @@ function Onboarding() {
       onActivate={() => void activate()}
       onActivationCodeChange={(value) => setActivationCode(normalizeActivationCode(value))}
       onApiKeyChange={updateApiKey}
-      onChooseWorkbenchRoot={() => void chooseWorkbenchRoot()}
       onComplete={() => void complete()}
       onDeviceNameChange={setDeviceName}
       onNavigateStep={(nextStep) => navigate(onboardingPath(nextStep))}

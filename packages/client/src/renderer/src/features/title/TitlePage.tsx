@@ -1,3 +1,4 @@
+import { DirectoryPicker } from '@/components/directory-picker'
 import {
   Accordion,
   AccordionContent,
@@ -21,7 +22,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
 import { VISION_MODEL_PRICES, type VisionModelKey } from '@tengyu-aipod/shared'
-import { Calculator, FolderOpen, Loader2, Play, RotateCcw, ScanLine } from 'lucide-react'
+import { Calculator, Loader2, Play, RotateCcw, ScanLine } from 'lucide-react'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
@@ -70,7 +71,6 @@ type TitlePageProps = {
   titleError: string | null
   openMessage: string | null
   onStateChange: (key: keyof TitleFormState, value: TitleFormState[keyof TitleFormState]) => void
-  onChooseBatchDir: () => void
   onScanBatchDir: () => void
   onRunBatch: () => void
   onRetryFailed: () => void
@@ -129,7 +129,6 @@ export function TitlePage({
   titleError,
   openMessage,
   onStateChange,
-  onChooseBatchDir,
   onScanBatchDir,
   onRunBatch,
   onRetryFailed,
@@ -172,16 +171,12 @@ export function TitlePage({
             </CardHeader>
             <CardContent className="space-y-3 p-5 pt-0">
               <div className="flex flex-col gap-2 md:flex-row">
-                <Input
+                <DirectoryPicker
                   className="min-w-0 flex-1"
-                  onChange={(event) => onStateChange('batchDir', event.target.value)}
-                  placeholder="选择货号成品中的一个批次目录"
+                  onChange={(value) => onStateChange('batchDir', value)}
+                  title="选择标题批次目录"
                   value={state.batchDir}
                 />
-                <Button onClick={onChooseBatchDir} type="button" variant="secondary">
-                  <FolderOpen className="mr-2 h-4 w-4" />
-                  选择
-                </Button>
                 <Button onClick={onScanBatchDir} type="button" variant="secondary">
                   <ScanLine className="mr-2 h-4 w-4" />
                   扫描
