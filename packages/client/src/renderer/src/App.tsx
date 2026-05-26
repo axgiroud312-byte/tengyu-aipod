@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import {
   CollectionPage,
   type CollectionPageState,
+  type CollectionPlatformOption,
   type CollectionProfileOption,
 } from '@/features/collection/CollectionPage'
 import { DetectionPage } from '@/features/detection/DetectionPage'
@@ -41,6 +42,8 @@ import {
   useNavigate,
   useParams,
 } from 'react-router-dom'
+import type { BitBrowserProfileWithStatus } from '../../main/lib/bit-browser-client'
+import type { CollectionPlatformRule } from '../../main/lib/collection-injected-script'
 import type { CollectionRecordRow } from '../../main/lib/collection-record-store'
 import type { CollectionSession } from '../../main/lib/collection-session-manager'
 import type { CollectionSessionEvent } from '../../main/lib/collection-session-manager'
@@ -51,11 +54,6 @@ import type {
   TitleTaskEvent,
 } from '../../main/lib/title-service'
 type PendingCollectionSku = Extract<CollectionSessionEvent, { type: 'sku-required' }>
-
-const defaultCollectionProfiles: CollectionProfileOption[] = [
-  { id: 'profile-001', label: '主店环境', detail: 'Temu 主店环境', online: true },
-  { id: 'profile-002', label: '备用环境', detail: '可手动改写编号', online: false },
-]
 
 const defaultCollectionPageState: CollectionPageState = {
   platform: 'temu',
@@ -130,6 +128,29 @@ function parseNonNegativeNumber(value: string, fallback: number) {
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
   const parsed = Number(value)
   return parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 ? parsed : 1
+}
+
+function collectionPlatformOption(rule: CollectionPlatformRule): CollectionPlatformOption {
+  return {
+    key: rule.key,
+    label: rule.name,
+    detail: rule.entry_url,
+  }
+}
+
+function collectionProfileOption(profile: BitBrowserProfileWithStatus): CollectionProfileOption {
+  const detailItems = [
+    profile.remark,
+    profile.platform,
+    profile.url,
+    profile.seq !== undefined ? `序号 ${profile.seq}` : null,
+  ].filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+  return {
+    id: profile.id,
+    label: profile.name,
+    detail: detailItems.join(' · ') || profile.id,
+    online: profile.online,
+  }
 }
 
 function onboardingPath(step: OnboardingStep) {
@@ -321,10 +342,13 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [collectionPageState, setCollectionPageState] = useState<CollectionPageState>(
     defaultCollectionPageState,
   )
-  const [collectionProfiles, setCollectionProfiles] =
-    useState<CollectionProfileOption[]>(defaultCollectionProfiles)
+  const [collectionPlatforms, setCollectionPlatforms] = useState<CollectionPlatformOption[]>([])
+  const [collectionProfiles, setCollectionProfiles] = useState<CollectionProfileOption[]>([])
   const [isStartingCollection, setIsStartingCollection] = useState(false)
   const [isStoppingCollection, setIsStoppingCollection] = useState(false)
+  const [isResumingCollection, setIsResumingCollection] = useState(false)
+  const [isRefreshingCollectionProfiles, setIsRefreshingCollectionProfiles] = useState(false)
+  const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
 
@@ -347,6 +371,35 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       setModel((current) => nextModels[0]?.key ?? current)
     }
     void loadOptions()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
+    async function loadCollectionPlatforms() {
+      try {
+        const rules = await window.api.collection.listPlatforms()
+        if (!mounted) {
+          return
+        }
+        const options = rules.map(collectionPlatformOption)
+        setCollectionPlatforms(options)
+        setCollectionPageState((current) => {
+          if (options.some((item) => item.key === current.platform)) {
+            return current
+          }
+          const firstPlatform = options[0]?.key
+          return firstPlatform ? { ...current, platform: firstPlatform } : current
+        })
+      } catch (error) {
+        if (mounted) {
+          setCollectionError(error instanceof Error ? error.message : '读取采集平台失败')
+        }
+      }
+    }
+    void loadCollectionPlatforms()
     return () => {
       mounted = false
     }
@@ -390,6 +443,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   useEffect(() => {
     if (activeModule === 'collection') {
       void refreshCollectionRecords()
+      void refreshCollectionProfiles()
     }
   }, [activeModule])
 
@@ -597,9 +651,17 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     setCollectionPageState((current) => ({ ...current, [key]: value }))
   }
 
-  function refreshCollectionProfiles() {
-    setCollectionProfiles(defaultCollectionProfiles)
-    setCollectionError(null)
+  async function refreshCollectionProfiles() {
+    setIsRefreshingCollectionProfiles(true)
+    try {
+      const profiles = await window.api.collection.listProfiles()
+      setCollectionProfiles(profiles.map(collectionProfileOption))
+      setCollectionError(null)
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '读取比特浏览器环境失败')
+    } finally {
+      setIsRefreshingCollectionProfiles(false)
+    }
   }
 
   async function startCollectionSession() {
@@ -645,6 +707,20 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     }
   }
 
+  async function resumeCollectionSession() {
+    setIsResumingCollection(true)
+    setCollectionError(null)
+    try {
+      const session = await window.api.collection.resumeSession()
+      setCollectionSession(session)
+      await refreshCollectionRecords()
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '恢复采集会话失败')
+    } finally {
+      setIsResumingCollection(false)
+    }
+  }
+
   async function retryCollectionRecord(recordId: string) {
     setRetryingRecordId(recordId)
     try {
@@ -655,6 +731,19 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       setCollectionError(error instanceof Error ? error.message : '重试采集记录失败')
     } finally {
       setRetryingRecordId(null)
+    }
+  }
+
+  async function deleteCollectionRecord(recordId: string) {
+    setDeletingRecordId(recordId)
+    try {
+      await window.api.collection.deleteRecord({ record_id: recordId })
+      await refreshCollectionRecords()
+      setCollectionError(null)
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '删除采集记录失败')
+    } finally {
+      setDeletingRecordId(null)
     }
   }
 
@@ -700,16 +789,22 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           <div className="space-y-6">
             {activeModule === 'collection' ? (
               <CollectionPage
+                deletingRecordId={deletingRecordId}
                 error={collectionError}
                 onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
-                onRefreshProfiles={refreshCollectionProfiles}
+                onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
+                onRefreshProfiles={() => void refreshCollectionProfiles()}
                 onRefreshRecords={() => void refreshCollectionRecords()}
+                onResumeSession={() => void resumeCollectionSession()}
                 onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
                 onStartSession={() => void startCollectionSession()}
                 onStateChange={updateCollectionPageState}
                 onStopSession={() => void stopCollectionSession()}
+                platforms={collectionPlatforms}
                 profiles={collectionProfiles}
+                refreshingProfiles={isRefreshingCollectionProfiles}
                 records={collectionRecords}
+                resuming={isResumingCollection}
                 retryingRecordId={retryingRecordId}
                 session={collectionSession}
                 starting={isStartingCollection}

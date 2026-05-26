@@ -55,6 +55,28 @@ describe('CDPClient', () => {
     expect(client.getCachedEndpoint('profile-1')).toBe('http://127.0.0.1:9222')
   })
 
+  it('uses browser/ports instead of opening profiles that are already online', async () => {
+    const browser = new FakeBrowser()
+    const bitBrowser = {
+      listOpenProfileIds: vi.fn().mockResolvedValue(['profile-1']),
+      getCdpEndpoint: vi.fn().mockResolvedValue({
+        http: 'http://127.0.0.1:9333',
+        ws: 'ws://127.0.0.1:9333/devtools/browser/open',
+      }),
+      openProfile: vi.fn(),
+      closeProfile: vi.fn().mockResolvedValue(undefined),
+    }
+    const chromium = {
+      connectOverCDP: vi.fn().mockResolvedValue(browser),
+    }
+    const client = new CDPClient({ bitBrowser, chromium })
+
+    await expect(client.connectToProfile('profile-1')).resolves.toBe(browser)
+    expect(bitBrowser.getCdpEndpoint).toHaveBeenCalledWith('profile-1')
+    expect(bitBrowser.openProfile).not.toHaveBeenCalled()
+    expect(chromium.connectOverCDP).toHaveBeenCalledWith('http://127.0.0.1:9333')
+  })
+
   it('reuses a connected browser for the same profile', async () => {
     const browser = new FakeBrowser()
     const bitBrowser = {

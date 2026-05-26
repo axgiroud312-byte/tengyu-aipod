@@ -17,6 +17,10 @@ export type BitBrowserProfile = {
   remark?: string
 }
 
+export type BitBrowserProfileWithStatus = BitBrowserProfile & {
+  online: boolean
+}
+
 export type BitBrowserCdpEndpoint = {
   http: string
   ws: string
@@ -56,6 +60,11 @@ export class BitBrowserClient {
     return profiles
   }
 
+  async listOpenProfileIds(): Promise<string[]> {
+    const payload = await this.post('/browser/pids/all', {})
+    return collectOpenProfileIds(payload)
+  }
+
   async openProfile(profileId: string): Promise<BitBrowserCdpEndpoint> {
     const payload = await this.post('/browser/open', { id: profileId })
     const record = asRecord(payload)
@@ -68,6 +77,15 @@ export class BitBrowserClient {
       throw protocolError('比特浏览器打开响应缺少 CDP 端点', { profileId })
     }
 
+    return endpoint
+  }
+
+  async getCdpEndpoint(profileId: string): Promise<BitBrowserCdpEndpoint> {
+    const payload = await this.post('/browser/ports', { id: profileId })
+    const endpoint = readCdpEndpointFromPayload(payload, profileId)
+    if (!endpoint) {
+      throw protocolError('比特浏览器端口响应缺少 CDP 端点', { profileId })
+    }
     return endpoint
   }
 
@@ -187,6 +205,58 @@ function collectProfileRecords(payload: unknown): RecordValue[] {
   return [record]
 }
 
+function collectOpenProfileIds(payload: unknown): string[] {
+  const ids = new Set<string>()
+  visitOpenProfilePayload(payload, ids)
+  return Array.from(ids)
+}
+
+function visitOpenProfilePayload(value: unknown, ids: Set<string>): void {
+  if (typeof value === 'string' && value.trim()) {
+    ids.add(value)
+    return
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      visitOpenProfilePayload(item, ids)
+    }
+    return
+  }
+
+  const record = asRecord(value)
+  if (!record) {
+    return
+  }
+
+  const directId = readString(record, ['id', 'browserId', 'profileId'])
+  if (directId) {
+    ids.add(directId)
+  }
+
+  let visitedNested = false
+  for (const key of ['ids', 'list', 'rows', 'browserIds', 'browser_ids', 'pids']) {
+    if (Object.hasOwn(record, key)) {
+      visitedNested = true
+      visitOpenProfilePayload(record[key], ids)
+    }
+  }
+
+  if (!directId && !visitedNested) {
+    for (const [key, item] of Object.entries(record)) {
+      if (
+        (typeof item === 'number' ||
+          typeof item === 'string' ||
+          typeof item === 'boolean' ||
+          isRecord(item)) &&
+        key.trim()
+      ) {
+        ids.add(key)
+      }
+    }
+  }
+}
+
 function readProfile(payload: unknown): BitBrowserProfile | null {
   const record = asRecord(payload)
   if (!record) {
@@ -240,6 +310,21 @@ function readCdpEndpoint(record: RecordValue): BitBrowserCdpEndpoint | null {
     ...(coreVersion !== undefined ? { coreVersion } : {}),
     ...(driverPath !== undefined ? { driverPath } : {}),
   }
+}
+
+function readCdpEndpointFromPayload(payload: unknown, profileId: string) {
+  const record = asRecord(payload)
+  if (!record) {
+    return null
+  }
+
+  const direct = readCdpEndpoint(record)
+  if (direct) {
+    return direct
+  }
+
+  const nested = asRecord(record[profileId])
+  return nested ? readCdpEndpoint(nested) : null
 }
 
 function normalizeCdpHttpEndpoint(value: string) {

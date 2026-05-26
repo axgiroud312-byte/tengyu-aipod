@@ -40,11 +40,23 @@ declare global {
         cleanupAll: () => Promise<{ ok: true }>
       }
       collection: {
+        listPlatforms: () => Promise<
+          import('../../main/lib/collection-injected-script').CollectionPlatformRule[]
+        >
+        listProfiles: () => Promise<
+          import('../../main/lib/bit-browser-client').BitBrowserProfileWithStatus[]
+        >
         startSession: (
           input: import('../../main/lib/collection-session-manager').CollectionSessionConfig,
         ) => Promise<import('../../main/lib/collection-session-manager').CollectionSession>
         stopSession: () => Promise<
           import('../../main/lib/collection-session-manager').CollectionSession | null
+        >
+        resumeSession: () => Promise<
+          import('../../main/lib/collection-session-manager').CollectionSession | null
+        >
+        openProfile: (input: { profile_id: string }) => Promise<
+          import('../../main/lib/bit-browser-client').BitBrowserCdpEndpoint
         >
         handleClick: (input: {
           event: import('../../main/lib/collection-click-service').CollectionClickEvent
@@ -66,6 +78,10 @@ declare global {
         retryRecord: (input: { record_id: string }) => Promise<
           import('../../main/lib/collection-click-service').CollectionScrollResult
         >
+        deleteRecord: (input: { record_id: string }) => Promise<{
+          ok: true
+          record_id: string
+        }>
         getActiveSession: () => Promise<
           import('../../main/lib/collection-session-manager').CollectionSession | null
         >

@@ -105,6 +105,14 @@ class FakeDb {
               values[8],
             ]
           }
+          return
+        }
+        if (sql.includes('DELETE FROM collection_records')) {
+          const recordId = values[0]
+          const index = this.records.findIndex((record) => record[0] === recordId)
+          if (index >= 0) {
+            this.records.splice(index, 1)
+          }
         }
       },
       all: (...values) => {
@@ -184,6 +192,9 @@ function createFs() {
       }
       return { size: value.byteLength }
     }),
+    rm: vi.fn(async (path: string) => {
+      files.delete(path)
+    }),
   }
 }
 
@@ -217,6 +228,7 @@ function createService(
     writeFile: fs.writeFile as never,
     stat: fs.stat as never,
     mkdir: fs.mkdir as never,
+    rm: fs.rm as never,
   })
   return { service, fs, db, requestSku }
 }
@@ -438,6 +450,36 @@ describe('CollectionClickService', () => {
     ])
   })
 
+  it('dispatches only events that match the active collection mode', async () => {
+    const { service, fs } = createService({ session: activeSession({ mode: 'scroll' }) })
+
+    await expect(
+      service.dispatch(
+        {
+          kind: 'click',
+          img: 'https://img.temu.com/a.jpg',
+          page: 'https://www.temu.com/goods/1',
+        },
+        { platformRule, mode: 'scroll' },
+      ),
+    ).resolves.toBeNull()
+
+    await expect(
+      service.dispatch(
+        {
+          kind: 'scroll',
+          img: 'https://img.temu.com/a.webp',
+          page: 'https://www.temu.com/search?q=shirt',
+        },
+        { platformRule, mode: 'scroll' },
+      ),
+    ).resolves.toMatchObject({
+      status: 'success',
+      savedPath: looseImagePath('.webp'),
+    })
+    expect(fs.writeFile).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects scroll events unless the active session is in scroll mode', async () => {
     const { service } = createService()
 
@@ -520,6 +562,33 @@ describe('CollectionClickService', () => {
     expect(fs.writeFile).toHaveBeenCalledWith(looseImagePath('.jpg'), Buffer.from('image-bytes'))
     expect(db.records[0]?.[7]).toBe('success')
     expect(db.records[0]?.[8]).toBeNull()
+  })
+
+  it('deletes records and removes saved files when present', async () => {
+    const db = new FakeDb()
+    const { service, fs } = createService({ db })
+    const savedPath = '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg'
+    fs.files.set(savedPath, Buffer.from('image-bytes'))
+    db.records.push([
+      'record-1',
+      'session-1',
+      'SKU-001',
+      'https://img.temu.com/a.jpg',
+      'https://www.temu.com/goods/1',
+      'https://www.temu.com/goods/1',
+      savedPath,
+      'failed',
+      'download failed',
+      null,
+      1000,
+    ])
+
+    await expect(service.deleteRecord('record-1')).resolves.toEqual({
+      ok: true,
+      record_id: 'record-1',
+    })
+    expect(db.records).toEqual([])
+    expect(fs.files.has(savedPath)).toBe(false)
   })
 })
 

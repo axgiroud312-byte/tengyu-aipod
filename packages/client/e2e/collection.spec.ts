@@ -424,6 +424,86 @@ test.describe('collection module E2E', () => {
     expect(mockServer.imageHits.get('/images/flaky_original.png')).toBe(2)
   })
 
+  test('starts a session, reloads the current page, injects script, and receives binding payloads', async () => {
+    if (!mockServer) {
+      throw new Error('mock server missing')
+    }
+    const workbenchRoot = join(tempRoot, 'workbench-real-wiring')
+    const outputDir = join(workbenchRoot, '01-采集')
+    await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
+    await mkdir(outputDir, { recursive: true })
+
+    const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+    browsers.push(browser)
+    const context = await browser.newContext()
+    const page = await context.newPage()
+    await page.goto(`${mockServer.baseUrl}/goods/click`)
+    await page.evaluate(() => {
+      Reflect.set(window, 'beforeStart', true)
+    })
+
+    const rule = platformRule(mockServer.baseUrl)
+    const cdp = new CDPClient({
+      bitBrowser: {
+        openProfile: async () => ({
+          http: 'http://mock-cdp/profile-current',
+          ws: 'ws://mock-cdp/profile-current',
+        }),
+        closeProfile: async () => undefined,
+      },
+      chromium: {
+        connectOverCDP: async () => browser,
+      },
+    })
+    const results: CapturedResult[] = []
+    let service: CollectionClickService | null = null
+    const manager = new CollectionSessionManager({
+      readConfig: async () => ({ workbench_root: workbenchRoot }) as never,
+      cdp,
+      locks: new BrowserProfileLockManager(),
+      getPlatformRule: () => rule,
+      dispatchCollectionEvent: async (payload, dispatchContext) => {
+        if (!service) {
+          throw new Error('collection service missing')
+        }
+        const result = await service.dispatch(payload, dispatchContext)
+        if (result) {
+          results.push({ payload, result })
+        }
+        return result
+      },
+      randomId: () => 'session-real-wiring',
+      now: () => 1_779_610_000_000,
+    })
+    service = new CollectionClickService({
+      sessionManager: manager,
+      randomId: () => `record-${results.length + 1}`,
+      now: () => 1_779_610_000_000 + results.length,
+    })
+
+    await manager.startSession({
+      platform: 'temu',
+      profile_id: 'profile-current',
+      mode: 'click',
+      output_dir: outputDir,
+    })
+
+    await expect(page.evaluate(() => Reflect.get(window, 'beforeStart'))).resolves.toBeUndefined()
+    const productLink = page.getByRole('link', { name: 'Hero product' })
+    await productLink.click()
+
+    await expect.poll(() => results.length).toBe(1)
+    expect(results[0]?.payload).toMatchObject({
+      kind: 'click',
+      img: `${mockServer.baseUrl}/images/click_original.png`,
+      page: `${mockServer.baseUrl}/goods/click`,
+    })
+    expect(results[0]?.result).toEqual({
+      status: 'pending_sku',
+      goodsLink: `${mockServer.baseUrl}/goods/click`,
+    })
+  })
+
   test('rejects profile lock competition for two collection sessions', async () => {
     const locks = new BrowserProfileLockManager()
     const browser = await chromium.launch({ headless: true, channel: 'chrome' })

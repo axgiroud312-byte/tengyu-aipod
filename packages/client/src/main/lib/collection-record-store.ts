@@ -133,6 +133,14 @@ export function getCollectionRecord(
   return row ? mapCollectionRecordRow(row) : null
 }
 
+export function deleteCollectionRecord(
+  db: Pick<Database.Database, 'exec' | 'prepare'>,
+  recordId: string,
+) {
+  ensureCollectionRecordTables(db)
+  return db.prepare('DELETE FROM collection_records WHERE id = ?').run(recordId).changes
+}
+
 export function listCollectionRecords(
   db: Pick<Database.Database, 'exec' | 'prepare'>,
   query: CollectionRecordQuery,

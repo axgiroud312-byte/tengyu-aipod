@@ -20,7 +20,8 @@ export type InjectPageScriptOptions = {
 }
 
 export type CDPClientDependencies = {
-  bitBrowser?: Pick<BitBrowserClient, 'openProfile' | 'closeProfile'>
+  bitBrowser?: Pick<BitBrowserClient, 'openProfile' | 'closeProfile'> &
+    Partial<Pick<BitBrowserClient, 'getCdpEndpoint' | 'listOpenProfileIds'>>
   chromium?: Pick<typeof chromium, 'connectOverCDP'>
 }
 
@@ -33,7 +34,8 @@ const DEFAULT_BINDING_NAME = '__poseidonSendToHost'
 
 export class CDPClient {
   private readonly browsers = new Map<string, BrowserEntry>()
-  private readonly bitBrowser: Pick<BitBrowserClient, 'openProfile' | 'closeProfile'>
+  private readonly bitBrowser: Pick<BitBrowserClient, 'openProfile' | 'closeProfile'> &
+    Partial<Pick<BitBrowserClient, 'getCdpEndpoint' | 'listOpenProfileIds'>>
   private readonly chromium: Pick<typeof chromium, 'connectOverCDP'>
 
   constructor(dependencies: CDPClientDependencies = {}) {
@@ -50,7 +52,7 @@ export class CDPClient {
       this.browsers.delete(profileId)
     }
 
-    const endpoint = await this.bitBrowser.openProfile(profileId)
+    const endpoint = await this.resolveCdpEndpoint(profileId)
     try {
       const browser = await this.chromium.connectOverCDP(endpoint.http)
       this.browsers.set(profileId, { browser, endpoint: endpoint.http })
@@ -74,6 +76,16 @@ export class CDPClient {
         error,
       )
     }
+  }
+
+  private async resolveCdpEndpoint(profileId: string) {
+    if (this.bitBrowser.listOpenProfileIds && this.bitBrowser.getCdpEndpoint) {
+      const openProfileIds = await this.bitBrowser.listOpenProfileIds()
+      if (openProfileIds.includes(profileId)) {
+        return this.bitBrowser.getCdpEndpoint(profileId)
+      }
+    }
+    return this.bitBrowser.openProfile(profileId)
   }
 
   async reconnect(profileId: string): Promise<Browser> {

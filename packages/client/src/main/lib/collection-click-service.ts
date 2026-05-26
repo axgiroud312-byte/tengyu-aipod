@@ -1,15 +1,17 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { extname, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import type Database from 'better-sqlite3'
 import type { BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
+import type { CollectionBindingPayload } from './cdp-client'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
   type CollectionRecordInput,
   type CollectionRecordRow,
+  deleteCollectionRecord,
   getCollectionRecord,
   insertCollectionRecord,
   listCollectionRecords,
@@ -69,6 +71,11 @@ export type CollectionScrollResult = Exclude<CollectionClickResult, { status: 'p
 type CollectionSavedResult = CollectionScrollResult
 type CollectionImageEvent = CollectionClickEvent | CollectionScrollEvent
 
+export type CollectionDispatchContext = {
+  platformRule: CollectionPlatformRule
+  mode: CollectionSession['mode']
+}
+
 export type CollectionClickServiceDependencies = {
   sessionManager?: Pick<
     CollectionSessionManager,
@@ -83,6 +90,7 @@ export type CollectionClickServiceDependencies = {
   writeFile?: typeof writeFile
   stat?: typeof stat
   mkdir?: typeof mkdir
+  rm?: typeof rm
 }
 
 export class CollectionClickService {
@@ -101,6 +109,7 @@ export class CollectionClickService {
   private readonly writeFile: typeof writeFile
   private readonly stat: typeof stat
   private readonly mkdir: typeof mkdir
+  private readonly rm: typeof rm
   private readonly pendingGoodsClicks = new Map<
     string,
     Array<{ event: CollectionClickEvent; platformRule: CollectionPlatformRule }>
@@ -117,6 +126,42 @@ export class CollectionClickService {
     this.writeFile = dependencies.writeFile ?? writeFile
     this.stat = dependencies.stat ?? stat
     this.mkdir = dependencies.mkdir ?? mkdir
+    this.rm = dependencies.rm ?? rm
+  }
+
+  async dispatch(
+    payload: CollectionBindingPayload,
+    context: CollectionDispatchContext,
+  ): Promise<CollectionClickResult | CollectionScrollResult | null> {
+    if (payload.kind !== context.mode || !payload.img) {
+      return null
+    }
+
+    if (payload.kind === 'click') {
+      return this.handleClick(
+        {
+          kind: 'click',
+          img: payload.img,
+          page: payload.page,
+          ...(payload.goodsLink ? { goodsLink: payload.goodsLink } : {}),
+          ...(typeof payload.platform === 'string' ? { platform: payload.platform } : {}),
+        },
+        context.platformRule,
+      )
+    }
+
+    return this.handleScroll(
+      {
+        kind: 'scroll',
+        img: payload.img,
+        page: payload.page,
+        ...(payload.goodsLink ? { goodsLink: payload.goodsLink } : {}),
+        ...(typeof payload.platform === 'string' ? { platform: payload.platform } : {}),
+        ...(typeof payload.width === 'number' ? { width: payload.width } : {}),
+        ...(typeof payload.height === 'number' ? { height: payload.height } : {}),
+      },
+      context.platformRule,
+    )
   }
 
   async handleClick(event: CollectionClickEvent, platformRule: CollectionPlatformRule) {
@@ -247,6 +292,37 @@ export class CollectionClickService {
     } finally {
       db.close()
     }
+  }
+
+  async deleteRecord(recordId: string) {
+    const session = this.sessionManager.getActiveSession()
+    if (!session) {
+      throw new AppErrorClass('HTTP_4XX', '当前没有采集会话', false, {
+        kind: 'state_conflict',
+      })
+    }
+
+    const workbenchRoot = workbenchRootFromOutput(session.output_dir)
+    const db = this.openDatabase(workbenchRoot)
+    let savedPath: string | null = null
+    try {
+      const record = getCollectionRecord(db, recordId)
+      if (!record || record.sessionId !== session.id) {
+        throw new AppErrorClass('HTTP_4XX', '采集记录不存在', false, {
+          kind: 'not_found',
+          recordId,
+        })
+      }
+      savedPath = record.savedPath ?? null
+      deleteCollectionRecord(db, recordId)
+    } finally {
+      db.close()
+    }
+
+    if (savedPath) {
+      await this.rm(savedPath, { force: true }).catch(() => undefined)
+    }
+    return { ok: true, record_id: recordId }
   }
 
   private async saveImage(input: {
@@ -621,6 +697,10 @@ const CollectionRetryRecordInputSchema = z.object({
   record_id: z.string().min(1),
 })
 
+const CollectionDeleteRecordInputSchema = z.object({
+  record_id: z.string().min(1),
+})
+
 export function registerCollectionClickIpc() {
   const ipcMain = electronIpcMain()
   ipcMain.handle('collection:set-sku', async (_event, input: unknown) => {
@@ -723,6 +803,17 @@ export function registerCollectionClickIpc() {
     const result = await collectionClickService.retryRecord(parsed.data.record_id)
     emitCollectionEvent({ type: 'image-saved', record: result.record })
     return result
+  })
+
+  ipcMain.handle('collection:delete-record', async (_event, input: unknown) => {
+    const parsed = CollectionDeleteRecordInputSchema.safeParse(input)
+    if (!parsed.success) {
+      throw new AppErrorClass('HTTP_4XX', '采集删除参数不正确', false, {
+        kind: 'validation',
+        issues: parsed.error.issues,
+      })
+    }
+    return collectionClickService.deleteRecord(parsed.data.record_id)
   })
 }
 

@@ -89,6 +89,50 @@ describe('BitBrowserClient', () => {
     expect(body).toEqual({ id: 'profile-1' })
   })
 
+  it('lists currently open profile ids through browser/pids/all', async () => {
+    server.use(
+      http.post(`${BIT_BROWSER_DEFAULT_BASE_URL}/browser/pids/all`, () =>
+        HttpResponse.json({
+          success: true,
+          data: {
+            'profile-1': 1234,
+            'profile-2': 5678,
+          },
+        }),
+      ),
+    )
+
+    const client = new BitBrowserClient()
+
+    await expect(client.listOpenProfileIds()).resolves.toEqual(['profile-1', 'profile-2'])
+  })
+
+  it('reads CDP endpoints for already-open profiles through browser/ports', async () => {
+    let body: unknown = null
+    server.use(
+      http.post(`${BIT_BROWSER_DEFAULT_BASE_URL}/browser/ports`, async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          success: true,
+          data: {
+            http: '127.0.0.1:9333',
+            ws: 'ws://127.0.0.1:9333/devtools/browser/open',
+            debug_port: 9333,
+          },
+        })
+      }),
+    )
+
+    const client = new BitBrowserClient()
+
+    await expect(client.getCdpEndpoint('profile-open')).resolves.toEqual({
+      http: 'http://127.0.0.1:9333',
+      ws: 'ws://127.0.0.1:9333/devtools/browser/open',
+      debugPort: 9333,
+    })
+    expect(body).toEqual({ id: 'profile-open' })
+  })
+
   it('closes a profile through browser/close', async () => {
     let body: unknown = null
     server.use(
