@@ -345,6 +345,31 @@ describe('CollectionSessionManager', () => {
     )
   })
 
+  it('passes the session size filter into the injected collection script', async () => {
+    const { manager, cdp } = createManager()
+
+    await manager.startSession({
+      platform: 'temu',
+      profile_id: 'profile-1',
+      mode: 'scroll',
+      size_filter: {
+        min_width: 500,
+        max_width: 1200,
+        min_height: 400,
+        max_height: 900,
+      },
+    })
+
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        script: expect.stringContaining(
+          'const sizeFilter = {"minWidth":500,"maxWidth":1200,"minHeight":400,"maxHeight":900};',
+        ),
+      }),
+    )
+  })
+
   it('lists real BitBrowser profiles with online status joined from open profile ids', async () => {
     const bitBrowser = {
       listProfiles: vi.fn().mockResolvedValue([

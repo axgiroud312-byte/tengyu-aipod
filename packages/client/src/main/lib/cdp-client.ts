@@ -111,6 +111,7 @@ export class CDPClient {
       await options.onEvent(readBindingPayload(data))
     })
     await page.addInitScript(options.script)
+    await page.evaluate(options.script).catch(() => null)
   }
 
   async getOrReconnect(profileId: string): Promise<Browser> {

@@ -18,6 +18,7 @@ import {
 import { type CDPClient, type CollectionBindingPayload, cdpClient } from './cdp-client'
 import {
   type CollectionPlatformRule,
+  type SizeFilter,
   createCollectionInjectedScript,
 } from './collection-injected-script'
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
@@ -35,6 +36,7 @@ export type CollectionSessionConfig = {
   profile_id: string
   mode: CollectionMode
   output_dir?: string | undefined
+  size_filter?: SizeFilter
 }
 
 export type CollectionSession = {
@@ -64,6 +66,12 @@ type DispatchCollectionEvent = (
   payload: CollectionBindingPayload,
   context: { platformRule: CollectionPlatformRule; mode: CollectionMode },
 ) => Promise<unknown> | unknown
+type SessionSizeFilterInput = {
+  min_width?: number | undefined
+  max_width?: number | undefined
+  min_height?: number | undefined
+  max_height?: number | undefined
+}
 
 export type CollectionSessionManagerDependencies = {
   readConfig?: ReadAppConfig
@@ -84,6 +92,7 @@ type SessionRuntime = {
   workbenchRoot: string
   goodsSku: Map<string, string>
   platformRule: CollectionPlatformRule
+  sizeFilter: SizeFilter
   wiredPages: WeakSet<Page>
   browser: Browser | undefined
   context: BrowserContext | undefined
@@ -96,6 +105,14 @@ const CollectionSessionConfigSchema = z
     profile_id: z.string().min(1),
     mode: z.enum(['click', 'scroll']),
     output_dir: z.string().min(1).optional(),
+    size_filter: z
+      .object({
+        min_width: z.number().int().nonnegative().optional(),
+        max_width: z.number().int().nonnegative().optional(),
+        min_height: z.number().int().nonnegative().optional(),
+        max_height: z.number().int().nonnegative().optional(),
+      })
+      .optional(),
   })
   .transform((value): CollectionSessionConfig => {
     const outputDir = value.output_dir
@@ -104,6 +121,7 @@ const CollectionSessionConfigSchema = z
       profile_id: value.profile_id,
       mode: value.mode,
       ...(outputDir ? { output_dir: outputDir } : {}),
+      size_filter: normalizeSessionSizeFilter(value.size_filter),
     }
   })
 
@@ -162,6 +180,7 @@ export class CollectionSessionManager {
       workbenchRoot,
       goodsSku: new Map(),
       platformRule,
+      sizeFilter: normalizeSessionSizeFilter(config.size_filter),
       wiredPages: new WeakSet(),
       browser: undefined,
       context: undefined,
@@ -360,7 +379,10 @@ export class CollectionSessionManager {
     runtime.wiredPages.add(page)
     try {
       await this.cdp.injectPageScript(page, {
-        script: createCollectionInjectedScript({ platformRule: runtime.platformRule }),
+        script: createCollectionInjectedScript({
+          platformRule: runtime.platformRule,
+          sizeFilter: runtime.sizeFilter,
+        }),
         onEvent: async (payload) => {
           await this.dispatchCollectionEvent(payload, {
             platformRule: runtime.platformRule,
@@ -390,6 +412,19 @@ export class CollectionSessionManager {
 function withoutPauseReason(session: CollectionSession): CollectionSession {
   const { pause_reason: _pauseReason, ...rest } = session
   return rest
+}
+
+function normalizeSessionSizeFilter(filter: SessionSizeFilterInput | undefined): SizeFilter {
+  return {
+    min_width: nonNegativeInteger(filter?.min_width),
+    max_width: nonNegativeInteger(filter?.max_width),
+    min_height: nonNegativeInteger(filter?.min_height),
+    max_height: nonNegativeInteger(filter?.max_height),
+  }
+}
+
+function nonNegativeInteger(value: number | undefined) {
+  return Number.isFinite(value) && value && value > 0 ? Math.floor(value) : 0
 }
 
 function workbenchDbPath(workbenchRoot: string) {

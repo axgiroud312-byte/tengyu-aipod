@@ -39,9 +39,17 @@ export type CollectionScrollFilter = {
   maxHeight?: number
 }
 
+export type SizeFilter = {
+  min_width?: number
+  max_width?: number
+  min_height?: number
+  max_height?: number
+}
+
 export type CollectionInjectedScriptOptions = {
   platformRule: CollectionPlatformRule
   scrollFilter?: CollectionScrollFilter
+  sizeFilter?: SizeFilter
   bindingName?: string
 }
 
@@ -50,9 +58,11 @@ const DEFAULT_BINDING_NAME = '__poseidonSendToHost'
 export function createCollectionInjectedScript(options: CollectionInjectedScriptOptions) {
   return `(() => {
   const platformRule = ${JSON.stringify(options.platformRule)};
-  const scrollFilter = ${JSON.stringify(normalizeScrollFilter(options.scrollFilter))};
+  const keywordFilter = ${JSON.stringify(normalizeKeywordFilter(options.scrollFilter))};
+  const sizeFilter = ${JSON.stringify(normalizeSizeFilter(options.sizeFilter, options.scrollFilter))};
   const bindingName = ${JSON.stringify(options.bindingName ?? DEFAULT_BINDING_NAME)};
   const seenScrollImages = new Set();
+  let lastPageUrl = window.location.href;
 
   function host() {
     return window.location.hostname.toLowerCase();
@@ -82,6 +92,19 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
     }
   }
 
+  function isBlockedImageUrl(value) {
+    const normalized = String(value || '').trim().toLowerCase();
+    return !normalized ||
+      normalized.startsWith('data:') ||
+      normalized.startsWith('about:') ||
+      normalized.startsWith('blob:');
+  }
+
+  function normalizedImageUrl(value) {
+    const url = absoluteUrl(value);
+    return isBlockedImageUrl(url) ? '' : url;
+  }
+
   function nearestGoodsLink(element) {
     const anchor = element.closest('a[href]');
     if (anchor && anchor.href) return absoluteUrl(anchor.href);
@@ -103,29 +126,40 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
       })
       .filter((item) => item.url);
     candidates.sort((left, right) => right.size - left.size);
-    return absoluteUrl(candidates[0]?.url || '');
+    return normalizedImageUrl(candidates[0]?.url || '');
   }
 
   function resolveOriginalImage(img) {
     const resolver = platformRule.original_image_resolver || { type: 'srcset_largest', config: {} };
     if (resolver.type === 'data_attr') {
       const attr = resolver.config?.attr || 'data-src';
-      return absoluteUrl(img.getAttribute(attr) || img.currentSrc || img.src);
+      return normalizedImageUrl(img.getAttribute(attr) || img.currentSrc || img.src);
     }
     if (resolver.type === 'src_replace') {
       const from = resolver.config?.from || '';
       const to = resolver.config?.to || '';
       const source = img.currentSrc || img.src;
-      return absoluteUrl(from ? source.replace(from, to) : source);
+      return normalizedImageUrl(from ? source.replace(from, to) : source);
     }
-    return largestSrcset(img.srcset) || absoluteUrl(img.currentSrc || img.src);
+    return largestSrcset(img.srcset) || normalizedImageUrl(img.currentSrc || img.src);
   }
 
   function send(data) {
     if (!isAllowedPage()) return;
+    const payload = { ...data };
+    if (typeof payload.img === 'string') {
+      const img = normalizedImageUrl(payload.img);
+      if (!img) return;
+      payload.img = img;
+    }
+    if (Array.isArray(payload.images)) {
+      const images = payload.images.map(normalizedImageUrl).filter(Boolean);
+      if (images.length === 0) return;
+      payload.images = images;
+    }
     const target = window[bindingName];
     if (typeof target === 'function') {
-      void target({ ...data, platform: platformRule.key, page: window.location.href });
+      void target({ ...payload, platform: platformRule.key, page: window.location.href });
     }
   }
 
@@ -133,6 +167,7 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
     const target = event.target;
     const img = target?.closest?.('img');
     if (!img) return;
+    if (!insideSizeRange(img)) return;
     const originalUrl = resolveOriginalImage(img);
     if (!originalUrl) return;
     send({
@@ -151,17 +186,42 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
   function insideSizeRange(img) {
     const width = img.naturalWidth || img.width || 0;
     const height = img.naturalHeight || img.height || 0;
-    if (scrollFilter.minWidth > 0 && width < scrollFilter.minWidth) return false;
-    if (scrollFilter.maxWidth > 0 && width > scrollFilter.maxWidth) return false;
-    if (scrollFilter.minHeight > 0 && height < scrollFilter.minHeight) return false;
-    if (scrollFilter.maxHeight > 0 && height > scrollFilter.maxHeight) return false;
+    if (sizeFilter.minWidth > 0 && width < sizeFilter.minWidth) return false;
+    if (sizeFilter.maxWidth > 0 && width > sizeFilter.maxWidth) return false;
+    if (sizeFilter.minHeight > 0 && height < sizeFilter.minHeight) return false;
+    if (sizeFilter.maxHeight > 0 && height > sizeFilter.maxHeight) return false;
     return true;
   }
 
   function passesScrollFilter(img, goodsLink) {
-    if (keywordMatches(scrollFilter.excludeKeywords, goodsLink)) return false;
-    if (scrollFilter.includeKeywords.length > 0 && !keywordMatches(scrollFilter.includeKeywords, goodsLink)) return false;
+    if (keywordMatches(keywordFilter.excludeKeywords, goodsLink)) return false;
+    if (keywordFilter.includeKeywords.length > 0 && !keywordMatches(keywordFilter.includeKeywords, goodsLink)) return false;
     return insideSizeRange(img);
+  }
+
+  function clearScrollSeenOnUrlChange() {
+    const nextPageUrl = window.location.href;
+    if (nextPageUrl === lastPageUrl) return;
+    lastPageUrl = nextPageUrl;
+    seenScrollImages.clear();
+  }
+
+  function setupRouteChangeWatcher() {
+    const historyRef = window.history;
+    if (historyRef) {
+      for (const methodName of ['pushState', 'replaceState']) {
+        const original = historyRef[methodName];
+        if (typeof original !== 'function') continue;
+        historyRef[methodName] = function () {
+          const result = original.apply(this, arguments);
+          clearScrollSeenOnUrlChange();
+          return result;
+        };
+      }
+    }
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('popstate', clearScrollSeenOnUrlChange);
+    }
   }
 
   function handleVisibleImage(img) {
@@ -210,18 +270,24 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
   }
 
   document.addEventListener('click', handleClick, true);
+  setupRouteChangeWatcher();
   setupScrollObserver();
 })();`
 }
 
-function normalizeScrollFilter(filter: CollectionScrollFilter = {}) {
+function normalizeKeywordFilter(filter: CollectionScrollFilter = {}) {
   return {
     excludeKeywords: filter.excludeKeywords ?? [],
     includeKeywords: filter.includeKeywords ?? [],
-    minWidth: positiveNumber(filter.minWidth),
-    maxWidth: positiveNumber(filter.maxWidth),
-    minHeight: positiveNumber(filter.minHeight),
-    maxHeight: positiveNumber(filter.maxHeight),
+  }
+}
+
+function normalizeSizeFilter(filter: SizeFilter = {}, legacyFilter: CollectionScrollFilter = {}) {
+  return {
+    minWidth: positiveNumber(filter.min_width ?? legacyFilter.minWidth),
+    maxWidth: positiveNumber(filter.max_width ?? legacyFilter.maxWidth),
+    minHeight: positiveNumber(filter.min_height ?? legacyFilter.minHeight),
+    maxHeight: positiveNumber(filter.max_height ?? legacyFilter.maxHeight),
   }
 }
 

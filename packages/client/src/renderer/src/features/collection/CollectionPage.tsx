@@ -48,6 +48,10 @@ export interface CollectionPageState {
   mode: CollectionMode
   outputDir: string
   scrollKeywords: string
+  minWidth: number
+  maxWidth: number
+  minHeight: number
+  maxHeight: number
 }
 
 interface CollectionPageProps {
@@ -216,6 +220,11 @@ function latestRecordLabel(record: CollectionRecordRow | undefined, now: number)
     return '0 张 · 等待用户在浏览器内操作'
   }
   return `最近一张 ${relativeTimeLabel(record.createdAt, now)}`
+}
+
+function sizeThresholdFromInput(value: string) {
+  const parsed = Number(value)
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : 0
 }
 
 export function CollectionPage({
@@ -472,6 +481,76 @@ export function CollectionPage({
                       </div>
                     </label>
                   </RadioGroup>
+
+                  <div className="rounded-md border bg-muted/40 p-4">
+                    <div className="text-sm font-medium">尺寸过滤（0 = 不限制）</div>
+                    <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                      <label
+                        className="grid gap-2 text-sm font-medium"
+                        htmlFor="collection-min-width"
+                      >
+                        <span>最小宽度</span>
+                        <Input
+                          id="collection-min-width"
+                          min={0}
+                          onChange={(event) =>
+                            onStateChange('minWidth', sizeThresholdFromInput(event.target.value))
+                          }
+                          step={1}
+                          type="number"
+                          value={state.minWidth}
+                        />
+                      </label>
+                      <label
+                        className="grid gap-2 text-sm font-medium"
+                        htmlFor="collection-max-width"
+                      >
+                        <span>最大宽度</span>
+                        <Input
+                          id="collection-max-width"
+                          min={0}
+                          onChange={(event) =>
+                            onStateChange('maxWidth', sizeThresholdFromInput(event.target.value))
+                          }
+                          step={1}
+                          type="number"
+                          value={state.maxWidth}
+                        />
+                      </label>
+                      <label
+                        className="grid gap-2 text-sm font-medium"
+                        htmlFor="collection-min-height"
+                      >
+                        <span>最小高度</span>
+                        <Input
+                          id="collection-min-height"
+                          min={0}
+                          onChange={(event) =>
+                            onStateChange('minHeight', sizeThresholdFromInput(event.target.value))
+                          }
+                          step={1}
+                          type="number"
+                          value={state.minHeight}
+                        />
+                      </label>
+                      <label
+                        className="grid gap-2 text-sm font-medium"
+                        htmlFor="collection-max-height"
+                      >
+                        <span>最大高度</span>
+                        <Input
+                          id="collection-max-height"
+                          min={0}
+                          onChange={(event) =>
+                            onStateChange('maxHeight', sizeThresholdFromInput(event.target.value))
+                          }
+                          step={1}
+                          type="number"
+                          value={state.maxHeight}
+                        />
+                      </label>
+                    </div>
+                  </div>
 
                   {state.mode === 'scroll' ? (
                     <div className="rounded-md border bg-muted/40 p-4">

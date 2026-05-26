@@ -26,12 +26,20 @@ type HarnessOptions = {
 function createHarness(options: HarnessOptions = {}) {
   const callbacks: unknown[] = []
   const listeners = new Map<string, EventListener>()
+  const windowListeners = new Map<string, EventListener>()
   const observed: unknown[] = []
   const observers: Array<{ trigger: (target: unknown) => void }> = []
   const anchors: unknown[] = []
+  const initialHref = options.href ?? `https://${options.hostname ?? 'www.temu.com'}/goods/1`
+  const initialUrl = new URL(initialHref)
   const location = {
-    hostname: options.hostname ?? 'www.temu.com',
-    href: options.href ?? 'https://www.temu.com/goods/1',
+    hostname: options.hostname ?? initialUrl.hostname,
+    href: initialUrl.toString(),
+  }
+  const setLocationHref = (value: string) => {
+    const nextUrl = new URL(value, location.href)
+    location.hostname = nextUrl.hostname
+    location.href = nextUrl.toString()
   }
 
   class FakeElement {
@@ -64,6 +72,21 @@ function createHarness(options: HarnessOptions = {}) {
   }
   const window = {
     location,
+    history: {
+      pushState: (_state: unknown, _title: string, url?: string | URL | null) => {
+        if (url !== undefined && url !== null) {
+          setLocationHref(String(url))
+        }
+      },
+      replaceState: (_state: unknown, _title: string, url?: string | URL | null) => {
+        if (url !== undefined && url !== null) {
+          setLocationHref(String(url))
+        }
+      },
+    },
+    addEventListener: (event: string, listener: EventListener) => {
+      windowListeners.set(event, listener)
+    },
     __poseidonSendToHost: (payload: unknown) => {
       callbacks.push(payload)
     },
@@ -93,6 +116,13 @@ function createHarness(options: HarnessOptions = {}) {
     observed,
     observers,
     FakeImageElement,
+    pushState: (url: string) => {
+      window.history.pushState(null, '', url)
+    },
+    triggerPopState: (url: string) => {
+      setLocationHref(url)
+      windowListeners.get('popstate')?.({} as Event)
+    },
     triggerClick: (target: unknown) => {
       listeners.get('click')?.({ target } as Event)
     },
@@ -159,6 +189,37 @@ describe('createCollectionInjectedScript', () => {
     const img = image(harness.FakeImageElement)
 
     harness.triggerClick(img)
+
+    expect(harness.callbacks).toEqual([])
+  })
+
+  it('drops clicked images outside the configured size range', () => {
+    const script = createCollectionInjectedScript({
+      platformRule,
+      sizeFilter: { min_width: 600 },
+    })
+    const harness = createHarness({ script })
+    const img = image(harness.FakeImageElement, {
+      width: 500,
+      naturalWidth: 500,
+    })
+
+    harness.triggerClick(img)
+
+    expect(harness.callbacks).toEqual([])
+  })
+
+  it('drops clicked data and blob image URLs', () => {
+    const harness = createHarness()
+    const dataImage = image(harness.FakeImageElement, {
+      src: 'data:image/png;base64,a_thumb',
+    })
+    const blobImage = image(harness.FakeImageElement, {
+      src: 'blob:https://www.temu.com/image-1',
+    })
+
+    harness.triggerClick(dataImage)
+    harness.triggerClick(blobImage)
 
     expect(harness.callbacks).toEqual([])
   })
@@ -278,5 +339,30 @@ describe('createCollectionInjectedScript', () => {
     harness.observers[0]?.trigger(tooTall)
 
     expect(harness.callbacks).toEqual([])
+  })
+
+  it('clears seen scroll images when pushState changes the URL', () => {
+    const harness = createHarness()
+    const img = image(harness.FakeImageElement, {
+      goodsLink: 'https://www.temu.com/goods/1',
+    })
+
+    harness.observers[0]?.trigger(img)
+    harness.observers[0]?.trigger(img)
+    harness.pushState('/goods/2')
+    harness.observers[0]?.trigger(img)
+
+    expect(harness.callbacks).toEqual([
+      expect.objectContaining({
+        kind: 'scroll',
+        img: 'https://img.temu.com/a_original.jpg',
+        page: 'https://www.temu.com/goods/1',
+      }),
+      expect.objectContaining({
+        kind: 'scroll',
+        img: 'https://img.temu.com/a_original.jpg',
+        page: 'https://www.temu.com/goods/2',
+      }),
+    ])
   })
 })

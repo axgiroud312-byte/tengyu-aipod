@@ -24,6 +24,7 @@ class FakeBrowser extends EventEmitter {
 class FakePage {
   bindings = new Map<string, (_source: unknown, data: unknown) => Promise<void>>()
   scripts: string[] = []
+  evaluations: string[] = []
 
   async exposeBinding(name: string, callback: (_source: unknown, data: unknown) => Promise<void>) {
     this.bindings.set(name, callback)
@@ -31,6 +32,11 @@ class FakePage {
 
   async addInitScript(script: string) {
     this.scripts.push(script)
+  }
+
+  async evaluate(script: string) {
+    this.evaluations.push(script)
+    return null
   }
 }
 
@@ -175,6 +181,7 @@ describe('CDPClient', () => {
     )
 
     expect(page.scripts).toEqual(['window.__collection = true'])
+    expect(page.evaluations).toEqual(['window.__collection = true'])
     expect(events).toEqual([
       {
         kind: 'click',

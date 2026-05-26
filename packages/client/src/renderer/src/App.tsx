@@ -61,6 +61,10 @@ const defaultCollectionPageState: CollectionPageState = {
   mode: 'click',
   outputDir: '',
   scrollKeywords: '',
+  minWidth: 0,
+  maxWidth: 0,
+  minHeight: 0,
+  maxHeight: 0,
 }
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
@@ -123,6 +127,10 @@ function parsePositiveNumber(value: string, fallback: number) {
 function parseNonNegativeNumber(value: string, fallback: number) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function nonNegativeInteger(value: number) {
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
@@ -677,6 +685,12 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
         platform: collectionPageState.platform,
         profile_id: profileId,
         mode: collectionPageState.mode,
+        size_filter: {
+          min_width: nonNegativeInteger(collectionPageState.minWidth),
+          max_width: nonNegativeInteger(collectionPageState.maxWidth),
+          min_height: nonNegativeInteger(collectionPageState.minHeight),
+          max_height: nonNegativeInteger(collectionPageState.maxHeight),
+        },
         ...(collectionPageState.outputDir.trim()
           ? { output_dir: collectionPageState.outputDir.trim() }
           : {}),
