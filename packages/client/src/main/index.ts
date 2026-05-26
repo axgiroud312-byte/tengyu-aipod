@@ -2,6 +2,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { registerListingRunnerIpc } from '../modules/listing/runner'
+import { registerDialogIpc } from './dialog'
 import { activationPoller } from './lib/activation-poller'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
@@ -52,6 +53,7 @@ app.whenReady().then(() => {
   ipcMain.handle('app:ping', () => 'pong')
   ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
   ipcMain.handle('activation:sync-status', () => activationPoller.poll())
+  registerDialogIpc()
   registerOnboardingIpc()
   registerBrowserProfileLockIpc()
   registerSkillCacheIpc()

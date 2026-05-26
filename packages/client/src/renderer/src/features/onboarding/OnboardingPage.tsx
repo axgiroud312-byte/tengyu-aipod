@@ -1,3 +1,4 @@
+import { DirectoryPicker } from '@/components/directory-picker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -38,7 +39,6 @@ interface OnboardingPageProps {
   onWorkbenchRootChange: (value: string) => void
   onApiKeyChange: (key: OnboardingApiKey, value: string) => void
   onActivate: () => void
-  onChooseWorkbenchRoot: () => void
   onSaveWorkbenchRoot: () => void
   onSaveApiKeys: () => void
   onComplete: () => void
@@ -197,7 +197,6 @@ export function OnboardingPage({
   onWorkbenchRootChange,
   onApiKeyChange,
   onActivate,
-  onChooseWorkbenchRoot,
   onSaveWorkbenchRoot,
   onSaveApiKeys,
   onComplete,
@@ -328,23 +327,14 @@ export function OnboardingPage({
               <div className="grid gap-5">
                 <label className="space-y-2 text-sm font-medium" htmlFor="workbench-root">
                   <span>素材总目录</span>
-                  <div className="flex gap-2">
-                    <Input
-                      className="h-11 min-w-0 flex-1 text-base"
-                      id="workbench-root"
-                      onChange={(event) => onWorkbenchRootChange(event.target.value)}
-                      value={workbenchRoot}
-                    />
-                    <Button
-                      className="h-11"
-                      onClick={onChooseWorkbenchRoot}
-                      type="button"
-                      variant="secondary"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      浏览
-                    </Button>
-                  </div>
+                  <DirectoryPicker
+                    defaultPath={workbenchRoot}
+                    id="workbench-root"
+                    inputClassName="h-11 text-base"
+                    onChange={onWorkbenchRootChange}
+                    title="选择素材总目录"
+                    value={workbenchRoot}
+                  />
                 </label>
 
                 <div className="rounded-md border bg-muted/50 p-4">

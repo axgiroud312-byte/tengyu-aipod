@@ -17,16 +17,6 @@ export function sendPhotoshopProgress(
 
 export function registerPhotoshopIpc(): void {
   ipcMain.handle('photoshop:get-status', () => photoshopStatusChecker.check())
-  ipcMain.handle('photoshop:choose-print-folder', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory'],
-      title: '选择印花文件夹',
-    })
-    if (result.canceled || result.filePaths.length === 0) {
-      return { ok: false, error: { code: 'CANCELED', message: '已取消选择' } }
-    }
-    return { ok: true, data: { path: result.filePaths[0] } }
-  })
   ipcMain.handle('photoshop:choose-templates', async () => {
     const result = await dialog.showOpenDialog({
       filters: [{ name: 'Photoshop 模板', extensions: ['psd', 'psb'] }],

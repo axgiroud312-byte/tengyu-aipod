@@ -1,3 +1,4 @@
+import { DirectoryPicker } from '@/components/directory-picker'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -73,7 +74,7 @@ interface CollectionPageProps {
   onRetryRecord: (recordId: string) => void
   onDeleteRecord: (recordId: string) => void
   onRefreshRecords: () => void
-  onOutputDirBrowse: () => void
+  onOutputDirClear: () => void
 }
 
 function collectionStatusLabel(status: CollectionRecordRow['status']) {
@@ -206,7 +207,7 @@ export function CollectionPage({
   onRetryRecord,
   onDeleteRecord,
   onRefreshRecords,
-  onOutputDirBrowse,
+  onOutputDirClear,
 }: CollectionPageProps) {
   const isIdle = !session
   const isPaused = session?.status === 'paused'
@@ -451,15 +452,17 @@ export function CollectionPage({
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <div className="flex gap-2">
-                    <Input
-                      className="h-11 min-w-0 flex-1"
+                    <DirectoryPicker
+                      className="min-w-0 flex-1"
                       id="collection-output-dir"
-                      onChange={(event) => onStateChange('outputDir', event.target.value)}
+                      inputClassName="h-11"
+                      onChange={(value) => onStateChange('outputDir', value)}
+                      title="选择采集输出目录"
                       value={state.outputDir}
                     />
                     <Button
                       className="h-11"
-                      onClick={onOutputDirBrowse}
+                      onClick={onOutputDirClear}
                       type="button"
                       variant="secondary"
                     >

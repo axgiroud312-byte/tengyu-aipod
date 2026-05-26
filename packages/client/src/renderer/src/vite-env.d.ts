@@ -4,15 +4,19 @@ declare global {
   interface Window {
     api: {
       ping: () => Promise<string>
+      dialog: {
+        chooseDirectory: (
+          input?: import('../../main/dialog').ChooseDirectoryInput,
+        ) => Promise<import('../../main/dialog').ChooseDirectoryResult>
+      }
+      shell: {
+        openPath: (path: string) => Promise<import('../../main/dialog').OpenPathResult>
+      }
       onboarding: {
         getState: () => Promise<{
           needs_onboarding: boolean
           default_workbench_root: string
         }>
-        chooseWorkbenchRoot: () => Promise<
-          | { ok: true; data: { path: string } }
-          | { ok: false; error: { code: string; message: string } }
-        >
         saveWorkbenchRoot: (path: string) => Promise<{ ok: true; data: { path: string } }>
         saveApiKeys: (apiKeys: Record<string, string>) => Promise<{ ok: true }>
         complete: () => Promise<{ ok: true }>
@@ -190,10 +194,6 @@ declare global {
         listPlatforms: () => Promise<Array<{ key: string; label: string }>>
         listLanguages: () => Promise<Array<{ key: string; label: string }>>
         listModels: () => Promise<Array<{ key: string; label: string }>>
-        chooseBatchDir: () => Promise<
-          | { ok: true; data: { path: string } }
-          | { ok: false; error: { code: string; message: string } }
-        >
         scanBatchDir: (input: { batchDir: string }) => Promise<{
           skuCount: number
           existingTitles: Record<string, string>
@@ -214,10 +214,6 @@ declare global {
       listing: {
         listTemplates: () => Promise<import('@tengyu-aipod/shared').ListingTemplateConfig[]>
         listProfiles: () => Promise<import('../../main/lib/bit-browser-client').BitBrowserProfile[]>
-        chooseBatchDir: () => Promise<
-          | { ok: true; data: { path: string } }
-          | { ok: false; error: { code: string; message: string } }
-        >
         scanBatchDir: (input: {
           batchDir: string
           templateKey: string
@@ -282,10 +278,6 @@ declare global {
       }
       photoshop: {
         getStatus: () => Promise<import('@tengyu-aipod/shared').PhotoshopStatus>
-        choosePrintFolder: () => Promise<
-          | { ok: true; data: { path: string } }
-          | { ok: false; error: { code: string; message: string } }
-        >
         chooseTemplates: () => Promise<
           | { ok: true; data: { paths: string[] } }
           | { ok: false; error: { code: string; message: string } }

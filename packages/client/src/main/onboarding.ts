@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import os from 'node:os'
-import { app, dialog, ipcMain } from 'electron'
+import { app, ipcMain } from 'electron'
 import { activationPoller } from './lib/activation-poller'
 import {
   extractActivationCodeSuffix,
@@ -154,18 +154,6 @@ export function registerOnboardingIpc() {
       return { ok: true, data: result.data }
     },
   )
-
-  ipcMain.handle('onboarding:choose-workbench-root', async () => {
-    const result = await dialog.showOpenDialog({
-      properties: ['openDirectory', 'createDirectory'],
-      defaultPath: await defaultWorkbenchRoot(),
-    })
-    if (result.canceled || !result.filePaths[0]) {
-      return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
-    }
-
-    return { ok: true, data: { path: result.filePaths[0] } }
-  })
 
   ipcMain.handle('onboarding:save-workbench-root', async (_event, root: string) => {
     await ensureWorkbenchDirectories(root)

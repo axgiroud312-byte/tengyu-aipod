@@ -1,3 +1,4 @@
+import { DirectoryPicker } from '@/components/directory-picker'
 import {
   Accordion,
   AccordionContent,
@@ -17,15 +18,7 @@ import type {
   ListingTemplateKey,
   ListingWorkspaceRecord,
 } from '@tengyu-aipod/shared'
-import {
-  AlertTriangle,
-  CheckCircle2,
-  FolderOpen,
-  Loader2,
-  Play,
-  RefreshCw,
-  RotateCcw,
-} from 'lucide-react'
+import { AlertTriangle, CheckCircle2, Loader2, Play, RefreshCw, RotateCcw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { BitBrowserProfile } from '../../../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../../../main/lib/browser-profile-lock'
@@ -319,15 +312,6 @@ export function ListingWorkbench() {
       })
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
-    }
-  }
-
-  async function chooseBatchDir() {
-    const result = await window.api.listing.chooseBatchDir()
-    if (result.ok) {
-      setBatchDir(result.data.path)
-      setScanResult(null)
-      setStatusRows([])
     }
   }
 
@@ -670,23 +654,20 @@ export function ListingWorkbench() {
             </div>
 
             <div className="mt-5 grid gap-5">
-              <label className="block space-y-2 text-sm font-medium">
+              <label className="block space-y-2 text-sm font-medium" htmlFor="listing-batch-dir">
                 <span>货号批次目录</span>
                 <div className="flex gap-2">
-                  <input
-                    className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onChange={(event) => {
-                      setBatchDir(event.target.value)
+                  <DirectoryPicker
+                    className="min-w-0 flex-1"
+                    id="listing-batch-dir"
+                    onChange={(value) => {
+                      setBatchDir(value)
                       setScanResult(null)
                       setStatusRows([])
                     }}
-                    placeholder="/Users/.../05-货号成品/批次"
+                    title="选择上架素材批次目录"
                     value={batchDir}
                   />
-                  <Button onClick={() => void chooseBatchDir()} type="button" variant="secondary">
-                    <FolderOpen className="mr-2 size-4" />
-                    选择
-                  </Button>
                   <Button
                     disabled={scanning}
                     onClick={() => void scanBatchDir()}
