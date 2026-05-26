@@ -781,7 +781,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               <CollectionPage
                 deletingRecordId={deletingRecordId}
                 error={collectionError}
-                onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
+                onOutputDirClear={() => updateCollectionPageState('outputDir', '')}
                 onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
                 onRefreshProfiles={() => void refreshCollectionProfiles()}
                 onRefreshRecords={() => void refreshCollectionRecords()}

@@ -1,4 +1,5 @@
 import { dialog, ipcMain, shell } from 'electron'
+import type { OpenDialogOptions } from 'electron'
 import { z } from 'zod'
 
 const chooseDirectoryInputSchema = z
@@ -25,11 +26,17 @@ export function registerDialogIpc(): void {
       throw new Error('选择目录参数不正确')
     }
 
-    const result = await dialog.showOpenDialog({
+    const options: OpenDialogOptions = {
       properties: ['openDirectory', 'createDirectory'],
-      title: parsed.data?.title,
-      defaultPath: parsed.data?.defaultPath,
-    })
+    }
+    if (parsed.data?.title) {
+      options.title = parsed.data.title
+    }
+    if (parsed.data?.defaultPath) {
+      options.defaultPath = parsed.data.defaultPath
+    }
+
+    const result = await dialog.showOpenDialog(options)
     if (result.canceled || !result.filePaths[0]) {
       return { ok: false, error: { code: 'CANCELED', message: '已取消选择目录' } }
     }

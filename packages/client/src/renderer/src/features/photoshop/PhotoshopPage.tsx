@@ -326,22 +326,13 @@ export function PhotoshopPage() {
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <p className="text-sm font-medium text-muted-foreground">输出目录</p>
             <h2 className="mt-1 text-lg font-semibold">货号成品保存位置</h2>
-            <div className="mt-4 flex gap-2">
-              <input
-                className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setOutputDir(event.target.value)}
-                value={outputDir}
-              />
-              <Button
-                className="h-10 px-3"
-                disabled={!outputDir.trim()}
-                onClick={() => void window.api.photoshop.openPath(outputDir)}
-                type="button"
-                variant="secondary"
-              >
-                打开
-              </Button>
-            </div>
+            <DirectoryPicker
+              className="mt-4"
+              onChange={setOutputDir}
+              showOpen
+              title="选择货号成品输出目录"
+              value={outputDir}
+            />
             <p className="mt-2 text-xs text-muted-foreground">
               当前版本仅展示目录配置，真实套版执行入口后续接入。
             </p>
