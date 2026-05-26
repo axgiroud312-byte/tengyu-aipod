@@ -496,9 +496,10 @@ export function CollectionPage({
                           onChange={(event) =>
                             onStateChange('minWidth', sizeThresholdFromInput(event.target.value))
                           }
+                          placeholder="0"
                           step={1}
                           type="number"
-                          value={state.minWidth}
+                          value={state.minWidth === 0 ? '' : state.minWidth}
                         />
                       </label>
                       <label
@@ -512,9 +513,10 @@ export function CollectionPage({
                           onChange={(event) =>
                             onStateChange('maxWidth', sizeThresholdFromInput(event.target.value))
                           }
+                          placeholder="0"
                           step={1}
                           type="number"
-                          value={state.maxWidth}
+                          value={state.maxWidth === 0 ? '' : state.maxWidth}
                         />
                       </label>
                       <label
@@ -528,9 +530,10 @@ export function CollectionPage({
                           onChange={(event) =>
                             onStateChange('minHeight', sizeThresholdFromInput(event.target.value))
                           }
+                          placeholder="0"
                           step={1}
                           type="number"
-                          value={state.minHeight}
+                          value={state.minHeight === 0 ? '' : state.minHeight}
                         />
                       </label>
                       <label
@@ -544,9 +547,10 @@ export function CollectionPage({
                           onChange={(event) =>
                             onStateChange('maxHeight', sizeThresholdFromInput(event.target.value))
                           }
+                          placeholder="0"
                           step={1}
                           type="number"
-                          value={state.maxHeight}
+                          value={state.maxHeight === 0 ? '' : state.maxHeight}
                         />
                       </label>
                     </div>
