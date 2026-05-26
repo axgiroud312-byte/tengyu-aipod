@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { TEMU_POP_REQUIRED_REAL_SELECTOR_KEYS, TEMU_POP_SELECTORS } from './selectors'
+import {
+  TEMU_POP_REQUIRED_REAL_SELECTOR_KEYS,
+  TEMU_POP_SELECTORS,
+  TEMU_POP_SELECTOR_RECORDS,
+} from './selectors'
 
 const VALID_SELECTOR_PREFIXES = ['css=', 'text=', 'label=', 'placeholder=', 'role=']
 
@@ -20,6 +24,20 @@ describe('Temu PopTemu selectors', () => {
     for (const key of TEMU_POP_REQUIRED_REAL_SELECTOR_KEYS) {
       expect(TEMU_POP_SELECTORS[key], key).toBeDefined()
       expect(TEMU_POP_SELECTORS[key].length, key).toBeGreaterThanOrEqual(2)
+    }
+  })
+
+  it('stores selectors as selector records with dispatch-ready metadata', () => {
+    expect(TEMU_POP_SELECTOR_RECORDS).toHaveLength(Object.keys(TEMU_POP_SELECTORS).length)
+    for (const record of TEMU_POP_SELECTOR_RECORDS) {
+      expect(record).toMatchObject({
+        key: expect.any(String),
+        name: expect.any(String),
+        primary: expect.any(String),
+        version: '1.0.0',
+        createdAt: '2026-05-26T00:00:00.000Z',
+      })
+      expect(record.fallbacks.length, record.key).toBeGreaterThanOrEqual(1)
     }
   })
 })

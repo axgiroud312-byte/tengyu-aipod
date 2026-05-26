@@ -1,8 +1,18 @@
 import { stat } from 'node:fs/promises'
-import type { ListingErrorCode } from '@tengyu-aipod/shared'
-import type { FileChooser, Locator, Page } from 'playwright'
+import {
+  ListingActionError,
+  type ListingActionErrorOptions,
+  type ListingSelector,
+} from '@tengyu-aipod/shared'
+import type { Locator, Page } from 'playwright'
+import { handleFileChooserWithRetry } from '../_commons/file-upload'
+import { locateBySelectorsWithFallback } from '../_commons/page-locator'
+import { waitForState as waitForParsedState } from '../_commons/page-wait'
 import { type SheinDraftPageState, type SheinTextFieldState, parseDraftPage } from './page-parser'
-import { type ListingSelector, SHEIN_SELECTORS, selectorToLocator } from './selectors'
+import { SHEIN_SELECTORS } from './selectors'
+
+export { ListingActionError }
+export type { ListingActionErrorOptions }
 
 export type SheinActionName =
   | 'replaceShopName'
@@ -13,48 +23,6 @@ export type SheinActionName =
   | 'uploadDetailImages'
   | 'uploadVideo'
   | 'generateSkuCode'
-
-export type ListingActionErrorOptions = {
-  action: SheinActionName
-  code: ListingErrorCode
-  message: string
-  selector?: ListingSelector | string | null
-  beforeState?: SheinDraftPageState
-  afterState?: SheinDraftPageState
-  pageText?: string | null
-  evidencePath?: string | null
-  cause?: unknown
-}
-
-export class ListingActionError extends Error {
-  readonly action: SheinActionName
-  readonly code: ListingErrorCode
-  readonly retryable: boolean
-  readonly selector: string | null
-  readonly url: string | null
-  readonly beforeState: SheinDraftPageState | undefined
-  readonly afterState: SheinDraftPageState | undefined
-  readonly pageText: string | null
-  readonly evidencePath: string | null
-  override readonly cause?: unknown
-
-  constructor(options: ListingActionErrorOptions) {
-    super(options.message)
-    this.name = 'ListingActionError'
-    this.action = options.action
-    this.code = options.code
-    this.retryable = isRetryableListingActionCode(options.code)
-    this.selector = options.selector ? String(options.selector) : null
-    this.url = options.afterState?.url ?? options.beforeState?.url ?? null
-    this.beforeState = options.beforeState
-    this.afterState = options.afterState
-    this.pageText = options.pageText ?? null
-    this.evidencePath = options.evidencePath ?? null
-    if (options.cause !== undefined) {
-      this.cause = options.cause
-    }
-  }
-}
 
 export type UploadActionResult = {
   action: 'uploaded'
@@ -467,12 +435,9 @@ async function locateFirst(
   selectors: readonly ListingSelector[],
   action: SheinActionName,
 ): Promise<{ selector: ListingSelector; locator: Locator }> {
-  for (const selector of selectors) {
-    const locator = locatorForSelector(page, selector).first()
-    if ((await locator.count().catch(() => 0)) === 0) {
-      continue
-    }
-    return { selector, locator }
+  const hit = await locateBySelectorsWithFallback(page, selectors)
+  if (hit) {
+    return hit
   }
   throw new ListingActionError({
     action,
@@ -489,45 +454,22 @@ async function setFilesThroughUploadControl(
   files: string[],
   action: Extract<SheinActionName, 'uploadVariantImages' | 'uploadDetailImages' | 'uploadVideo'>,
 ): Promise<void> {
-  await trigger.scrollIntoViewIfNeeded().catch(() => undefined)
-  const chooserPromise = page.waitForEvent('filechooser', { timeout: 5_000 }).catch(() => null)
-  await trigger.click({ timeout: DEFAULT_ACTION_TIMEOUT_MS })
-  const directChooser = await waitForFileChooserCandidate(chooserPromise, 300)
-  if (directChooser) {
-    await directChooser.setFiles(files)
-    await page.waitForTimeout(UPLOAD_SETTLE_MS)
-    return
-  }
-
-  for (const menuText of localMenuTexts) {
-    const menuItem = page
-      .locator('.ant-dropdown:not(.ant-dropdown-hidden), .ant-popover, .ant-select-dropdown')
-      .getByText(menuText, { exact: false })
-      .last()
-    const visible = await menuItem.isVisible({ timeout: 1_000 }).catch(() => false)
-    if (visible) {
-      await menuItem.click({ timeout: DEFAULT_ACTION_TIMEOUT_MS })
-      const menuChooser = await chooserPromise
-      if (menuChooser) {
-        await menuChooser.setFiles(files)
-        await page.waitForTimeout(UPLOAD_SETTLE_MS)
-        return
-      }
-      break
-    }
-  }
-
-  const globalInput = page.locator('#localFileUploadInp, input[type="file"]').first()
-  if ((await globalInput.count().catch(() => 0)) === 0) {
+  try {
+    await handleFileChooserWithRetry(page, trigger, files, {
+      menuTexts: localMenuTexts,
+      globalInputSelector: '#localFileUploadInp, input[type="file"]',
+      actionTimeoutMs: DEFAULT_ACTION_TIMEOUT_MS,
+      settleMs: UPLOAD_SETTLE_MS,
+    })
+  } catch (error) {
     throw actionFailure({
       action,
       code: 'FILE_CHOOSER_TIMEOUT',
       message: '未打开文件选择器，也未找到全局本地上传 input',
       pageText: await pageTextExcerpt(page),
+      cause: error,
     })
   }
-  await globalInput.setInputFiles(files)
-  await page.waitForTimeout(UPLOAD_SETTLE_MS)
 }
 
 async function selectVisibleOption(
@@ -562,16 +504,7 @@ async function waitForState(
   predicate: (state: SheinDraftPageState) => boolean,
   timeoutMs: number,
 ): Promise<SheinDraftPageState> {
-  const deadline = Date.now() + timeoutMs
-  let latest = await parseDraftPage(page)
-  while (Date.now() < deadline) {
-    latest = await parseDraftPage(page)
-    if (predicate(latest)) {
-      return latest
-    }
-    await page.waitForTimeout(250)
-  }
-  return latest
+  return waitForParsedState(page, () => parseDraftPage(page), predicate, timeoutMs)
 }
 
 async function requireExistingFiles(
@@ -652,41 +585,6 @@ function actionFailure(options: ListingActionErrorOptions): ListingActionError {
   return new ListingActionError(options)
 }
 
-function locatorForSelector(page: Page, selector: ListingSelector): Locator {
-  const { type, value } = selectorToLocator(selector)
-  if (type === 'css') {
-    return page.locator(value)
-  }
-  if (type === 'text') {
-    return page.getByText(value)
-  }
-  if (type === 'label') {
-    return page.getByLabel(value)
-  }
-  if (type === 'placeholder') {
-    return page.getByPlaceholder(value)
-  }
-  if (type === 'role') {
-    const match = value.match(/^([a-z]+)(?:\[name="(.+)"\])?$/)
-    const role = match?.[1] ?? value
-    const name = match?.[2]
-    return page.getByRole(role as Parameters<Page['getByRole']>[0], name ? { name } : undefined)
-  }
-  return page.locator(value)
-}
-
-async function waitForFileChooserCandidate(
-  chooserPromise: Promise<FileChooser | null>,
-  timeoutMs: number,
-): Promise<FileChooser | null> {
-  return Promise.race([
-    chooserPromise,
-    new Promise<null>((resolve) => {
-      setTimeout(() => resolve(null), timeoutMs)
-    }),
-  ])
-}
-
 async function readSkuTableText(page: Page): Promise<string> {
   return page
     .locator('#skuDataInfo')
@@ -715,16 +613,4 @@ function normalizeRequiredValue(value: string, action: SheinActionName): string 
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, '').toLowerCase()
-}
-
-function isRetryableListingActionCode(code: ListingErrorCode): boolean {
-  return (
-    code === 'TIMEOUT' ||
-    code === 'BLOCKING_MODAL' ||
-    code === 'PAGE_NOT_READY' ||
-    code === 'FILE_CHOOSER_TIMEOUT' ||
-    code === 'FIELD_VALUE_MISMATCH' ||
-    code === 'UPLOAD_COUNT_MISMATCH' ||
-    code === 'UNKNOWN'
-  )
 }

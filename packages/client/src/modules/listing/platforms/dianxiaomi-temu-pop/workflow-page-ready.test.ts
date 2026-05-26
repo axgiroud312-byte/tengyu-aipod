@@ -7,6 +7,13 @@ import {
   SLICE_8_LISTING_TEMPLATES,
 } from '@tengyu-aipod/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  control,
+  imageSection,
+  createState as mergeState,
+  textField,
+  toast,
+} from '../_commons/test-helpers'
 import type { TemuPopDraftPageState } from './page-parser'
 import { TEMU_POP_WORKFLOW_STAGES, type TemuPopWorkflowActions, runListingItem } from './workflow'
 
@@ -125,7 +132,7 @@ function createClock() {
 }
 
 function createState(overrides: Partial<TemuPopDraftPageState> = {}): TemuPopDraftPageState {
-  return {
+  const state: TemuPopDraftPageState = {
     url: 'https://www.dianxiaomi.com/web/popTemu/edit?id=128935194833519551',
     page_title: '店小秘--编辑Temu半托管产品',
     template_key: 'general',
@@ -165,40 +172,6 @@ function createState(overrides: Partial<TemuPopDraftPageState> = {}): TemuPopDra
     publish_button: control('发布'),
     success_toast: toast(null),
     failure_toast: toast(null),
-    ...overrides,
   }
-}
-
-function textField(value: string) {
-  return {
-    found: true,
-    current_value: value,
-    is_disabled: false,
-    selector: 'css=.example',
-  } as const
-}
-
-function imageSection(count: number) {
-  return {
-    found: true,
-    count,
-    selector: 'css=.example',
-  } as const
-}
-
-function control(text: string) {
-  return {
-    found: true,
-    enabled: true,
-    text,
-    selector: 'css=.example',
-  } as const
-}
-
-function toast(message: string | null) {
-  return {
-    found: message !== null,
-    message,
-    selector: message === null ? null : ('css=.example' as const),
-  }
+  return mergeState(state, overrides)
 }

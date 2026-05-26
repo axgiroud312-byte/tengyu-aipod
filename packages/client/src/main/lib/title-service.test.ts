@@ -21,7 +21,12 @@ type TestDatabase = Pick<Database.Database, 'exec' | 'prepare' | 'close'>
 let workbenchRoot = ''
 let tempRoot = ''
 
+const electronAppGetPath = vi.hoisted(() => vi.fn())
+
 vi.mock('electron', () => ({
+  app: {
+    getPath: electronAppGetPath,
+  },
   BrowserWindow: {
     getAllWindows: () => [],
   },
@@ -81,7 +86,13 @@ beforeEach(async () => {
   const { mkdtemp } = await import('node:fs/promises')
   tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-title-service-'))
   workbenchRoot = join(tempRoot, 'workbench')
+  electronAppGetPath.mockImplementation(() => tempRoot)
   await mkdir(workbenchRoot, { recursive: true })
+  await writeFile(
+    join(tempRoot, 'app-config.json'),
+    JSON.stringify({ workbench_root: workbenchRoot }),
+    'utf8',
+  )
 })
 
 afterEach(async () => {

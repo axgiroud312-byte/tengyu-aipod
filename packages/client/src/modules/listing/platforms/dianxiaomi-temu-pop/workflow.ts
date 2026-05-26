@@ -1,6 +1,5 @@
 import {
   type ListingConfig,
-  type ListingFailure,
   type ListingItem,
   type ListingResult,
   type ListingStage,
@@ -9,8 +8,9 @@ import {
 } from '@tengyu-aipod/shared'
 import type { Page } from 'playwright'
 import { saveStageEvidence } from '../../evidence'
+import { failureFromUnknown } from '../_commons/error-utils'
+import { waitForEditorReady } from '../_commons/page-wait'
 import {
-  type ListingActionError,
   fillSku,
   fillTitle,
   generateSkuCode,
@@ -402,15 +402,7 @@ async function waitForEditableDraftPage(
   page: Page,
   timeoutMs: number,
 ): Promise<TemuPopDraftPageState> {
-  const deadline = Date.now() + timeoutMs
-  let state = await parseDraftPage(page)
-
-  while (state.workflow_step !== 'editing' && Date.now() < deadline) {
-    await page.waitForTimeout(Math.min(250, Math.max(0, deadline - Date.now())))
-    state = await parseDraftPage(page)
-  }
-
-  return state
+  return waitForEditorReady(page, () => parseDraftPage(page), timeoutMs)
 }
 
 export function selectTemuPopUploadImageFiles(item: ListingItem): string[] {
@@ -429,43 +421,6 @@ export function selectTemuPopUploadImageFiles(item: ListingItem): string[] {
           ...item.imageGroups.sku,
         ]
   return Array.from(new Set(ordered.map((file) => file.trim()).filter(Boolean)))
-}
-
-function failureFromUnknown(error: unknown, stage: ListingStage): ListingFailure {
-  if (isListingFailure(error)) {
-    return error
-  }
-  if (isListingActionError(error)) {
-    return createListingFailure({
-      code: error.code,
-      message: error.message,
-      stage,
-      ...(error.selector ? { selector: error.selector } : {}),
-      ...(error.url ? { url: error.url } : {}),
-      ...(error.evidencePath ? { screenshotPath: error.evidencePath } : {}),
-      cause: error.cause,
-    })
-  }
-  return createListingFailure({
-    code: 'UNKNOWN',
-    message: error instanceof Error ? error.message : String(error),
-    stage,
-    cause: error,
-  })
-}
-
-function isListingFailure(error: unknown): error is ListingFailure {
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    'stage' in error &&
-    'retryable' in error
-  )
-}
-
-function isListingActionError(error: unknown): error is ListingActionError {
-  return error instanceof Error && 'action' in error && 'code' in error && 'retryable' in error
 }
 
 function stageContract(args: {

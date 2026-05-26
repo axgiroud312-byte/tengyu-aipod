@@ -2,6 +2,13 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import {
+  control,
+  imageSection,
+  createState as mergeState,
+  textField,
+  toast,
+} from '../_commons/test-helpers'
 import { ListingActionError, replaceShopName, uploadMaterialImages } from './action-executor'
 import type { TemuPopDraftPageState } from './page-parser'
 
@@ -126,41 +133,7 @@ function createState(overrides: Partial<TemuPopDraftPageState> = {}): TemuPopDra
     success_toast: toast(null),
     failure_toast: toast(null),
   }
-  return { ...state, ...overrides }
-}
-
-function textField(value: string) {
-  return {
-    found: true,
-    current_value: value,
-    is_disabled: false,
-    selector: 'css=.example',
-  } as const
-}
-
-function imageSection(count: number) {
-  return {
-    found: true,
-    count,
-    selector: 'css=.example',
-  } as const
-}
-
-function control(text: string) {
-  return {
-    found: true,
-    enabled: true,
-    text,
-    selector: 'css=.example',
-  } as const
-}
-
-function toast(message: string | null) {
-  return {
-    found: message !== null,
-    message,
-    selector: message === null ? null : ('css=.example' as const),
-  }
+  return mergeState(state, overrides)
 }
 
 function createPage() {

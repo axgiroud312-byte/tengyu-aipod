@@ -529,7 +529,7 @@ function PhotoshopMockupPanel() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[1fr_280px]">
-          <div className="rounded-md bg-muted p-4">
+        <div className="rounded-md bg-muted p-4">
           <div className="flex items-center justify-between text-sm">
             <span className="font-medium">执行进度</span>
             <span>{photoshopProgressPercent(progress)}%</span>

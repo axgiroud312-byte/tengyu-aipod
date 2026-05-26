@@ -1,10 +1,8 @@
+import type { ListingSelector } from '@tengyu-aipod/shared'
 import type { Locator, Page } from 'playwright'
-import {
-  type ListingSelector,
-  TEMU_POP_SELECTORS,
-  TEMU_POP_TEMPLATE_URLS,
-  selectorToLocator,
-} from './selectors'
+import { readToast } from '../_commons/page-feedback'
+import { locateBySelectorsWithFallback, locatorForSelector } from '../_commons/page-locator'
+import { TEMU_POP_SELECTORS, TEMU_POP_TEMPLATE_URLS } from './selectors'
 
 export type TemuPopTemplateKey = keyof typeof TEMU_POP_TEMPLATE_URLS
 
@@ -295,38 +293,11 @@ async function readVideoSection(page: Page): Promise<TemuPopVideoSectionState> {
   }
 }
 
-async function readToast(
-  page: Page,
-  selectors: readonly ListingSelector[],
-): Promise<TemuPopToastState> {
-  const hit = await findFirst(page, selectors)
-  if (!hit) {
-    return {
-      found: false,
-      message: null,
-      selector: null,
-    }
-  }
-
-  return {
-    found: true,
-    message: await readText(hit.locator),
-    selector: hit.selector,
-  }
-}
-
 async function findFirst(
   page: Page,
   selectors: readonly ListingSelector[],
 ): Promise<{ selector: ListingSelector; locator: Locator } | null> {
-  for (const selector of selectors) {
-    const locator = locatorForSelector(page, selector).first()
-    const count = await locator.count().catch(() => 0)
-    if (count > 0) {
-      return { selector, locator }
-    }
-  }
-  return null
+  return locateBySelectorsWithFallback(page, selectors)
 }
 
 async function hasAnySelector(page: Page, selectors: readonly ListingSelector[]) {
@@ -390,27 +361,4 @@ function missingTextField(): TemuPopTextFieldState {
     is_disabled: false,
     selector: null,
   }
-}
-
-function locatorForSelector(page: Page, selector: ListingSelector) {
-  const { type, value } = selectorToLocator(selector)
-  if (type === 'css') {
-    return page.locator(value)
-  }
-  if (type === 'text') {
-    return page.getByText(value)
-  }
-  if (type === 'label') {
-    return page.getByLabel(value)
-  }
-  if (type === 'placeholder') {
-    return page.getByPlaceholder(value)
-  }
-  if (type === 'role') {
-    const match = value.match(/^([a-z]+)(?:\[name="(.+)"\])?$/)
-    const role = match?.[1] ?? value
-    const name = match?.[2]
-    return page.getByRole(role as Parameters<Page['getByRole']>[0], name ? { name } : undefined)
-  }
-  return page.locator(value)
 }

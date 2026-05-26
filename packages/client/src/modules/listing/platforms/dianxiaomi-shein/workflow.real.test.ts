@@ -7,7 +7,8 @@ import {
 } from '@tengyu-aipod/shared'
 import { type Page, chromium } from 'playwright'
 import { describe, expect, it } from 'vitest'
-import { type BitBrowserProfile, bitBrowserClient } from '../../../../main/lib/bit-browser-client'
+import { bitBrowserClient } from '../../../../main/lib/bit-browser-client'
+import { findBitBrowserProfile2_1111 } from '../_commons/test-helpers'
 import { parseDraftPage } from './page-parser'
 import { runListingItem } from './workflow'
 
@@ -17,7 +18,7 @@ const describeReal = runRealListing ? describe : describe.skip
 const evidenceDir = resolve(
   process.cwd(),
   '../..',
-  '.trellis/tasks/05-23-listing-shein-workflow/evidence',
+  '.trellis/tasks/05-26-listing-platforms-commons-refactor/evidence/shein-workflow',
 )
 
 const REAL_TEMPLATE = {
@@ -108,24 +109,6 @@ describeReal('Shein workflow on real Dianxiaomi page', () => {
     }
   }, 180_000)
 })
-
-async function findBitBrowserProfile2_1111(): Promise<BitBrowserProfile> {
-  const profiles = await bitBrowserClient.listProfiles()
-  const profile = profiles.find((item) => {
-    const candidates = [
-      item.id,
-      item.name,
-      item.remark,
-      item.seq === undefined ? undefined : String(item.seq),
-      item.seq === undefined ? undefined : `${item.seq}-${item.name}`,
-    ]
-    return candidates.some((candidate) => candidate === '2-1111')
-  })
-  if (!profile) {
-    throw new Error('BitBrowser profile 2-1111 not found')
-  }
-  return profile
-}
 
 async function waitForSheinEditorReady(page: Page): Promise<void> {
   await page.locator('#productBasicInfo').waitFor({ state: 'attached', timeout: 60_000 })

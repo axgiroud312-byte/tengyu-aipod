@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { control, imageSection, textField, toast } from '../_commons/test-helpers'
 import type { SheinDraftPageState } from './page-parser'
 
 describe('Dianxiaomi Shein page parser contract', () => {
@@ -28,9 +29,9 @@ describe('Dianxiaomi Shein page parser contract', () => {
         selector: 'css=#skuDataInfo table',
       },
       one_click_sku: control('一键生成'),
-      variant_images: imageSection(11),
-      detail_images: imageSection(10),
-      video_section: imageSection(0),
+      variant_images: imageSection(11, { kind: 'upload' }),
+      detail_images: imageSection(10, { kind: 'upload' }),
+      video_section: imageSection(0, { kind: 'upload' }),
       sales_info_section: control('销售信息'),
       save_button: control('保存'),
       publish_button: control('发布'),
@@ -41,39 +42,3 @@ describe('Dianxiaomi Shein page parser contract', () => {
     expect(JSON.parse(JSON.stringify(state))).toEqual(state)
   })
 })
-
-function textField(value: string) {
-  return {
-    found: true,
-    current_value: value,
-    is_disabled: false,
-    selector: 'css=.example',
-  } as const
-}
-
-function control(text: string) {
-  return {
-    found: true,
-    enabled: true,
-    text,
-    selector: 'css=.example',
-  } as const
-}
-
-function imageSection(imageCount: number) {
-  return {
-    found: true,
-    image_count: imageCount,
-    upload_button_found: true,
-    upload_button_enabled: true,
-    selector: 'css=.example',
-  } as const
-}
-
-function toast(message: string | null) {
-  return {
-    found: message !== null,
-    message,
-    selector: message === null ? null : ('css=.example' as const),
-  }
-}

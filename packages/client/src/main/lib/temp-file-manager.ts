@@ -74,19 +74,16 @@ export class TempFileManager {
   private readonly sessionDirs = new Set<string>()
 
   constructor(optionsOrFailedTtlMs: TempFileManagerOptions | number = {}) {
-    const options =
-      typeof optionsOrFailedTtlMs === 'number'
-        ? { failedTtlMs: optionsOrFailedTtlMs }
-        : optionsOrFailedTtlMs
+    const options: TempFileManagerOptions =
+      typeof optionsOrFailedTtlMs === 'number' ? {} : optionsOrFailedTtlMs
+    const defaultFailedTtlMs =
+      typeof optionsOrFailedTtlMs === 'number' ? optionsOrFailedTtlMs : DEFAULT_FAILED_TTL_MS
 
     this.rootDir = options.rootDir
     this.workbenchRootProvider = options.workbenchRootProvider ?? getWorkbenchRoot
     this.now = options.now ?? Date.now
     this.orphanTtlMs = options.orphanTtlMs ?? DEFAULT_ORPHAN_TTL_MS
-    this.defaultFailedTtlMs =
-      typeof optionsOrFailedTtlMs === 'number'
-        ? optionsOrFailedTtlMs
-        : DEFAULT_FAILED_TTL_MS
+    this.defaultFailedTtlMs = defaultFailedTtlMs
   }
 
   async rootPath(): Promise<string> {

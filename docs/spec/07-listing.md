@@ -197,6 +197,21 @@ export async function runListingItem(
 }
 ```
 
+## 2.5 _commons 共用基础层
+
+`platforms/_commons/` 下集中放跨平台共用的基础函数：
+
+- `page-locator`：多选择器降级定位 + 单 selector 转 Locator
+- `page-wait`：通用等元素可见 / 编辑器就绪 / 状态轮询
+- `file-upload`：文件上传含 file chooser、菜单入口、全局 input 兜底
+- `page-feedback`：toast 等页面反馈读取
+- `error-utils`：错误分类与判定
+- `test-helpers`：测试夹具与 fixture（仅 `.test.ts` 使用）
+
+每个平台（`dianxiaomi-temu-pop` / `dianxiaomi-shein` / 未来新增）必须调用 `_commons`，不得重新实现这些基础函数。业务 action 仍保留在平台层，只有前置状态、目标状态、成功证据和失败策略一致时才继续抽共用。
+
+selector 用 `SelectorRecord[]` 形式存储，含 `key` / `name` / `primary` / `fallbacks` / `version` / `createdAt`，再派生平台内部兼容 map 给 parser/executor 使用。这个形态为 v1.5 `v15-selectors-dispatch` 云端派发铺路，但当前仍只读取客户端本地 record。
+
 ## 3. 比特浏览器 + CDP 共享适配器
 
 ```ts

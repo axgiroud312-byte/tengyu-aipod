@@ -1,15 +1,19 @@
 import { describe, expect, it } from 'vitest'
 import {
   LISTING_ERROR_CODE_TO_APP_ERROR_CODE,
+  ListingActionError,
+  type ListingActionErrorOptions,
   type ListingConfig,
   type ListingItem,
   type ListingResult,
   SLICE_8_LISTING_TEMPLATES,
+  type SelectorRecord,
   type StageResult,
   type WorkspaceResult,
   createListingFailure,
   isListingRetryable,
   listingFailureFromAppError,
+  lookupSelector,
 } from './listing-types'
 
 describe('listing shared types', () => {
@@ -162,6 +166,45 @@ describe('listing shared types', () => {
       profileId: '2-1111',
       totalCount: 1,
       successCount: 1,
+    })
+  })
+
+  it('looks up selector records by key', () => {
+    const records = [
+      {
+        key: 'title_input',
+        name: 'Title input',
+        primary: 'css=input[name="title"]',
+        fallbacks: ['label=产品标题'],
+        version: '1.0.0',
+        createdAt: '2026-05-26T00:00:00.000Z',
+      },
+    ] satisfies SelectorRecord<'title_input'>[]
+
+    expect(lookupSelector(records, 'title_input')).toEqual(records[0])
+  })
+
+  it('keeps listing action errors serializable enough for workflow boundaries', () => {
+    const options: ListingActionErrorOptions = {
+      action: 'fillTitle',
+      code: 'FIELD_VALUE_MISMATCH',
+      message: 'title mismatch',
+      selector: 'css=input[name="title"]',
+      beforeState: { url: 'https://example.com/before' },
+      afterState: { url: 'https://example.com/after' },
+      pageText: '店小秘 编辑页',
+    }
+
+    const error = new ListingActionError(options)
+
+    expect(error).toMatchObject({
+      name: 'ListingActionError',
+      action: 'fillTitle',
+      code: 'FIELD_VALUE_MISMATCH',
+      retryable: true,
+      selector: 'css=input[name="title"]',
+      url: 'https://example.com/after',
+      pageText: '店小秘 编辑页',
     })
   })
 })
