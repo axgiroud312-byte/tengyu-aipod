@@ -7,7 +7,7 @@ const BUILT_IN_COLLECTION_PLATFORM_RULES: CollectionPlatformRule[] = [
     name: 'Temu',
     allowed_domains: ['temu.com', '*.temu.com'],
     entry_url: 'https://www.temu.com',
-    goods_url_patterns: ['\\/goods\\/', '\\/goods\\.html'],
+    goods_url_patterns: ['\\/goods\\/', '\\/goods\\.html', '-g-\\d+\\.html'],
     login_check: { indicators: ['Sign in', '登录'] },
     original_image_resolver: {
       type: 'src_replace',

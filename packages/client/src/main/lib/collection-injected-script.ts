@@ -61,6 +61,11 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
   const keywordFilter = ${JSON.stringify(normalizeKeywordFilter(options.scrollFilter))};
   const sizeFilter = ${JSON.stringify(normalizeSizeFilter(options.sizeFilter, options.scrollFilter))};
   const bindingName = ${JSON.stringify(options.bindingName ?? DEFAULT_BINDING_NAME)};
+  const runtimeKey = '__poseidonCollectionRuntime';
+  const previousRuntime = window[runtimeKey];
+  if (previousRuntime && typeof previousRuntime.dispose === 'function') {
+    previousRuntime.dispose();
+  }
   const seenScrollImages = new Set();
   let lastPageUrl = window.location.href;
 
@@ -107,12 +112,89 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
     return isBlockedImageUrl(url) ? '' : url;
   }
 
+  function preferredImageUrl(value) {
+    const url = normalizedImageUrl(value);
+    if (!url) return '';
+    return url.replace(/(imageView2\\/2\\/w\\/)(\\d+)(?=\\/)/, (_match, prefix, width) => {
+      const parsed = Number.parseInt(width, 10);
+      return prefix + String(Number.isFinite(parsed) ? Math.max(parsed, 500) : 500);
+    });
+  }
+
   function nearestGoodsLink(element) {
     const anchor = element.closest('a[href]');
     if (anchor && anchor.href) return absoluteUrl(anchor.href);
     const wrapper = element.closest('[data-href], [data-url], [data-link]');
     if (!wrapper) return '';
     return absoluteUrl(wrapper.getAttribute('data-href') || wrapper.getAttribute('data-url') || wrapper.getAttribute('data-link') || '');
+  }
+
+  function imageFromElement(element) {
+    if (element instanceof HTMLImageElement) return element;
+    if (!(element instanceof Element)) return null;
+    const closestImage = element.closest('img');
+    return closestImage instanceof HTMLImageElement ? closestImage : null;
+  }
+
+  function eventPoint(event) {
+    const x = Number(event.clientX);
+    const y = Number(event.clientY);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  }
+
+  function imageContainsPoint(img, point) {
+    const rect = img.getBoundingClientRect();
+    return rect.width > 0 &&
+      rect.height > 0 &&
+      point.x >= rect.left &&
+      point.x <= rect.right &&
+      point.y >= rect.top &&
+      point.y <= rect.bottom;
+  }
+
+  function addImageCandidate(candidates, seen, value) {
+    if (!(value instanceof HTMLImageElement) || seen.has(value)) return;
+    seen.add(value);
+    candidates.push(value);
+  }
+
+  function addElementImageCandidates(candidates, seen, element, point) {
+    const directImage = imageFromElement(element);
+    if (directImage) {
+      addImageCandidate(candidates, seen, directImage);
+    }
+    if (!(element instanceof Element)) return;
+    if (typeof element.querySelectorAll !== 'function') return;
+    for (const img of element.querySelectorAll('img')) {
+      if (point && !imageContainsPoint(img, point)) continue;
+      addImageCandidate(candidates, seen, img);
+    }
+  }
+
+  function clickedImage(event) {
+    const candidates = [];
+    const seen = new Set();
+    const point = eventPoint(event);
+
+    if (point) {
+      const elementsAtPoint = typeof document.elementsFromPoint === 'function'
+        ? document.elementsFromPoint(point.x, point.y)
+        : [document.elementFromPoint(point.x, point.y)].filter(Boolean);
+      for (const element of elementsAtPoint) {
+        addElementImageCandidates(candidates, seen, element, point);
+      }
+    }
+
+    addElementImageCandidates(candidates, seen, event.target, point);
+
+    return candidates.find((img) => {
+      if (point && !imageContainsPoint(img, point)) return false;
+      const originalUrl = resolveOriginalImage(img);
+      if (!originalUrl) return false;
+      if (!insideSizeRange(img, originalUrl)) return false;
+      return true;
+    }) || null;
   }
 
   function largestSrcset(srcset) {
@@ -128,22 +210,30 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
       })
       .filter((item) => item.url);
     candidates.sort((left, right) => right.size - left.size);
-    return normalizedImageUrl(candidates[0]?.url || '');
+    return preferredImageUrl(candidates[0]?.url || '');
   }
 
   function resolveOriginalImage(img) {
     const resolver = platformRule.original_image_resolver || { type: 'srcset_largest', config: {} };
     if (resolver.type === 'data_attr') {
       const attr = resolver.config?.attr || 'data-src';
-      return normalizedImageUrl(img.getAttribute(attr) || img.currentSrc || img.src);
+      return preferredImageUrl(img.getAttribute(attr) || img.currentSrc || img.src);
     }
     if (resolver.type === 'src_replace') {
       const from = resolver.config?.from || '';
       const to = resolver.config?.to || '';
       const source = img.currentSrc || img.src;
-      return normalizedImageUrl(from ? source.replace(from, to) : source);
+      return preferredImageUrl(from ? source.replace(from, to) : source);
     }
-    return largestSrcset(img.srcset) || normalizedImageUrl(img.currentSrc || img.src);
+    return largestSrcset(img.srcset) || preferredImageUrl(img.currentSrc || img.src);
+  }
+
+  function dimensionsFromImageUrl(value) {
+    const match = String(value || '').match(/\\/w\\/(\\d+)(?:\\D|$)/);
+    if (!match) return null;
+    const width = Number.parseInt(match[1], 10);
+    if (!Number.isFinite(width) || width <= 0) return null;
+    return { width, height: width };
   }
 
   function send(data) {
@@ -166,10 +256,8 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
   }
 
   function handleClick(event) {
-    const target = event.target;
-    const img = target?.closest?.('img');
+    const img = clickedImage(event);
     if (!img) return;
-    if (!insideSizeRange(img)) return;
     const originalUrl = resolveOriginalImage(img);
     if (!originalUrl) return;
     send({
@@ -185,20 +273,23 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
     return keywords.some((keyword) => normalized.includes(String(keyword).toLowerCase()));
   }
 
-  function insideSizeRange(img) {
+  function insideSizeRange(img, originalUrl) {
     const width = img.naturalWidth || img.width || 0;
     const height = img.naturalHeight || img.height || 0;
-    if (sizeFilter.minWidth > 0 && width < sizeFilter.minWidth) return false;
-    if (sizeFilter.maxWidth > 0 && width > sizeFilter.maxWidth) return false;
-    if (sizeFilter.minHeight > 0 && height < sizeFilter.minHeight) return false;
-    if (sizeFilter.maxHeight > 0 && height > sizeFilter.maxHeight) return false;
+    const urlDimensions = dimensionsFromImageUrl(originalUrl);
+    const filterWidth = Math.max(width, urlDimensions?.width || 0);
+    const filterHeight = Math.max(height, urlDimensions?.height || 0);
+    if (sizeFilter.minWidth > 0 && filterWidth < sizeFilter.minWidth) return false;
+    if (sizeFilter.maxWidth > 0 && filterWidth > sizeFilter.maxWidth) return false;
+    if (sizeFilter.minHeight > 0 && filterHeight < sizeFilter.minHeight) return false;
+    if (sizeFilter.maxHeight > 0 && filterHeight > sizeFilter.maxHeight) return false;
     return true;
   }
 
   function passesScrollFilter(img, goodsLink) {
     if (keywordMatches(keywordFilter.excludeKeywords, goodsLink)) return false;
     if (keywordFilter.includeKeywords.length > 0 && !keywordMatches(keywordFilter.includeKeywords, goodsLink)) return false;
-    return insideSizeRange(img);
+    return insideSizeRange(img, resolveOriginalImage(img));
   }
 
   function clearScrollSeenOnUrlChange() {
@@ -210,20 +301,31 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
 
   function setupRouteChangeWatcher() {
     const historyRef = window.history;
+    const cleanup = [];
     if (historyRef) {
       for (const methodName of ['pushState', 'replaceState']) {
         const original = historyRef[methodName];
         if (typeof original !== 'function') continue;
-        historyRef[methodName] = function () {
+        const wrapped = function () {
           const result = original.apply(this, arguments);
           clearScrollSeenOnUrlChange();
           return result;
         };
+        historyRef[methodName] = wrapped;
+        cleanup.push(() => {
+          if (historyRef[methodName] === wrapped) {
+            historyRef[methodName] = original;
+          }
+        });
       }
     }
     if (typeof window.addEventListener === 'function') {
       window.addEventListener('popstate', clearScrollSeenOnUrlChange);
+      cleanup.push(() => window.removeEventListener?.('popstate', clearScrollSeenOnUrlChange));
     }
+    return () => {
+      for (const item of cleanup.reverse()) item();
+    };
   }
 
   function handleVisibleImage(img) {
@@ -269,11 +371,22 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
       }
     });
     mutationObserver.observe(document.documentElement, { childList: true, subtree: true });
+    return () => {
+      observer.disconnect?.();
+      mutationObserver.disconnect?.();
+    };
   }
 
   document.addEventListener('click', handleClick, true);
-  setupRouteChangeWatcher();
-  setupScrollObserver();
+  const cleanupRouteChangeWatcher = setupRouteChangeWatcher();
+  const cleanupScrollObserver = setupScrollObserver();
+  window[runtimeKey] = {
+    dispose: () => {
+      document.removeEventListener?.('click', handleClick, true);
+      cleanupRouteChangeWatcher();
+      cleanupScrollObserver();
+    },
+  };
 })();`
 }
 

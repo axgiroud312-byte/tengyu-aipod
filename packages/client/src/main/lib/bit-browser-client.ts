@@ -323,8 +323,19 @@ function readCdpEndpointFromPayload(payload: unknown, profileId: string) {
     return direct
   }
 
-  const nested = asRecord(record[profileId])
-  return nested ? readCdpEndpoint(nested) : null
+  const nestedValue = record[profileId]
+  const nested = asRecord(nestedValue)
+  if (nested) {
+    return readCdpEndpoint(nested)
+  }
+  const debugPort = readPortValue(nestedValue)
+  return debugPort
+    ? {
+        http: `http://127.0.0.1:${debugPort}`,
+        ws: '',
+        debugPort,
+      }
+    : null
 }
 
 function normalizeCdpHttpEndpoint(value: string) {
@@ -413,6 +424,16 @@ function readNumber(record: RecordValue, keys: string[]) {
     if (typeof value === 'string' && /^\d+$/.test(value)) {
       return Number(value)
     }
+  }
+  return undefined
+}
+
+function readPortValue(value: unknown) {
+  if (typeof value === 'number' && Number.isInteger(value) && value > 0) {
+    return value
+  }
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    return Number(value)
   }
   return undefined
 }

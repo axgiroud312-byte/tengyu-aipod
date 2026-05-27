@@ -3,6 +3,7 @@ import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { AppErrorClass } from '@tengyu-aipod/shared'
+import sharp from 'sharp'
 import { describe, expect, it, vi } from 'vitest'
 import { CollectionClickService, parseCollectionRecordListInput } from './collection-click-service'
 import type { CollectionPlatformRule } from './collection-injected-script'
@@ -417,6 +418,87 @@ describe('CollectionClickService', () => {
     expect(db.records[0]?.[8]).toBe('download failed')
   })
 
+  it('falls back to browser image capture when direct download fails', async () => {
+    const fs = createFs()
+    const db = new FakeDb()
+    const captureImageWithBrowser = vi.fn(async () => Buffer.from('browser-image'))
+    const service = new CollectionClickService({
+      sessionManager: {
+        assignSessionSku: vi.fn(),
+        getActiveSession: () => activeSession(),
+        getSessionSku: () => null,
+        requestSku: vi.fn(),
+      },
+      downloadImage: vi.fn(async () => {
+        throw new Error('fetch failed')
+      }),
+      captureImageWithBrowser,
+      openDatabase: () => db as never,
+      randomId: () => 'record-1',
+      now: () => COLLECTION_TEST_NOW,
+      readFile: fs.readFile as never,
+      readdir: fs.readdir as never,
+      writeFile: fs.writeFile as never,
+      stat: fs.stat as never,
+      mkdir: fs.mkdir as never,
+    })
+
+    await expect(
+      service.handleClick(
+        {
+          kind: 'click',
+          img: 'https://img.kwcdn.com/product/a.jpg?imageView2/2/w/500/q/70/format/avif',
+          page: 'https://www.temu.com/search?q=shirt',
+        },
+        platformRule,
+      ),
+    ).resolves.toMatchObject({
+      status: 'success',
+      savedPath: looseImagePath('.png'),
+    })
+
+    expect(captureImageWithBrowser).toHaveBeenCalledWith(
+      'profile-1',
+      'https://img.kwcdn.com/product/a.jpg?imageView2/2/w/500/q/70/format/avif',
+      'https://www.temu.com/search?q=shirt',
+    )
+    expect(fs.writeFile).toHaveBeenCalledWith(looseImagePath('.png'), Buffer.from('browser-image'))
+    expect(db.records[0]?.[7]).toBe('success')
+  })
+
+  it('converts downloaded AVIF image bytes into PNG files', async () => {
+    const avif = await sharp({
+      create: {
+        width: 2,
+        height: 2,
+        channels: 3,
+        background: '#ffffff',
+      },
+    })
+      .avif()
+      .toBuffer()
+    const { service, fs, db } = createService({ image: avif })
+
+    await expect(
+      service.handleClick(
+        {
+          kind: 'click',
+          img: 'https://img.kwcdn.com/product/a.jpg?imageView2/2/w/800/q/70/format/avif',
+          page: 'https://www.temu.com/search?q=shirt',
+        },
+        platformRule,
+      ),
+    ).resolves.toMatchObject({
+      status: 'success',
+      savedPath: looseImagePath('.png'),
+    })
+
+    expect(db.records[0]?.[6]).toBe(looseImagePath('.png'))
+    expect(fs.files.get(looseImagePath('.png'))?.subarray(0, 8).toString('hex')).toBe(
+      '89504e470d0a1a0a',
+    )
+  })
+
   it('saves scroll images into the loose image pool', async () => {
     const { service, fs, db } = createService({
       session: activeSession({ mode: 'scroll' }),
@@ -480,6 +562,32 @@ describe('CollectionClickService', () => {
       savedPath: looseImagePath('.webp'),
     })
     expect(fs.writeFile).toHaveBeenCalledTimes(1)
+  })
+
+  it('drops duplicate runtime image events from stale injected listeners', async () => {
+    const { service, fs, db } = createService({ session: activeSession({ mode: 'scroll' }) })
+    const firstPayload = {
+      kind: 'scroll' as const,
+      img: 'https://img.kwcdn.com/product/a.jpg?imageView2/2/w/500/q/70/format/avif',
+      page: 'https://www.temu.com/search?q=shirt',
+    }
+    const duplicatePayload = {
+      ...firstPayload,
+      img: 'https://img.kwcdn.com/product/a.jpg?imageView2/2/w/1300/q/90/format/avif',
+    }
+
+    await expect(
+      service.dispatch(firstPayload, { platformRule, mode: 'scroll' }),
+    ).resolves.toMatchObject({
+      status: 'success',
+      savedPath: looseImagePath('.jpg'),
+    })
+    await expect(
+      service.dispatch(duplicatePayload, { platformRule, mode: 'scroll' }),
+    ).resolves.toBeNull()
+
+    expect(fs.writeFile).toHaveBeenCalledTimes(1)
+    expect(db.records).toHaveLength(1)
   })
 
   it('rejects scroll events unless the active session is in scroll mode', async () => {

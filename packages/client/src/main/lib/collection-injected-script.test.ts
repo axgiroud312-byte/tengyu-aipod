@@ -25,11 +25,12 @@ type HarnessOptions = {
 
 function createHarness(options: HarnessOptions = {}) {
   const callbacks: unknown[] = []
-  const listeners = new Map<string, EventListener>()
-  const windowListeners = new Map<string, EventListener>()
+  const listeners = new Map<string, EventListener[]>()
+  const windowListeners = new Map<string, EventListener[]>()
   const observed: unknown[] = []
   const observers: Array<{ trigger: (target: unknown) => void }> = []
   const anchors: unknown[] = []
+  const pointElements: unknown[] = []
   const initialHref = options.href ?? `https://${options.hostname ?? 'www.temu.com'}/goods/1`
   const initialUrl = new URL(initialHref)
   const location = {
@@ -66,9 +67,17 @@ function createHarness(options: HarnessOptions = {}) {
   const document = {
     documentElement: {},
     addEventListener: (event: string, listener: EventListener) => {
-      listeners.set(event, listener)
+      listeners.set(event, [...(listeners.get(event) ?? []), listener])
+    },
+    removeEventListener: (event: string, listener: EventListener) => {
+      listeners.set(
+        event,
+        (listeners.get(event) ?? []).filter((item) => item !== listener),
+      )
     },
     querySelectorAll: () => anchors,
+    elementFromPoint: () => pointElements[0] ?? null,
+    elementsFromPoint: () => pointElements,
   }
   const window = {
     location,
@@ -85,46 +94,65 @@ function createHarness(options: HarnessOptions = {}) {
       },
     },
     addEventListener: (event: string, listener: EventListener) => {
-      windowListeners.set(event, listener)
+      windowListeners.set(event, [...(windowListeners.get(event) ?? []), listener])
+    },
+    removeEventListener: (event: string, listener: EventListener) => {
+      windowListeners.set(
+        event,
+        (windowListeners.get(event) ?? []).filter((item) => item !== listener),
+      )
     },
     __poseidonSendToHost: (payload: unknown) => {
       callbacks.push(payload)
     },
   }
 
-  const fn = new Function(
-    'window',
-    'document',
-    'IntersectionObserver',
-    'MutationObserver',
-    'HTMLImageElement',
-    'Element',
-    options.script ?? createCollectionInjectedScript({ platformRule }),
-  )
-  fn(
-    window,
-    document,
-    FakeIntersectionObserver,
-    FakeMutationObserver,
-    FakeImageElement,
-    FakeElement,
-  )
+  const runScript = () => {
+    const fn = new Function(
+      'window',
+      'document',
+      'IntersectionObserver',
+      'MutationObserver',
+      'HTMLImageElement',
+      'Element',
+      options.script ?? createCollectionInjectedScript({ platformRule }),
+    )
+    fn(
+      window,
+      document,
+      FakeIntersectionObserver,
+      FakeMutationObserver,
+      FakeImageElement,
+      FakeElement,
+    )
+  }
+
+  runScript()
 
   return {
     callbacks,
     listeners,
     observed,
     observers,
+    FakeElement,
     FakeImageElement,
+    setPointElements: (...items: unknown[]) => {
+      pointElements.splice(0, pointElements.length, ...items)
+    },
+    runScript,
     pushState: (url: string) => {
       window.history.pushState(null, '', url)
     },
     triggerPopState: (url: string) => {
       setLocationHref(url)
-      windowListeners.get('popstate')?.({} as Event)
+      for (const listener of windowListeners.get('popstate') ?? []) {
+        listener({} as Event)
+      }
     },
-    triggerClick: (target: unknown) => {
-      listeners.get('click')?.({ target } as Event)
+    triggerClick: (target: unknown, patch: Record<string, unknown> = {}) => {
+      for (const listener of listeners.get('click') ?? []) {
+        listener({ target, ...patch } as Event)
+      }
     },
   }
 }
@@ -163,6 +191,14 @@ function image(
     return null
   }
   img.getAttribute = (name: string) => attrs[name] ?? null
+  img.getBoundingClientRect = () => ({
+    left: 0,
+    top: 0,
+    right: img.width,
+    bottom: img.height,
+    width: img.width,
+    height: img.height,
+  })
   return img
 }
 
@@ -171,6 +207,50 @@ describe('createCollectionInjectedScript', () => {
     const harness = createHarness()
     const img = image(harness.FakeImageElement)
 
+    harness.triggerClick(img)
+
+    expect(harness.callbacks).toEqual([
+      {
+        kind: 'click',
+        img: 'https://img.temu.com/a_original.jpg',
+        goodsLink: 'https://www.temu.com/goods/1',
+        platform: 'temu',
+        page: 'https://www.temu.com/goods/1',
+      },
+    ])
+  })
+
+  it('captures clicks that land on a visible image overlay', () => {
+    const harness = createHarness()
+    const overlay = new harness.FakeElement()
+    overlay.closest = () => null
+    const img = image(harness.FakeImageElement, {
+      src: 'https://img.temu.com/overlay_thumb.jpg',
+      width: 500,
+      height: 500,
+      naturalWidth: 500,
+      naturalHeight: 500,
+    })
+    harness.setPointElements(overlay, img)
+
+    harness.triggerClick(overlay, { clientX: 250, clientY: 250 })
+
+    expect(harness.callbacks).toEqual([
+      {
+        kind: 'click',
+        img: 'https://img.temu.com/overlay_original.jpg',
+        goodsLink: 'https://www.temu.com/goods/1',
+        platform: 'temu',
+        page: 'https://www.temu.com/goods/1',
+      },
+    ])
+  })
+
+  it('replaces previous click listeners when the script is injected again', () => {
+    const harness = createHarness()
+    const img = image(harness.FakeImageElement)
+
+    harness.runScript()
     harness.triggerClick(img)
 
     expect(harness.callbacks).toEqual([
@@ -209,6 +289,33 @@ describe('createCollectionInjectedScript', () => {
     harness.triggerClick(img)
 
     expect(harness.callbacks).toEqual([])
+  })
+
+  it('uses the preferred Temu image URL before applying the size filter', () => {
+    const script = createCollectionInjectedScript({
+      platformRule,
+      sizeFilter: { min_width: 300, min_height: 300 },
+    })
+    const harness = createHarness({ script })
+    const img = image(harness.FakeImageElement, {
+      src: 'https://img.kwcdn.com/product/example.jpg?imageView2/2/w/150/q/50/format/avif',
+      width: 178,
+      height: 178,
+      naturalWidth: 150,
+      naturalHeight: 150,
+    })
+
+    harness.triggerClick(img)
+
+    expect(harness.callbacks).toEqual([
+      {
+        kind: 'click',
+        img: 'https://img.kwcdn.com/product/example.jpg?imageView2/2/w/500/q/50/format/avif',
+        goodsLink: 'https://www.temu.com/goods/1',
+        platform: 'temu',
+        page: 'https://www.temu.com/goods/1',
+      },
+    ])
   })
 
   it('drops clicked data and blob image URLs', () => {

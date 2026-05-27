@@ -4,7 +4,9 @@ import { createRequire } from 'node:module'
 import { extname, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import type { BrowserWindow, ipcMain } from 'electron'
+import type { Page } from 'playwright'
 import { z } from 'zod'
+import { cdpClient } from './cdp-client'
 import type { CollectionBindingPayload } from './cdp-client'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
@@ -71,6 +73,16 @@ export type CollectionScrollResult = Exclude<CollectionClickResult, { status: 'p
 
 type CollectionSavedResult = CollectionScrollResult
 type CollectionImageEvent = CollectionClickEvent | CollectionScrollEvent
+type CollectionImageBuffer = {
+  buffer: Buffer
+  extension?: '.png' | undefined
+}
+type CollectionRuntimeEventKeyInput = {
+  sessionId: string
+  kind: CollectionImageEvent['kind']
+  img: string
+  page: string
+}
 
 export type CollectionDispatchContext = {
   platformRule: CollectionPlatformRule
@@ -83,6 +95,7 @@ export type CollectionClickServiceDependencies = {
     'assignSessionSku' | 'getActiveSession' | 'getSessionSku' | 'requestSku'
   >
   downloadImage?: (url: string) => Promise<Buffer>
+  captureImageWithBrowser?: (profileId: string, url: string, pageUrl: string) => Promise<Buffer>
   openDatabase?: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
   randomId?: () => string
   now?: () => number
@@ -94,12 +107,19 @@ export type CollectionClickServiceDependencies = {
   rm?: typeof rm
 }
 
+const RUNTIME_EVENT_DEDUPE_MS = 1_000
+
 export class CollectionClickService {
   private readonly sessionManager: Pick<
     CollectionSessionManager,
     'assignSessionSku' | 'getActiveSession' | 'getSessionSku' | 'requestSku'
   >
   private readonly downloadImage: (url: string) => Promise<Buffer>
+  private readonly captureImageWithBrowser: (
+    profileId: string,
+    url: string,
+    pageUrl: string,
+  ) => Promise<Buffer>
   private readonly openDatabase: (
     workbenchRoot: string,
   ) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -115,10 +135,13 @@ export class CollectionClickService {
     string,
     Array<{ event: CollectionClickEvent; platformRule: CollectionPlatformRule }>
   >()
+  private readonly recentRuntimeEvents = new Map<string, number>()
 
   constructor(dependencies: CollectionClickServiceDependencies = {}) {
     this.sessionManager = dependencies.sessionManager ?? collectionSessionManager
     this.downloadImage = dependencies.downloadImage ?? defaultDownloadImage
+    this.captureImageWithBrowser =
+      dependencies.captureImageWithBrowser ?? defaultCaptureImageWithBrowser
     this.openDatabase = dependencies.openDatabase ?? openCollectionDatabase
     this.randomId = dependencies.randomId ?? randomUUID
     this.now = dependencies.now ?? Date.now
@@ -135,6 +158,9 @@ export class CollectionClickService {
     context: CollectionDispatchContext,
   ): Promise<CollectionClickResult | CollectionScrollResult | null> {
     if (payload.kind !== context.mode || !payload.img) {
+      return null
+    }
+    if (this.isDuplicateRuntimeEvent(payload)) {
       return null
     }
 
@@ -336,7 +362,8 @@ export class CollectionClickService {
     createdAt: number
   }): Promise<CollectionSavedResult> {
     try {
-      const buffer = await this.downloadImage(input.event.img)
+      const image = await this.imageBuffer(input.session, input.event)
+      const buffer = image.buffer
       const hash = sha256(buffer)
       await this.mkdir(input.targetDir, { recursive: true })
       const existing = await findExistingImageByHash(
@@ -362,7 +389,7 @@ export class CollectionClickService {
       const savedPath = await nextImagePath(
         input.targetDir,
         input.fileBase,
-        imageExtension(input.event.img),
+        image.extension ?? imageExtension(input.event),
         this.stat,
       )
       await this.writeFile(savedPath, buffer)
@@ -477,6 +504,53 @@ export class CollectionClickService {
     }
     return record
   }
+
+  private async imageBuffer(
+    session: CollectionSession,
+    event: CollectionImageEvent,
+  ): Promise<CollectionImageBuffer> {
+    try {
+      return await normalizeDownloadedImage(await this.downloadImage(event.img))
+    } catch (error) {
+      try {
+        return {
+          buffer: await this.captureImageWithBrowser(session.profile_id, event.img, event.page),
+          extension: '.png',
+        }
+      } catch {
+        throw error
+      }
+    }
+  }
+
+  private isDuplicateRuntimeEvent(payload: CollectionBindingPayload) {
+    if (!payload.img) {
+      return false
+    }
+    const session = this.sessionManager.getActiveSession()
+    if (!session || session.status !== 'active') {
+      return false
+    }
+
+    const now = this.now()
+    const key = runtimeEventKey({
+      sessionId: session.id,
+      kind: payload.kind,
+      img: payload.img,
+      page: payload.page,
+    })
+    for (const [itemKey, timestamp] of this.recentRuntimeEvents) {
+      if (now - timestamp > RUNTIME_EVENT_DEDUPE_MS) {
+        this.recentRuntimeEvents.delete(itemKey)
+      }
+    }
+    const previous = this.recentRuntimeEvents.get(key)
+    if (previous !== undefined && now - previous <= RUNTIME_EVENT_DEDUPE_MS) {
+      return true
+    }
+    this.recentRuntimeEvents.set(key, now)
+    return false
+  }
 }
 
 function targetForClick(input: {
@@ -563,6 +637,89 @@ async function defaultDownloadImage(url: string) {
   return Buffer.from(await response.arrayBuffer())
 }
 
+async function normalizeDownloadedImage(buffer: Buffer): Promise<CollectionImageBuffer> {
+  if (!isAvifBuffer(buffer)) {
+    return { buffer }
+  }
+  const sharp = nodeRequire('sharp') as typeof import('sharp')
+  return { buffer: await sharp(buffer).png().toBuffer(), extension: '.png' }
+}
+
+function isAvifBuffer(buffer: Buffer) {
+  if (buffer.byteLength < 16 || buffer.toString('ascii', 4, 8) !== 'ftyp') {
+    return false
+  }
+  const brandHeader = buffer.toString('ascii', 8, Math.min(buffer.byteLength, 32))
+  return brandHeader.includes('avif') || brandHeader.includes('avis')
+}
+
+async function defaultCaptureImageWithBrowser(profileId: string, url: string, pageUrl: string) {
+  const browser = await cdpClient.getOrReconnect(profileId)
+  const pages = browser
+    .contexts()
+    .flatMap((context) => context.pages())
+    .filter((item) => !item.isClosed())
+  const page =
+    pages.find((item) => sameUrl(item.url(), pageUrl)) ??
+    pages.find((item) => sameHost(item.url(), pageUrl)) ??
+    pages[0]
+  if (!page) {
+    throw new Error('没有可用的比特浏览器页面用于兜底下载图片')
+  }
+  const imageIndex = await renderedImageIndex(page, url)
+  if (imageIndex === null) {
+    throw new Error('浏览器页面未找到可截图的采集图片')
+  }
+  return page.locator('img').nth(imageIndex).screenshot({ type: 'png' })
+}
+
+function sameUrl(left: string, right: string) {
+  return left === right
+}
+
+function sameHost(left: string, right: string) {
+  try {
+    return new URL(left).hostname === new URL(right).hostname
+  } catch {
+    return false
+  }
+}
+
+async function renderedImageIndex(page: Page, url: string) {
+  return page.evaluate((targetUrl) => {
+    function imagePath(value: string) {
+      try {
+        const parsed = new URL(value, window.location.href)
+        return `${parsed.origin}${parsed.pathname}`
+      } catch {
+        return ''
+      }
+    }
+
+    const targetPath = imagePath(targetUrl)
+    const candidates = Array.from(document.images)
+      .map((img, index) => {
+        const source = img.currentSrc || img.src || ''
+        const rect = img.getBoundingClientRect()
+        return {
+          index,
+          path: imagePath(source),
+          visible:
+            img.complete &&
+            (img.naturalWidth || 0) > 0 &&
+            (img.naturalHeight || 0) > 0 &&
+            rect.width > 0 &&
+            rect.height > 0,
+          area: rect.width * rect.height,
+        }
+      })
+      .filter((item) => item.visible && item.path === targetPath)
+      .sort((left, right) => right.area - left.area)
+
+    return candidates[0]?.index ?? null
+  }, url)
+}
+
 async function findExistingImageByHash(
   folder: string,
   hash: string,
@@ -597,7 +754,8 @@ async function nextImagePath(folder: string, baseName: string, ext: string, stat
   throw new AppErrorClass('HTTP_4XX', '采集文件序号已达上限', false, { folder })
 }
 
-function imageExtension(url: string) {
+function imageExtension(input: string | CollectionImageEvent) {
+  const url = typeof input === 'string' ? input : input.img
   const pathname = url.includes('://') ? new URL(url).pathname : url
   const ext = extname(pathname).toLowerCase()
   return ['.jpg', '.jpeg', '.png', '.webp'].includes(ext) ? ext : '.jpg'
@@ -605,6 +763,33 @@ function imageExtension(url: string) {
 
 function sha256(buffer: Buffer) {
   return createHash('sha256').update(buffer).digest('hex')
+}
+
+function runtimeEventKey(input: CollectionRuntimeEventKeyInput) {
+  return [
+    input.sessionId,
+    input.kind,
+    canonicalPageUrl(input.page),
+    canonicalImageUrl(input.img),
+  ].join('\0')
+}
+
+function canonicalPageUrl(value: string) {
+  try {
+    const parsed = new URL(value)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return value
+  }
+}
+
+function canonicalImageUrl(value: string) {
+  try {
+    const parsed = new URL(value)
+    return `${parsed.origin}${parsed.pathname}`
+  } catch {
+    return value
+  }
 }
 
 function timestampSlug(value: number) {

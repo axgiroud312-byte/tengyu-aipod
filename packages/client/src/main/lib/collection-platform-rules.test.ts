@@ -29,4 +29,14 @@ describe('collection platform rules', () => {
     expect(getPlatformRule('temu').allowed_domains).not.toContain('mutated.example')
     expect(() => getPlatformRule('missing')).toThrow('采集平台规则不存在')
   })
+
+  it('recognizes regional Temu goods URLs that use -g-id.html slugs', () => {
+    const temu = getPlatformRule('temu')
+    const regionalGoodsUrl =
+      'https://www.temu.com/ca/happy-face-painting-gifts-g-601101959736135.html'
+
+    expect(
+      temu.goods_url_patterns.some((pattern) => new RegExp(pattern).test(regionalGoodsUrl)),
+    ).toBe(true)
+  })
 })
