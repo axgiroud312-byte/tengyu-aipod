@@ -187,6 +187,56 @@ window.localStorage.setItem('collection-settings', JSON.stringify(state))
 await window.api.collection.saveConfig(collectionConfigFromPageState(state))
 ```
 
+## Scenario: Collection Record List Limit Contract
+
+### 1. Scope / Trigger
+
+- Trigger: collection record listing, manifest export, collection records IPC validation, or renderer collection progress summaries.
+- Applies to: collection record store and collection click IPC in the Electron client.
+
+### 2. Signatures
+
+- Constants: `COLLECTION_RECORD_LIST_LIMIT_DEFAULT`, `COLLECTION_RECORD_LIST_LIMIT_MAX`
+- IPC: `collection:list-records(input: { session_id: string; status?: CollectionRecordStatus; limit?: number })`
+- Store: `listCollectionRecords(db, { sessionId, status?, limit? })`
+
+### 3. Contracts
+
+- The renderer, IPC validator, store query clamp, and manifest export must use the same max list limit constant.
+- The current max list limit is `10_000`; do not reintroduce a smaller hard-coded IPC max such as `200`.
+- Renderer collection summaries may request the max limit so success/failure counts cover the whole current session.
+
+### 4. Validation & Error Matrix
+
+- `limit <= COLLECTION_RECORD_LIST_LIMIT_MAX` -> IPC accepts.
+- `limit > COLLECTION_RECORD_LIST_LIMIT_MAX` -> validation `AppErrorClass`.
+- Missing limit -> store uses `COLLECTION_RECORD_LIST_LIMIT_DEFAULT`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: renderer asks for 10,000 records and IPC accepts the request.
+- Base: caller omits limit and receives the default page size.
+- Bad: IPC uses `max(200)` while the renderer asks for 10,000, causing `采集记录查询参数不正确`.
+
+### 6. Tests Required
+
+- Unit tests must cover IPC parsing accepting `COLLECTION_RECORD_LIST_LIMIT_MAX` and rejecting `max + 1`.
+- Service/store tests must keep active-session record listing and manifest export behavior intact.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+limit: z.number().int().positive().max(200).optional()
+```
+
+#### Correct
+
+```ts
+limit: z.number().int().positive().max(COLLECTION_RECORD_LIST_LIMIT_MAX).optional()
+```
+
 ---
 
 ## Query Patterns

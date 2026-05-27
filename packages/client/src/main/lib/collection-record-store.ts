@@ -1,6 +1,9 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+
+export const COLLECTION_RECORD_LIST_LIMIT_DEFAULT = 20
+export const COLLECTION_RECORD_LIST_LIMIT_MAX = 10_000
 
 export type CollectionRecordStatus = 'success' | 'skipped' | 'failed'
 
@@ -146,7 +149,13 @@ export function listCollectionRecords(
   query: CollectionRecordQuery,
 ): CollectionRecordRow[] {
   ensureCollectionRecordTables(db)
-  const limit = Math.max(1, Math.min(Math.floor(query.limit ?? 20), 10_000))
+  const limit = Math.max(
+    1,
+    Math.min(
+      Math.floor(query.limit ?? COLLECTION_RECORD_LIST_LIMIT_DEFAULT),
+      COLLECTION_RECORD_LIST_LIMIT_MAX,
+    ),
+  )
   const params: Array<string | number> = [query.sessionId]
   let sql = 'SELECT * FROM collection_records WHERE session_id = ?'
   if (query.status) {
@@ -164,9 +173,10 @@ export async function exportCollectionManifest(
   outputDir: string,
   sessionId: string,
 ) {
-  const records = listCollectionRecords(db, { sessionId, limit: 10_000 }).sort(
-    (left, right) => left.createdAt - right.createdAt,
-  )
+  const records = listCollectionRecords(db, {
+    sessionId,
+    limit: COLLECTION_RECORD_LIST_LIMIT_MAX,
+  }).sort((left, right) => left.createdAt - right.createdAt)
   const manifestPath = join(outputDir, `${sessionId}-manifest.csv`)
   const csv = [
     ['sku_code', 'saved_path', 'source_url', 'goods_link', 'status', 'file_size', 'created_at'],

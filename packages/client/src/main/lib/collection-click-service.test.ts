@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
+import type { AppErrorClass } from '@tengyu-aipod/shared'
 import { describe, expect, it, vi } from 'vitest'
-import { CollectionClickService } from './collection-click-service'
+import { CollectionClickService, parseCollectionRecordListInput } from './collection-click-service'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
+  COLLECTION_RECORD_LIST_LIMIT_MAX,
   exportCollectionManifest,
   insertCollectionRecord,
   openCollectionDatabase,
@@ -562,6 +564,38 @@ describe('CollectionClickService', () => {
     expect(fs.writeFile).toHaveBeenCalledWith(looseImagePath('.jpg'), Buffer.from('image-bytes'))
     expect(db.records[0]?.[7]).toBe('success')
     expect(db.records[0]?.[8]).toBeNull()
+  })
+
+  it('accepts the collection page list limit at the IPC boundary', () => {
+    expect(
+      parseCollectionRecordListInput({
+        session_id: 'session-1',
+        limit: COLLECTION_RECORD_LIST_LIMIT_MAX,
+      }),
+    ).toEqual({
+      sessionId: 'session-1',
+      limit: COLLECTION_RECORD_LIST_LIMIT_MAX,
+    })
+  })
+
+  it('rejects record list limits above the shared maximum', () => {
+    let caught: unknown = null
+
+    try {
+      parseCollectionRecordListInput({
+        session_id: 'session-1',
+        limit: COLLECTION_RECORD_LIST_LIMIT_MAX + 1,
+      })
+    } catch (error) {
+      caught = error
+    }
+
+    expect(caught).toBeInstanceOf(Error)
+    expect(caught).toMatchObject({
+      code: 'HTTP_4XX',
+      message: '采集记录查询参数不正确',
+      details: { kind: 'validation' },
+    } satisfies Partial<AppErrorClass>)
   })
 
   it('deletes records and removes saved files when present', async () => {

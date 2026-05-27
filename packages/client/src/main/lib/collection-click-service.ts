@@ -8,6 +8,7 @@ import { z } from 'zod'
 import type { CollectionBindingPayload } from './cdp-client'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
+  COLLECTION_RECORD_LIST_LIMIT_MAX,
   type CollectionRecordInput,
   type CollectionRecordRow,
   deleteCollectionRecord,
@@ -690,7 +691,7 @@ const CollectionSkuInputSchema = z.object({
 const CollectionRecordListInputSchema = z.object({
   session_id: z.string().min(1),
   status: z.enum(['success', 'skipped', 'failed']).optional(),
-  limit: z.number().int().positive().max(200).optional(),
+  limit: z.number().int().positive().max(COLLECTION_RECORD_LIST_LIMIT_MAX).optional(),
 })
 
 const CollectionRetryRecordInputSchema = z.object({
@@ -700,6 +701,21 @@ const CollectionRetryRecordInputSchema = z.object({
 const CollectionDeleteRecordInputSchema = z.object({
   record_id: z.string().min(1),
 })
+
+export function parseCollectionRecordListInput(input: unknown) {
+  const parsed = CollectionRecordListInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('HTTP_4XX', '采集记录查询参数不正确', false, {
+      kind: 'validation',
+      issues: parsed.error.issues,
+    })
+  }
+  return {
+    sessionId: parsed.data.session_id,
+    ...(parsed.data.status ? { status: parsed.data.status } : {}),
+    ...(parsed.data.limit ? { limit: parsed.data.limit } : {}),
+  }
+}
 
 export function registerCollectionClickIpc() {
   const ipcMain = electronIpcMain()
@@ -778,18 +794,7 @@ export function registerCollectionClickIpc() {
   })
 
   ipcMain.handle('collection:list-records', (_event, input: unknown) => {
-    const parsed = CollectionRecordListInputSchema.safeParse(input)
-    if (!parsed.success) {
-      throw new AppErrorClass('HTTP_4XX', '采集记录查询参数不正确', false, {
-        kind: 'validation',
-        issues: parsed.error.issues,
-      })
-    }
-    return collectionClickService.listRecords({
-      sessionId: parsed.data.session_id,
-      ...(parsed.data.status ? { status: parsed.data.status } : {}),
-      ...(parsed.data.limit ? { limit: parsed.data.limit } : {}),
-    })
+    return collectionClickService.listRecords(parseCollectionRecordListInput(input))
   })
 
   ipcMain.handle('collection:retry-record', async (_event, input: unknown) => {
