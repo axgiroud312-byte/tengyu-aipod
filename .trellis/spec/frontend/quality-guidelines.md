@@ -32,6 +32,28 @@ Questions to answer:
 
 <!-- Patterns that must always be used -->
 
+### Scenario: Tailwind Theme Token Contract
+
+#### 1. Scope / Trigger
+- Trigger: renderer theme tokens, Tailwind CSS setup, app shell colors, shared UI primitives, or build scripts that affect compiled renderer CSS.
+- Applies to: `packages/client/src/renderer/src/index.css`, shared UI components under `packages/client/src/renderer/src/components/ui/`, layout components, and `packages/client/scripts/assert-theme-css.mjs`.
+
+#### 2. Contracts
+- Tailwind v4 semantic color utilities must be registered from the renderer CSS entry with `@theme inline`.
+- Components should use semantic utilities such as `bg-primary`, `text-primary-foreground`, `bg-card`, `bg-muted`, `text-muted-foreground`, `border-border`, `border-input`, and `focus-visible:ring-ring`.
+- Do not scatter raw brand colors through components to fix a missing token. Restore the token contract instead.
+- The client `build` script must run the theme CSS contract check after `electron-vite build`.
+- If a class depends on an old custom Tailwind config token, either register it in the v4 CSS theme contract or replace it with a Tailwind default utility.
+
+#### 3. Validation & Error Matrix
+- Missing semantic utility selectors in built renderer CSS -> build must fail through `assert-theme-css.mjs`.
+- Active sidebar navigation losing blue background or white foreground -> inspect the theme contract before editing individual components.
+- Local project paths may contain non-ASCII characters; scripts that convert file URLs to paths must use `fileURLToPath`.
+
+#### 4. Tests Required
+- Run `pnpm -F @tengyu-aipod/client build`; this must also pass the theme CSS contract check.
+- When changing theme tokens, verify computed styles for at least active navigation background/foreground and app shell background.
+
 ### Scenario: Aliyun Bailian Client Adapter
 
 #### 1. Scope / Trigger
