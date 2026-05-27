@@ -140,6 +140,54 @@ await window.api.listing.run({
 })
 ```
 
+### Scenario: Collection Session CDP Page Wiring
+
+#### 1. Scope / Trigger
+- Trigger: collection session startup/resume, BitBrowser CDP connection, platform-domain filtering, or injected collection script changes.
+- Boundary: collection sessions are scoped to one BitBrowser profile. They must not be scoped to the first tab or first Playwright `BrowserContext`.
+
+#### 2. Signatures
+- `CollectionSessionManager.startSession(config: CollectionSessionConfig): Promise<CollectionSession>`
+- `CollectionSessionManager.resume(): Promise<CollectionSession | null>`
+- Internal CDP hook: `CDPClient.injectPageScript(page, { script, onEvent })`
+
+#### 3. Contracts
+- Startup must scan every existing `browser.contexts()` entry and every existing page before deciding whether to open an entry page.
+- If any existing page matches the selected platform domains, startup must not open another entry page.
+- If no existing page matches, startup may open exactly one page to the platform `entry_url`.
+- Existing pages and future `context.on('page')` pages should be wired at the page level; the injected script owns platform-domain filtering before emitting data.
+- `about:blank` pages must still be wired because they can later navigate to the selected platform.
+- Stopping or reconnecting must detach every context page handler owned by the runtime.
+
+#### 4. Validation & Error Matrix
+- No browser context is available after CDP connection -> retryable browser/CDP error.
+- Page script injection fails on a non-target existing page -> ignore that page and keep the session start path alive.
+- Page script injection fails on the chosen target page -> surface the failure so session startup can fail.
+
+#### 5. Good/Base/Bad Cases
+- Good: a Temu tab in a second context is reused and brought to front without opening a duplicate Temu tab.
+- Base: no Temu tab exists, so one Temu entry page is opened.
+- Bad: only `browser.contexts()[0]` is scanned, causing hidden Temu tabs in other windows to be missed.
+- Bad: new pages are wired only when their creation-time URL already matches the platform domain, which misses `about:blank -> Temu` flows.
+
+#### 6. Tests Required
+- Unit tests must cover existing allowed pages across multiple contexts, multiple allowed pages being wired, no duplicate entry page when an allowed page exists, one entry page when none exists, and `about:blank` new pages being wired.
+- Injected script tests must assert non-platform pages stay inert and do not emit collection events.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+const context = browser.contexts()[0]
+const page = context.pages().find((item) => isAllowedDomain(item.url(), domains))
+```
+
+Correct:
+```ts
+const pages = browser.contexts().flatMap((context) => context.pages())
+const page = pages.find((item) => isAllowedDomain(item.url(), domains))
+```
+
 ---
 
 ## Testing Requirements

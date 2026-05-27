@@ -83,6 +83,8 @@ export function createCollectionInjectedScript(options: CollectionInjectedScript
       platformRule.allowed_domains.some((domain) => allowedDomainMatches(domain, host()));
   }
 
+  if (!isAllowedPage()) return;
+
   function absoluteUrl(value) {
     if (typeof value !== 'string' || value.trim() === '') return '';
     try {

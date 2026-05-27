@@ -95,8 +95,7 @@ type SessionRuntime = {
   sizeFilter: SizeFilter
   wiredPages: WeakSet<Page>
   browser: Browser | undefined
-  context: BrowserContext | undefined
-  pageHandler: ((page: Page) => void) | undefined
+  contextHandlers: Map<BrowserContext, (page: Page) => void>
 }
 
 const CollectionSessionConfigSchema = z
@@ -183,8 +182,7 @@ export class CollectionSessionManager {
       sizeFilter: normalizeSessionSizeFilter(config.size_filter),
       wiredPages: new WeakSet(),
       browser: undefined,
-      context: undefined,
-      pageHandler: undefined,
+      contextHandlers: new Map(),
     }
 
     try {
@@ -329,18 +327,21 @@ export class CollectionSessionManager {
     this.detachPageHandler(runtime)
     const browser = await this.cdp.connectToProfile(runtime.session.profile_id)
     runtime.browser = browser
-    const context = await firstBrowserContext(browser)
-    runtime.context = context
 
-    const targetPage = await this.acquireCollectionPage(context, runtime.platformRule)
+    const contexts = await browserContexts(browser)
+    for (const context of contexts) {
+      for (const page of context.pages()) {
+        await this.wirePage(runtime, page).catch(() => null)
+      }
+    }
+
+    const targetPage = await this.acquireCollectionPage(contexts, runtime.platformRule)
     await this.wirePage(runtime, targetPage)
     await targetPage.bringToFront().catch(() => null)
 
-    const pageHandler = (page: Page) => {
-      void this.wireIfAllowed(runtime, page).catch(() => null)
+    for (const context of contexts) {
+      this.attachPageHandler(runtime, context)
     }
-    context.on('page', pageHandler)
-    runtime.pageHandler = pageHandler
 
     browser.on('disconnected', () => {
       if (this.active?.session.id === runtime.session.id) {
@@ -350,26 +351,26 @@ export class CollectionSessionManager {
   }
 
   private async acquireCollectionPage(
-    context: BrowserContext,
+    contexts: BrowserContext[],
     rule: CollectionPlatformRule,
   ): Promise<Page> {
-    const existing = context
-      .pages()
+    const existing = contexts
+      .flatMap((context) => context.pages())
       .find((page) => !page.isClosed() && isAllowedDomain(page.url(), rule.allowed_domains))
     if (existing) {
       return existing
     }
 
+    const context = contexts[0]
+    if (!context) {
+      throw new AppErrorClass('BROWSER_NOT_CONNECTED', '无法获取比特浏览器页面上下文', true, {
+        kind: 'network',
+        provider: 'playwright-cdp',
+      })
+    }
     const page = await context.newPage()
     await page.goto(rule.entry_url, { waitUntil: 'domcontentloaded' }).catch(() => null)
     return page
-  }
-
-  private async wireIfAllowed(runtime: SessionRuntime, page: Page): Promise<void> {
-    if (!isAllowedDomain(page.url(), runtime.platformRule.allowed_domains)) {
-      return
-    }
-    await this.wirePage(runtime, page)
   }
 
   private async wirePage(runtime: SessionRuntime, page: Page): Promise<void> {
@@ -396,12 +397,22 @@ export class CollectionSessionManager {
     }
   }
 
-  private detachPageHandler(runtime: SessionRuntime): void {
-    if (runtime.context && runtime.pageHandler) {
-      runtime.context.off('page', runtime.pageHandler)
+  private attachPageHandler(runtime: SessionRuntime, context: BrowserContext): void {
+    if (runtime.contextHandlers.has(context)) {
+      return
     }
-    runtime.pageHandler = undefined
-    runtime.context = undefined
+    const pageHandler = (page: Page) => {
+      void this.wirePage(runtime, page).catch(() => null)
+    }
+    context.on('page', pageHandler)
+    runtime.contextHandlers.set(context, pageHandler)
+  }
+
+  private detachPageHandler(runtime: SessionRuntime): void {
+    for (const [context, pageHandler] of runtime.contextHandlers) {
+      context.off('page', pageHandler)
+    }
+    runtime.contextHandlers.clear()
   }
 
   private emit(event: CollectionSessionEvent) {
@@ -447,8 +458,9 @@ async function readAppConfig() {
   return (await import('../onboarding')).readAppConfig()
 }
 
-async function firstBrowserContext(browser: Browser): Promise<BrowserContext> {
-  return browser.contexts()[0] ?? (await browser.newContext())
+async function browserContexts(browser: Browser): Promise<BrowserContext[]> {
+  const contexts = browser.contexts()
+  return contexts.length > 0 ? contexts : [await browser.newContext()]
 }
 
 function isAllowedDomain(url: string, allowedDomains: string[]): boolean {

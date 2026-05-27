@@ -184,13 +184,15 @@ describe('createCollectionInjectedScript', () => {
     ])
   })
 
-  it('does not send events outside allowed domains', () => {
+  it('stays inert outside allowed domains', () => {
     const harness = createHarness({ hostname: 'example.com', href: 'https://example.com/item/1' })
     const img = image(harness.FakeImageElement)
 
     harness.triggerClick(img)
 
     expect(harness.callbacks).toEqual([])
+    expect(harness.observers).toEqual([])
+    expect(harness.observed).toEqual([])
   })
 
   it('drops clicked images outside the configured size range', () => {

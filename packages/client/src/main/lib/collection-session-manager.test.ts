@@ -242,7 +242,7 @@ describe('CollectionSessionManager', () => {
     ])
   })
 
-  it('reuses an allowed current page without reloading other tabs, wires allowed new tabs, and pauses on disconnect', async () => {
+  it('reuses an allowed current page without reloading other tabs, wires existing and new tabs, and pauses on disconnect', async () => {
     const currentPage = new FakePage('https://temu.com/goods/1')
     const unrelatedPage = new FakePage('https://www.dianxiaomi.com/dashboard')
     const context = new FakeContext([unrelatedPage, currentPage])
@@ -266,7 +266,12 @@ describe('CollectionSessionManager', () => {
     expect(currentPage.gotos).toEqual([])
     expect(currentPage.bringToFronts).toBe(1)
     expect(unrelatedPage.reloads).toBe(0)
-    expect(cdp.injectPageScript).not.toHaveBeenCalledWith(unrelatedPage, expect.anything())
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(
+      unrelatedPage,
+      expect.objectContaining({
+        script: expect.stringContaining('__poseidonSendToHost'),
+      }),
+    )
 
     await currentPage.bindings.get('__poseidonSendToHost')?.(
       {},
@@ -296,11 +301,16 @@ describe('CollectionSessionManager', () => {
     )
     expect(newPage.reloads).toBe(0)
 
-    const disallowedNewPage = new FakePage('https://www.dianxiaomi.com/order')
-    context.emit('page', disallowedNewPage)
+    const blankNewPage = new FakePage('about:blank')
+    context.emit('page', blankNewPage)
     await Promise.resolve()
     await Promise.resolve()
-    expect(cdp.injectPageScript).not.toHaveBeenCalledWith(disallowedNewPage, expect.anything())
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(
+      blankNewPage,
+      expect.objectContaining({
+        script: expect.stringContaining('__poseidonSendToHost'),
+      }),
+    )
 
     browser.disconnectOnly()
     expect(manager.getActiveSession()).toMatchObject({
@@ -313,10 +323,55 @@ describe('CollectionSessionManager', () => {
     })
   })
 
+  it('finds existing allowed pages across every browser context without opening a new entry page', async () => {
+    const unrelatedPage = new FakePage('https://www.dianxiaomi.com/dashboard')
+    const firstContext = new FakeContext([unrelatedPage])
+    const temuPage = new FakePage('https://www.temu.com/goods/1')
+    const secondContext = new FakeContext([temuPage])
+    const browser = new FakeBrowser([firstContext, secondContext])
+    const { manager, cdp } = createManager({ browser })
+
+    await manager.startSession({
+      platform: 'temu',
+      profile_id: 'profile-1',
+      mode: 'click',
+    })
+
+    expect(firstContext.pages()).toEqual([unrelatedPage])
+    expect(secondContext.pages()).toEqual([temuPage])
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(
+      temuPage,
+      expect.objectContaining({
+        script: expect.stringContaining('__poseidonSendToHost'),
+      }),
+    )
+    expect(temuPage.bringToFronts).toBe(1)
+  })
+
+  it('wires existing allowed pages across multiple browser contexts', async () => {
+    const firstTemuPage = new FakePage('https://www.temu.com/goods/1')
+    const secondTemuPage = new FakePage('https://www.temu.com/goods/2')
+    const browser = new FakeBrowser([
+      new FakeContext([firstTemuPage]),
+      new FakeContext([secondTemuPage]),
+    ])
+    const { manager, cdp } = createManager({ browser })
+
+    await manager.startSession({
+      platform: 'temu',
+      profile_id: 'profile-1',
+      mode: 'click',
+    })
+
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(firstTemuPage, expect.anything())
+    expect(cdp.injectPageScript).toHaveBeenCalledWith(secondTemuPage, expect.anything())
+  })
+
   it('opens one entry page when no existing tab matches the platform domains', async () => {
     const unrelatedPage = new FakePage('https://www.dianxiaomi.com/dashboard')
     const context = new FakeContext([unrelatedPage])
-    const browser = new FakeBrowser([context])
+    const otherContext = new FakeContext([new FakePage('https://seller.ozon.ru/dashboard')])
+    const browser = new FakeBrowser([context, otherContext])
     const { manager, cdp } = createManager({ browser })
 
     await manager.startSession({
@@ -336,7 +391,6 @@ describe('CollectionSessionManager', () => {
     expect(targetPage.reloads).toBe(0)
     expect(targetPage.bringToFronts).toBe(1)
     expect(unrelatedPage.reloads).toBe(0)
-    expect(cdp.injectPageScript).toHaveBeenCalledTimes(1)
     expect(cdp.injectPageScript).toHaveBeenCalledWith(
       targetPage,
       expect.objectContaining({
