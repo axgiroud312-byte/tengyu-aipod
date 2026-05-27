@@ -1,0 +1,14 @@
+{"file": "docs/spec/07-listing.md", "reason": "上架模块整体设计 + 四层结构定义"}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "为什么按 SKILL 重写而不是直接 Port 旧代码"}
+{"file": ".agents/skills/listing-automation-builder/SKILL.md", "reason": "selectors/parser/executor/workflow 四层结构的来源约束"}
+{"file": "docs/spec/00-overview.md", "reason": "TypeScript strict / 主进程职责 / AppError 等基础编码约束"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-temu-pop/selectors.ts", "reason": "需要抽取共用部分到 _commons，并改成 record 数据结构"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-temu-pop/action-executor.ts", "reason": "ListingActionError + 多个 page 操作原语需要抽到 _commons"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-temu-pop/page-parser.ts", "reason": "selector 调用方式会因 record 化改变"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-temu-pop/workflow.ts", "reason": "可能引用 ListingActionError，需同步更新 import"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-shein/selectors.ts", "reason": "同 Temu，需要抽取共用部分并 record 化"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-shein/action-executor.ts", "reason": "同 Temu，删除重复定义并引用 _commons"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-shein/page-parser.ts", "reason": "同 Temu"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-shein/workflow.ts", "reason": "同 Temu"}
+{"file": "packages/shared/src/listing-types.ts", "reason": "ListingActionError 可能上移到 shared，SelectorRecord 类型在这里新增"}
+{"file": "packages/client/src/modules/listing/runner.ts", "reason": "runner 引用了 ListingActionError 的导出，需同步更新 import 路径"}

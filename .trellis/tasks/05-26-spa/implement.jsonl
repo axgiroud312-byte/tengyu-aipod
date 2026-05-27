@@ -1,0 +1,11 @@
+{"file": "docs/spec/02-collection.md", "reason": "采集模块的权威 spec：click/scroll 行为、货号识别、散图池、暂停恢复条件"}
+{"file": "docs/spec/00-overview.md", "reason": "主进程/渲染进程职责边界、IPC 命名 + zod 校验、AppError 结构（影响 IPC schema 改动）"}
+{"file": "docs/CONTEXT.md", "reason": "货号 / 散图池 / SKU 等术语权威定义，UI 文案要保持一致"}
+{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "UI 改动 CollectionPage.tsx 时要遵循的组件结构约定"}
+{"file": ".trellis/spec/frontend/state-management.md", "reason": "CollectionPageState 增加 4 个字段时的状态约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "主进程 IPC schema 改动 + AppError 用法"}
+{"file": "packages/client/src/main/lib/cdp-client.ts", "reason": "Bug 根因：injectPageScript 只 addInitScript，需追加 evaluate"}
+{"file": "packages/client/src/main/lib/collection-injected-script.ts", "reason": "脚本本体：加 click 尺寸过滤 + SPA pushState/replaceState/popstate hook + data:/blob: 过滤"}
+{"file": "packages/client/src/main/lib/collection-session-manager.ts", "reason": "CollectionSessionConfig 增 size_filter 字段；createCollectionInjectedScript 调用处合并选项；CollectionSessionConfigSchema 校验"}
+{"file": "packages/client/src/main/lib/collection-injected-script.test.ts", "reason": "现有 harness 已支持模拟 IntersectionObserver/click，扩展三个 case（size 过滤 / data: 过滤 / pushState 清 set）"}
+{"file": "packages/client/src/renderer/src/features/collection/CollectionPage.tsx", "reason": "UI 增加 4 个 number Input，并连到 onStateChange"}

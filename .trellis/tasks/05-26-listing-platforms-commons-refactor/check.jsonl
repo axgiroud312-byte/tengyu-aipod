@@ -1,0 +1,9 @@
+{"file": "docs/spec/07-listing.md", "reason": "验收时核对四层结构约束是否被 _commons 抽取破坏"}
+{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "核对 SKILL 流程约束（不抄旧代码、按四层重写）"}
+{"file": ".agents/skills/listing-automation-builder/SKILL.md", "reason": "_commons 的接口是否仍满足 SKILL 四层规范"}
+{"file": "docs/spec/00-overview.md", "reason": "AppError / TS strict / IPC zod 校验 等通用编码标准"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-temu-pop/action-executor.real.test.ts", "reason": "重构后 Temu real.test 必须全过，是回归核心证据"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-temu-pop/workflow.real.test.ts", "reason": "Temu workflow 真实测试"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-shein/action-executor.real.test.ts", "reason": "重构后 Shein real.test 必须全过"}
+{"file": "packages/client/src/modules/listing/platforms/dianxiaomi-shein/workflow.real.test.ts", "reason": "Shein workflow 真实测试"}
+{"file": "packages/shared/src/listing-types.ts", "reason": "ListingActionError 上移后只能有一处定义"}
