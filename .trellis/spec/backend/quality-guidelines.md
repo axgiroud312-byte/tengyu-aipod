@@ -188,6 +188,61 @@ const pages = browser.contexts().flatMap((context) => context.pages())
 const page = pages.find((item) => isAllowedDomain(item.url(), domains))
 ```
 
+### Scenario: Collection Click Runtime Deduplication and Image Normalization
+
+#### 1. Scope / Trigger
+- Trigger: collection injected script changes, CDP `Runtime.bindingCalled` dispatch, click/scroll save handling, or image download fallback changes.
+- Boundary: browser-page code may identify candidate images, but the Electron main process owns idempotency, file writing, and final image format.
+
+#### 2. Signatures
+- `CollectionClickService.dispatch(payload, context): Promise<CollectionClickResult | CollectionScrollResult | null>`
+- `CollectionClickService.handleClick(event, platformRule)`
+- `CollectionClickService.handleScroll(event, platformRule)`
+- Injected binding payload: `{ kind: 'click' | 'scroll', img: string, goodsLink?: string, page: string, platform?: string }`
+
+#### 3. Contracts
+- Treat browser binding payloads as at-least-once delivery. A real page can keep stale anonymous click listeners from older injected script versions after the Electron app restarts.
+- The service must drop duplicate runtime image events for the same active session, event kind, canonical page path, and canonical image path within a short debounce window before doing download or DB writes.
+- Dropped duplicate runtime events return `null` and must not insert `collection_records` rows.
+- The injected script should still call `window.__poseidonCollectionRuntime.dispose()` before installing a new runtime, but this is a best-effort cleanup, not the only duplicate defense.
+- Direct downloads that decode as AVIF must be normalized to PNG before writing, because downstream client flows expect collected images to be usable through `.jpg`, `.png`, or `.webp`-style local image handling. Browser screenshot fallback also writes PNG.
+- Node `fetch` failure for Temu image CDN URLs should fall back to browser-rendered image capture through the active BitBrowser CDP page.
+
+#### 4. Validation & Error Matrix
+- Duplicate runtime payload within the debounce window -> return `null`, no file write, no DB row.
+- First runtime payload for a visible image -> save normally or record a structured failed row if all download/capture strategies fail.
+- Direct download returns AVIF bytes -> convert to PNG and save with `.png`.
+- Direct download fails, rendered page contains matching image path -> screenshot that `img` element and save as PNG.
+- Direct download fails and rendered image cannot be found -> preserve the original download error in the failed collection record.
+- No active collection session or wrong mode -> existing state-conflict errors still apply.
+
+#### 5. Good/Base/Bad Cases
+- Good: one user click fires three stale listeners but inserts exactly one successful `collection_records` row.
+- Good: a Temu `format/avif` URL saves as a valid PNG file, not AVIF bytes with a `.jpg` extension.
+- Base: two different image paths clicked quickly both save because their canonical image paths differ.
+- Bad: relying only on `removeEventListener` in the injected script; older anonymous listeners cannot be removed.
+- Bad: saving CDN AVIF bytes under `.jpg`, which creates files that look like JPEGs by name but are not JPEG content.
+
+#### 6. Tests Required
+- Unit test duplicate runtime `dispatch` calls with the same canonical image path and assert only one file write and one DB row.
+- Unit test AVIF download normalization by passing AVIF bytes and asserting the saved path is `.png` with a PNG signature.
+- Injected script tests must still cover repeated injection cleanup through `window.__poseidonCollectionRuntime.dispose()`.
+- Real Playwright smoke should verify one click on a Temu detail image and one click on a Temu list/home product image each add exactly one successful record under `散图池/`.
+
+#### 7. Wrong vs Correct
+
+Wrong:
+```ts
+await service.handleClick(payload, rule)
+await service.handleClick(payload, rule) // second stale listener writes another row
+```
+
+Correct:
+```ts
+await service.dispatch(payload, context) // first payload saves
+await service.dispatch(payload, context) // duplicate payload returns null
+```
+
 ---
 
 ## Testing Requirements
