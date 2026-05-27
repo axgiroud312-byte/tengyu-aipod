@@ -4,7 +4,7 @@ import { Slot } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 
 const buttonVariants = cva(
-  'inline-flex h-10 items-center justify-center rounded-sm px-4 py-2 text-sm font-medium transition-colors duration-fast focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex h-10 items-center justify-center rounded-sm px-4 py-2 text-sm font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {

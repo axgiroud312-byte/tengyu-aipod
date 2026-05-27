@@ -136,7 +136,7 @@ function StepRail({ step }: { step: OnboardingStep }) {
         return (
           <div
             className={cn(
-              'flex items-start gap-3 rounded-md border p-3 transition-colors duration-base',
+              'flex items-start gap-3 rounded-md border p-3 transition-colors duration-150',
               isCurrent
                 ? 'border-primary bg-primary/5 text-foreground shadow-xs'
                 : isDone

@@ -6,7 +6,8 @@
   "main": "out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
-    "build": "electron-vite build",
+    "build": "electron-vite build && node scripts/assert-theme-css.mjs",
+    "check:theme": "node scripts/assert-theme-css.mjs",
     "e2e": "playwright test -c playwright.e2e.config.ts",
     "lint": "biome check .",
     "postinstall": "node scripts/check-native-abi.mjs",

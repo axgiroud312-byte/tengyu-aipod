@@ -34,7 +34,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-base',
+        'flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-150',
         collapsed ? 'w-[60px]' : 'w-[180px]',
       )}
     >
@@ -59,7 +59,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             <NavLink
               className={({ isActive }) =>
                 cn(
-                  'flex h-10 items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-fast',
+                  'flex h-10 items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
                   collapsed ? 'justify-center px-0' : null,
                   isActive
                     ? 'bg-primary text-primary-foreground shadow-xs'
@@ -80,7 +80,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
       <div className="space-y-1 border-t px-2 py-3">
         <button
           className={cn(
-            'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-fast hover:bg-accent hover:text-accent-foreground',
+            'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground',
             collapsed ? 'justify-center px-0' : null,
           )}
           title={collapsed ? '设置' : undefined}
@@ -91,7 +91,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
         </button>
         <button
           className={cn(
-            'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-fast hover:bg-accent hover:text-accent-foreground',
+            'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground',
             collapsed ? 'justify-center px-0' : null,
           )}
           title={collapsed ? '教程' : undefined}
