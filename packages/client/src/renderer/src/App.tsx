@@ -43,6 +43,7 @@ import {
   useParams,
 } from 'react-router-dom'
 import type { BitBrowserProfileWithStatus } from '../../main/lib/bit-browser-client'
+import type { CollectionConfig } from '../../main/lib/collection-config'
 import type { CollectionPlatformRule } from '../../main/lib/collection-injected-script'
 import type { CollectionRecordRow } from '../../main/lib/collection-record-store'
 import type { CollectionSession } from '../../main/lib/collection-session-manager'
@@ -68,6 +69,7 @@ const defaultCollectionPageState: CollectionPageState = {
 }
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
+const COLLECTION_CONFIG_SAVE_DEBOUNCE_MS = 400
 
 function normalizeActivationCode(value: string) {
   return value
@@ -158,6 +160,36 @@ function collectionProfileOption(profile: BitBrowserProfileWithStatus): Collecti
     label: profile.name,
     detail: detailItems.join(' · ') || profile.id,
     online: profile.online,
+  }
+}
+
+function collectionPageStateFromConfig(config: CollectionConfig): CollectionPageState {
+  return {
+    platform: config.platform,
+    profileId: config.profile_id,
+    mode: config.mode,
+    outputDir: config.output_dir,
+    scrollKeywords: config.scroll_keywords,
+    minWidth: config.size_filter.min_width,
+    maxWidth: config.size_filter.max_width,
+    minHeight: config.size_filter.min_height,
+    maxHeight: config.size_filter.max_height,
+  }
+}
+
+function collectionConfigFromPageState(state: CollectionPageState): CollectionConfig {
+  return {
+    platform: state.platform,
+    profile_id: state.profileId,
+    mode: state.mode,
+    output_dir: state.outputDir,
+    scroll_keywords: state.scrollKeywords,
+    size_filter: {
+      min_width: nonNegativeInteger(state.minWidth),
+      max_width: nonNegativeInteger(state.maxWidth),
+      min_height: nonNegativeInteger(state.minHeight),
+      max_height: nonNegativeInteger(state.maxHeight),
+    },
   }
 }
 
@@ -350,6 +382,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [collectionPageState, setCollectionPageState] = useState<CollectionPageState>(
     defaultCollectionPageState,
   )
+  const [isCollectionConfigLoaded, setIsCollectionConfigLoaded] = useState(false)
   const [collectionPlatforms, setCollectionPlatforms] = useState<CollectionPlatformOption[]>([])
   const [collectionProfiles, setCollectionProfiles] = useState<CollectionProfileOption[]>([])
   const [isStartingCollection, setIsStartingCollection] = useState(false)
@@ -359,6 +392,51 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
+
+  useEffect(() => {
+    let mounted = true
+    async function loadCollectionConfig() {
+      try {
+        const config = await window.api.collection.getConfig()
+        if (!mounted) {
+          return
+        }
+        if (config) {
+          setCollectionPageState(collectionPageStateFromConfig(config))
+        }
+        setIsCollectionConfigLoaded(true)
+      } catch (error) {
+        if (mounted) {
+          setCollectionError(error instanceof Error ? error.message : '读取采集设置失败')
+          setIsCollectionConfigLoaded(true)
+        }
+      }
+    }
+    void loadCollectionConfig()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!isCollectionConfigLoaded) {
+      return
+    }
+    let cancelled = false
+    const timeout = window.setTimeout(() => {
+      window.api.collection
+        .saveConfig(collectionConfigFromPageState(collectionPageState))
+        .catch((error) => {
+          if (!cancelled) {
+            setCollectionError(error instanceof Error ? error.message : '保存采集设置失败')
+          }
+        })
+    }, COLLECTION_CONFIG_SAVE_DEBOUNCE_MS)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timeout)
+    }
+  }, [collectionPageState, isCollectionConfigLoaded])
 
   useEffect(() => {
     let mounted = true
@@ -412,6 +490,19 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       mounted = false
     }
   }, [])
+
+  useEffect(() => {
+    if (!isCollectionConfigLoaded || collectionPlatforms.length === 0) {
+      return
+    }
+    setCollectionPageState((current) => {
+      if (collectionPlatforms.some((item) => item.key === current.platform)) {
+        return current
+      }
+      const firstPlatform = collectionPlatforms[0]?.key
+      return firstPlatform ? { ...current, platform: firstPlatform } : current
+    })
+  }, [collectionPlatforms, isCollectionConfigLoaded])
 
   useEffect(() => {
     const offCollectionEvent = window.api.collection.onEvent((event) => {
@@ -693,6 +784,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     setIsStartingCollection(true)
     setCollectionError(null)
     try {
+      await window.api.collection.saveConfig(collectionConfigFromPageState(collectionPageState))
       const session = await window.api.collection.startSession({
         platform: collectionPageState.platform,
         profile_id: profileId,

@@ -5,6 +5,7 @@ import { registerListingRunnerIpc } from '../modules/listing/runner'
 import { activationPoller } from './lib/activation-poller'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
+import { registerCollectionConfigIpc } from './lib/collection-config'
 import { registerCollectionSessionIpc } from './lib/collection-session-manager'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
@@ -64,6 +65,7 @@ app.whenReady().then(() => {
   registerBrowserProfileLockIpc()
   registerSkillCacheIpc()
   registerTempFileIpc()
+  registerCollectionConfigIpc()
   registerCollectionSessionIpc()
   registerCollectionClickIpc()
   registerTitleIpc()

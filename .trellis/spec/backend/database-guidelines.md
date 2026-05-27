@@ -131,6 +131,62 @@ import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
 const db: SqliteDatabase = openSqliteDatabase(path)
 ```
 
+## Scenario: Collection Config Persistence
+
+### 1. Scope / Trigger
+
+- Trigger: collection page settings, saved collection defaults, collection IPC config changes, or `.workbench/workbench.db` collection tables.
+- Applies to: Electron client main process collection config storage and renderer collection page hydration.
+
+### 2. Signatures
+
+- Main module: `packages/client/src/main/lib/collection-config.ts`
+- IPC read: `collection:get-config -> Promise<CollectionConfig | null>`
+- IPC save: `collection:save-config(input: CollectionConfig) -> Promise<CollectionConfig>`
+- Table: `collection_config`, single row keyed by `id = 1`
+
+### 3. Contracts
+
+- Store collection settings in the current workbench SQLite database at `.workbench/workbench.db`; do not use renderer `localStorage` for this business setting.
+- Persist only user preferences: `platform`, `profile_id`, `mode`, `output_dir`, `scroll_keywords`, and `size_filter`.
+- Do not persist runtime state such as active session status, success/failure counts, current page, transient errors, or loading flags.
+- Renderer must read saved config on workbench startup, then debounce autosaves after local setting changes.
+- `startSession` should save the latest config before launching so the final visible settings survive restart.
+
+### 4. Validation & Error Matrix
+
+- Missing `workbench_root` before read/save -> user-facing setup error.
+- Missing row -> return `null` so renderer can keep built-in defaults.
+- Invalid mode -> normalize to `click`.
+- Empty platform -> normalize to `temu`.
+- Invalid or negative size filters -> normalize to `0`.
+
+### 5. Good/Base/Bad Cases
+
+- Good: user selects Temu, a BitBrowser profile, output folder, and size filters; app restart restores those values.
+- Base: first app launch has no row and uses renderer defaults.
+- Bad: storing collection settings only in React state, causing restart to reset the form.
+- Bad: saving collection success/failure counters into the config row.
+
+### 6. Tests Required
+
+- Unit tests must assert table creation, first read returns `null`, save/load round-trip, normalization, and single-row upsert behavior.
+- Cross-layer verification: `pnpm -F @tengyu-aipod/client type-check`, targeted collection config tests, and `pnpm -F @tengyu-aipod/client build`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ts
+window.localStorage.setItem('collection-settings', JSON.stringify(state))
+```
+
+#### Correct
+
+```ts
+await window.api.collection.saveConfig(collectionConfigFromPageState(state))
+```
+
 ---
 
 ## Query Patterns

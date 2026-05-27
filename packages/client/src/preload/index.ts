@@ -29,6 +29,7 @@ import type {
   CollectionScrollEvent,
   CollectionScrollResult,
 } from '../main/lib/collection-click-service'
+import type { CollectionConfig } from '../main/lib/collection-config'
 import type { CollectionPlatformRule } from '../main/lib/collection-injected-script'
 import type {
   CollectionRecordRow,
@@ -114,6 +115,10 @@ const api = {
       }>,
   },
   collection: {
+    getConfig: () =>
+      ipcRenderer.invoke('collection:get-config') as Promise<CollectionConfig | null>,
+    saveConfig: (input: CollectionConfig) =>
+      ipcRenderer.invoke('collection:save-config', input) as Promise<CollectionConfig>,
     listPlatforms: () =>
       ipcRenderer.invoke('collection:list-platforms') as Promise<CollectionPlatformRule[]>,
     listProfiles: () =>

@@ -40,6 +40,10 @@ declare global {
         cleanupAll: () => Promise<{ ok: true }>
       }
       collection: {
+        getConfig: () => Promise<import('../../main/lib/collection-config').CollectionConfig | null>
+        saveConfig: (
+          input: import('../../main/lib/collection-config').CollectionConfig,
+        ) => Promise<import('../../main/lib/collection-config').CollectionConfig>
         listPlatforms: () => Promise<
           import('../../main/lib/collection-injected-script').CollectionPlatformRule[]
         >
