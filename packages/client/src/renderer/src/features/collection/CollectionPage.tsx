@@ -8,6 +8,7 @@ import { Separator } from '@/components/ui/separator'
 import { cn } from '@/lib/utils'
 import {
   Download,
+  FolderOpen,
   Globe2,
   History,
   PauseCircle,
@@ -593,8 +594,8 @@ export function CollectionPage({
                       type="button"
                       variant="secondary"
                     >
-                      <Download className="mr-2 h-4 w-4" />
-                      清空
+                      <FolderOpen className="mr-2 h-4 w-4" />
+                      选择
                     </Button>
                   </div>
                   <p className="text-xs text-muted-foreground">

@@ -659,6 +659,18 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     setCollectionPageState((current) => ({ ...current, [key]: value }))
   }
 
+  async function chooseCollectionOutputDir() {
+    const result = await window.api.onboarding.chooseWorkbenchRoot()
+    if (result.ok) {
+      updateCollectionPageState('outputDir', result.data.path)
+      setCollectionError(null)
+      return
+    }
+    if (result.error.code !== 'CANCELLED') {
+      setCollectionError(result.error.message)
+    }
+  }
+
   async function refreshCollectionProfiles() {
     setIsRefreshingCollectionProfiles(true)
     try {
@@ -805,7 +817,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               <CollectionPage
                 deletingRecordId={deletingRecordId}
                 error={collectionError}
-                onOutputDirBrowse={() => updateCollectionPageState('outputDir', '')}
+                onOutputDirBrowse={() => void chooseCollectionOutputDir()}
                 onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
                 onRefreshProfiles={() => void refreshCollectionProfiles()}
                 onRefreshRecords={() => void refreshCollectionRecords()}
