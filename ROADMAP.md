@@ -140,7 +140,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 
 **v0.5.0 发版**
 
-## 切片 6 — 采集（10 task）
+## 切片 6 — 采集（11 task）
 
 | # | Task | Slug | 优先级 |
 |---|---|---|---|
@@ -154,7 +154,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 58 | 滚动采集模式 | collection-scroll-mode | P0 |
 | 59 | 采集记录和 manifest | collection-records | P0 |
 | 60 | 采集 E2E | collection-e2e | P1 |
-| 61 | 图池扫描、商品页主图分组、运行期日志 | collection-image-pool-logging | P0 |
+| 60A | 图池扫描、商品页主图分组、运行期日志 | collection-image-pool-logging | P0 |
 
 **v0.6.0 发版**
 
@@ -234,7 +234,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 
 ## 总计
 
-**108 个 task**（含 00-bootstrap）= 全部 v1 + v1.5 工作单元已就绪，每个 task 含完整 prd.md。
+**108 个原始 task**（含 00-bootstrap）+ **1 个采集补充工作项 60A** = 全部 v1 + v1.5 工作单元已就绪；原始 task 含完整 prd.md，补充项记录在本路线图。
 
 每完成一个切片 = 一个可演示发版本。逐 task 跑、逐切片发，不要跳。
 

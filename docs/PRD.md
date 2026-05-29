@@ -528,7 +528,7 @@ v1 不做编排引擎，每个模块独立使用产生轻量任务。v1.5 引入
 **任务队列**：主进程内 priority queue，优先级 = 用户手动 > 编排引擎自动 > 重试
 
 **暂停恢复**：按模块粒度
-- 采集：会话级
+- 采集：会话级 / 图池级（图池扫描结果在前端内存中，重启后重新扫描）
 - 生图：单图级
 - 检测：单图级
 - 套版：任务组级
@@ -617,7 +617,9 @@ docs/
     ├── 0005-task-and-sku-two-layer-model.md
     ├── 0006-unified-generation-module-by-capability.md
     ├── 0007-photoshop-windows-only-v1.md
-    └── 0008-temp-file-manager-and-cleanup.md
+    ├── 0008-temp-file-manager-and-cleanup.md
+    ├── 0009-replace-better-sqlite3-with-node-sqlite.md
+    └── 0010-collection-image-pool-and-runtime-logs.md
 ```
 
 外部参考资料：[../references/](../references/)

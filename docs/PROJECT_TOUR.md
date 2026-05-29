@@ -105,7 +105,7 @@ sequenceDiagram
 
 ```
 ~/腾域aipod工作台/
-├─ 01-采集图片/        ← 比特浏览器采集回来
+├─ 01-采集/           ← 比特浏览器采集回来，含散图池和商品页主图分组
 ├─ 02-生图/           ← Grsai / ComfyUI 出图
 ├─ 03-检测结果/        ← 百炼判定 pass 的进这里
 ├─ 04-待套版印花/       ← 生产入口，PS 模块的输入
@@ -221,7 +221,7 @@ sequenceDiagram
 
 ```mermaid
 flowchart LR
-    A[采集图片<br/>01-采集图片/] --> B[检测侵权<br/>百炼 vision LLM]
+    A[采集图片<br/>01-采集/] --> B[检测侵权<br/>百炼 vision LLM]
     B -->|pass| C[生图<br/>Grsai 出印花]
     C --> D[04-待套版印花/]
     D --> E[PS 套版<br/>Windows Photoshop COM]
@@ -232,7 +232,7 @@ flowchart LR
 ```
 
 **5 个流转规则**（任意一条违反 = 出 bug）：
-1. 检测只看 `01-采集图片/` 和 `02-生图/`
+1. 检测只看 `01-采集/` 和 `02-生图/`
 2. `04-待套版印花/` 是 PS 的入口（来自 03/02/手工放图三种路径）
 3. `05-货号成品/` 是上架的唯一来源
 4. 服务端从不接触图片 / API Key（ADR-0003 红线）
@@ -250,7 +250,7 @@ flowchart LR
 | `print_artifact` | 印花 ID 全局唯一（不变规则 #9） |
 | `detection_result` | 检测历史 |
 | `generation_record` | 生图记录 |
-| `collection_record` | 点击/滚动采集记录 + manifest |
+| `collection_record` | 点击/滚动会话采集记录 + manifest（图池结果不写入该表） |
 | `listing_task` / `listing_stage` | 上架任务 + 12 阶段状态 |
 | `ps_job` | PS 套版任务 |
 
@@ -296,5 +296,5 @@ erDiagram
 - **领域语言**：[docs/CONTEXT.md](CONTEXT.md)
 - **产品需求**：[docs/PRD.md](PRD.md)
 - **整体架构 + 10 条不变规则**：[docs/spec/00-overview.md](spec/00-overview.md)
-- **8 个 ADR（关键架构决策）**：[docs/adr/](adr/)
+- **10 个 ADR（关键架构决策）**：[docs/adr/](adr/)
 - **CHANGELOG**：[CHANGELOG.md](../CHANGELOG.md)

@@ -9,7 +9,7 @@
 ## 索引
 
 ### 采集（collection/）
-- _尚未编写_ — 比特浏览器 API、Chrome DevTools Protocol 等
+- _外部参考待补_ — 比特浏览器 API、Chrome DevTools Protocol 等；当前实现规则见 [采集 Spec](../docs/spec/02-collection.md) 和 [ADR-0010](../docs/adr/0010-collection-image-pool-and-runtime-logs.md)
 
 ### 生图 - ComfyUI（generation-comfyui/）
 - [chenyu-cloud-api.md](./generation-comfyui/chenyu-cloud-api.md) — 晨羽智云开放接口，对接 comfyui 生图模块

@@ -13,8 +13,8 @@
 
 ## 当前阶段
 
-- ✅ 文档体系完成（PRD / CONTEXT / 10 个 Spec / 8 个 ADR / 4 份 references/）
-- ✅ Trellis 108 个 task 全部建好 prd.md（见 ROADMAP.md）
+- ✅ 文档体系完成（PRD / CONTEXT / 10 个 Spec / 10 个 ADR / 4 份 references/）
+- ✅ Trellis 108 个原始 task 全部建好 prd.md，另有采集补充工作项 60A（见 ROADMAP.md）
 - ✅ 切片 0-8 代码层归档完成，v1 全功能（采集 / 检测 / 生图 / PS 套版 / 标题 / 上架）已就位
 - 🟡 待主理人本机跑通完整链路 + 提供完整 fixture 矩阵，才正式放行 v1.0.0
 - ⏸ v1.5 增量（15 task）尚未启动：i18n / 多平台上架 / 编排引擎 / 自动更新 / 代码签名
@@ -42,7 +42,7 @@ docs/
 │   ├─ 07-listing.md             ← 上架（直接 Port + 重写）
 │   ├─ 08-server.md              ← 服务器端 + Admin
 │   └─ 09-cross-cutting.md       ← 跨平台 / 并发 / 暂停 / 打包
-└─ adr/                          ← 8 个关键架构决策
+└─ adr/                          ← 10 个关键架构决策
     ├─ 0001-electron-react-stack.md
     ├─ 0002-activation-code-no-accounts.md
     ├─ 0003-skill-and-provider-cloud-dispatch.md
@@ -50,7 +50,9 @@ docs/
     ├─ 0005-task-and-sku-two-layer-model.md
     ├─ 0006-unified-generation-module-by-capability.md
     ├─ 0007-photoshop-windows-only-v1.md
-    └─ 0008-temp-file-manager-and-cleanup.md
+    ├─ 0008-temp-file-manager-and-cleanup.md
+    ├─ 0009-replace-better-sqlite3-with-node-sqlite.md
+    └─ 0010-collection-image-pool-and-runtime-logs.md
 
 references/                      ← 外部依赖参考资料（不是设计文档）
 ├─ generation-comfyui/chenyu-cloud-api.md      ← 晨羽智云 API
