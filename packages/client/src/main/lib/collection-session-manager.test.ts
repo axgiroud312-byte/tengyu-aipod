@@ -234,12 +234,16 @@ describe('CollectionSessionManager', () => {
     expect(cdp.connectToProfile).toHaveBeenCalledWith('profile-1')
     expect(db.execCalls[0]).toContain('CREATE TABLE IF NOT EXISTS collection_sessions')
     expect(db.rows.get('session-1')).toMatchObject({ status: 'active' })
-    expect(events).toEqual([
+    expect(events.filter((event) => event.type !== 'debug-log')).toEqual([
       {
         type: 'session-started',
         session: expect.objectContaining({ id: 'session-1', status: 'active' }),
       },
     ])
+    expect(events).toContainEqual({
+      type: 'debug-log',
+      entry: expect.objectContaining({ message: '采集会话已进入监听状态' }),
+    })
   })
 
   it('reuses an allowed current page without reloading other tabs, wires existing and new tabs, and pauses on disconnect', async () => {
@@ -321,6 +325,36 @@ describe('CollectionSessionManager', () => {
       type: 'session-paused',
       reason: 'browser_closed',
     })
+  })
+
+  it('emits image-saved when an injected page event creates a collection record', async () => {
+    const currentPage = new FakePage('https://temu.com/goods/1')
+    const context = new FakeContext([currentPage])
+    const browser = new FakeBrowser([context])
+    const record = {
+      id: 'record-1',
+      sessionId: 'session-1',
+      sourceUrl: 'https://img.temu.com/a.jpg',
+    }
+    const dispatch = vi.fn().mockResolvedValue({ status: 'success', record })
+    const { manager, events } = createManager({ browser, dispatch })
+
+    await manager.startSession({
+      platform: 'temu',
+      profile_id: 'profile-1',
+      mode: 'click',
+    })
+
+    await currentPage.bindings.get('__poseidonSendToHost')?.(
+      {},
+      {
+        kind: 'click',
+        img: 'https://img.temu.com/a.jpg',
+        page: 'https://temu.com/goods/1',
+      },
+    )
+
+    expect(events).toContainEqual({ type: 'image-saved', record })
   })
 
   it('finds existing allowed pages across every browser context without opening a new entry page', async () => {
@@ -482,11 +516,9 @@ describe('CollectionSessionManager', () => {
     expect(manager.getActiveSession()).not.toHaveProperty('pause_reason')
 
     expect(db.rows.get('session-1')).toMatchObject({ status: 'active' })
-    expect(events.map((event) => event.type)).toEqual([
-      'session-started',
-      'session-paused',
-      'session-resumed',
-    ])
+    expect(events.filter((event) => event.type !== 'debug-log').map((event) => event.type)).toEqual(
+      ['session-started', 'session-paused', 'session-resumed'],
+    )
   })
 
   it('stops a session, disconnects CDP, releases the lock, and stores completed state', async () => {

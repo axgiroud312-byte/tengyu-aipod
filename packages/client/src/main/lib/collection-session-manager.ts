@@ -17,6 +17,7 @@ import {
 } from './browser-profile-lock'
 import { type CDPClient, type CollectionBindingPayload, cdpClient } from './cdp-client'
 import {
+  COLLECTION_INJECTED_SCRIPT_VERSION,
   type CollectionPlatformRule,
   type SizeFilter,
   createCollectionInjectedScript,
@@ -51,6 +52,16 @@ export type CollectionSession = {
   pause_reason?: CollectionPauseReason
 }
 
+export type CollectionDebugLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export type CollectionDebugLogEntry = {
+  id: string
+  timestamp: number
+  level: CollectionDebugLogLevel
+  message: string
+  details?: Record<string, string | number | boolean | null>
+}
+
 export type CollectionSessionEvent =
   | { type: 'session-started'; session: CollectionSession }
   | { type: 'session-paused'; session: CollectionSession; reason: CollectionPauseReason }
@@ -59,6 +70,7 @@ export type CollectionSessionEvent =
   | { type: 'manifest-exported'; session: CollectionSession; manifest_path: string }
   | { type: 'sku-required'; session: CollectionSession; goods_link: string; image_url: string }
   | { type: 'image-saved'; record: unknown }
+  | { type: 'debug-log'; entry: CollectionDebugLogEntry }
 
 type CollectionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 type ReadAppConfig = () => Promise<{ workbench_root?: string | undefined }>
@@ -139,6 +151,7 @@ export class CollectionSessionManager {
   private readonly findPlatformRule: (key: string) => CollectionPlatformRule
   private readonly randomId: () => string
   private readonly now: () => number
+  private debugSequence = 0
 
   constructor(dependencies: CollectionSessionManagerDependencies = {}) {
     this.readConfig = dependencies.readConfig ?? readAppConfig
@@ -161,6 +174,12 @@ export class CollectionSessionManager {
       })
     }
 
+    this.debug('请求开始采集会话', 'info', {
+      platform: config.platform,
+      profile_id: config.profile_id,
+      mode: config.mode,
+      output_dir: config.output_dir ?? null,
+    })
     const workbenchRoot = await readWorkbenchRoot(this.readConfig)
     const platformRule = this.findPlatformRule(config.platform)
     const session: CollectionSession = {
@@ -173,6 +192,10 @@ export class CollectionSessionManager {
       started_at: this.now(),
     }
     const lock = this.locks.acquire(config.profile_id, 'collection', session.id)
+    this.debug('已锁定比特浏览器环境', 'debug', {
+      session_id: session.id,
+      profile_id: config.profile_id,
+    })
     this.active = {
       session,
       lock,
@@ -190,9 +213,17 @@ export class CollectionSessionManager {
       await this.connectAndWire(this.active)
       const activeSession = this.updateActiveSession({ status: 'active' })
       writeSession(workbenchRoot, this.openDatabase, activeSession)
+      this.debug('采集会话已进入监听状态', 'info', {
+        session_id: activeSession.id,
+        output_dir: activeSession.output_dir,
+      })
       this.emit({ type: 'session-started', session: activeSession })
       return activeSession
     } catch (error) {
+      this.debug('启动采集会话失败', 'error', {
+        profile_id: config.profile_id,
+        error: appErrorMessage(error),
+      })
       await this.cdp.disconnect(config.profile_id).catch(() => null)
       lock.release()
       this.active = null
@@ -207,9 +238,17 @@ export class CollectionSessionManager {
 
     const runtime = this.active
     const stopping = this.updateActiveSession({ status: 'stopping' })
+    this.debug('请求停止采集会话', 'info', {
+      session_id: stopping.id,
+      profile_id: stopping.profile_id,
+    })
     writeSession(runtime.workbenchRoot, this.openDatabase, stopping)
     this.detachPageHandler(runtime)
     await this.cdp.disconnect(runtime.session.profile_id).catch(() => null)
+    this.debug('已断开采集浏览器连接', 'debug', {
+      session_id: stopping.id,
+      profile_id: stopping.profile_id,
+    })
     runtime.lock.release()
 
     const completed = this.updateActiveSession({ status: 'completed', ended_at: this.now() })
@@ -220,6 +259,10 @@ export class CollectionSessionManager {
       completed.output_dir,
       completed.id,
     )
+    this.debug('采集清单已导出', 'info', {
+      session_id: completed.id,
+      manifest_path: manifestPath,
+    })
     this.active = null
     this.emit({ type: 'session-stopped', session: completed })
     this.emit({ type: 'manifest-exported', session: completed, manifest_path: manifestPath })
@@ -253,6 +296,11 @@ export class CollectionSessionManager {
     if (!this.active) {
       return
     }
+    this.debug('等待用户填写商品货号', 'warn', {
+      session_id: this.active.session.id,
+      goods_link: goodsLink,
+      image_url: imageUrl,
+    })
     this.emit({
       type: 'sku-required',
       session: this.active.session,
@@ -266,6 +314,10 @@ export class CollectionSessionManager {
       return null
     }
     const paused = this.updateActiveSession({ status: 'paused', pause_reason: reason })
+    this.debug('采集会话已暂停', 'warn', {
+      session_id: paused.id,
+      reason,
+    })
     writeSession(this.active.workbenchRoot, this.openDatabase, paused)
     this.emit({ type: 'session-paused', session: paused, reason })
     return paused
@@ -275,6 +327,10 @@ export class CollectionSessionManager {
     if (!this.active || this.active.session.status !== 'paused') {
       return null
     }
+    this.debug('请求恢复采集会话', 'info', {
+      session_id: this.active.session.id,
+      profile_id: this.active.session.profile_id,
+    })
     await this.connectAndWire(this.active)
     const active = this.updateActiveSession({ status: 'active' }, { clearPauseReason: true })
     writeSession(this.active.workbenchRoot, this.openDatabase, active)
@@ -325,13 +381,28 @@ export class CollectionSessionManager {
 
   private async connectAndWire(runtime: SessionRuntime): Promise<void> {
     this.detachPageHandler(runtime)
+    this.debug('连接比特浏览器 CDP', 'info', {
+      session_id: runtime.session.id,
+      profile_id: runtime.session.profile_id,
+    })
     const browser = await this.cdp.connectToProfile(runtime.session.profile_id)
     runtime.browser = browser
 
     const contexts = await browserContexts(browser)
+    this.debug('扫描浏览器页面', 'debug', {
+      session_id: runtime.session.id,
+      contexts: contexts.length,
+      pages: contexts.reduce((total, context) => total + context.pages().length, 0),
+    })
     for (const context of contexts) {
       for (const page of context.pages()) {
-        await this.wirePage(runtime, page).catch(() => null)
+        await this.wirePage(runtime, page).catch((error) => {
+          this.debug('页面脚本注入失败，已跳过该页', 'warn', {
+            session_id: runtime.session.id,
+            page_url: safePageUrl(page),
+            error: appErrorMessage(error),
+          })
+        })
       }
     }
 
@@ -345,6 +416,10 @@ export class CollectionSessionManager {
 
     browser.on('disconnected', () => {
       if (this.active?.session.id === runtime.session.id) {
+        this.debug('浏览器连接已断开', 'warn', {
+          session_id: runtime.session.id,
+          profile_id: runtime.session.profile_id,
+        })
         this.handleBrowserClosed()
       }
     })
@@ -358,6 +433,9 @@ export class CollectionSessionManager {
       .flatMap((context) => context.pages())
       .find((page) => !page.isClosed() && isAllowedDomain(page.url(), rule.allowed_domains))
     if (existing) {
+      this.debug('复用已打开的平台页面', 'info', {
+        page_url: safePageUrl(existing),
+      })
       return existing
     }
 
@@ -369,30 +447,84 @@ export class CollectionSessionManager {
       })
     }
     const page = await context.newPage()
+    this.debug('未找到平台页面，打开入口页', 'info', {
+      entry_url: rule.entry_url,
+    })
     await page.goto(rule.entry_url, { waitUntil: 'domcontentloaded' }).catch(() => null)
     return page
   }
 
   private async wirePage(runtime: SessionRuntime, page: Page): Promise<void> {
-    if (page.isClosed() || runtime.wiredPages.has(page)) {
+    if (page.isClosed()) {
+      this.debug('跳过已关闭页面', 'debug', {
+        session_id: runtime.session.id,
+      })
+      return
+    }
+    if (runtime.wiredPages.has(page)) {
       return
     }
     runtime.wiredPages.add(page)
+    this.debug('准备监听页面', 'debug', {
+      session_id: runtime.session.id,
+      page_url: safePageUrl(page),
+    })
     try {
       await this.cdp.injectPageScript(page, {
         script: createCollectionInjectedScript({
           platformRule: runtime.platformRule,
           sizeFilter: runtime.sizeFilter,
+          mode: runtime.session.mode,
         }),
         onEvent: async (payload) => {
-          await this.dispatchCollectionEvent(payload, {
+          if (payload.kind === 'debug') {
+            this.debug(payload.message ?? '页面采集脚本日志', payload.level ?? 'debug', {
+              session_id: runtime.session.id,
+              page_url: payload.page,
+              ...(payload.details ?? {}),
+            })
+            return
+          }
+          this.debug('收到页面采集事件', 'debug', {
+            session_id: runtime.session.id,
+            kind: payload.kind,
+            page_url: payload.page,
+            image_url: payload.img ?? null,
+          })
+          const result = await this.dispatchCollectionEvent(payload, {
             platformRule: runtime.platformRule,
             mode: runtime.session.mode,
           })
+          if (!result) {
+            this.debug('页面采集事件未产生保存记录', 'debug', {
+              session_id: runtime.session.id,
+              kind: payload.kind,
+              image_url: payload.img ?? null,
+            })
+          }
+          if (hasCollectionRecord(result)) {
+            this.debug('采集图片记录已生成，通知前端刷新', 'info', {
+              session_id: runtime.session.id,
+              kind: payload.kind,
+              image_url: payload.img ?? null,
+            })
+            this.emit({ type: 'image-saved', record: result.record })
+          }
         },
+      })
+      this.debug('页面监听脚本注入成功', 'info', {
+        session_id: runtime.session.id,
+        page_url: safePageUrl(page),
+        script_version: COLLECTION_INJECTED_SCRIPT_VERSION,
+        runtime_mode: runtime.session.mode,
       })
     } catch (error) {
       runtime.wiredPages.delete(page)
+      this.debug('页面监听脚本注入失败', 'error', {
+        session_id: runtime.session.id,
+        page_url: safePageUrl(page),
+        error: appErrorMessage(error),
+      })
       throw error
     }
   }
@@ -417,6 +549,23 @@ export class CollectionSessionManager {
 
   private emit(event: CollectionSessionEvent) {
     this.emitEvent?.(event)
+  }
+
+  private debug(
+    message: string,
+    level: CollectionDebugLogLevel = 'info',
+    details?: Record<string, string | number | boolean | null | undefined>,
+  ) {
+    this.emit({
+      type: 'debug-log',
+      entry: {
+        id: `${Date.now()}-${++this.debugSequence}`,
+        timestamp: Date.now(),
+        level,
+        message,
+        ...(details ? { details: compactLogDetails(details) } : {}),
+      },
+    })
   }
 }
 
@@ -482,6 +631,14 @@ function isAllowedDomain(url: string, allowedDomains: string[]): boolean {
     }
     return hostname === normalized
   })
+}
+
+function safePageUrl(page: Page) {
+  try {
+    return page.url()
+  } catch {
+    return 'unknown'
+  }
 }
 
 function ensureCollectionSessionTable(db: Pick<SqliteDatabase, 'exec'>) {
@@ -571,6 +728,25 @@ async function dispatchCollectionPayload(
 ) {
   const { collectionClickService } = await import('./collection-click-service')
   return collectionClickService.dispatch(payload, context)
+}
+
+function hasCollectionRecord(value: unknown): value is { record: unknown } {
+  return Boolean(value && typeof value === 'object' && 'record' in value)
+}
+
+function compactLogDetails(details: Record<string, string | number | boolean | null | undefined>) {
+  return Object.fromEntries(
+    Object.entries(details).filter((entry): entry is [string, string | number | boolean | null] => {
+      return entry[1] !== undefined
+    }),
+  )
+}
+
+function appErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message
+  }
+  return String(error)
 }
 
 export const collectionSessionManager = new CollectionSessionManager({

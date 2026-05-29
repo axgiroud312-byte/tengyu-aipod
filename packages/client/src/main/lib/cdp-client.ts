@@ -3,11 +3,14 @@ import { type Browser, type Page, chromium } from 'playwright'
 import { type BitBrowserClient, bitBrowserClient } from './bit-browser-client'
 
 export type CollectionBindingPayload = {
-  kind: 'click' | 'scroll'
+  kind: 'click' | 'scroll' | 'debug'
   img?: string
   images?: string[]
   goodsLink?: string
   page: string
+  level?: 'debug' | 'info' | 'warn' | 'error'
+  message?: string
+  details?: Record<string, string | number | boolean | null>
   [key: string]: unknown
 }
 
@@ -31,9 +34,11 @@ type BrowserEntry = {
 }
 
 const DEFAULT_BINDING_NAME = '__poseidonSendToHost'
+const PLAYWRIGHT_BROWSER_CLOSE_TIMEOUT_MS = 5_000
 
 export class CDPClient {
   private readonly browsers = new Map<string, BrowserEntry>()
+  private readonly pendingConnections = new Map<string, Promise<Browser>>()
   private readonly bitBrowser: Pick<BitBrowserClient, 'openProfile' | 'closeProfile'> &
     Partial<Pick<BitBrowserClient, 'getCdpEndpoint' | 'listOpenProfileIds'>>
   private readonly chromium: Pick<typeof chromium, 'connectOverCDP'>
@@ -52,6 +57,23 @@ export class CDPClient {
       this.browsers.delete(profileId)
     }
 
+    const pending = this.pendingConnections.get(profileId)
+    if (pending) {
+      return pending
+    }
+
+    const connecting = this.connectFreshProfile(profileId)
+    this.pendingConnections.set(profileId, connecting)
+    try {
+      return await connecting
+    } finally {
+      if (this.pendingConnections.get(profileId) === connecting) {
+        this.pendingConnections.delete(profileId)
+      }
+    }
+  }
+
+  private async connectFreshProfile(profileId: string): Promise<Browser> {
     const endpoint = await this.resolveCdpEndpoint(profileId)
     try {
       const browser = await this.chromium.connectOverCDP(endpoint.http)
@@ -95,9 +117,10 @@ export class CDPClient {
 
   async disconnect(profileId: string): Promise<void> {
     const entry = this.browsers.get(profileId)
+    this.pendingConnections.delete(profileId)
     this.browsers.delete(profileId)
     if (entry?.browser.isConnected()) {
-      await entry.browser.close()
+      await closePlaywrightBrowser(entry.browser).catch(() => undefined)
     }
     await this.bitBrowser.closeProfile(profileId)
   }
@@ -137,7 +160,13 @@ function readBindingPayload(value: unknown): CollectionBindingPayload {
 
   const kind = value.kind
   const page = value.page
-  if ((kind !== 'click' && kind !== 'scroll') || typeof page !== 'string') {
+  if ((kind !== 'click' && kind !== 'scroll' && kind !== 'debug') || typeof page !== 'string') {
+    throw new AppErrorClass('HTTP_4XX', '采集脚本回调缺少必要字段', false, {
+      kind: 'validation',
+      provider: 'playwright-cdp',
+    })
+  }
+  if (kind === 'debug' && typeof value.message !== 'string') {
     throw new AppErrorClass('HTTP_4XX', '采集脚本回调缺少必要字段', false, {
       kind: 'validation',
       provider: 'playwright-cdp',
@@ -153,11 +182,49 @@ function readBindingPayload(value: unknown): CollectionBindingPayload {
       ? { images: value.images }
       : {}),
     ...(typeof value.goodsLink === 'string' ? { goodsLink: value.goodsLink } : {}),
+    ...(isDebugLogLevel(value.level) ? { level: value.level } : {}),
+    ...(typeof value.message === 'string' ? { message: value.message } : {}),
+    ...(isLogDetails(value.details) ? { details: value.details } : {}),
   }
+}
+
+async function closePlaywrightBrowser(browser: Browser): Promise<void> {
+  await withTimeout(browser.close(), PLAYWRIGHT_BROWSER_CLOSE_TIMEOUT_MS)
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error: unknown) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isDebugLogLevel(value: unknown): value is 'debug' | 'info' | 'warn' | 'error' {
+  return value === 'debug' || value === 'info' || value === 'warn' || value === 'error'
+}
+
+function isLogDetails(value: unknown): value is Record<string, string | number | boolean | null> {
+  if (!isRecord(value)) {
+    return false
+  }
+  return Object.values(value).every((item) => {
+    return item === null || ['string', 'number', 'boolean'].includes(typeof item)
+  })
 }
 
 export const cdpClient = new CDPClient()

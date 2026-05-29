@@ -50,6 +50,19 @@ declare global {
         listProfiles: () => Promise<
           import('../../main/lib/bit-browser-client').BitBrowserProfileWithStatus[]
         >
+        getCurrentPage: (input: {
+          platform: string
+          profile_id: string
+        }) => Promise<
+          import('../../main/lib/collection-image-index-service').CollectionCurrentPageResult
+        >
+        openPage: (input: {
+          platform: string
+          profile_id: string
+          page_url: string
+        }) => Promise<
+          import('../../main/lib/collection-image-index-service').CollectionCurrentPageResult
+        >
         startSession: (
           input: import('../../main/lib/collection-session-manager').CollectionSessionConfig,
         ) => Promise<import('../../main/lib/collection-session-manager').CollectionSession>
@@ -86,6 +99,42 @@ declare global {
           ok: true
           record_id: string
         }>
+        scanImageIndex: (input: {
+          platform: string
+          profile_id: string
+          output_dir?: string
+          page_url?: string
+          limit?: number
+        }) => Promise<
+          import('../../main/lib/collection-image-index-service').CollectionImageIndexScanResult
+        >
+        probeImageIndexClick: (input: {
+          platform: string
+          profile_id: string
+          output_dir?: string
+          page_url?: string
+          limit?: number
+        }) => Promise<
+          import('../../main/lib/collection-image-index-service').CollectionImageIndexClickResult
+        >
+        downloadImageIndexSample: (input: {
+          platform: string
+          profile_id: string
+          output_dir?: string
+          page_url?: string
+          limit?: number
+        }) => Promise<
+          import('../../main/lib/collection-image-index-service').CollectionImageIndexDownloadResult
+        >
+        downloadImageIndexItems: (input: {
+          platform: string
+          profile_id: string
+          output_dir?: string
+          page_url?: string
+          items: import('../../main/lib/collection-image-index-service').CollectionImageIndexItem[]
+        }) => Promise<
+          import('../../main/lib/collection-image-index-service').CollectionImageIndexDownloadResult
+        >
         getActiveSession: () => Promise<
           import('../../main/lib/collection-session-manager').CollectionSession | null
         >

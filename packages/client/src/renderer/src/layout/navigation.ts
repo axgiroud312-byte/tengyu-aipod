@@ -17,7 +17,7 @@ export const workbenchModules: WorkbenchModuleMeta[] = [
     path: '/collection',
     label: '采集',
     title: '采集模块',
-    description: '查看当前采集会话的保存记录和失败重试',
+    description: '扫描当前页面图池并选择下载图片',
   },
   {
     key: 'title',

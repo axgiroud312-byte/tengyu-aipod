@@ -14,6 +14,7 @@ import {
   openCollectionDatabase,
 } from './collection-record-store'
 import type { CollectionSession } from './collection-session-manager'
+import type { CollectionSessionEvent } from './collection-session-manager'
 
 const platformRule: CollectionPlatformRule = {
   key: 'temu',
@@ -207,6 +208,7 @@ function createService(
     sku?: string | null
     image?: Buffer
     db?: FakeDb
+    events?: CollectionSessionEvent[]
   } = {},
 ) {
   const fs = createFs()
@@ -224,6 +226,9 @@ function createService(
     },
     downloadImage: vi.fn(async () => options.image ?? Buffer.from('image-bytes')),
     openDatabase: () => db as never,
+    ...(options.events
+      ? { emitEvent: (event: CollectionSessionEvent) => options.events?.push(event) }
+      : {}),
     randomId: () => `record-${db.records.length + 1}`,
     now: () => COLLECTION_TEST_NOW,
     readFile: fs.readFile as never,
@@ -233,7 +238,7 @@ function createService(
     mkdir: fs.mkdir as never,
     rm: fs.rm as never,
   })
-  return { service, fs, db, requestSku }
+  return { service, fs, db, requestSku, events: options.events }
 }
 
 describe('CollectionClickService', () => {
@@ -264,7 +269,8 @@ describe('CollectionClickService', () => {
   })
 
   it('saves goods-page clicks into the existing SKU folder', async () => {
-    const { service, fs, db } = createService({ sku: 'SKU-001' })
+    const events: CollectionSessionEvent[] = []
+    const { service, fs, db } = createService({ sku: 'SKU-001', events })
 
     await expect(
       service.handleClick(
@@ -295,6 +301,14 @@ describe('CollectionClickService', () => {
       '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg',
       'success',
     ])
+    expect(events).toContainEqual({
+      type: 'debug-log',
+      entry: expect.objectContaining({ message: '图片文件写入完成' }),
+    })
+    expect(events).toContainEqual({
+      type: 'debug-log',
+      entry: expect.objectContaining({ message: '采集记录已写入数据库' }),
+    })
   })
 
   it('saves the pending goods-page click after the user fills the SKU', async () => {

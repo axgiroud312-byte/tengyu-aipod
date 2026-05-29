@@ -6,6 +6,7 @@ import { activationPoller } from './lib/activation-poller'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
 import { registerCollectionConfigIpc } from './lib/collection-config'
+import { registerCollectionImageIndexIpc } from './lib/collection-image-index-service'
 import { registerCollectionSessionIpc } from './lib/collection-session-manager'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
@@ -68,6 +69,7 @@ app.whenReady().then(() => {
   registerCollectionConfigIpc()
   registerCollectionSessionIpc()
   registerCollectionClickIpc()
+  registerCollectionImageIndexIpc()
   registerTitleIpc()
   registerDetectionConfigIpc()
   registerDetectionIpc()

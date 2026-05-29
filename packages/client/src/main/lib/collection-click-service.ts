@@ -21,7 +21,9 @@ import {
   updateCollectionRecord,
 } from './collection-record-store'
 import {
+  type CollectionDebugLogLevel,
   type CollectionSession,
+  type CollectionSessionEvent,
   type CollectionSessionManager,
   collectionSessionManager,
 } from './collection-session-manager'
@@ -73,13 +75,14 @@ export type CollectionScrollResult = Exclude<CollectionClickResult, { status: 'p
 
 type CollectionSavedResult = CollectionScrollResult
 type CollectionImageEvent = CollectionClickEvent | CollectionScrollEvent
+type CollectionImageEventKind = CollectionImageEvent['kind']
 type CollectionImageBuffer = {
   buffer: Buffer
   extension?: '.png' | undefined
 }
 type CollectionRuntimeEventKeyInput = {
   sessionId: string
-  kind: CollectionImageEvent['kind']
+  kind: CollectionImageEventKind
   img: string
   page: string
 }
@@ -97,6 +100,7 @@ export type CollectionClickServiceDependencies = {
   downloadImage?: (url: string) => Promise<Buffer>
   captureImageWithBrowser?: (profileId: string, url: string, pageUrl: string) => Promise<Buffer>
   openDatabase?: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
+  emitEvent?: (event: CollectionSessionEvent) => void
   randomId?: () => string
   now?: () => number
   readFile?: typeof readFile
@@ -123,6 +127,7 @@ export class CollectionClickService {
   private readonly openDatabase: (
     workbenchRoot: string,
   ) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
+  private readonly emitEvent: ((event: CollectionSessionEvent) => void) | undefined
   private readonly randomId: () => string
   private readonly now: () => number
   private readonly readFile: typeof readFile
@@ -131,6 +136,7 @@ export class CollectionClickService {
   private readonly stat: typeof stat
   private readonly mkdir: typeof mkdir
   private readonly rm: typeof rm
+  private debugSequence = 0
   private readonly pendingGoodsClicks = new Map<
     string,
     Array<{ event: CollectionClickEvent; platformRule: CollectionPlatformRule }>
@@ -143,6 +149,7 @@ export class CollectionClickService {
     this.captureImageWithBrowser =
       dependencies.captureImageWithBrowser ?? defaultCaptureImageWithBrowser
     this.openDatabase = dependencies.openDatabase ?? openCollectionDatabase
+    this.emitEvent = dependencies.emitEvent
     this.randomId = dependencies.randomId ?? randomUUID
     this.now = dependencies.now ?? Date.now
     this.readFile = dependencies.readFile ?? readFile
@@ -157,10 +164,35 @@ export class CollectionClickService {
     payload: CollectionBindingPayload,
     context: CollectionDispatchContext,
   ): Promise<CollectionClickResult | CollectionScrollResult | null> {
-    if (payload.kind !== context.mode || !payload.img) {
+    if (payload.kind === 'debug') {
+      this.debug(payload.message ?? '页面采集脚本日志', payload.level ?? 'debug', {
+        page_url: payload.page,
+        ...(payload.details ?? {}),
+      })
+      return null
+    }
+    if (payload.kind !== context.mode) {
+      this.debug('采集事件模式不匹配，已跳过', 'debug', {
+        expected_mode: context.mode,
+        payload_kind: payload.kind,
+        page_url: payload.page,
+        image_url: payload.img ?? null,
+      })
+      return null
+    }
+    if (!payload.img) {
+      this.debug('采集事件缺少图片 URL，已跳过', 'warn', {
+        payload_kind: payload.kind,
+        page_url: payload.page,
+      })
       return null
     }
     if (this.isDuplicateRuntimeEvent(payload)) {
+      this.debug('重复采集事件，已跳过', 'debug', {
+        payload_kind: payload.kind,
+        page_url: payload.page,
+        image_url: payload.img,
+      })
       return null
     }
 
@@ -208,6 +240,14 @@ export class CollectionClickService {
     const goodsLink = event.goodsLink?.trim() || null
     const skuCode = goodsLink ? this.sessionManager.getSessionSku(goodsLink) : null
     const isGoodsPage = matchesGoodsPage(event.page, platformRule)
+    this.debug('处理点击采集图片', 'info', {
+      session_id: session.id,
+      page_url: event.page,
+      image_url: event.img,
+      goods_link: goodsLink,
+      is_goods_page: isGoodsPage,
+      has_sku: Boolean(skuCode),
+    })
 
     if (isGoodsPage && goodsLink && !skuCode) {
       const pendingClicks = this.pendingGoodsClicks.get(goodsLink) ?? []
@@ -216,6 +256,11 @@ export class CollectionClickService {
       if (pendingClicks.length === 1) {
         this.sessionManager.requestSku(goodsLink, event.img)
       }
+      this.debug('商品页图片等待货号后再保存', 'warn', {
+        session_id: session.id,
+        goods_link: goodsLink,
+        image_url: event.img,
+      })
       return { status: 'pending_sku', goodsLink } satisfies CollectionClickResult
     }
 
@@ -261,6 +306,13 @@ export class CollectionClickService {
     }
 
     const createdAt = this.now()
+    this.debug('处理滚动采集图片', 'info', {
+      session_id: session.id,
+      page_url: event.page,
+      image_url: event.img,
+      width: event.width ?? null,
+      height: event.height ?? null,
+    })
     return this.saveImage({
       session,
       event,
@@ -361,9 +413,22 @@ export class CollectionClickService {
     reason?: string
     createdAt: number
   }): Promise<CollectionSavedResult> {
+    this.debug('开始保存采集图片', 'info', {
+      session_id: input.session.id,
+      page_url: input.event.page,
+      image_url: input.event.img,
+      target_dir: input.targetDir,
+      file_base: input.fileBase,
+    })
     try {
       const image = await this.imageBuffer(input.session, input.event)
       const buffer = image.buffer
+      this.debug('图片下载完成', 'debug', {
+        session_id: input.session.id,
+        image_url: input.event.img,
+        bytes: buffer.byteLength,
+        extension: image.extension ?? imageExtension(input.event),
+      })
       const hash = sha256(buffer)
       await this.mkdir(input.targetDir, { recursive: true })
       const existing = await findExistingImageByHash(
@@ -373,6 +438,11 @@ export class CollectionClickService {
         this.readFile,
       )
       if (existing) {
+        this.debug('图片内容重复，跳过写入新文件', 'warn', {
+          session_id: input.session.id,
+          image_url: input.event.img,
+          saved_path: existing,
+        })
         const record = this.record({
           session: input.session,
           event: input.event,
@@ -393,6 +463,11 @@ export class CollectionClickService {
         this.stat,
       )
       await this.writeFile(savedPath, buffer)
+      this.debug('图片文件写入完成', 'info', {
+        session_id: input.session.id,
+        image_url: input.event.img,
+        saved_path: savedPath,
+      })
       const info = await this.stat(savedPath)
       const record = this.record({
         session: input.session,
@@ -406,6 +481,12 @@ export class CollectionClickService {
       })
       return { status: 'success', record, savedPath }
     } catch (error) {
+      this.debug('采集图片保存失败', 'error', {
+        session_id: input.session.id,
+        page_url: input.event.page,
+        image_url: input.event.img,
+        error: appErrorMessage(error),
+      })
       const record = this.record({
         session: input.session,
         event: input.event,
@@ -499,6 +580,13 @@ export class CollectionClickService {
     const db = this.openDatabase(workbenchRootFromOutput(input.session.output_dir))
     try {
       insertCollectionRecord(db, record)
+      this.debug('采集记录已写入数据库', 'debug', {
+        session_id: input.session.id,
+        record_id: record.id,
+        status: record.status,
+        reason: record.reason,
+        saved_path: record.savedPath,
+      })
     } finally {
       db.close()
     }
@@ -510,14 +598,31 @@ export class CollectionClickService {
     event: CollectionImageEvent,
   ): Promise<CollectionImageBuffer> {
     try {
+      this.debug('开始直接下载图片', 'debug', {
+        session_id: session.id,
+        image_url: event.img,
+      })
       return await normalizeDownloadedImage(await this.downloadImage(event.img))
     } catch (error) {
+      this.debug('直接下载失败，尝试浏览器截图兜底', 'warn', {
+        session_id: session.id,
+        image_url: event.img,
+        error: appErrorMessage(error),
+      })
       try {
-        return {
-          buffer: await this.captureImageWithBrowser(session.profile_id, event.img, event.page),
-          extension: '.png',
-        }
-      } catch {
+        const buffer = await this.captureImageWithBrowser(session.profile_id, event.img, event.page)
+        this.debug('浏览器截图兜底成功', 'info', {
+          session_id: session.id,
+          image_url: event.img,
+          bytes: buffer.byteLength,
+        })
+        return { buffer, extension: '.png' }
+      } catch (fallbackError) {
+        this.debug('浏览器截图兜底失败', 'error', {
+          session_id: session.id,
+          image_url: event.img,
+          error: appErrorMessage(fallbackError),
+        })
         throw error
       }
     }
@@ -535,7 +640,7 @@ export class CollectionClickService {
     const now = this.now()
     const key = runtimeEventKey({
       sessionId: session.id,
-      kind: payload.kind,
+      kind: payload.kind as CollectionImageEventKind,
       img: payload.img,
       page: payload.page,
     })
@@ -550,6 +655,23 @@ export class CollectionClickService {
     }
     this.recentRuntimeEvents.set(key, now)
     return false
+  }
+
+  private debug(
+    message: string,
+    level: CollectionDebugLogLevel = 'info',
+    details?: Record<string, string | number | boolean | null | undefined>,
+  ) {
+    this.emitEvent?.({
+      type: 'debug-log',
+      entry: {
+        id: `${Date.now()}-${++this.debugSequence}`,
+        timestamp: Date.now(),
+        level,
+        message,
+        ...(details ? { details: compactLogDetails(details) } : {}),
+      },
+    })
   }
 }
 
@@ -805,13 +927,23 @@ function appErrorMessage(error: unknown) {
   return String(error)
 }
 
+function compactLogDetails(details: Record<string, string | number | boolean | null | undefined>) {
+  return Object.fromEntries(
+    Object.entries(details).filter((entry): entry is [string, string | number | boolean | null] => {
+      return entry[1] !== undefined
+    }),
+  )
+}
+
 function workbenchRootFromOutput(outputDir: string) {
   return outputDir.endsWith('/01-采集') || outputDir.endsWith('\\01-采集')
     ? outputDir.slice(0, -'01-采集'.length - 1)
     : outputDir
 }
 
-export const collectionClickService = new CollectionClickService()
+export const collectionClickService = new CollectionClickService({
+  emitEvent: emitCollectionEvent,
+})
 
 const CollectionClickIpcSchema = z.object({
   event: z.object({

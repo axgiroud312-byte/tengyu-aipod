@@ -424,7 +424,7 @@ test.describe('collection module E2E', () => {
     expect(mockServer.imageHits.get('/images/flaky_original.png')).toBe(2)
   })
 
-  test('starts a session, reloads the current page, injects script, and receives binding payloads', async () => {
+  test('starts a session, keeps the current page, injects script, and receives binding payloads', async () => {
     if (!mockServer) {
       throw new Error('mock server missing')
     }
@@ -488,7 +488,7 @@ test.describe('collection module E2E', () => {
       output_dir: outputDir,
     })
 
-    await expect(page.evaluate(() => Reflect.get(window, 'beforeStart'))).resolves.toBeUndefined()
+    await expect(page.evaluate(() => Reflect.get(window, 'beforeStart'))).resolves.toBe(true)
     const productLink = page.getByRole('link', { name: 'Hero product' })
     await productLink.click()
 

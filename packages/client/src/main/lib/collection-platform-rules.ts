@@ -10,8 +10,8 @@ const BUILT_IN_COLLECTION_PLATFORM_RULES: CollectionPlatformRule[] = [
     goods_url_patterns: ['\\/goods\\/', '\\/goods\\.html', '-g-\\d+\\.html'],
     login_check: { indicators: ['Sign in', '登录'] },
     original_image_resolver: {
-      type: 'src_replace',
-      config: { from: '_thumb', to: '_main' },
+      type: 'srcset_largest',
+      config: {},
     },
   },
   {

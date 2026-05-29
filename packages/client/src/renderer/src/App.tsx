@@ -5,6 +5,10 @@ import {
   type CollectionPlatformOption,
   type CollectionProfileOption,
 } from '@/features/collection/CollectionPage'
+import {
+  collectionImagePoolKey,
+  mergeCollectionImagePoolItems,
+} from '@/features/collection/image-pool'
 import { DetectionPage } from '@/features/detection/DetectionPage'
 import { GenerationPage } from '@/features/generation/GenerationPage'
 import { ListingPage } from '@/features/listing/ListingPage'
@@ -32,7 +36,7 @@ import {
 import { initializeActivationStore, useActivationStore } from '@/store/activation'
 import type { ActivationBadgeState } from '@tengyu-aipod/shared'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   HashRouter,
   Navigate,
@@ -44,8 +48,19 @@ import {
 } from 'react-router-dom'
 import type { BitBrowserProfileWithStatus } from '../../main/lib/bit-browser-client'
 import type { CollectionConfig } from '../../main/lib/collection-config'
+import type {
+  CollectionCurrentPageResult,
+  CollectionImageIndexClickResult,
+  CollectionImageIndexDownloadResult,
+  CollectionImageIndexItem,
+  CollectionImageIndexScanResult,
+} from '../../main/lib/collection-image-index-service'
 import type { CollectionPlatformRule } from '../../main/lib/collection-injected-script'
 import type { CollectionRecordRow } from '../../main/lib/collection-record-store'
+import type {
+  CollectionDebugLogEntry,
+  CollectionDebugLogLevel,
+} from '../../main/lib/collection-session-manager'
 import type { CollectionSession } from '../../main/lib/collection-session-manager'
 import type { CollectionSessionEvent } from '../../main/lib/collection-session-manager'
 import type {
@@ -69,7 +84,21 @@ const defaultCollectionPageState: CollectionPageState = {
 }
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
+const COLLECTION_DEBUG_LOG_LIMIT = 1000
+
+type CollectionDebugDetails = Record<string, string | number | boolean | null | undefined>
+
+function compactCollectionDebugDetails(details: CollectionDebugDetails) {
+  const compacted: Record<string, string | number | boolean | null> = {}
+  for (const [key, value] of Object.entries(details)) {
+    if (value !== undefined) {
+      compacted[key] = value
+    }
+  }
+  return compacted
+}
 const COLLECTION_CONFIG_SAVE_DEBOUNCE_MS = 400
+const COLLECTION_CURRENT_PAGE_POLL_MS = 1_500
 
 function normalizeActivationCode(value: string) {
   return value
@@ -191,6 +220,14 @@ function collectionConfigFromPageState(state: CollectionPageState): CollectionCo
       max_height: nonNegativeInteger(state.maxHeight),
     },
   }
+}
+
+function temuSearchUrl(keyword: string) {
+  const trimmed = keyword.trim()
+  if (!trimmed) {
+    return ''
+  }
+  return `https://www.temu.com/search_result.html?search_key=${encodeURIComponent(trimmed)}&search_method=user`
 }
 
 function onboardingPath(step: OnboardingStep) {
@@ -379,6 +416,28 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [collectionRecords, setCollectionRecords] = useState<CollectionRecordRow[]>([])
   const [collectionError, setCollectionError] = useState<string | null>(null)
   const [retryingRecordId, setRetryingRecordId] = useState<string | null>(null)
+  const [collectionDebugLogs, setCollectionDebugLogs] = useState<CollectionDebugLogEntry[]>([])
+  const collectionDebugLogSequenceRef = useRef(0)
+  const [collectionImageIndexScan, setCollectionImageIndexScan] =
+    useState<CollectionImageIndexScanResult | null>(null)
+  const [collectionImageIndexClick, setCollectionImageIndexClick] =
+    useState<CollectionImageIndexClickResult | null>(null)
+  const [collectionImageIndexDownload, setCollectionImageIndexDownload] =
+    useState<CollectionImageIndexDownloadResult | null>(null)
+  const [collectionCurrentPage, setCollectionCurrentPage] =
+    useState<CollectionCurrentPageResult | null>(null)
+  const [isDetectingCollectionCurrentPage, setIsDetectingCollectionCurrentPage] = useState(false)
+  const [isOpeningCollectionSearchPage, setIsOpeningCollectionSearchPage] = useState(false)
+  const [collectionImagePoolItems, setCollectionImagePoolItems] = useState<
+    CollectionImageIndexItem[]
+  >([])
+  const [collectionSelectedImageIds, setCollectionSelectedImageIds] = useState<Set<string>>(
+    () => new Set(),
+  )
+  const [collectionLastScanAddedCount, setCollectionLastScanAddedCount] = useState(0)
+  const [collectionLastScanExistingCount, setCollectionLastScanExistingCount] = useState(0)
+  const [collectionLastDownloadFailedCount, setCollectionLastDownloadFailedCount] = useState(0)
+  const detectingCollectionCurrentPageRef = useRef(false)
   const [collectionPageState, setCollectionPageState] = useState<CollectionPageState>(
     defaultCollectionPageState,
   )
@@ -389,6 +448,10 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   const [isStoppingCollection, setIsStoppingCollection] = useState(false)
   const [isResumingCollection, setIsResumingCollection] = useState(false)
   const [isRefreshingCollectionProfiles, setIsRefreshingCollectionProfiles] = useState(false)
+  const [isScanningCollectionImageIndex, setIsScanningCollectionImageIndex] = useState(false)
+  const [isProbingCollectionImageIndexClick, setIsProbingCollectionImageIndexClick] =
+    useState(false)
+  const [isDownloadingCollectionImageIndex, setIsDownloadingCollectionImageIndex] = useState(false)
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
   const isBlocked =
     status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
@@ -506,6 +569,11 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
 
   useEffect(() => {
     const offCollectionEvent = window.api.collection.onEvent((event) => {
+      if (event.type === 'debug-log') {
+        setCollectionDebugLogs((current) =>
+          [...current, event.entry].slice(-COLLECTION_DEBUG_LOG_LIMIT),
+        )
+      }
       if (event.type === 'sku-required') {
         setPendingCollectionSku(event)
         setCollectionSkuCode('')
@@ -545,6 +613,30 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       void refreshCollectionProfiles()
     }
   }, [activeModule])
+
+  useEffect(() => {
+    const profileId = collectionPageState.profileId.trim()
+    const platform = collectionPageState.platform
+    if (activeModule !== 'collection' || !profileId || !platform) {
+      setCollectionCurrentPage(null)
+      return
+    }
+    let cancelled = false
+    async function tick(showLoading = false) {
+      if (cancelled) {
+        return
+      }
+      await refreshCollectionCurrentPage(showLoading)
+    }
+    void tick(true)
+    const timer = window.setInterval(() => {
+      void tick(false)
+    }, COLLECTION_CURRENT_PAGE_POLL_MS)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [activeModule, collectionPageState.platform, collectionPageState.profileId])
 
   useEffect(() => {
     const offProgress = window.api.title.onProgress((nextProgress) => {
@@ -750,6 +842,30 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     setCollectionPageState((current) => ({ ...current, [key]: value }))
   }
 
+  function clearCollectionDebugLogs() {
+    setCollectionDebugLogs([])
+  }
+
+  function appendCollectionDebugLog(
+    message: string,
+    level: CollectionDebugLogLevel = 'info',
+    details?: CollectionDebugDetails,
+  ) {
+    const compacted = details ? compactCollectionDebugDetails(details) : null
+    setCollectionDebugLogs((current) =>
+      [
+        ...current,
+        {
+          id: `${Date.now()}-renderer-${++collectionDebugLogSequenceRef.current}`,
+          timestamp: Date.now(),
+          level,
+          message,
+          ...(compacted && Object.keys(compacted).length > 0 ? { details: compacted } : {}),
+        },
+      ].slice(-COLLECTION_DEBUG_LOG_LIMIT),
+    )
+  }
+
   async function chooseCollectionOutputDir() {
     const result = await window.api.onboarding.chooseWorkbenchRoot()
     if (result.ok) {
@@ -773,6 +889,275 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     } finally {
       setIsRefreshingCollectionProfiles(false)
     }
+  }
+
+  async function refreshCollectionCurrentPage(showLoading = false) {
+    const profileId = collectionPageState.profileId.trim()
+    if (!profileId) {
+      setCollectionCurrentPage(null)
+      return
+    }
+    if (detectingCollectionCurrentPageRef.current) {
+      return
+    }
+    detectingCollectionCurrentPageRef.current = true
+    if (showLoading) {
+      setIsDetectingCollectionCurrentPage(true)
+    }
+    try {
+      const result = await window.api.collection.getCurrentPage({
+        platform: collectionPageState.platform,
+        profile_id: profileId,
+      })
+      setCollectionCurrentPage(result)
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '检测当前操作页面失败')
+    } finally {
+      detectingCollectionCurrentPageRef.current = false
+      if (showLoading) {
+        setIsDetectingCollectionCurrentPage(false)
+      }
+    }
+  }
+
+  async function openCollectionSearchPage(keyword: string) {
+    const profileId = collectionPageState.profileId.trim()
+    if (!profileId) {
+      setCollectionError('请先选择或填写比特浏览器环境编号')
+      return
+    }
+    const pageUrl = collectionPageState.platform === 'temu' ? temuSearchUrl(keyword) : ''
+    if (!pageUrl) {
+      setCollectionError('当前平台暂未配置关键词搜索入口，请在比特浏览器里手动打开页面')
+      return
+    }
+    setIsOpeningCollectionSearchPage(true)
+    setCollectionError(null)
+    try {
+      const result = await window.api.collection.openPage({
+        platform: collectionPageState.platform,
+        profile_id: profileId,
+        page_url: pageUrl,
+      })
+      setCollectionCurrentPage(result)
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '打开搜索页面失败')
+    } finally {
+      setIsOpeningCollectionSearchPage(false)
+    }
+  }
+
+  function collectionImageIndexRequest(limit?: number, pageUrl?: string) {
+    const profileId = collectionPageState.profileId.trim()
+    if (!profileId) {
+      throw new Error('请先选择或填写比特浏览器环境编号')
+    }
+    return {
+      platform: collectionPageState.platform,
+      profile_id: profileId,
+      ...(collectionPageState.outputDir.trim()
+        ? { output_dir: collectionPageState.outputDir.trim() }
+        : {}),
+      ...(pageUrl?.trim() ? { page_url: pageUrl.trim() } : {}),
+      ...(limit !== undefined ? { limit } : {}),
+    }
+  }
+
+  async function scanCollectionImageIndex(pageUrl?: string) {
+    const targetPageUrl = pageUrl?.trim() || collectionCurrentPage?.pageUrl.trim()
+    if (!targetPageUrl) {
+      setCollectionError('请先在比特浏览器打开当前平台页面')
+      appendCollectionDebugLog('扫描图池失败：未找到当前平台页面', 'warn', {
+        operation: 'scan',
+        stage: 'failed',
+      })
+      return
+    }
+    setIsScanningCollectionImageIndex(true)
+    setCollectionError(null)
+    appendCollectionDebugLog('----- 扫描图池任务开始 -----', 'info', {
+      operation: 'scan',
+      stage: 'start',
+      pageUrl: targetPageUrl,
+    })
+    try {
+      const result = await window.api.collection.scanImageIndex(
+        collectionImageIndexRequest(0, targetPageUrl),
+      )
+      const scannedAt = Date.now()
+      const mergeResult = mergeCollectionImagePoolItems(
+        collectionImagePoolItems,
+        result.items,
+        result,
+        scannedAt,
+      )
+      setCollectionImagePoolItems(mergeResult.items)
+      setCollectionSelectedImageIds((current) => {
+        if (mergeResult.addedItems.length === 0) {
+          return current
+        }
+        const next = new Set(current)
+        for (const item of mergeResult.addedItems) {
+          next.add(item.id)
+        }
+        return next
+      })
+      setCollectionLastScanAddedCount(mergeResult.addedItems.length)
+      setCollectionLastScanExistingCount(mergeResult.existingCount)
+      setCollectionImageIndexScan(result)
+      setCollectionImageIndexClick(null)
+      setCollectionImageIndexDownload(null)
+      appendCollectionDebugLog(
+        mergeResult.addedItems.length > 0 ? '图池合并完成' : '图池合并完成：本次扫描图片已存在',
+        mergeResult.addedItems.length > 0 ? 'info' : 'warn',
+        {
+          operation: 'scan',
+          stage: 'finish',
+          added: mergeResult.addedItems.length,
+          existing: mergeResult.existingCount,
+          total: mergeResult.items.length,
+          pageUrl: result.pageUrl,
+        },
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '扫描图片索引池失败'
+      setCollectionError(message)
+      appendCollectionDebugLog('扫描图池失败', 'error', {
+        operation: 'scan',
+        stage: 'failed',
+        error: message,
+        pageUrl: targetPageUrl,
+      })
+    } finally {
+      setIsScanningCollectionImageIndex(false)
+    }
+  }
+
+  async function probeCollectionImageIndexClick(pageUrl?: string) {
+    setIsProbingCollectionImageIndexClick(true)
+    setCollectionError(null)
+    try {
+      const result = await window.api.collection.probeImageIndexClick(
+        collectionImageIndexRequest(80, pageUrl),
+      )
+      setCollectionImageIndexClick(result)
+      if (!result.timedOut && result.item) {
+        setCollectionImageIndexScan((current) =>
+          current && current.pageUrl === result.pageUrl ? current : null,
+        )
+      }
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '测试点击命中失败')
+    } finally {
+      setIsProbingCollectionImageIndexClick(false)
+    }
+  }
+
+  async function downloadCollectionImageIndexSample(pageUrl?: string) {
+    setIsDownloadingCollectionImageIndex(true)
+    setCollectionError(null)
+    try {
+      const result = await window.api.collection.downloadImageIndexSample(
+        collectionImageIndexRequest(5, pageUrl),
+      )
+      setCollectionImageIndexDownload(result)
+      setCollectionImageIndexScan(result.scan)
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '下载索引池样例失败')
+    } finally {
+      setIsDownloadingCollectionImageIndex(false)
+    }
+  }
+
+  async function downloadCollectionImageIndexItems(
+    items: CollectionImageIndexItem[],
+    pageUrl?: string,
+  ) {
+    if (items.length === 0) {
+      setCollectionError('请先勾选要下载的图片')
+      appendCollectionDebugLog('下载图池失败：没有勾选图片', 'warn', {
+        operation: 'download',
+        stage: 'failed',
+      })
+      return
+    }
+    setIsDownloadingCollectionImageIndex(true)
+    setCollectionError(null)
+    appendCollectionDebugLog('----- 下载图池任务开始 -----', 'info', {
+      operation: 'download',
+      stage: 'start',
+      total: items.length,
+      pageUrl: pageUrl ?? collectionCurrentPage?.pageUrl ?? null,
+    })
+    try {
+      const result = await window.api.collection.downloadImageIndexItems({
+        ...collectionImageIndexRequest(undefined, pageUrl),
+        items,
+      })
+      const savedKeys = new Set(result.saved.map((item) => collectionImagePoolKey(item.item)))
+      setCollectionImageIndexDownload(result)
+      setCollectionLastDownloadFailedCount(result.failed.length)
+      if (savedKeys.size > 0) {
+        setCollectionImagePoolItems((current) =>
+          current.filter((item) => !savedKeys.has(collectionImagePoolKey(item))),
+        )
+        setCollectionSelectedImageIds((current) => {
+          const next = new Set(current)
+          for (const item of result.saved) {
+            next.delete(item.item.id)
+          }
+          return next
+        })
+      }
+      appendCollectionDebugLog('前端图池更新完成', result.failed.length > 0 ? 'warn' : 'info', {
+        operation: 'download',
+        stage: 'finish',
+        saved: result.saved.length,
+        failed: result.failed.length,
+        total: items.length,
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '下载图池图片失败'
+      setCollectionError(message)
+      appendCollectionDebugLog('下载图池失败', 'error', {
+        operation: 'download',
+        stage: 'failed',
+        error: message,
+        total: items.length,
+      })
+    } finally {
+      setIsDownloadingCollectionImageIndex(false)
+    }
+  }
+
+  function toggleCollectionImagePoolItem(itemId: string, checked: boolean) {
+    setCollectionSelectedImageIds((current) => {
+      const next = new Set(current)
+      if (checked) {
+        next.add(itemId)
+      } else {
+        next.delete(itemId)
+      }
+      return next
+    })
+  }
+
+  function selectAllCollectionImagePoolItems() {
+    setCollectionSelectedImageIds(new Set(collectionImagePoolItems.map((item) => item.id)))
+  }
+
+  function clearCollectionImagePoolSelection() {
+    setCollectionSelectedImageIds(new Set())
+  }
+
+  function clearCollectionImagePool() {
+    setCollectionImagePoolItems([])
+    setCollectionSelectedImageIds(new Set())
+    setCollectionLastScanAddedCount(0)
+    setCollectionLastScanExistingCount(0)
+    setCollectionLastDownloadFailedCount(0)
+    setCollectionImageIndexScan(null)
+    setCollectionImageIndexDownload(null)
   }
 
   async function startCollectionSession() {
@@ -907,23 +1292,52 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           <div className="space-y-6">
             {activeModule === 'collection' ? (
               <CollectionPage
+                currentPage={collectionCurrentPage}
+                debugLogs={collectionDebugLogs}
                 deletingRecordId={deletingRecordId}
+                detectingCurrentPage={isDetectingCollectionCurrentPage}
                 error={collectionError}
+                imageIndexClick={collectionImageIndexClick}
+                imageIndexDownload={collectionImageIndexDownload}
+                imagePoolItems={collectionImagePoolItems}
+                imageIndexScan={collectionImageIndexScan}
+                imageIndexScanning={isScanningCollectionImageIndex}
+                imageIndexClickProbing={isProbingCollectionImageIndexClick}
+                imageIndexDownloading={isDownloadingCollectionImageIndex}
+                onClearDebugLogs={clearCollectionDebugLogs}
+                onClearImagePool={clearCollectionImagePool}
+                onClearImagePoolSelection={clearCollectionImagePoolSelection}
+                onDownloadImageIndexSample={(pageUrl) =>
+                  void downloadCollectionImageIndexSample(pageUrl)
+                }
+                onDownloadImageIndexItems={(items, pageUrl) =>
+                  void downloadCollectionImageIndexItems(items, pageUrl)
+                }
                 onOutputDirBrowse={() => void chooseCollectionOutputDir()}
                 onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
+                onOpenSearchPage={(keyword) => void openCollectionSearchPage(keyword)}
+                onProbeImageIndexClick={(pageUrl) => void probeCollectionImageIndexClick(pageUrl)}
                 onRefreshProfiles={() => void refreshCollectionProfiles()}
                 onRefreshRecords={() => void refreshCollectionRecords()}
                 onResumeSession={() => void resumeCollectionSession()}
                 onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
+                onScanImageIndex={(pageUrl) => void scanCollectionImageIndex(pageUrl)}
+                onSelectAllImagePoolItems={selectAllCollectionImagePoolItems}
                 onStartSession={() => void startCollectionSession()}
                 onStateChange={updateCollectionPageState}
                 onStopSession={() => void stopCollectionSession()}
+                onToggleImagePoolItem={toggleCollectionImagePoolItem}
+                lastDownloadFailedCount={collectionLastDownloadFailedCount}
+                lastScanAddedCount={collectionLastScanAddedCount}
+                lastScanExistingCount={collectionLastScanExistingCount}
+                openingSearchPage={isOpeningCollectionSearchPage}
                 platforms={collectionPlatforms}
                 profiles={collectionProfiles}
                 refreshingProfiles={isRefreshingCollectionProfiles}
                 records={collectionRecords}
                 resuming={isResumingCollection}
                 retryingRecordId={retryingRecordId}
+                selectedImageIds={collectionSelectedImageIds}
                 session={collectionSession}
                 starting={isStartingCollection}
                 state={collectionPageState}

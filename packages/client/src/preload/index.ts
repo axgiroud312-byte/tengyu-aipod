@@ -30,6 +30,13 @@ import type {
   CollectionScrollResult,
 } from '../main/lib/collection-click-service'
 import type { CollectionConfig } from '../main/lib/collection-config'
+import type {
+  CollectionCurrentPageResult,
+  CollectionImageIndexClickResult,
+  CollectionImageIndexDownloadResult,
+  CollectionImageIndexItem,
+  CollectionImageIndexScanResult,
+} from '../main/lib/collection-image-index-service'
 import type { CollectionPlatformRule } from '../main/lib/collection-injected-script'
 import type {
   CollectionRecordRow,
@@ -123,6 +130,13 @@ const api = {
       ipcRenderer.invoke('collection:list-platforms') as Promise<CollectionPlatformRule[]>,
     listProfiles: () =>
       ipcRenderer.invoke('collection:list-profiles') as Promise<BitBrowserProfileWithStatus[]>,
+    getCurrentPage: (input: { platform: string; profile_id: string }) =>
+      ipcRenderer.invoke(
+        'collection:get-current-page',
+        input,
+      ) as Promise<CollectionCurrentPageResult>,
+    openPage: (input: { platform: string; profile_id: string; page_url: string }) =>
+      ipcRenderer.invoke('collection:open-page', input) as Promise<CollectionCurrentPageResult>,
     startSession: (input: CollectionSessionConfig) =>
       ipcRenderer.invoke('collection:start-session', input) as Promise<CollectionSession>,
     stopSession: () =>
@@ -166,6 +180,50 @@ const api = {
         ok: true
         record_id: string
       }>,
+    scanImageIndex: (input: {
+      platform: string
+      profile_id: string
+      output_dir?: string
+      page_url?: string
+      limit?: number
+    }) =>
+      ipcRenderer.invoke(
+        'collection:scan-image-index',
+        input,
+      ) as Promise<CollectionImageIndexScanResult>,
+    probeImageIndexClick: (input: {
+      platform: string
+      profile_id: string
+      output_dir?: string
+      page_url?: string
+      limit?: number
+    }) =>
+      ipcRenderer.invoke(
+        'collection:probe-image-index-click',
+        input,
+      ) as Promise<CollectionImageIndexClickResult>,
+    downloadImageIndexSample: (input: {
+      platform: string
+      profile_id: string
+      output_dir?: string
+      page_url?: string
+      limit?: number
+    }) =>
+      ipcRenderer.invoke(
+        'collection:download-image-index-sample',
+        input,
+      ) as Promise<CollectionImageIndexDownloadResult>,
+    downloadImageIndexItems: (input: {
+      platform: string
+      profile_id: string
+      output_dir?: string
+      page_url?: string
+      items: CollectionImageIndexItem[]
+    }) =>
+      ipcRenderer.invoke(
+        'collection:download-image-index-items',
+        input,
+      ) as Promise<CollectionImageIndexDownloadResult>,
   },
   generation: {
     generatePrompts: (input: GenerationPromptInput) =>

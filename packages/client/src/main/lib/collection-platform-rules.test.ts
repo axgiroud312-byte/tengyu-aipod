@@ -39,4 +39,11 @@ describe('collection platform rules', () => {
       temu.goods_url_patterns.some((pattern) => new RegExp(pattern).test(regionalGoodsUrl)),
     ).toBe(true)
   })
+
+  it('uses srcset-style image resolution for current Temu kwcdn images', () => {
+    expect(getPlatformRule('temu').original_image_resolver).toEqual({
+      type: 'srcset_largest',
+      config: {},
+    })
+  })
 })

@@ -53,7 +53,7 @@ describe('CDPClient', () => {
     const chromium = {
       connectOverCDP: vi.fn().mockResolvedValue(browser),
     }
-    const client = new CDPClient({ bitBrowser, chromium })
+    const client = new CDPClient({ bitBrowser, chromium: chromium as never })
 
     await expect(client.connectToProfile('profile-1')).resolves.toBe(browser)
     expect(bitBrowser.openProfile).toHaveBeenCalledWith('profile-1')
@@ -75,7 +75,7 @@ describe('CDPClient', () => {
     const chromium = {
       connectOverCDP: vi.fn().mockResolvedValue(browser),
     }
-    const client = new CDPClient({ bitBrowser, chromium })
+    const client = new CDPClient({ bitBrowser, chromium: chromium as never })
 
     await expect(client.connectToProfile('profile-1')).resolves.toBe(browser)
     expect(bitBrowser.getCdpEndpoint).toHaveBeenCalledWith('profile-1')
@@ -100,6 +100,36 @@ describe('CDPClient', () => {
     await client.connectToProfile('profile-1')
     await client.connectToProfile('profile-1')
 
+    expect(bitBrowser.openProfile).toHaveBeenCalledTimes(1)
+    expect(chromium.connectOverCDP).toHaveBeenCalledTimes(1)
+  })
+
+  it('reuses an in-flight browser connection for the same profile', async () => {
+    const browser = new FakeBrowser()
+    let resolveConnection: (browser: FakeBrowser) => void = () => undefined
+    const bitBrowser = {
+      openProfile: vi.fn().mockResolvedValue({
+        http: 'http://127.0.0.1:9222',
+        ws: 'ws://127.0.0.1:9222/devtools/browser/abc',
+      }),
+      closeProfile: vi.fn().mockResolvedValue(undefined),
+    }
+    const chromium = {
+      connectOverCDP: vi.fn(
+        () =>
+          new Promise<FakeBrowser>((resolve) => {
+            resolveConnection = resolve
+          }),
+      ),
+    }
+    const client = new CDPClient({ bitBrowser, chromium: chromium as never })
+
+    const first = client.connectToProfile('profile-1')
+    const second = client.connectToProfile('profile-1')
+    await vi.waitFor(() => expect(chromium.connectOverCDP).toHaveBeenCalledTimes(1))
+    resolveConnection(browser)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([browser, browser])
     expect(bitBrowser.openProfile).toHaveBeenCalledTimes(1)
     expect(chromium.connectOverCDP).toHaveBeenCalledTimes(1)
   })
@@ -151,6 +181,39 @@ describe('CDPClient', () => {
     expect(client.getCachedEndpoint('profile-1')).toBeNull()
   })
 
+  it('still closes the BitBrowser profile when Playwright browser close hangs', async () => {
+    vi.useFakeTimers()
+    class HangingBrowser extends FakeBrowser {
+      override async close() {
+        await new Promise<void>(() => undefined)
+      }
+    }
+    const browser = new HangingBrowser()
+    const bitBrowser = {
+      openProfile: vi.fn().mockResolvedValue({
+        http: 'http://127.0.0.1:9222',
+        ws: 'ws://127.0.0.1:9222/devtools/browser/abc',
+      }),
+      closeProfile: vi.fn().mockResolvedValue(undefined),
+    }
+    const chromium = {
+      connectOverCDP: vi.fn().mockResolvedValue(browser),
+    }
+    const client = new CDPClient({ bitBrowser, chromium })
+
+    try {
+      await client.connectToProfile('profile-1')
+      const disconnecting = client.disconnect('profile-1')
+      await vi.advanceTimersByTimeAsync(5_000)
+
+      await expect(disconnecting).resolves.toBeUndefined()
+      expect(bitBrowser.closeProfile).toHaveBeenCalledWith('profile-1')
+      expect(client.getCachedEndpoint('profile-1')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('injects init script and exposes the collection binding', async () => {
     const page = new FakePage()
     const events: CollectionBindingPayload[] = []
@@ -192,6 +255,47 @@ describe('CDPClient', () => {
     ])
   })
 
+  it('accepts injected debug payloads for collection diagnostics', async () => {
+    const page = new FakePage()
+    const events: CollectionBindingPayload[] = []
+    const client = new CDPClient({
+      bitBrowser: {
+        openProfile: vi.fn(),
+        closeProfile: vi.fn(),
+      },
+      chromium: {
+        connectOverCDP: vi.fn(),
+      },
+    })
+
+    await client.injectPageScript(page as never, {
+      script: 'window.__collection = true',
+      onEvent: (event) => {
+        events.push(event)
+      },
+    })
+    await page.bindings.get('__poseidonSendToHost')?.(
+      {},
+      {
+        kind: 'debug',
+        level: 'debug',
+        message: '页面点击未识别到可采集图片',
+        details: { target: 'button.buy-now', click_x: 25, click_y: 25 },
+        page: 'https://shop.example/goods/1',
+      },
+    )
+
+    expect(events).toEqual([
+      {
+        kind: 'debug',
+        level: 'debug',
+        message: '页面点击未识别到可采集图片',
+        details: { target: 'button.buy-now', click_x: 25, click_y: 25 },
+        page: 'https://shop.example/goods/1',
+      },
+    ])
+  })
+
   it('rejects invalid binding payloads before they reach the handler', async () => {
     const page = new FakePage()
     const handler = vi.fn()
@@ -212,6 +316,33 @@ describe('CDPClient', () => {
 
     await expect(
       page.bindings.get('__poseidonSendToHost')?.({}, { kind: 'click' }),
+    ).rejects.toBeInstanceOf(AppErrorClass)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('rejects injected debug payloads without a message', async () => {
+    const page = new FakePage()
+    const handler = vi.fn()
+    const client = new CDPClient({
+      bitBrowser: {
+        openProfile: vi.fn(),
+        closeProfile: vi.fn(),
+      },
+      chromium: {
+        connectOverCDP: vi.fn(),
+      },
+    })
+
+    await client.injectPageScript(page as never, {
+      script: 'window.__collection = true',
+      onEvent: handler,
+    })
+
+    await expect(
+      page.bindings.get('__poseidonSendToHost')?.(
+        {},
+        { kind: 'debug', page: 'https://shop.example/goods/1' },
+      ),
     ).rejects.toBeInstanceOf(AppErrorClass)
     expect(handler).not.toHaveBeenCalled()
   })
