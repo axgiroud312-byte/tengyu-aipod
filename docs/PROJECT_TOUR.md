@@ -122,10 +122,10 @@ sequenceDiagram
 
 | 部分 | 文件 |
 |---|---|
-| **主进程业务** | `packages/client/src/main/lib/collection-session-manager.ts` ← 会话状态机<br/>`collection-click-service.ts` ← 点击模式<br/>`collection-injected-script.ts` ← 注入到页面的采集脚本<br/>`collection-record-store.ts` ← 采集记录 + manifest |
+| **主进程业务** | `packages/client/src/main/lib/collection-image-index-service.ts` ← 图池扫描/下载/商品页主图分组<br/>`collection-session-manager.ts` ← 会话状态机 + debug-log 事件<br/>`collection-click-service.ts` ← 点击模式<br/>`collection-injected-script.ts` ← 注入到页面的采集脚本<br/>`collection-record-store.ts` ← 采集记录 + manifest |
 | **浏览器接入** | `bit-browser-client.ts` ← 比特浏览器 HTTP API<br/>`cdp-client.ts` ← Chrome DevTools Protocol<br/>`browser-profile-lock.ts` ← profile 互斥（不变规则 #5） |
-| **UI 工作台** | （没单独工作台，并入主入口或弹窗）|
-| **相关归档 task** | `.trellis/tasks/archive/2026-05/05-23-collection-*`、`bit-browser-adapter`、`cdp-adapter` |
+| **UI 工作台** | `packages/client/src/renderer/src/features/collection/CollectionPage.tsx` ← 图池采集界面 + 日志弹窗<br/>`image-pool.ts` ← 散图/商品页分组<br/>`collection-debug-log.ts` ← 命令行式日志格式化 |
+| **相关归档 task** | `.trellis/tasks/archive/2026-05/05-23-collection-*`、`05-27-fix-collection-remaining-issue`、`05-28-collection-debug-log-panel` |
 
 ### 2️⃣ 检测模块 — 用百炼视觉 LLM 判断是否侵权
 
@@ -250,7 +250,7 @@ flowchart LR
 | `print_artifact` | 印花 ID 全局唯一（不变规则 #9） |
 | `detection_result` | 检测历史 |
 | `generation_record` | 生图记录 |
-| `collection_record` | 采集记录 + manifest |
+| `collection_record` | 点击/滚动采集记录 + manifest |
 | `listing_task` / `listing_stage` | 上架任务 + 12 阶段状态 |
 | `ps_job` | PS 套版任务 |
 

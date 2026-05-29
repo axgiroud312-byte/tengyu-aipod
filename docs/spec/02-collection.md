@@ -1,16 +1,19 @@
 # Spec 02 — 采集模块
 
-> 浏览器辅助采集器。用户在比特浏览器里手动浏览跨境电商平台，腾域监听点击/滚动事件，保存商品图到本地。
+> 浏览器辅助采集器。用户在比特浏览器里手动浏览跨境电商平台，腾域通过 CDP 扫描当前页图池、监听点击事件，并把商品图保存到本地。
 > **不绕过登录、验证码、风控**。
 
 ## 1. 核心能力
 
 | 子能力 | 说明 |
 |---|---|
+| **图池扫描** | 用户打开搜索页/列表页/商品详情页 → 扫描当前页可下载图片 → 进入图池 |
+| **商品页主图采集** | 商品详情页只采集左侧主图/轮播图，按商品页分组保存 |
 | **点击采集** | 用户点击某张图 → 保存原图到对应商品文件夹 |
 | **滚动采集** | 用户滚动列表页 → 按规则自动保存图片到散图池 |
 | **平台绑定管理** | 一个采集平台关联一个比特浏览器 profile |
-| **采集会话状态展示** | 实时显示模式、数量、保存位置 |
+| **采集状态展示** | 实时显示当前页、图池数量、选择数量、扫描/下载结果 |
+| **运行期日志** | 命令行式弹窗展示扫描、下载、点击采集和会话诊断日志 |
 | **失败重试** | 用户从记录中触发单图重试 |
 | **采集预览** | 展示最近保存图片、删除、打开所在文件夹 |
 
@@ -18,7 +21,7 @@
 
 | Platform Key | 平台 | 商品 URL 规则示例 |
 |---|---|---|
-| `temu` | Temu | 含 `/goods/` 或 `/goods.html` |
+| `temu` | Temu | 含 `/search_result.html` 或 `-g-{goodsId}.html` |
 | `ozon` | Ozon | 含 `/product/` |
 | `shein` | Shein | 含 `-p-` |
 | `tiktok` | TikTok Shop | 含 `/product/` |
@@ -26,7 +29,7 @@
 | `1688` | 1688 | 含 `/offer/` |
 | `mercado` | Mercado Libre | 含 `/MLB-` 或 `/p/MLB` |
 
-各平台的 URL 规则、原图提取规则、登录辅助检测规则在云端 Skill / Provider 之外，**单独有一个 platform-rules 配置**也由云端派发，详见 §11。
+各平台的 URL 规则、原图提取规则、登录辅助检测规则在云端 Skill / Provider 之外，**单独有一个 platform-rules 配置**也由云端派发，详见 §12.1。
 
 ## 3. 采集会话生命周期
 
@@ -145,7 +148,44 @@ CDP 监听滚动事件 + 图片加载，自动判断符合条件的图。
 
 后期用户在 UI 上"批量归档" → 多选 → 指定货号 → 移到 `01-采集/{采集货号}/`。
 
-## 6. 平台规则（云端可派发）
+## 6. 图池扫描采集
+
+图池扫描是当前采集模块的主入口。用户先在比特浏览器里打开目标页面，再回到腾域点“扫描图池”。扫描结果不会立刻写文件，而是先进入前端图池，用户勾选后再下载。
+
+### 6.1 页面分类
+
+| 页面 | 归类 | UI 展示 | 下载目录 |
+|---|---|---|---|
+| 搜索页/列表页 | `bucket = loose` | 散图平铺展示 | `图池采集/散图池` |
+| 商品详情页 | `bucket = product` | 商品页文件夹展示，封面取第一张主图 | `图池采集/商品页/<商品分组>` |
+| 其他平台页 | `bucket = loose` 或平台默认规则 | 散图平铺展示 | `图池采集/散图池` |
+
+### 6.2 商品详情页过滤
+
+商品详情页只采集商品本体主图区域：
+
+- 保留左侧缩略图和主轮播大图。
+- 排除评论区、推荐商品、页面底部图片、右侧 SKU/颜色选择图片。
+- Temu 商品分组优先使用 URL 中的 `-g-{goodsId}`，例如 `temu-g-601101959736135`。
+
+### 6.3 图片 URL 升级
+
+扫描阶段会尽量把 Temu 缩略图 URL 升级为高分辨率下载 URL：
+
+```text
+...?imageView2/2/w/180/q/70/... → ...?imageView2/2/w/1300/q/90/...
+```
+
+前端展示尺寸时只显示下载预估尺寸，例如 `下载约 1300x1300`，不显示页面上 `57x57` 这类缩略图尺寸。
+
+### 6.4 下载策略
+
+- 下载仍采用逐张串行下载，避免过高并发触发平台/CDN 限速或风控。
+- 下载成功后从图池移除对应图片。
+- 下载失败保留在图池中，并在日志里显示错误原因。
+- 文件保存路径由扫描时的 `bucket`、`pageKind`、`groupKey` 决定，避免保存时再重新判断页面类型。
+
+## 7. 平台规则（云端可派发）
 
 ```ts
 interface PlatformRule {
@@ -181,9 +221,9 @@ interface PlatformRule {
 
 自定义规则存本地数据库，不与云端同步。
 
-## 7. 比特浏览器集成
+## 8. 比特浏览器集成
 
-### 7.1 连接
+### 8.1 连接
 
 ```ts
 // adapters/bit-browser.ts
@@ -206,7 +246,7 @@ class BitBrowserClient {
 }
 ```
 
-### 7.2 CDP 连接
+### 8.2 CDP 连接
 
 ```ts
 // adapters/cdp.ts
@@ -219,7 +259,7 @@ async function connectToProfile(profileId: string) {
 }
 ```
 
-### 7.3 注入采集脚本
+### 8.3 注入采集脚本
 
 ```ts
 async function injectCollectionScript(page: Page, platformRule: PlatformRule) {
@@ -233,57 +273,41 @@ async function injectCollectionScript(page: Page, platformRule: PlatformRule) {
 }
 ```
 
-## 8. UI 设计
+## 9. UI 设计
 
-### 8.1 模块面板（启动会话前）
+### 9.1 图池采集面板
 
 ```
-┌─ 采集 ──────────────────────────────────────────┐
+┌─ 图池采集 ──────────────────────────────────────┐
+│ 搜索关键词 [米老鼠________] [打开搜索页]        │
+│ 平台 [Temu]  浏览器环境 [1111]  输出目录 [...]  │
+│ 当前页：搜索结果页 / 商品详情页 / 等待页面       │
 │                                                │
-│ 当前无活动会话                                  │
+│ [日志 12] [扫描图池] [全选] [取消选择] [清空]   │
+│ [下载选中 8] [下载全部 42]                      │
 │                                                │
-│ 1. 选择采集平台                                 │
-│    ● Temu  ○ Ozon  ○ Shein ...                  │
-│    [+ 自定义平台]                               │
-│                                                │
-│ 2. 选择比特浏览器环境                           │
-│    ☑ profile-001（Temu 主店）● 已登录            │
-│    ☐ profile-002（备店）⚠ 未登录                │
-│    [刷新比特浏览器列表]                          │
-│                                                │
-│ 3. 采集模式                                     │
-│    ● 点击采集（推荐，按商品归档）                │
-│    ○ 滚动采集（瀑布式批量保存）                  │
-│                                                │
-│ 4. 输出目录                                     │
-│    /Users/.../素材总目录/01-采集/               │
-│                                                │
-│ [开始采集会话]                                  │
+│ 图池列表：                                      │
+│ - 商品页：按文件夹展示，封面取第一张主图         │
+│ - 散图：直接平铺展示图片                        │
 └────────────────────────────────────────────────┘
 ```
 
-### 8.2 模块面板（会话激活后 - 低打扰）
+### 9.2 运行期日志弹窗
 
 ```
-┌─ 采集中 ─────────────────────────────────────┐
-│ ● Temu · 点击模式 · profile-001              │
-│                                              │
-│ 已采集：12 张 / 3 个商品                      │
-│ 失败：1                                       │
-│ 当前页面：https://temu.com/goods/123456      │
-│                                              │
-│ 最近保存：                                    │
-│   📷 sku-001-003.jpg (3 秒前)                │
-│   📷 sku-001-002.jpg (8 秒前)                │
-│   📷 sku-001-001.jpg (15 秒前)               │
-│                                              │
-│ [停止会话]  [查看清单]  [查看失败]            │
-└─────────────────────────────────────────────┘
+┌─ 采集日志 ─────────────────────────────────────┐
+│ [10:37:56.123] [INFO] [扫描] 开始扫描图池       │
+│ [10:38:01.201] [INFO] [下载] 第 3/20 张成功     │
+│                          · 420 KB · 1.2s        │
+│ [10:38:07.901] [ERROR] [下载] 第 8/20 张失败    │
+│                          · HTTP 403             │
+│                                      [清空]     │
+└────────────────────────────────────────────────┘
 ```
 
-**关键 UX**：会话进行中**不抢焦点、不弹模态对话框**，全部用 toast / 卡片 / 浮窗。
+日志只保存在当前应用运行期间，不落盘；最多保留最近 `1000` 条。扫描日志显示页面级进度，下载日志显示逐张进度、文件大小、耗时、保存路径或错误原因。
 
-### 8.3 低打扰提示场景
+### 9.3 低打扰提示场景
 
 | 场景 | 提示 |
 |---|---|
@@ -293,9 +317,9 @@ async function injectCollectionScript(page: Page, platformRule: PlatformRule) {
 | 商品页未识别 | toast "当前不是商品页，图保存到散图池" |
 | 货号填写中 | 右下角浮窗，2 分钟未操作折叠 |
 
-## 9. 采集记录与清单
+## 10. 采集记录与清单
 
-### 9.1 数据库
+### 10.1 数据库
 
 ```sql
 CREATE TABLE collection_sessions (
@@ -328,7 +352,7 @@ CREATE INDEX idx_records_session ON collection_records(session_id);
 CREATE INDEX idx_records_status ON collection_records(status);
 ```
 
-### 9.2 导出清单
+### 10.2 导出清单
 
 会话结束时自动导出 CSV 到 `01-采集/{session_id}-manifest.csv`：
 
@@ -339,7 +363,7 @@ sku-001,01-采集/sku-001/sku-001-002.jpg,...
 ...
 ```
 
-## 10. 失败重试
+## 11. 失败重试
 
 UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 
@@ -353,9 +377,9 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 - 简单重试：再次下载 source_url
 - 多次失败：保存为 0-byte 占位，标记永久失败
 
-## 11. 云端派发的资源
+## 12. 云端派发的资源
 
-### 11.1 Platform Rules
+### 12.1 Platform Rules
 
 `GET /api/platform-rules`
 
@@ -371,12 +395,12 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 
 客户端按 version 比较，新版才更新本地。
 
-### 11.2 不派发的
+### 12.2 不派发的
 
 - 用户的 platform 自定义规则：仅本地
 - 平台账号：永远不上传
 
-## 12. 安全和敏感数据
+## 13. 安全和敏感数据
 
 **不保存**：
 - 平台账号密码
@@ -389,27 +413,34 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 - 采集货号
 
 **审计**：
-- 所有采集记录留 30 天本地日志
+- 采集记录和 manifest 按本地保留策略保存
+- 采集运行期日志只保存在前端内存中，不作为审计日志
 - 用户可主动清理
 
-## 13. IPC 接口
+## 14. IPC 接口
 
 ```ts
 'collection:list-platforms'           → PlatformRule[]
 'collection:list-profiles'            → BitBrowserProfile[]
+'collection:get-current-page'         → { platform, profile_id } → CurrentPage
+'collection:open-page'                → { platform, profile_id, page_url } → CurrentPage
 'collection:start-session'            → { platform, profile_id, mode, output_dir }
 'collection:stop-session'             → { session_id }
 'collection:get-active-session'       → CollectionSession | null
 'collection:export-manifest'          → { session_id, format: 'csv' | 'json' }
 'collection:retry-record'             → { record_id }
 'collection:delete-record'            → { record_id }
+'collection:scan-image-index'         → { platform, profile_id, page_url?, limit? } → ScanResult
+'collection:probe-image-index-click'  → { platform, profile_id, page_url? } → ClickProbeResult
+'collection:download-image-index-sample' → { platform, profile_id, page_url?, limit? } → DownloadResult
+'collection:download-image-index-items'  → { platform, profile_id, items[] } → DownloadResult
 
 // 事件
-'collection:event'                    → { type, record? }
-                                        // type: 'image-saved' | 'session-paused' | 'session-resumed' | 'manual-intervention'
+'collection:event'                    → { type, record?, entry? }
+                                        // type: 'image-saved' | 'session-paused' | 'session-resumed' | 'debug-log'
 ```
 
-## 14. 错误处理
+## 15. 错误处理
 
 | 错误码 | 触发 | 处理 |
 |---|---|---|
@@ -419,9 +450,11 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 | `PLATFORM_RULE_NOT_FOUND` | 平台规则缺失 | UI 提示等待云端派发或创建自定义 |
 | `OUTPUT_DIR_NOT_WRITABLE` | 输出目录权限问题 | UI 提示用户检查权限 |
 
-## 15. 测试
+## 16. 测试
 
 - 各平台的 URL 规则识别（mock 页面）
 - 点击事件的 CDP 监听
 - 浏览器关闭/网络断的会话暂停
 - 同 profile 锁竞争
+- 图池扫描：搜索页散图、商品详情页主图分组、Temu URL 高分辨率升级
+- 图池下载：逐张成功/失败日志、保存目录区分、失败保留在图池

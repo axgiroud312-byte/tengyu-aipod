@@ -4,7 +4,7 @@
 
 ### Added
 
-- 采集模块：比特浏览器接入 / CDP / 点击 / 滚动 / 会话 FSM / 注入脚本 / records
+- 采集模块：比特浏览器接入 / CDP / 点击 / 滚动 / 会话 FSM / 注入脚本 / records / 图池扫描 / 商品页主图分组 / 运行期日志弹窗
 - 检测模块：百炼适配 / 阈值配置 / 成本估算 / 工作台 UI / 一键加入待套版 / E2E
 - 标题模块：服务 / Skill 缓存 / UI / E2E
 - 生图 Grsai：adapter / 并发控制 / 骨架 / 提示词服务 / 三条 UI 链路（txt2img / img2img / extract）/ E2E
@@ -18,4 +18,4 @@
 - PS 套版 v1 为 Windows-only，需要 Photoshop 2023+，通过 `New-Object -ComObject Photoshop.Application` + `DoJavaScriptFile` 执行；macOS 不支持该能力。
 - 真实 PS 测试需要显式设置 `REAL_PS=1`；会写入真实输出目录或覆盖文件的操作还需要 `REAL_PS_MUTATE=1`。
 - 当前本机 E2E fixture 只有 2 个 PSD 和 3 张素材，未满足 3 PSD + 5 印花的完整手动矩阵。
-- 当前仓库还没有可执行的采集、检测、生图、上架模块实现，因此 v1.0.0 全链路 E2E 尚未放行。
+- v1.0.0 全链路 E2E 仍需用真实账号和真实素材做最终人工放行；采集模块已有本地实现和定向测试。

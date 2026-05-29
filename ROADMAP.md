@@ -154,6 +154,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 58 | 滚动采集模式 | collection-scroll-mode | P0 |
 | 59 | 采集记录和 manifest | collection-records | P0 |
 | 60 | 采集 E2E | collection-e2e | P1 |
+| 61 | 图池扫描、商品页主图分组、运行期日志 | collection-image-pool-logging | P0 |
 
 **v0.6.0 发版**
 
