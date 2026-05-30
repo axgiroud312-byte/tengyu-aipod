@@ -238,12 +238,18 @@ describe('ComfyuiChenyuAdapter', () => {
       capability: 'txt2img',
       workflowJson: {
         '2': { inputs: { text: '' } },
+        '3': { inputs: { width: 0, height: 0 } },
         '9': { inputs: {} },
       },
-      inputSlots: [{ name: 'prompt', nodeId: '2', field: 'text' }],
+      inputSlots: [
+        { name: 'prompt', nodeId: '2', field: 'text' },
+        { name: 'width', nodeId: '3', field: 'width' },
+        { name: 'height', nodeId: '3', field: 'height' },
+      ],
     }
     const db = createDb()
     const uploadImage = vi.fn()
+    const queuePrompt = vi.fn().mockResolvedValue('prompt-1')
     const adapter = new ComfyuiChenyuAdapter({
       instanceManager: {
         refreshCurrentInstance: vi.fn().mockResolvedValue({
@@ -254,7 +260,7 @@ describe('ComfyuiChenyuAdapter', () => {
       },
       comfyHttp: {
         uploadImage,
-        queuePrompt: vi.fn().mockResolvedValue('prompt-1'),
+        queuePrompt,
         getHistory: vi.fn().mockResolvedValue({
           status: { completed: true },
           outputs: { '9': { images: [{ filename: 'result.png' }] } },
@@ -275,6 +281,11 @@ describe('ComfyuiChenyuAdapter', () => {
     })
 
     expect(uploadImage).not.toHaveBeenCalled()
+    expect(queuePrompt).toHaveBeenCalledWith({
+      '2': { inputs: { text: 'centered floral print' } },
+      '3': { inputs: { width: 1024, height: 1024 } },
+      '9': { inputs: {} },
+    })
     expect(response.images[0]?.local_path).toContain('/workbench/02-生图/01-文生图/')
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([

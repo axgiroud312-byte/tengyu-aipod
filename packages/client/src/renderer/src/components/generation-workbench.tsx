@@ -92,6 +92,7 @@ const fallbackBailianVisionModels: LocalModelOption[] = [
 ]
 const GRSAI_EXTRACT_SKILL_ID = 'extract-paid-model'
 const COMFYUI_EXTRACT_SKILL_ID = 'extract-comfyui-workflow'
+const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
     key: 'text',
@@ -167,6 +168,38 @@ function readFileAsDataUrl(file: File) {
 
 function workflowOptionKey(workflow: Pick<ComfyuiWorkflowSummary, 'id' | 'version'>) {
   return `${workflow.id}@${workflow.version}`
+}
+
+function workflowStorageKey(scope: string) {
+  return `${COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX}${scope}`
+}
+
+function storedWorkflowKey(scope: string) {
+  try {
+    return window.localStorage.getItem(workflowStorageKey(scope)) ?? ''
+  } catch {
+    return ''
+  }
+}
+
+function rememberWorkflowKey(scope: string, key: string) {
+  try {
+    if (key) {
+      window.localStorage.setItem(workflowStorageKey(scope), key)
+    } else {
+      window.localStorage.removeItem(workflowStorageKey(scope))
+    }
+  } catch {
+    // Storage failure should not block generation.
+  }
+}
+
+function workflowKeyOrFallback(scope: string, workflows: ComfyuiWorkflowSummary[]) {
+  const stored = storedWorkflowKey(scope)
+  if (stored && workflows.some((workflow) => workflowOptionKey(workflow) === stored)) {
+    return stored
+  }
+  return workflows[0] ? workflowOptionKey(workflows[0]) : ''
 }
 
 function useGenerationLocalSettings() {
@@ -1240,6 +1273,7 @@ function GrsaiPromptGenerationPanel({
 }
 
 function ComfyuiTxt2imgPanel() {
+  const workflowScope = 'txt2img'
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [workflowKey, setWorkflowKey] = useState('')
   const [manualText, setManualText] = useState('')
@@ -1294,8 +1328,10 @@ function ComfyuiTxt2imgPanel() {
     try {
       const nextWorkflows = await window.api.generation.listComfyuiTxt2imgWorkflows()
       setWorkflows(nextWorkflows)
-      setWorkflowKey(
-        (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      setWorkflowKey((current) =>
+        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(workflowScope, nextWorkflows),
       )
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 文生图工作流失败')
@@ -1381,7 +1417,10 @@ function ComfyuiTxt2imgPanel() {
             <span>工作流</span>
             <select
               className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              onChange={(event) => setWorkflowKey(event.target.value)}
+              onChange={(event) => {
+                rememberWorkflowKey(workflowScope, event.target.value)
+                setWorkflowKey(event.target.value)
+              }}
               value={workflowKey}
             >
               {workflows.map((workflow) => (
@@ -1871,6 +1910,7 @@ function GrsaiExtractPanel() {
 }
 
 function ComfyuiImg2imgPanel() {
+  const workflowScope = 'img2img'
   const [sources, setSources] = useState<Img2imgPrintSource[]>([])
   const [folders, setFolders] = useState<string[]>([])
   const [selectedArtifactIds, setSelectedArtifactIds] = useState<string[]>([])
@@ -1941,8 +1981,10 @@ function ComfyuiImg2imgPanel() {
     try {
       const nextWorkflows = await window.api.generation.listComfyuiImg2imgWorkflows()
       setWorkflows(nextWorkflows)
-      setWorkflowKey(
-        (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      setWorkflowKey((current) =>
+        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(workflowScope, nextWorkflows),
       )
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 工作流失败')
@@ -2049,7 +2091,10 @@ function ComfyuiImg2imgPanel() {
               <span>工作流</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setWorkflowKey(event.target.value)}
+                onChange={(event) => {
+                  rememberWorkflowKey(workflowScope, event.target.value)
+                  setWorkflowKey(event.target.value)
+                }}
                 value={workflowKey}
               >
                 {workflows.map((workflow) => (
@@ -2135,6 +2180,7 @@ function ComfyuiImg2imgPanel() {
 }
 
 function ComfyuiExtractPanel() {
+  const workflowScope = 'extract'
   const [sources, setSources] = useState<GenerationImageSource[]>([])
   const [sourceFolder, setSourceFolder] = useState('')
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
@@ -2216,8 +2262,10 @@ function ComfyuiExtractPanel() {
     try {
       const nextWorkflows = await window.api.generation.listComfyuiExtractWorkflows()
       setWorkflows(nextWorkflows)
-      setWorkflowKey(
-        (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      setWorkflowKey((current) =>
+        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(workflowScope, nextWorkflows),
       )
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 提取工作流失败')
@@ -2341,7 +2389,10 @@ function ComfyuiExtractPanel() {
               <span>工作流</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setWorkflowKey(event.target.value)}
+                onChange={(event) => {
+                  rememberWorkflowKey(workflowScope, event.target.value)
+                  setWorkflowKey(event.target.value)
+                }}
                 value={workflowKey}
               >
                 {workflows.map((workflow) => (
@@ -2430,6 +2481,8 @@ function ComfyuiExtractPanel() {
 }
 
 function ComfyuiMattingPanel() {
+  const workflowScope = 'matting'
+  const mixedWorkflowScope = 'matting-mixed'
   const [mode, setMode] = useState<MattingMode>('comfyui')
   const [sources, setSources] = useState<Img2imgPrintSource[]>([])
   const [folders, setFolders] = useState<string[]>([])
@@ -2510,12 +2563,15 @@ function ComfyuiMattingPanel() {
       ])
       setWorkflows(nextWorkflows)
       setMixedWorkflows(nextMixedWorkflows)
-      setWorkflowKey(
-        (current) => current || (nextWorkflows[0] ? workflowOptionKey(nextWorkflows[0]) : ''),
+      setWorkflowKey((current) =>
+        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(workflowScope, nextWorkflows),
       )
-      setMixedWorkflowKey(
-        (current) =>
-          current || (nextMixedWorkflows[0] ? workflowOptionKey(nextMixedWorkflows[0]) : ''),
+      setMixedWorkflowKey((current) =>
+        current && nextMixedWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(mixedWorkflowScope, nextMixedWorkflows),
       )
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 抠图工作流失败')
@@ -2658,11 +2714,15 @@ function ComfyuiMattingPanel() {
               <span>工作流</span>
               <select
                 className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) =>
-                  mode === 'mixed'
-                    ? setMixedWorkflowKey(event.target.value)
-                    : setWorkflowKey(event.target.value)
-                }
+                onChange={(event) => {
+                  if (mode === 'mixed') {
+                    rememberWorkflowKey(mixedWorkflowScope, event.target.value)
+                    setMixedWorkflowKey(event.target.value)
+                  } else {
+                    rememberWorkflowKey(workflowScope, event.target.value)
+                    setWorkflowKey(event.target.value)
+                  }
+                }}
                 value={activeWorkflowKey}
               >
                 {activeWorkflows.map((workflow) => (

@@ -247,7 +247,15 @@ function valueForSlot(
     return optionValue
   }
 
-  if (slot.name.toLowerCase().includes('image') || slot.field.toLowerCase().includes('image')) {
+  const normalizedName = `${slot.name} ${slot.field}`.toLowerCase()
+  if (normalizedName.includes('width')) {
+    return req.output.size_px?.width ?? 1024
+  }
+  if (normalizedName.includes('height')) {
+    return req.output.size_px?.height ?? 1024
+  }
+
+  if (normalizedName.includes('image')) {
     const filename = context.uploadedImages[imageIndexForSlot(slot, req)]
     if (!filename) {
       throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流需要参考图', false, {

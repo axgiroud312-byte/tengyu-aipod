@@ -60,8 +60,11 @@ import type {
 } from '../main/lib/collection-session-manager'
 import type { ComfyuiInstanceSummary } from '../main/lib/comfyui-instance-manager'
 import type {
+  ChooseLocalComfyuiWorkflowDirectoryResult,
   ComfyuiWorkflowCategory,
   ComfyuiWorkflowSummary,
+  ImportLocalComfyuiWorkflowDirectoryInput,
+  ImportLocalComfyuiWorkflowDirectoryResult,
   ImportLocalComfyuiWorkflowInput,
 } from '../main/lib/comfyui-workflow-cache'
 import type { DetectionConfig } from '../main/lib/detection-config'
@@ -191,10 +194,19 @@ const api = {
       ) as Promise<GenerationLocalSettingsSnapshot>,
   },
   workflow: {
+    chooseDirectory: () =>
+      ipcRenderer.invoke(
+        'workflow:choose-directory',
+      ) as Promise<ChooseLocalComfyuiWorkflowDirectoryResult>,
     listLocal: (category?: ComfyuiWorkflowCategory) =>
       ipcRenderer.invoke('workflow:list-local', category) as Promise<ComfyuiWorkflowSummary[]>,
     importLocal: (input: ImportLocalComfyuiWorkflowInput) =>
       ipcRenderer.invoke('workflow:import-local', input) as Promise<ComfyuiWorkflowSummary>,
+    importDirectory: (input: ImportLocalComfyuiWorkflowDirectoryInput) =>
+      ipcRenderer.invoke(
+        'workflow:import-directory',
+        input,
+      ) as Promise<ImportLocalComfyuiWorkflowDirectoryResult>,
     removeLocal: (input: { id: string }) =>
       ipcRenderer.invoke('workflow:remove-local', input) as Promise<{ ok: true }>,
   },

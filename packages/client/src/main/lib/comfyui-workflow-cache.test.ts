@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -61,5 +61,64 @@ describe('ComfyuiWorkflowCacheManager', () => {
       outputSlots: [{ nodeId: '2', field: 'images' }],
     })
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('imports workflows from a categorized directory and detects common input slots', async () => {
+    const manager = new ComfyuiWorkflowCacheManager()
+    const root = await mkdtemp(join(tmpdir(), 'tengyu-workflow-library-'))
+    const txt2imgDir = join(root, '文生图')
+    const img2imgDir = join(root, '图生图')
+    const unknownDir = join(root, '杂项')
+    await Promise.all([mkdir(txt2imgDir), mkdir(img2imgDir), mkdir(unknownDir)])
+    await writeFile(
+      join(txt2imgDir, '局部印花.json'),
+      JSON.stringify({
+        '1': {
+          class_type: 'CLIPTextEncode',
+          inputs: { text: 'old prompt' },
+          _meta: { title: 'Prompt' },
+        },
+        '2': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512 } },
+        '3': { class_type: 'SaveImage', inputs: {} },
+      }),
+      'utf8',
+    )
+    await writeFile(
+      join(img2imgDir, '参考图.json'),
+      JSON.stringify({
+        '1': { class_type: 'LoadImage', inputs: { image: '' } },
+        '2': { class_type: 'SaveImage', inputs: {} },
+      }),
+      'utf8',
+    )
+    await writeFile(join(unknownDir, '不会导入.json'), '{"1":{}}', 'utf8')
+
+    try {
+      const result = await manager.importWorkflowDirectory({ directoryPath: root })
+
+      expect(result.importedCount).toBe(2)
+      expect(result.skippedCount).toBe(1)
+      await expect(manager.listWorkflows('txt2img')).resolves.toMatchObject([
+        { name: '局部印花', capability: 'txt2img' },
+      ])
+      const txtWorkflow = (await manager.listWorkflows('txt2img'))[0]
+      expect(txtWorkflow).toBeDefined()
+      if (!txtWorkflow) {
+        throw new Error('txt2img workflow was not imported')
+      }
+      await expect(manager.get(txtWorkflow.id, 'txt2img')).resolves.toMatchObject({
+        inputSlots: expect.arrayContaining([
+          { name: 'prompt', nodeId: '1', field: 'text' },
+          { name: 'width', nodeId: '2', field: 'width' },
+          { name: 'height', nodeId: '2', field: 'height' },
+        ]),
+        outputSlots: [{ name: 'output_1', nodeId: '3', field: 'images' }],
+      })
+      await expect(manager.listWorkflows('img2img')).resolves.toMatchObject([
+        { name: '参考图', capability: 'img2img' },
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })

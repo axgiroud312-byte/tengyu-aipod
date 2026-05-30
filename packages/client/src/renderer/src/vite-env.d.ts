@@ -1,6 +1,10 @@
 /// <reference types="vite/client" />
 
-export {}
+import type {
+  ChooseLocalComfyuiWorkflowDirectoryResult as WorkflowDirectoryChooseResult,
+  ImportLocalComfyuiWorkflowDirectoryInput as WorkflowDirectoryImportInput,
+  ImportLocalComfyuiWorkflowDirectoryResult as WorkflowDirectoryImportResult,
+} from '../../main/lib/comfyui-workflow-cache'
 
 declare global {
   interface Window {
@@ -85,12 +89,16 @@ declare global {
         ) => Promise<import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot>
       }
       workflow: {
+        chooseDirectory: () => Promise<WorkflowDirectoryChooseResult>
         listLocal: (
           category?: import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowCategory,
         ) => Promise<import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]>
         importLocal: (
           input: import('../../main/lib/comfyui-workflow-cache').ImportLocalComfyuiWorkflowInput,
         ) => Promise<import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary>
+        importDirectory: (
+          input: WorkflowDirectoryImportInput,
+        ) => Promise<WorkflowDirectoryImportResult>
         removeLocal: (input: { id: string }) => Promise<{ ok: true }>
       }
       tempFile: {

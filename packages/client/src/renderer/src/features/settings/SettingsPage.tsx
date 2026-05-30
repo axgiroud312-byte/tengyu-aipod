@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   Cloud,
   FileJson,
+  FolderOpen,
   Loader2,
   PlugZap,
   Power,
@@ -31,7 +32,6 @@ import {
   Server,
   Settings2,
   Trash2,
-  Upload,
 } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 
@@ -43,7 +43,6 @@ type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generatio
 type GenerationConfig = GenerationSettingsSnapshot['config']
 type SkillSyncResult = Awaited<ReturnType<typeof window.api.skill.refresh>>
 type LocalWorkflowSummary = Awaited<ReturnType<typeof window.api.workflow.listLocal>>[number]
-type LocalWorkflowCategory = 'txt2img' | 'img2img' | 'extract' | 'matting'
 type ConnectionStatus = 'unchecked' | 'checking' | 'connected' | 'failed'
 type InstanceAction = 'startup' | 'shutdown' | 'restart' | 'active'
 
@@ -77,11 +76,12 @@ const defaultGenerationConfig: GenerationConfig = {
   grsai_retries: 2,
 }
 
-const workflowCategoryOptions: Array<{ key: LocalWorkflowCategory; label: string }> = [
+const workflowCategoryOptions: Array<{ key: LocalWorkflowSummary['capability']; label: string }> = [
   { key: 'txt2img', label: '文生图' },
   { key: 'img2img', label: '图生图' },
   { key: 'extract', label: '提取' },
   { key: 'matting', label: '抠图' },
+  { key: 'matting-mixed', label: '混合抠图' },
 ]
 
 const statusText: Record<ChenyuInstance['statusName'], string> = {
@@ -137,10 +137,7 @@ export function SettingsPage() {
   const [syncingConfig, setSyncingConfig] = useState(false)
   const [syncResult, setSyncResult] = useState<SkillSyncResult | null>(null)
   const [workflows, setWorkflows] = useState<LocalWorkflowSummary[]>([])
-  const [workflowName, setWorkflowName] = useState('')
-  const [workflowCategory, setWorkflowCategory] = useState<LocalWorkflowCategory>('txt2img')
-  const [workflowJsonText, setWorkflowJsonText] = useState('')
-  const [workflowModelsText, setWorkflowModelsText] = useState('')
+  const [workflowDirectoryPath, setWorkflowDirectoryPath] = useState('')
   const [importingWorkflow, setImportingWorkflow] = useState(false)
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('unchecked')
   const [connectionError, setConnectionError] = useState<string | null>(null)
@@ -331,27 +328,36 @@ export function SettingsPage() {
     }
   }
 
-  async function importLocalWorkflow() {
+  async function chooseWorkflowDirectory() {
+    setError(null)
+    setMessage(null)
+    const result = await window.api.workflow.chooseDirectory()
+    if (!result.ok) {
+      if (result.error.code !== 'CANCELLED') {
+        setError(result.error.message)
+      }
+      return
+    }
+    setWorkflowDirectoryPath(result.data.path)
+  }
+
+  async function importWorkflowDirectory() {
     setImportingWorkflow(true)
     setError(null)
     setMessage(null)
     try {
-      const imported = await window.api.workflow.importLocal({
-        name: workflowName,
-        capability: workflowCategory,
-        workflowJsonText,
-        requiredModels: workflowModelsText
-          .split(/\r?\n|,/)
-          .map((item) => item.trim())
-          .filter(Boolean),
+      const imported = await window.api.workflow.importDirectory({
+        directoryPath: workflowDirectoryPath,
       })
-      setWorkflowName('')
-      setWorkflowJsonText('')
-      setWorkflowModelsText('')
-      setMessage(`已导入 Workflow：${imported.name}`)
+      setWorkflows(imported.workflows)
+      setMessage(
+        `已导入 ${imported.importedCount} 个 Workflow${
+          imported.skippedCount ? `，跳过 ${imported.skippedCount} 个文件` : ''
+        }`,
+      )
       await loadGenerationSettings()
     } catch (nextError) {
-      setError(errorMessage(nextError, '导入本地 Workflow 失败'))
+      setError(errorMessage(nextError, '导入 Workflow 文件夹失败'))
     } finally {
       setImportingWorkflow(false)
     }
@@ -636,17 +642,12 @@ export function SettingsPage() {
           />
 
           <LocalWorkflowCard
-            category={workflowCategory}
+            directoryPath={workflowDirectoryPath}
             importing={importingWorkflow}
-            jsonText={workflowJsonText}
-            modelsText={workflowModelsText}
-            name={workflowName}
             workflows={workflows}
-            onCategoryChange={setWorkflowCategory}
-            onImport={() => void importLocalWorkflow()}
-            onJsonTextChange={setWorkflowJsonText}
-            onModelsTextChange={setWorkflowModelsText}
-            onNameChange={setWorkflowName}
+            onChooseDirectory={() => void chooseWorkflowDirectory()}
+            onDirectoryPathChange={setWorkflowDirectoryPath}
+            onImport={() => void importWorkflowDirectory()}
             onRemove={(id) => void removeLocalWorkflow(id)}
           />
 
@@ -930,7 +931,9 @@ function GenerationLocalSettingsCard({
           <Input
             id="grsai-api-key"
             onChange={(event) => onGrsaiApiKeyChange(event.target.value)}
-            placeholder={settings?.grsaiKeyConfigured ? '已保存，留空则不修改' : '粘贴 Grsai API Key'}
+            placeholder={
+              settings?.grsaiKeyConfigured ? '已保存，留空则不修改' : '粘贴 Grsai API Key'
+            }
             type="password"
             value={grsaiApiKey}
           />
@@ -975,7 +978,9 @@ function GenerationLocalSettingsCard({
               id="grsai-concurrency"
               max={20}
               min={1}
-              onChange={(event) => onConfigChange({ grsai_concurrency: Number(event.target.value) })}
+              onChange={(event) =>
+                onConfigChange({ grsai_concurrency: Number(event.target.value) })
+              }
               type="number"
               value={config.grsai_concurrency}
             />
@@ -1006,7 +1011,10 @@ function GenerationLocalSettingsCard({
               ))}
             </select>
           </label>
-          <label className="block space-y-2 text-sm font-medium sm:col-span-2" htmlFor="bailian-vision-model">
+          <label
+            className="block space-y-2 text-sm font-medium sm:col-span-2"
+            htmlFor="bailian-vision-model"
+          >
             <span>百炼视觉模型</span>
             <select
               className="h-10 w-full rounded-md border bg-background px-3 text-sm"
@@ -1049,12 +1057,17 @@ function SkillSyncCard({
     <Card>
       <CardHeader>
         <CardTitle>云端 Skill 同步</CardTitle>
-        <CardDescription>服务器只下发系统提示词；模型、密钥和 Workflow 不从云端同步。</CardDescription>
+        <CardDescription>
+          服务器只下发系统提示词；模型、密钥和 Workflow 不从云端同步。
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div className="grid gap-3 text-sm">
           {result ? (
-            <SyncStatusRow label="Skill 缓存" value={result.ok ? `${result.count} 条` : result.error} />
+            <SyncStatusRow
+              label="Skill 缓存"
+              value={result.ok ? `${result.count} 条` : result.error}
+            />
           ) : (
             <SyncStatusRow label="Skill 缓存" value="尚未手动同步" />
           )}
@@ -1079,118 +1092,97 @@ function SkillSyncCard({
 }
 
 function LocalWorkflowCard({
-  category,
+  directoryPath,
   importing,
-  jsonText,
-  modelsText,
-  name,
   workflows,
-  onCategoryChange,
+  onChooseDirectory,
+  onDirectoryPathChange,
   onImport,
-  onJsonTextChange,
-  onModelsTextChange,
-  onNameChange,
   onRemove,
 }: {
-  category: LocalWorkflowCategory
+  directoryPath: string
   importing: boolean
-  jsonText: string
-  modelsText: string
-  name: string
   workflows: LocalWorkflowSummary[]
-  onCategoryChange: (value: LocalWorkflowCategory) => void
+  onChooseDirectory: () => void
+  onDirectoryPathChange: (value: string) => void
   onImport: () => void
-  onJsonTextChange: (value: string) => void
-  onModelsTextChange: (value: string) => void
-  onNameChange: (value: string) => void
   onRemove: (id: string) => void
 }) {
+  const groupedWorkflows = workflowCategoryOptions
+    .map((category) => ({
+      ...category,
+      workflows: workflows.filter((workflow) => workflow.capability === category.key),
+    }))
+    .filter((category) => category.workflows.length > 0)
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>本地 Workflow</CardTitle>
-        <CardDescription>导入 ComfyUI API JSON 后，本机运行时按分类选择。</CardDescription>
+        <CardDescription>
+          选择一个总文件夹，按子文件夹名称自动归类并缓存 ComfyUI API JSON。
+        </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="block space-y-2 text-sm font-medium" htmlFor="workflow-name">
-            <span>名称</span>
+        <div className="space-y-2">
+          <label className="block space-y-2 text-sm font-medium" htmlFor="workflow-directory">
+            <span>Workflow 文件夹</span>
             <Input
-              id="workflow-name"
-              onChange={(event) => onNameChange(event.target.value)}
-              placeholder="例如 局部印花图生图"
-              value={name}
+              id="workflow-directory"
+              onChange={(event) => onDirectoryPathChange(event.target.value)}
+              placeholder="选择或粘贴 ComfyUI Workflow 总文件夹路径"
+              value={directoryPath}
             />
           </label>
-          <label className="block space-y-2 text-sm font-medium" htmlFor="workflow-category">
-            <span>分类</span>
-            <select
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-              id="workflow-category"
-              onChange={(event) => onCategoryChange(event.target.value as LocalWorkflowCategory)}
-              value={category}
-            >
-              {workflowCategoryOptions.map((option) => (
-                <option key={option.key} value={option.key}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+            <Button onClick={onChooseDirectory} type="button" variant="secondary">
+              <FolderOpen className="mr-2 h-4 w-4" />
+              选择文件夹
+            </Button>
+            <Button disabled={importing || !directoryPath.trim()} onClick={onImport} type="button">
+              {importing ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              导入并刷新缓存
+            </Button>
+          </div>
+          <p className="text-xs leading-5 text-muted-foreground">
+            支持子文件夹：文生图 / 图生图 / 提取 / 抠图，也支持 txt2img / img2img / extract /
+            matting。重新导入会用这个文件夹刷新本机缓存。
+          </p>
         </div>
 
-        <label className="block space-y-2 text-sm font-medium" htmlFor="workflow-json">
-          <span>Workflow API JSON</span>
-          <textarea
-            className="min-h-32 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            id="workflow-json"
-            onChange={(event) => onJsonTextChange(event.target.value)}
-            placeholder='{"1":{"class_type":"LoadImage","inputs":{}}}'
-            value={jsonText}
-          />
-        </label>
-
-        <label className="block space-y-2 text-sm font-medium" htmlFor="workflow-models">
-          <span>依赖模型</span>
-          <textarea
-            className="min-h-16 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            id="workflow-models"
-            onChange={(event) => onModelsTextChange(event.target.value)}
-            placeholder="每行一个模型名，可留空"
-            value={modelsText}
-          />
-        </label>
-
-        <Button className="w-full" disabled={importing || !jsonText.trim()} onClick={onImport} type="button">
-          {importing ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <Upload className="mr-2 h-4 w-4" />
-          )}
-          导入 Workflow
-        </Button>
-
         <div className="space-y-2">
-          {workflows.length ? (
-            workflows.map((workflow) => (
-              <div
-                className="flex items-center justify-between gap-3 rounded-md border bg-muted/30 px-3 py-2 text-sm"
-                key={`${workflow.id}@${workflow.version}`}
-              >
-                <div className="min-w-0">
-                  <p className="truncate font-medium">{workflow.name}</p>
-                  <p className="truncate text-xs text-muted-foreground">
-                    {workflowCategoryLabel(workflow.capability)} · {workflow.version}
-                  </p>
+          {groupedWorkflows.length ? (
+            groupedWorkflows.map((group) => (
+              <div className="rounded-md border bg-muted/20 p-3" key={group.key}>
+                <div className="mb-2 flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium">{group.label}</p>
+                  <Badge variant="secondary">{group.workflows.length}</Badge>
                 </div>
-                <Button
-                  className="h-8 px-2"
-                  onClick={() => onRemove(workflow.id)}
-                  type="button"
-                  variant="ghost"
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
+                <div className="space-y-2">
+                  {group.workflows.map((workflow) => (
+                    <div
+                      className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm"
+                      key={`${workflow.id}@${workflow.version}`}
+                    >
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{workflow.name}</p>
+                        <p className="truncate text-xs text-muted-foreground">{workflow.version}</p>
+                      </div>
+                      <Button
+                        className="h-8 px-2"
+                        onClick={() => onRemove(workflow.id)}
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               </div>
             ))
           ) : (
@@ -1212,10 +1204,6 @@ function SyncStatusRow({ label, value }: { label: string; value: string }) {
       <span className="text-right font-medium">{value}</span>
     </div>
   )
-}
-
-function workflowCategoryLabel(category: LocalWorkflowSummary['capability']) {
-  return workflowCategoryOptions.find((option) => option.key === category)?.label ?? category
 }
 
 function InstanceManagementCard({

@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
-import { type ComfyuiWorkflow, type GenerationCapability } from '@tengyu-aipod/shared'
-import { app, ipcMain } from 'electron'
+import { basename, dirname, extname, join, relative } from 'node:path'
+import type { ComfyuiWorkflow, GenerationCapability } from '@tengyu-aipod/shared'
+import { app, dialog, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 
 const INDEX_FILE_NAME = 'index.json'
@@ -22,6 +22,22 @@ export type ImportLocalComfyuiWorkflowInput = {
   workflowJsonText: string
   requiredModels?: string[]
 }
+
+export type ImportLocalComfyuiWorkflowDirectoryInput = {
+  directoryPath: string
+}
+
+export type ImportLocalComfyuiWorkflowDirectoryResult = {
+  directoryPath: string
+  importedCount: number
+  skippedCount: number
+  workflows: ComfyuiWorkflowSummary[]
+  skipped: Array<{ path: string; reason: string }>
+}
+
+export type ChooseLocalComfyuiWorkflowDirectoryResult =
+  | { ok: true; data: { path: string } }
+  | { ok: false; error: { code: string; message: string } }
 
 type WorkflowIndexFile = {
   updated_at: number
@@ -73,6 +89,46 @@ function normalizeCapability(value: unknown): ComfyuiWorkflowCategory {
     return value
   }
   return 'img2img'
+}
+
+const WORKFLOW_CATEGORY_ALIASES: Record<ComfyuiWorkflowCategory, string[]> = {
+  txt2img: ['txt2img', 'text2image', 'text-to-image', '文生图', '文字生图', '文本生图', '01文生图'],
+  img2img: ['img2img', 'image2image', 'image-to-image', '图生图', '以图生图', '02图生图'],
+  extract: ['extract', 'extraction', '提取', '印花提取', '03提取'],
+  matting: ['matting', 'cutout', 'removebg', 'rembg', '抠图', '去背景', '透明底', '04抠图'],
+  'matting-mixed': ['mattingmixed', 'mixedmatting', '混合抠图', '付费黑白图混合', '付费黑白图'],
+}
+
+const NORMALIZED_WORKFLOW_CATEGORY_ALIASES = Object.fromEntries(
+  Object.entries(WORKFLOW_CATEGORY_ALIASES).map(([category, aliases]) => [
+    category,
+    new Set(aliases.map(normalizeCategoryToken)),
+  ]),
+) as Record<ComfyuiWorkflowCategory, Set<string>>
+
+function normalizeCategoryToken(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s._\-()[\]{}【】（）]+/g, '')
+}
+
+function capabilityFromPath(root: string, filePath: string): ComfyuiWorkflowCategory | null {
+  const relativePath = relative(root, filePath)
+  const parts = [basename(root), ...relativePath.split(/[\\/]+/)]
+    .map(normalizeCategoryToken)
+    .filter(Boolean)
+    .reverse()
+
+  for (const part of parts) {
+    for (const [category, aliases] of Object.entries(NORMALIZED_WORKFLOW_CATEGORY_ALIASES)) {
+      if ([...aliases].some((alias) => part.includes(alias))) {
+        return category as ComfyuiWorkflowCategory
+      }
+    }
+  }
+
+  return null
 }
 
 function normalizeSlot(raw: unknown) {
@@ -135,12 +191,28 @@ function classTypeOf(node: unknown) {
   return isRecord(node) && typeof node.class_type === 'string' ? node.class_type : ''
 }
 
+function nodeInputs(node: unknown) {
+  return isRecord(node) && isRecord(node.inputs) ? node.inputs : {}
+}
+
+function nodeMetaTitle(node: unknown) {
+  return isRecord(node) && isRecord(node._meta) ? stringValue(node._meta.title) : ''
+}
+
+function looksNegativePrompt(node: unknown) {
+  const text = `${nodeMetaTitle(node)} ${stringValue(nodeInputs(node).text)}`.toLowerCase()
+  return text.includes('negative') || text.includes('反向') || text.includes('负面')
+}
+
 function detectSlots(workflowJson: unknown) {
   const inputSlots = []
   const outputSlots = []
+  let foundPromptSlot = false
+  let foundSizeSlot = false
 
   for (const [nodeId, node] of nodeEntries(workflowJson)) {
     const classType = classTypeOf(node)
+    const inputs = nodeInputs(node)
     if (/loadimage/i.test(classType)) {
       inputSlots.push({
         name: `image_${inputSlots.length + 1}`,
@@ -148,6 +220,36 @@ function detectSlots(workflowJson: unknown) {
         field: 'image',
         imageIndex: inputSlots.length,
       })
+    }
+    if (
+      !foundPromptSlot &&
+      /cliptextencode/i.test(classType) &&
+      'text' in inputs &&
+      !looksNegativePrompt(node)
+    ) {
+      inputSlots.push({
+        name: 'prompt',
+        nodeId,
+        field: 'text',
+      })
+      foundPromptSlot = true
+    }
+    if (!foundSizeSlot && /emptylatentimage/i.test(classType)) {
+      if ('width' in inputs) {
+        inputSlots.push({
+          name: 'width',
+          nodeId,
+          field: 'width',
+        })
+      }
+      if ('height' in inputs) {
+        inputSlots.push({
+          name: 'height',
+          nodeId,
+          field: 'height',
+        })
+      }
+      foundSizeSlot = true
     }
     if (/saveimage|previewimage/i.test(classType)) {
       outputSlots.push({
@@ -182,6 +284,19 @@ function slugFromName(name: string) {
   )
 }
 
+function stableWorkflowId(capability: ComfyuiWorkflowCategory, relativeFilePath: string) {
+  const withoutExtension = relativeFilePath.replace(/\.[^.]+$/, '')
+  const hash = createHash('sha1')
+    .update(`${capability}:${relativeFilePath}`)
+    .digest('hex')
+    .slice(0, 8)
+  return `${slugFromName(`${capability}-${withoutExtension}`)}-${hash}`
+}
+
+function workflowNameFromPath(filePath: string) {
+  return basename(filePath, extname(filePath)).trim() || '未命名 Workflow'
+}
+
 function parseWorkflowJson(text: string) {
   try {
     const parsed = JSON.parse(text) as unknown
@@ -194,6 +309,65 @@ function parseWorkflowJson(text: string) {
       throw new Error(`Workflow JSON 无法解析：${error.message}`)
     }
     throw new Error('Workflow JSON 无法解析')
+  }
+}
+
+async function workflowJsonFiles(root: string) {
+  const result: string[] = []
+
+  async function visit(directoryPath: string) {
+    const entries = await readdir(directoryPath, { withFileTypes: true })
+    for (const entry of entries) {
+      if (entry.name.startsWith('.')) {
+        continue
+      }
+      const entryPath = join(directoryPath, entry.name)
+      if (entry.isDirectory()) {
+        await visit(entryPath)
+        continue
+      }
+      if (entry.isFile() && extname(entry.name).toLowerCase() === '.json') {
+        result.push(entryPath)
+      }
+    }
+  }
+
+  await visit(root)
+  return result.sort((left, right) => left.localeCompare(right, 'zh-CN'))
+}
+
+async function workflowFromFile(root: string, filePath: string) {
+  const capability = capabilityFromPath(root, filePath)
+  if (!capability) {
+    return {
+      workflow: null,
+      skipped: { path: filePath, reason: '未识别分类文件夹' },
+    }
+  }
+
+  try {
+    const workflowJson = parseWorkflowJson(await readFile(filePath, 'utf8'))
+    const relativeFilePath = relative(root, filePath)
+    const slots = detectSlots(workflowJson)
+    const workflow: CachedComfyuiWorkflow = {
+      id: stableWorkflowId(capability, relativeFilePath),
+      name: workflowNameFromPath(filePath),
+      version: '1.0.0',
+      capability,
+      workflowJson,
+      inputSlots: slots.inputSlots,
+      outputSlots: slots.outputSlots,
+      requiredModels: [],
+    }
+    return { workflow, skipped: null }
+  } catch (error) {
+    return {
+      workflow: null,
+      skipped: {
+        path: filePath,
+        reason: error instanceof Error ? error.message : 'Workflow JSON 无法解析',
+      },
+    }
   }
 }
 
@@ -242,8 +416,52 @@ export class ComfyuiWorkflowCacheManager {
 
     await this.saveWorkflow(workflow)
     const index = await this.readIndex()
-    await this.saveIndex([...index.items.filter((item) => item.id !== id), workflowSummary(workflow)])
+    await this.saveIndex([
+      ...index.items.filter((item) => item.id !== id),
+      workflowSummary(workflow),
+    ])
     return workflowSummary(workflow)
+  }
+
+  async importWorkflowDirectory(
+    input: ImportLocalComfyuiWorkflowDirectoryInput,
+  ): Promise<ImportLocalComfyuiWorkflowDirectoryResult> {
+    const directoryPath = input.directoryPath.trim()
+    if (!directoryPath) {
+      throw new Error('请选择 Workflow 文件夹')
+    }
+
+    const files = await workflowJsonFiles(directoryPath)
+    const imported: CachedComfyuiWorkflow[] = []
+    const skipped: Array<{ path: string; reason: string }> = []
+    for (const filePath of files) {
+      const result = await workflowFromFile(directoryPath, filePath)
+      if (result.workflow) {
+        imported.push(result.workflow)
+      }
+      if (result.skipped) {
+        skipped.push(result.skipped)
+      }
+    }
+    if (imported.length === 0) {
+      throw new Error('未导入任何 Workflow，请确认文件夹里有按分类存放的 .json 工作流')
+    }
+
+    const root = await this.rootDir()
+    await rm(root, { recursive: true, force: true })
+    for (const workflow of imported) {
+      await this.saveWorkflow(workflow)
+    }
+    const summaries = imported.map(workflowSummary)
+    await this.saveIndex(summaries)
+
+    return {
+      directoryPath,
+      importedCount: imported.length,
+      skippedCount: skipped.length,
+      workflows: summaries.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
+      skipped,
+    }
   }
 
   async removeWorkflow(id: string) {
@@ -311,11 +529,29 @@ export class ComfyuiWorkflowCacheManager {
 export const comfyuiWorkflowCacheManager = new ComfyuiWorkflowCacheManager()
 
 export function registerComfyuiWorkflowCacheIpc() {
+  ipcMain.handle(
+    'workflow:choose-directory',
+    async (): Promise<ChooseLocalComfyuiWorkflowDirectoryResult> => {
+      const result = await dialog.showOpenDialog({
+        properties: ['openDirectory'],
+        title: '选择 ComfyUI Workflow 文件夹',
+      })
+      if (result.canceled || !result.filePaths[0]) {
+        return { ok: false, error: { code: 'CANCELLED', message: '已取消选择' } }
+      }
+      return { ok: true, data: { path: result.filePaths[0] } }
+    },
+  )
   ipcMain.handle('workflow:list-local', (_event, category?: ComfyuiWorkflowCategory) =>
     comfyuiWorkflowCacheManager.listWorkflows(category),
   )
   ipcMain.handle('workflow:import-local', (_event, input: ImportLocalComfyuiWorkflowInput) =>
     comfyuiWorkflowCacheManager.importWorkflow(input),
+  )
+  ipcMain.handle(
+    'workflow:import-directory',
+    (_event, input: ImportLocalComfyuiWorkflowDirectoryInput) =>
+      comfyuiWorkflowCacheManager.importWorkflowDirectory(input),
   )
   ipcMain.handle('workflow:remove-local', (_event, input: { id: string }) =>
     comfyuiWorkflowCacheManager.removeWorkflow(input.id),
