@@ -206,7 +206,7 @@ sequenceDiagram
 | 路径 | 干什么 |
 |---|---|
 | `packages/server/src/app/admin/customers/` | 客户 / 微信账户 / 权益管理 |
-| `packages/server/src/app/admin/skills/` | 4 个固定生图 Skill 系统提示词槽位 |
+| `packages/server/src/app/admin/skills/` | 生图、提取、侵权检测固定 Skill 系统提示词槽位 |
 | `packages/server/src/app/api/skills/` | 客户端拉取 Skill 系统提示词 |
 | `packages/server/src/app/api/status/` | 客户端登录态和权益状态校验 |
 | `packages/server/src/app/api/health/` | 服务健康检查 |

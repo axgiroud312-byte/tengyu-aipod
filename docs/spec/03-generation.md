@@ -242,9 +242,9 @@ class GrsaiAdapter implements ImageGenerationAdapter {
 
 ```ts
 interface PaidSkill {
-  id: string                          // "extract-prompt-v3"
+  id: string                          // "extract-paid-model"
   module: 'generation'                // 模块名
-  category: string                    // "txt2img" | "img2img" | "extract" | "matting" | "matting-mask"
+  category: string                    // "txt2img-local-print" | "extract-paid-model" | ...
   version: string                     // "3.0.1"
   enabled: boolean
   system_prompt: string               // LLM 的 systemMessage

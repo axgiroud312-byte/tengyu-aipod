@@ -163,7 +163,7 @@ class PreprocessPool {
 
 ```ts
 interface DetectionSkill {
-  id: string                          // "infringement-v2"
+  id: string                          // "infringement-detection"
   module: 'detection'
   version: string
   enabled: boolean
@@ -318,7 +318,7 @@ class AliyunBailianAdapter {
 │                                                       │
 │ ② 检测设置                                             │
 │    模型：[qwen3-vl-flash ▼]                           │
-│    Skill：[infringement-v2 ▼]                         │
+│    Skill：[infringement-detection ▼]                  │
 │    阈值：                                              │
 │      Pass: 0-[40] | Review: [40]-[70] | Block: [70]-100│
 │    关注重点：☑ 商标 ☑ 卡通 ☐ 名人 ☐ 影视 ☐ 自定义       │

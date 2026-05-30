@@ -26,15 +26,21 @@ const emptyStats: DashboardStats = {
 
 async function getDashboardStats(): Promise<DashboardStats> {
   try {
-    const [totalSkills, enabledSkills, totalCustomers, activeCustomers, totalCodes, activatedCodes] =
-      await Promise.all([
-        db.skill.count(),
-        db.skill.count({ where: { enabled: true } }),
-        db.customer.count(),
-        db.customer.count({ where: { is_active: true } }),
-        db.activationCode.count(),
-        db.activationCode.count({ where: { activated_at: { not: null } } }),
-      ])
+    const [
+      totalSkills,
+      enabledSkills,
+      totalCustomers,
+      activeCustomers,
+      totalCodes,
+      activatedCodes,
+    ] = await Promise.all([
+      db.skill.count(),
+      db.skill.count({ where: { enabled: true } }),
+      db.customer.count(),
+      db.customer.count({ where: { is_active: true } }),
+      db.activationCode.count(),
+      db.activationCode.count({ where: { activated_at: { not: null } } }),
+    ])
 
     return {
       activationCodes: { active: activatedCodes, total: totalCodes },
@@ -57,7 +63,7 @@ function formatPair(pair: CountPair, activeLabel: string) {
 
 const moduleLinks = [
   {
-    description: '维护 4 个固定生图 Skill 槽位，每个槽位只保存系统提示词。',
+    description: '维护生图、提取、侵权检测等固定业务 Skill 槽位，每个槽位只保存系统提示词。',
     href: '/admin/skills',
     label: '系统提示词',
     statKey: 'skills',
@@ -93,7 +99,7 @@ export default async function AdminHomePage() {
       <section className="flex flex-wrap items-start justify-between gap-4 rounded-md border bg-card p-5 shadow-[0_10px_28px_rgba(37,99,235,0.06)]">
         <div className="space-y-1">
           <p className="text-sm font-medium text-muted-foreground">云端轻配置中心</p>
-          <h2 className="text-xl font-semibold">只管理账号体系和生图系统提示词</h2>
+          <h2 className="text-xl font-semibold">只管理账号体系和业务系统提示词</h2>
           <p className="max-w-2xl text-sm text-muted-foreground">
             Grsai、百炼、晨羽 API Key、模型清单和本地 Workflow 都留在客户端，服务器不保存用户密钥。
           </p>
@@ -111,7 +117,9 @@ export default async function AdminHomePage() {
           <CardContent>
             <p
               className={
-                stats.dbOk ? 'text-sm font-medium text-green-700' : 'text-sm font-medium text-red-700'
+                stats.dbOk
+                  ? 'text-sm font-medium text-green-700'
+                  : 'text-sm font-medium text-red-700'
               }
             >
               {stats.dbOk ? '连接正常' : '连接异常'}

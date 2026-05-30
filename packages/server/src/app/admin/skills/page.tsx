@@ -8,8 +8,12 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type SkillSlot = {
   id: string
+  module: 'generation' | 'detection' | 'title'
+  category: string | null
   title: string
   description: string
+  recommendedModel: string | null
+  returnHint: string
 }
 
 type SkillListResponse = {
@@ -25,23 +29,66 @@ type SkillDetailResponse = {
 const skillSlots: SkillSlot[] = [
   {
     id: 'txt2img-local-print',
+    module: 'generation',
+    category: 'txt2img-local-print',
     title: '文生图局部印花',
     description: '用于无参考图生成局部独立印花提示词。',
+    recommendedModel: 'qwen3-vl-plus',
+    returnHint: '要求返回 JSON：{ "prompts": ["..."] }。',
   },
   {
     id: 'txt2img-full-print',
+    module: 'generation',
+    category: 'txt2img-full-print',
     title: '文生图满印',
     description: '用于无参考图生成满版连续图案提示词。',
+    recommendedModel: 'qwen3-vl-plus',
+    returnHint: '要求返回 JSON：{ "prompts": ["..."] }。',
   },
   {
     id: 'img2img-local-reference',
+    module: 'generation',
+    category: 'img2img-local-reference',
     title: '图生图局部参考图',
     description: '用于有参考图时提炼局部独立印花提示词。',
+    recommendedModel: 'qwen3-vl-plus',
+    returnHint: '要求返回 JSON：{ "prompts": ["..."] }。',
   },
   {
     id: 'img2img-full-reference',
+    module: 'generation',
+    category: 'img2img-full-reference',
     title: '图生图满印参考图',
     description: '用于有参考图时生成满版连续图案提示词。',
+    recommendedModel: 'qwen3-vl-plus',
+    returnHint: '要求返回 JSON：{ "prompts": ["..."] }。',
+  },
+  {
+    id: 'extract-paid-model',
+    module: 'generation',
+    category: 'extract-paid-model',
+    title: '付费模型提取提示词',
+    description: '用于 Grsai 路径：把采集源图交给百炼视觉模型，生成提取印花的提示词。',
+    recommendedModel: 'qwen3-vl-plus',
+    returnHint: '要求返回 JSON：{ "prompts": ["..."] }，客户端会逐条交给 Grsai 生图。',
+  },
+  {
+    id: 'extract-comfyui-workflow',
+    module: 'generation',
+    category: 'extract-comfyui-workflow',
+    title: 'ComfyUI 提取提示词',
+    description: '用于 ComfyUI 路径：作为提取工作流的 prompt 直接发送到默认云机。',
+    recommendedModel: null,
+    returnHint: '不要求 JSON，这段 system prompt 会作为 ComfyUI 工作流 prompt 使用。',
+  },
+  {
+    id: 'infringement-detection',
+    module: 'detection',
+    category: 'infringement',
+    title: '侵权检测提示词',
+    description: '用于侵权检测：把印花图像和这段系统提示词发送给百炼视觉模型。',
+    recommendedModel: 'qwen3-vl-flash',
+    returnHint: '要求返回 JSON：{ "risk_score": 0-100, "reason": "..." }。',
   },
 ]
 const defaultSkillSlot = skillSlots[0]!
@@ -53,15 +100,15 @@ function slotNotes(slot: SkillSlot) {
 function skillPayload(slot: SkillSlot, systemPrompt: string, enabled: boolean) {
   return {
     id: slot.id,
-    module: 'generation',
-    category: slot.id,
+    module: slot.module,
+    category: slot.category,
     platform: null,
     language: null,
     version: '1.0.0',
     enabled,
     system_prompt: systemPrompt,
     variables_json: '[]',
-    recommended_model: null,
+    recommended_model: slot.recommendedModel,
     notes: slotNotes(slot),
   }
 }
@@ -94,7 +141,7 @@ export default function AdminSkillsPage() {
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
     setMessage(null)
-    const response = await fetch('/admin/api/skills?module=generation')
+    const response = await fetch('/admin/api/skills')
     const result = (await response.json()) as SkillListResponse | { ok: false }
     if (!result.ok) {
       setIsLoading(false)
@@ -168,7 +215,7 @@ export default function AdminSkillsPage() {
 
   return (
     <AdminShell
-      description="这里只配置 4 个固定生图 Skill 的系统提示词；模型、密钥和 Workflow 都在客户端本地设置。"
+      description="这里只配置固定业务 Skill 的系统提示词；模型、密钥和 Workflow 都在客户端本地设置。"
       title="Skill 管理"
     >
       <section className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -196,9 +243,7 @@ export default function AdminSkillsPage() {
                     <span className="font-medium">{slot.title}</span>
                     <span
                       className={
-                        configured
-                          ? 'text-xs text-green-700'
-                          : 'text-xs text-muted-foreground'
+                        configured ? 'text-xs text-green-700' : 'text-xs text-muted-foreground'
                       }
                     >
                       {configured ? '已配置' : '未配置'}
@@ -239,8 +284,8 @@ export default function AdminSkillsPage() {
             {message ? <p className="mb-4 text-sm text-muted-foreground">{message}</p> : null}
             <div className="space-y-3">
               <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs leading-5 text-muted-foreground">
-                <p>Skill 需要自己写明模型返回 JSON，例如：{`{ "prompts": ["..."] }`}。</p>
-                <p>客户端会按 prompts 字符串数组拆分后逐条发给 Grsai 生图。</p>
+                <p>{selectedSlot.returnHint}</p>
+                <p>后台只保存 system prompt，不保存用户 API Key、模型密钥或图片。</p>
               </div>
               <textarea
                 className="min-h-[420px] w-full resize-y rounded-md border bg-background p-3 font-mono text-sm leading-6 outline-none focus:border-primary"

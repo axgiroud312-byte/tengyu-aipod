@@ -12,6 +12,7 @@ type DetectionSettingsPanelProps = {
 
 const DEFAULT_THRESHOLD: DetectionThresholdConfig = { passMax: 39, reviewMax: 69 }
 const DEFAULT_MODEL = 'qwen3-vl-flash'
+const DEFAULT_DETECTION_SKILL_ID = 'infringement-detection'
 
 function skillKey(skill: SkillSummary) {
   return `${skill.id}@@${skill.version}`
@@ -104,19 +105,22 @@ export function DetectionSettingsPanel({
           return
         }
 
+        const detectionSkillList = skillList.filter(
+          (item) => item.id === DEFAULT_DETECTION_SKILL_ID,
+        )
         setModels(modelList)
-        setSkills(skillList)
+        setSkills(detectionSkillList)
         setSavedConfig(config)
         setThreshold(config?.threshold ?? DEFAULT_THRESHOLD)
         setModel(config?.model ?? modelList[0] ?? DEFAULT_MODEL)
 
         const selected =
           (config
-            ? skillList.find(
+            ? detectionSkillList.find(
                 (item) => item.id === config.skillId && item.version === config.skillVersion,
               )
             : null) ??
-          skillList[0] ??
+          detectionSkillList[0] ??
           null
         setSelectedSkill(selected)
         setLoading(false)
@@ -346,7 +350,7 @@ export function DetectionSettingsPanel({
                     </option>
                   ))
                 ) : (
-                  <option value="">暂无检测模板</option>
+                  <option value="">暂无侵权检测 Skill，请先在后台配置并同步</option>
                 )}
               </select>
             </label>

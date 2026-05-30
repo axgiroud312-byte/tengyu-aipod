@@ -179,7 +179,7 @@ enum SkillModule {
 }
 
 model Skill {
-  id                  String   @id              // "extract-prompt-v3"
+  id                  String   @id              // "extract-paid-model"
   module              SkillModule
   category            String?                   // 'txt2img' | 'img2img' | 'extract' | 'matting' | ...
   platform            String?                   // 仅 title skill 用
@@ -609,14 +609,15 @@ Admin JWT 用单独密钥签名。
 模块：[全部 ▼] / generation / detection / title
 
 | ID | 模块 | 分类 | 平台/语言 | 当前版本 | 推荐模型 | 启用 | 操作 |
-| extract-prompt-v3 | generation | extract | - | 3.0.1 | qwen3.6-plus | ✅ | [编辑][版本历史][禁用] |
-| infringement-v2 | detection | - | - | 2.1 | qwen3-vl-flash | ✅ | [编辑] |
+| extract-paid-model | generation | extract-paid-model | - | 1.0.0 | qwen3-vl-plus | ✅ | [编辑] |
+| extract-comfyui-workflow | generation | extract-comfyui-workflow | - | 1.0.0 | - | ✅ | [编辑] |
+| infringement-detection | detection | infringement | - | 1.0.0 | qwen3-vl-flash | ✅ | [编辑] |
 | title-temu-en-v3 | title | - | temu_pop / en | 3.0 | qwen3-vl-plus | ✅ | [编辑] |
 
 [+ 新建 Skill]
 
 [编辑 Skill]
-ID：[extract-prompt-v3]（不可改）
+ID：[extract-paid-model]（不可改）
 模块：[generation ▼]
 分类：[extract ▼]
 版本：[3.0.2]（自动 +0.0.1，可改）

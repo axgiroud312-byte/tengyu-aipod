@@ -90,6 +90,8 @@ const fallbackBailianTextModels: LocalModelOption[] = [
 const fallbackBailianVisionModels: LocalModelOption[] = [
   { id: 'qwen3-vl-plus', label: 'qwen3-vl-plus', modality: 'vision' },
 ]
+const GRSAI_EXTRACT_SKILL_ID = 'extract-paid-model'
+const COMFYUI_EXTRACT_SKILL_ID = 'extract-comfyui-workflow'
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
     key: 'text',
@@ -203,10 +205,7 @@ function modelOptionsForCapability(
   return settings?.grsaiModels.length ? settings.grsaiModels : fallbackGrsaiModels
 }
 
-function bailianModelsForUse(
-  settings: GenerationSettingsSnapshot | null,
-  needsVision: boolean,
-) {
+function bailianModelsForUse(settings: GenerationSettingsSnapshot | null, needsVision: boolean) {
   if (needsVision) {
     return settings?.bailianVisionModels.length
       ? settings.bailianVisionModels
@@ -804,8 +803,7 @@ function GrsaiPromptGenerationPanel({
     const preferredModel = usesReference
       ? settings?.config.bailian_vision_model
       : settings?.config.bailian_text_model
-    const firstLlm =
-      llmModels.find((model) => model.id === preferredModel) ?? llmModels[0]
+    const firstLlm = llmModels.find((model) => model.id === preferredModel) ?? llmModels[0]
     if (firstLlm && !llmModels.some((model) => model.id === llmModel)) {
       setLlmModel(firstLlm.id)
     }
@@ -1510,8 +1508,6 @@ function GrsaiExtractPanel() {
   const [sourceFolder, setSourceFolder] = useState('')
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
-  const [variables, setVariables] = useState<SkillVariablesState>({})
-  const [printMode, setPrintMode] = useState<'local' | 'full'>('local')
   const [promptCount, setPromptCount] = useState('1')
   const [llmModel, setLlmModel] = useState('qwen3-vl-plus')
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
@@ -1529,23 +1525,23 @@ function GrsaiExtractPanel() {
   }, [])
 
   useEffect(() => {
-    const id = printMode === 'full' ? 'img2img-full-reference' : 'img2img-local-reference'
     window.api.skill
-      .get({ id })
+      .get({ id: GRSAI_EXTRACT_SKILL_ID })
       .then((skill) => {
         setSelectedSkill(skill)
-        setVariables(
-          Object.fromEntries(
-            skill.variables.map((variable) => [variable.key, defaultVariableValue(variable)]),
-          ),
+        setLlmModel(
+          skill.recommendedModel ?? settings?.config.bailian_vision_model ?? 'qwen3-vl-plus',
         )
-        setLlmModel(skill.recommendedModel ?? settings?.config.bailian_vision_model ?? 'qwen3-vl-plus')
       })
       .catch((nextError) => {
         setSelectedSkill(null)
-        setError(nextError instanceof Error ? nextError.message : '读取参考图 Skill 失败，请先在后台配置')
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : '读取付费模型提取 Skill 失败，请先在后台配置',
+        )
       })
-  }, [printMode, settings?.config.bailian_vision_model])
+  }, [settings?.config.bailian_vision_model])
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
@@ -1577,10 +1573,7 @@ function GrsaiExtractPanel() {
 
   const selectedCount = selectedPaths.length
   const percent = progressPercent(progress)
-  const generationModels = useMemo(
-    () => modelOptionsForCapability(settings, 'extract'),
-    [settings],
-  )
+  const generationModels = useMemo(() => modelOptionsForCapability(settings, 'extract'), [settings])
   const selectedGenerationModel = useMemo(
     () => generationModels.find((model) => model.id === generationModel) ?? null,
     [generationModel, generationModels],
@@ -1588,10 +1581,7 @@ function GrsaiExtractPanel() {
   const sizeOptions = grsaiSizes(selectedGenerationModel)
   const maxConcurrency = 20
   const defaultConcurrency = settings?.config.grsai_concurrency ?? 3
-  const llmModels = useMemo(
-    () => bailianModelsForUse(settings, true),
-    [settings],
-  )
+  const llmModels = useMemo(() => bailianModelsForUse(settings, true), [settings])
 
   useEffect(() => {
     const firstModel = generationModels[0]
@@ -1645,14 +1635,10 @@ function GrsaiExtractPanel() {
     setSelectedPaths([])
   }
 
-  function setVariable(key: string, value: string | boolean) {
-    setVariables((current) => ({ ...current, [key]: value }))
-  }
-
   async function startExtract() {
     setError(null)
     if (!selectedSkill) {
-      setError('请先在后台配置图生图参考图 Skill')
+      setError('请先在后台配置付费模型提取 Skill')
       return
     }
     if (selectedPaths.length === 0) {
@@ -1666,7 +1652,7 @@ function GrsaiExtractPanel() {
       sourceImagePaths: selectedPaths,
       skillId: selectedSkill.id,
       skillVersion: selectedSkill.version,
-      variables: variablePayload(selectedSkill.variables, variables),
+      variables: {},
       promptCount: clampNumber(promptCount, 1, 100, 1),
       llmModel,
       model: generationModel,
@@ -1746,34 +1732,16 @@ function GrsaiExtractPanel() {
         </div>
 
         <div className="rounded-md border bg-background p-4">
-          <h4 className="font-semibold">参考图 Skill</h4>
-          <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <fieldset className="rounded-md border p-3 md:col-span-2">
-              <legend className="px-1 text-sm font-medium">印花类型</legend>
-              <div className="mt-2 flex gap-4 text-sm">
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    checked={printMode === 'local'}
-                    onChange={() => setPrintMode('local')}
-                    type="radio"
-                  />
-                  局部参考图
-                </label>
-                <label className="inline-flex items-center gap-2">
-                  <input
-                    checked={printMode === 'full'}
-                    onChange={() => setPrintMode('full')}
-                    type="radio"
-                  />
-                  满印参考图
-                </label>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
+          <h4 className="font-semibold">提取 Skill</h4>
+          <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_230px]">
+            <div className="rounded-md border p-3">
+              <p className="text-sm font-medium">付费模型提取提示词</p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 {selectedSkill
                   ? `${selectedSkill.id} · ${selectedSkill.version}`
-                  : '未读取到固定 Skill'}
+                  : '未读取到固定提取 Skill'}
               </p>
-            </fieldset>
+            </div>
             <label className="block space-y-2 text-sm font-medium">
               <span>每张提示词数</span>
               <input
@@ -1785,42 +1753,6 @@ function GrsaiExtractPanel() {
                 value={promptCount}
               />
             </label>
-          </div>
-
-          <div className="mt-4 grid gap-4 md:grid-cols-2">
-            {selectedSkill?.variables.length ? (
-              selectedSkill.variables.map((variable) => (
-                <SkillVariableControl
-                  key={variable.key}
-                  onChange={(value) => setVariable(variable.key, value)}
-                  value={variables[variable.key] ?? defaultVariableValue(variable)}
-                  variable={variable}
-                />
-              ))
-            ) : (
-              <>
-                <label className="block space-y-2 text-sm font-medium">
-                  <span>印花区域偏好</span>
-                  <select
-                    className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onChange={(event) => setVariable('printAreaPreference', event.target.value)}
-                    value={String(variables.printAreaPreference ?? 'auto')}
-                  >
-                    <option value="auto">自动识别</option>
-                    <option value="front">优先正面</option>
-                    <option value="largest">最大印花</option>
-                  </select>
-                </label>
-                <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium">
-                  <input
-                    checked={Boolean(variables.allowMultiplePrints)}
-                    onChange={(event) => setVariable('allowMultiplePrints', event.target.checked)}
-                    type="checkbox"
-                  />
-                  允许多印花
-                </label>
-              </>
-            )}
           </div>
         </div>
       </div>
@@ -2208,7 +2140,7 @@ function ComfyuiExtractPanel() {
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [workflowKey, setWorkflowKey] = useState('')
-  const [prompt, setPrompt] = useState('')
+  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -2219,6 +2151,17 @@ function ComfyuiExtractPanel() {
   useEffect(() => {
     void loadSources()
     void loadWorkflows()
+    window.api.skill
+      .get({ id: COMFYUI_EXTRACT_SKILL_ID })
+      .then((skill) => setSelectedSkill(skill))
+      .catch((nextError) => {
+        setSelectedSkill(null)
+        setError(
+          nextError instanceof Error
+            ? nextError.message
+            : '读取 ComfyUI 提取 Skill 失败，请先在后台配置',
+        )
+      })
   }, [])
 
   useEffect(() => {
@@ -2305,6 +2248,10 @@ function ComfyuiExtractPanel() {
       setError('请选择 ComfyUI 提取工作流')
       return
     }
+    if (!selectedSkill) {
+      setError('请先在后台配置 ComfyUI 提取 Skill')
+      return
+    }
 
     setResult(null)
     setRunning(true)
@@ -2312,7 +2259,8 @@ function ComfyuiExtractPanel() {
       sourceImagePaths: selectedPaths,
       workflowId: selectedWorkflow.id,
       workflowVersion: selectedWorkflow.version,
-      prompt,
+      skillId: selectedSkill.id,
+      skillVersion: selectedSkill.version,
     })
     setTaskId(taskId)
     setProgress({
@@ -2403,15 +2351,14 @@ function ComfyuiExtractPanel() {
                 ))}
               </select>
             </label>
-            <label className="block space-y-2 text-sm font-medium">
-              <span>提示词</span>
-              <input
-                className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder="可留空，使用工作流默认提取逻辑"
-                value={prompt}
-              />
-            </label>
+            <div className="rounded-md border p-3 text-sm">
+              <p className="font-medium">ComfyUI 提取 Skill</p>
+              <p className="mt-2 text-xs leading-5 text-muted-foreground">
+                {selectedSkill
+                  ? `${selectedSkill.id} · ${selectedSkill.version}`
+                  : '未读取到固定提取 Skill'}
+              </p>
+            </div>
           </div>
         </div>
       </div>
@@ -2427,6 +2374,10 @@ function ComfyuiExtractPanel() {
             <div>
               <dt className="text-muted-foreground">工作流</dt>
               <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
+            </div>
+            <div>
+              <dt className="text-muted-foreground">Skill</dt>
+              <dd className="truncate font-medium">{selectedSkill?.id ?? '未配置'}</dd>
             </div>
           </dl>
           <Button

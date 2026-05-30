@@ -158,6 +158,8 @@ export type ComfyuiExtractRunInput = {
   sourceImagePaths: string[]
   workflowId: string
   workflowVersion?: string
+  skillId?: string
+  skillVersion?: string
   prompt?: string
   taskId?: string
 }
@@ -1383,6 +1385,14 @@ export async function runComfyuiExtractBatch(
     failures: [],
   }
   const emit = dependencies.emitProgress ?? emitProgress
+  const skillId = input.skillId?.trim()
+  const skill = skillId
+    ? await (dependencies.skillCache ?? skillCacheManager).getSkill(skillId, input.skillVersion)
+    : null
+  const prompt =
+    skill?.systemPrompt.trim() ||
+    input.prompt?.trim() ||
+    'Extract the print from the source product image.'
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
   const sourceFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
@@ -1415,7 +1425,7 @@ export async function runComfyuiExtractBatch(
         })
         const response = await adapter.generate({
           capability: 'extract',
-          prompt: input.prompt?.trim() || 'Extract the print from the source product image.',
+          prompt,
           workflow_id: input.workflowId.trim(),
           reference_images: [await imageReference(sourceImagePath)],
           output: { format: 'png' },
@@ -1431,7 +1441,7 @@ export async function runComfyuiExtractBatch(
         result.succeeded += response.images.length
         result.images.push(
           ...response.images.map((image) => ({
-            prompt: input.prompt ?? '',
+            prompt,
             url: image.url,
             ...(image.local_path ? { localPath: image.local_path } : {}),
             sourcePath: sourceImagePath,
@@ -1442,7 +1452,7 @@ export async function runComfyuiExtractBatch(
       } catch (error) {
         result.failed += 1
         result.failures.push({
-          prompt: input.prompt ?? '',
+          prompt,
           sourcePath: sourceImagePath,
           error: appErrorMessage(error),
         })

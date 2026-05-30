@@ -387,6 +387,7 @@ describe('generation comfyui service', () => {
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         capability: 'extract',
+        prompt: 'extract print',
         workflow_id: 'extract-v1',
         reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
         options: expect.objectContaining({
@@ -401,6 +402,47 @@ describe('generation comfyui service', () => {
         task_id: 'extract-comfy-task',
         capability: 'extract',
         processed: 1,
+      }),
+    )
+  })
+
+  it('uses the ComfyUI extract skill prompt when a skill is provided', async () => {
+    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    await createImage(sourcePath, 'source-image')
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    await runComfyuiExtractBatch(
+      {
+        sourceImagePaths: [sourcePath],
+        workflowId: 'extract-v1',
+        skillId: 'extract-comfyui-workflow',
+        skillVersion: '1.0.0',
+        prompt: 'manual prompt should not win',
+        taskId: 'extract-comfy-skill-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: createFakeDb().openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+        skillCache: {
+          getSkill: vi.fn().mockResolvedValue(
+            extractSkill({
+              id: 'extract-comfyui-workflow',
+              systemPrompt: 'backend comfyui extract prompt',
+            }),
+          ),
+          listSkills: vi.fn(),
+        },
+      },
+    )
+
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'backend comfyui extract prompt',
       }),
     )
   })
