@@ -81,7 +81,7 @@ describe('SkillCacheManager', () => {
     const manager = new SkillCacheManager()
 
     await expect(manager.listSkills({ module: 'title' })).resolves.toEqual([summary()])
-    expect(fetch).toHaveBeenCalledWith('http://localhost:3000/api/skills?module=title', {
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:3100/api/skills?module=title', {
       headers: { authorization: 'Bearer token' },
     })
   })

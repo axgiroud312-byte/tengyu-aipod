@@ -18,6 +18,22 @@
 | 邮件 | Resend / 阿里云 DM（仅用于运营通知，可选）|
 | 部署 | Vercel / 自托管 Docker / 2 核 2G 云服务器 |
 
+## 本地开发启动
+
+开发环境下，服务端固定监听 `http://127.0.0.1:3100`。客户端未打包时也默认从这个地址拉取 Skill、登录态和权益状态，所以本地联调时直接启动 server 包即可：
+
+```bash
+pnpm --filter @tengyu-aipod/server dev
+curl http://127.0.0.1:3100/api/health
+curl http://127.0.0.1:3100/api/skills
+```
+
+如果临时改用其他端口，需要同步给客户端设置 `TENGYU_SERVER_URL`：
+
+```bash
+TENGYU_SERVER_URL=http://127.0.0.1:<port> pnpm --filter @tengyu-aipod/client dev
+```
+
 ## 2. 部署架构
 
 ### 2.1 推荐方案 B（v1）
