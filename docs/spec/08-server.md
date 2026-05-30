@@ -14,8 +14,8 @@
 | API 验证 | zod schema |
 | Admin UI | shadcn/ui + Tailwind |
 | 认证（admin）| 邮箱+密码（自实现 JWT）|
-| 认证（客户端）| 激活码 + JWT |
-| 邮件 | Resend / 阿里云 DM（仅发激活码邮件，可选）|
+| 认证（客户端）| 微信扫码登录 + 权益 JWT |
+| 邮件 | Resend / 阿里云 DM（仅用于运营通知，可选）|
 | 部署 | Vercel / 自托管 Docker / 2 核 2G 云服务器 |
 
 ## 2. 部署架构
@@ -57,7 +57,7 @@ generator client {
   provider = "prisma-client-js"
 }
 
-// ─── 客户与激活 ─────────────────────────────────────
+// ─── 客户、微信身份与权益 ─────────────────────────────
 
 model Customer {
   id          String   @id @default(cuid())
@@ -68,45 +68,106 @@ model Customer {
   notes       String?
   is_active   Boolean  @default(true)        // 客户级封号
   created_at  DateTime @default(now())
-  
-  codes       ActivationCode[]
-  
+
+  users        CustomerWechatUser[]
+  entitlements Entitlement[]
+  codes        ActivationCode[]
+
   @@map("customers")
+}
+
+model WechatUser {
+  id            String   @id @default(cuid())
+  unionid       String?  @unique              // 微信开放平台跨应用唯一身份
+  openid        String   @unique              // 当前扫码登录应用内身份
+  nickname      String?
+  avatar_url    String?
+  is_active     Boolean  @default(true)       // 用户级封禁
+  created_at    DateTime @default(now())
+  last_login_at DateTime?
+
+  customers     CustomerWechatUser[]
+  entitlements  Entitlement[]
+  sessions      ClientSession[]
+
+  @@map("wechat_users")
+}
+
+model CustomerWechatUser {
+  id             String   @id @default(cuid())
+  customer_id    String
+  wechat_user_id String
+  role           String   @default("member")  // owner | member | operator
+  created_at     DateTime @default(now())
+
+  customer        Customer   @relation(fields: [customer_id], references: [id])
+  wechat_user     WechatUser @relation(fields: [wechat_user_id], references: [id])
+
+  @@unique([customer_id, wechat_user_id])
+  @@index([wechat_user_id])
+  @@map("customer_wechat_users")
+}
+
+model Entitlement {
+  id             String   @id @default(cuid())
+  customer_id    String?
+  wechat_user_id String?
+  source_code    String?                       // 来自兑换码时记录 code
+  status         String   @default("active")   // active | expired | banned
+  starts_at      DateTime @default(now())
+  expires_at     DateTime
+  seat_count     Int      @default(1)
+  modules        String[]                      // generation | detection | title | listing | ...
+  notes          String?
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+
+  customer       Customer?   @relation(fields: [customer_id], references: [id])
+  wechat_user    WechatUser? @relation(fields: [wechat_user_id], references: [id])
+  sessions       ClientSession[]
+
+  @@index([customer_id])
+  @@index([wechat_user_id])
+  @@index([status, expires_at])
+  @@map("entitlements")
 }
 
 model ActivationCode {
   code          String   @id                  // POD-A1B2-C3D4-E5F6
-  customer_id   String?                       // null = 匿名码
+  customer_id   String?                       // null = 匿名兑换码
   batch_id      String?                       // 批量生成共享
   days_total    Int
-  max_devices   Int
-  is_active     Boolean  @default(true)       // 码级封号
-  expires_at    DateTime?                     // 激活后开始算
-  activated_at  DateTime?                     // 首次激活时间
+  seat_count    Int      @default(1)
+  modules       String[]
+  is_active     Boolean  @default(true)       // 兑换码级封号
+  redeemed_at   DateTime?
+  redeemed_by   String?                       // WechatUser.id
   notes         String?
   created_at    DateTime @default(now())
-  
-  customer      Customer?           @relation(fields: [customer_id], references: [id])
-  devices       DeviceActivation[]
-  
+
+  customer      Customer? @relation(fields: [customer_id], references: [id])
+
   @@index([customer_id])
   @@index([batch_id])
   @@map("activation_codes")
 }
 
-model DeviceActivation {
+model ClientSession {
   id                  String   @id @default(cuid())
-  code_id             String                   // = ActivationCode.code
-  device_fingerprint  String                   // SHA256
-  device_name         String?                  // 用户起名
-  activated_at        DateTime @default(now())
+  wechat_user_id      String
+  entitlement_id      String
+  installation_label  String?                  // 用户给这次安装起名
+  login_ip_hash       String?
+  created_at          DateTime @default(now())
   last_active_at      DateTime @default(now())
-  
-  code                ActivationCode @relation(fields: [code_id], references: [code])
-  
-  @@unique([code_id, device_fingerprint])     // 同码同设备只能激活一次
-  @@index([device_fingerprint])
-  @@map("device_activations")
+  revoked_at          DateTime?
+
+  wechat_user         WechatUser  @relation(fields: [wechat_user_id], references: [id])
+  entitlement         Entitlement @relation(fields: [entitlement_id], references: [id])
+
+  @@index([wechat_user_id])
+  @@index([entitlement_id, revoked_at])
+  @@map("client_sessions")
 }
 
 // ─── 派发资源 ─────────────────────────────────────
@@ -136,57 +197,6 @@ model Skill {
   @@index([module, category])
   @@index([module, platform, language])
   @@map("skills")
-}
-
-model Provider {
-  id                  String   @id              // "grsai" | "aliyun-bailian"
-  name                String
-  type                String                    // 'paid-generation' | 'comfyui-cloud' | 'vision-llm'
-  base_url            String
-  fallback_url        String?
-  api_style           String                    // 'grsai-native' | 'openai-images' | 'openai-chat' | 'dashscope-native'
-  endpoints_json      String                    @db.Text  // JSON
-  model_options_json  String                    @db.Text  // JSON
-  default_params_json String                    @db.Text  // JSON
-  capabilities        String[]                  // ['txt2img', 'img2img', ...]
-  enabled             Boolean  @default(true)
-  sort_order          Int      @default(0)
-  notes               String?
-  updated_at          DateTime @updatedAt
-  
-  @@map("providers")
-}
-
-model ComfyuiWorkflow {
-  row_id              String   @id @default(cuid())
-  id                  String                    // 'extract-v3'
-  category            String                    // 'extract' | 'img2img' | 'matting'
-  version             String
-  workflow_json       String                    @db.Text  // ComfyUI 原生 workflow JSON
-  input_slots_json    String                    @db.Text
-  output_slots_json   String                    @db.Text
-  required_models     String[]
-  recommended_pod_keywords String[]
-  min_vram_gb         Int      @default(8)
-  enabled             Boolean  @default(true)
-  notes               String?
-  updated_at          DateTime @updatedAt
-  
-  @@unique([id, version])
-  @@index([category, enabled])
-  @@map("comfyui_workflows")
-}
-
-model PlatformRule {
-  key                 String   @id              // 'temu' | 'shein' | ...
-  name                String
-  category            String                    // 'collection' | 'listing'
-  rules_json          String                    @db.Text
-  enabled             Boolean  @default(true)
-  version             String
-  updated_at          DateTime @updatedAt
-  
-  @@map("platform_rules")
 }
 
 model Announcement {
@@ -241,10 +251,10 @@ model TelemetryError {
   error_code          String
   error_message       String                    @db.Text
   stack_trace         String?                   @db.Text
-  device_fingerprint  String                    // 关联设备（不关联用户）
+  client_session_id   String?                   // 可选授权会话，不含硬件指纹
   occurred_at         DateTime
   received_at         DateTime @default(now())
-  
+
   @@index([error_code, occurred_at])
   @@index([module, occurred_at])
   @@map("telemetry_errors")
@@ -261,75 +271,67 @@ type ApiResponse<T> =
   | { ok: false; error: { code: string; message: string; details?: unknown } }
 ```
 
-### 4.1 激活与状态
+### 4.1 登录、权益与状态
 
 ```
-POST /api/activate
-  body: { code, device_fingerprint, device_name? }
-  response: { activation_token: JWT, expires_at, max_devices, used_devices }
-  errors: 
+GET /api/auth/wechat/qrcode
+  response: { login_id, qrcode_url, expires_at }
+
+GET /api/auth/wechat/poll
+  query: ?login_id=...
+  response: {
+    status: 'pending' | 'scanned' | 'confirmed' | 'expired',
+    auth_token?: JWT,
+    user?: { nickname, avatar_url },
+  }
+
+POST /api/redeem-code
+  header: Authorization: Bearer <auth_token>
+  body: { code }
+  response: { entitlement_id, expires_at, modules, seat_count }
+  errors:
     - INVALID_CODE
     - CODE_BANNED
-    - DEVICE_LIMIT_REACHED
+    - CODE_ALREADY_REDEEMED
     - CUSTOMER_BANNED
-    - ALREADY_ACTIVATED_BY_OTHER (this fingerprint registered with different code)
 
 GET /api/status
-  header: Authorization: Bearer <activation_token>
+  header: Authorization: Bearer <auth_token>
   response: {
-    status: 'active' | 'expired' | 'banned',
+    status: 'active' | 'expired' | 'banned' | 'no_entitlement',
     days_remaining: number,
-    max_devices: number,
-    used_devices: number,
-    device_name: string,
-    customer?: { name, has_contact } // 仅有 customer 时返回部分信息
+    modules: string[],
+    seat_count: number,
+    customer?: { name, has_contact }
   }
 
 POST /api/auth/refresh
-  body: { activation_token }
-  response: { activation_token: new JWT }
+  header: Authorization: Bearer <auth_token>
+  response: { auth_token: new JWT }
 
-POST /api/deactivate-device     // 用户自助解绑（每月限制 1 次）
-  header: Bearer
-  body: { device_fingerprint }
+POST /api/sessions/revoke
+  header: Authorization: Bearer <auth_token>
+  body: { session_id }
   response: { ok }
-  errors:
-    - SELF_DEACTIVATION_RATE_LIMITED (30 天内已用过)
 ```
+
+客户端不上传 CPU / 主板 / 网卡等硬件机器码，也不以设备指纹作为授权身份。多端控制按权益 seat 和 `ClientSession` 管理。
 
 ### 4.2 派发资源
 
 ```
 GET /api/skills
   header: Bearer
-  query: ?module=generation&category=txt2img&platform=temu&language=en
+  query: ?module=generation&category=txt2img-local-print
   response: SkillSummary[]  (不含 system_prompt 全文)
 
 GET /api/skills/:id
   header: Bearer
-  query: ?version=3.0.1  (optional)
+  query: ?version=1.0.0  (optional)
   response: Skill (full)
-
-GET /api/providers
-  query: ?type=paid-generation
-  response: Provider[]
-
-GET /api/comfyui-workflows
-  query: ?category=extract
-  response: ComfyuiWorkflowSummary[]
-  auth: Bearer client JWT
-  contract: only enabled rows; latest version per id; no workflow_json/input_slots/output_slots
-
-GET /api/comfyui-workflows/:id/content
-  query: ?version=3.0.1
-  response: ComfyuiWorkflow (full)
-  auth: Bearer client JWT
-  contract: if version omitted, latest enabled version for id; includes parsed workflow_json/input_slots/output_slots
-
-GET /api/platform-rules
-  query: ?category=collection
-  response: PlatformRule[]
 ```
+
+Provider、百炼/Grsai 模型清单、ComfyUI Workflow、采集平台规则均由客户端本地维护，不再通过服务端 API 派发。
 
 ### 4.3 公告与版本
 
@@ -357,7 +359,7 @@ POST /api/telemetry/error
   header: Bearer
   body: {
     client_version, module, error_code, error_message,
-    stack_trace?, device_fingerprint, occurred_at,
+    stack_trace?, client_session_id?, occurred_at,
   }
   response: { received: true }
   
@@ -375,14 +377,14 @@ GET /api/health
 
 ### 5.1 客户端 JWT
 
-激活成功后服务端签发 JWT：
+微信登录确认后服务端签发短期 JWT，授权状态来自服务端的用户、会话和权益记录：
 
 ```ts
 // JWT payload
 interface ClientJwtPayload {
-  sub: string                    // = "device_activation.id"
-  code: string                   // activation code
-  device_fp: string              // device fingerprint
+  sub: string                    // = "user.id"
+  session_id: string             // client_sessions.id
+  entitlement_id?: string        // 当前生效权益，无权益时为空
   exp: number                    // 过期时间（建议 30 天）
   iss: 'tengyu-pod-server'
   iat: number
@@ -398,27 +400,31 @@ interface ClientJwtPayload {
 async function verifyClientToken(req: NextRequest) {
   const auth = req.headers.get('authorization')
   if (!auth?.startsWith('Bearer ')) return null
-  
+
   const token = auth.substring(7)
   const payload = await verifyJwt(token)
   if (!payload) return null
-  
-  // 进一步查数据库：device 是否还在、码是否还激活
-  const device = await prisma.deviceActivation.findUnique({
-    where: { id: payload.sub },
-    include: { code: { include: { customer: true } } },
+
+  const session = await prisma.clientSession.findUnique({
+    where: { id: payload.session_id },
+    include: {
+      wechat_user: true,
+      entitlement: true,
+    },
   })
-  if (!device) return null
-  if (!device.code.is_active) return null
-  if (device.code.customer && !device.code.customer.is_active) return null
-  
-  // 更新 last_active_at
-  await prisma.deviceActivation.update({
-    where: { id: device.id },
+  if (!session || session.revoked_at) return null
+  if (!session.wechat_user.is_active) return null
+
+  const entitlement = session.entitlement
+  if (!entitlement || entitlement.status !== 'active') return null
+  if (entitlement.expires_at < new Date()) return null
+
+  await prisma.clientSession.update({
+    where: { id: session.id },
     data: { last_active_at: new Date() },
   })
-  
-  return { device, code: device.code }
+
+  return { session, user: session.wechat_user, entitlement }
 }
 ```
 
@@ -444,15 +450,14 @@ Admin JWT 用单独密钥签名。
 ```
 /admin
 ├─ /dashboard                ← 数据概览
-├─ /codes                    ← 激活码列表（最常用）
-├─ /codes/new                ← 创建激活码（单/批量匿名/CSV）
+├─ /wechat-users             ← 微信用户列表
 ├─ /customers                ← 客户列表
 ├─ /customers/:id            ← 客户详情
+├─ /entitlements             ← 权益列表（开通/续费/封禁/席位）
+├─ /codes                    ← 兑换码列表
+├─ /codes/new                ← 创建兑换码（单个/批量/CSV）
 ├─ /skills                   ← Skill 管理
 ├─ /skills/:id               ← Skill 编辑
-├─ /providers                ← Provider 管理
-├─ /comfyui-workflows        ← 工作流管理（含上传 JSON）
-├─ /platform-rules           ← 平台规则（采集/上架）
 ├─ /announcements            ← 公告管理
 ├─ /client-versions          ← 客户端版本发布
 ├─ /telemetry/errors         ← 错误日志
@@ -465,19 +470,28 @@ Admin JWT 用单独密钥签名。
 [Dashboard]
 今日 / 本周 / 本月 切换
 
-激活码：
+微信用户：
   总数 1,234
-  已激活 856
-  即将过期（7天内）23
   今日新增 5
+  本周活跃 156
+
+权益：
+  生效中 856
+  即将过期（7天内）23
+  今日续费 12
+
+兑换码：
+  总数 1,234
+  已兑换 856
+  今日新增 100
 
 客户：
   总数 234
   本周新增 4
 
-设备：
+席位：
   当前在线 78
-  本周活跃 156
+  已占用 156 / 300
 
 错误日志：
   最近 24h 上报 12
@@ -492,77 +506,67 @@ Admin JWT 用单独密钥签名。
   覆盖率：72%
 ```
 
-### 6.3 激活码列表（最常用）
+### 6.3 兑换码列表（推广 / 试用 / 人工发码）
 
 ```
-[激活码列表]
-搜索 [____]   筛选：● 全部  ○ 已激活  ○ 未激活  ○ 即将过期  ○ 已封号  
-批次：[全部 ▼]   平台：[全部 ▼]
+[兑换码列表]
+搜索 [____]   筛选：● 全部  ○ 未兑换  ○ 已兑换  ○ 已作废
+批次：[全部 ▼]
 
-| 码 | 客户 | 联系方式 | 天数 | 设备 | 已激活 | 剩余天 | 批次 | 状态 | 操作 |
-| POD-A1B2-... | 张三 | 138... | 365 | 3 | 2/3 | 222 | -            | ✅ | [详情][+30天][改设备][封号] |
-| POD-C3D4-... | (匿名) | -    | 7   | 1 | 1/1 | 3 ⚠ | 春节推广批次 | ✅ | [关联客户][封号] |
-| POD-E5F6-... | 李四 | 139... | 30  | 1 | 1/1 | 已过期 | -          | ⏹️ | [+30天][封号] |
+| 码 | 客户 | 天数 | 席位 | 模块 | 兑换人 | 批次 | 状态 | 操作 |
+| POD-A1B2-... | 张三 | 365 | 3 | 全模块 | wx_张三 | - | ✅ 已兑换 | [详情][作废] |
+| POD-C3D4-... | (匿名) | 7 | 1 | 全模块 | - | 春节推广批次 | ✅ 未兑换 | [关联客户][作废] |
+| POD-E5F6-... | 李四 | 30 | 1 | 标题+检测 | wx_李四 | - | ⏹️ 已作废 | [恢复] |
 ...
 
-[批量生成激活码 ▼]
-[导出 CSV] [批量+30天] [批量封号]
+[批量生成兑换码 ▼]
+[导出 CSV] [批量作废]
 ```
 
-### 6.4 创建激活码（3 种模式）
+### 6.4 创建兑换码 / 开通权益（3 种模式）
 
 ```
-[+ 新建激活码]
+[+ 新建兑换码 / 开通权益]
 
 模式：
-  ● 单个创建（绑客户）
-  ○ 批量匿名（试用/推广）
-  ○ 批量预绑客户（CSV）
+  ● 直接开通权益（绑定微信用户或客户）
+  ○ 生成单个兑换码
+  ○ 批量兑换码（试用/推广/CSV）
 
-单个创建：
-  客户信息：
-    姓名：[张三]
-    手机：[13800138000]
-    微信：[zhangsan]（可选）
-    备注：[2026 春节正式购买]
-  
-  智能匹配：已找到客户「张三 138...」
-    ● 给该客户新增激活码
-    ○ 新建客户
-  
-  激活码：
+直接开通权益：
+  绑定对象：
+    微信用户：[搜索 unionid/openid/昵称]
+    客户：[张三 13800138000]（可选）
+  权益：
     天数：[365]
-    设备数：[3]
+    席位数：[3]
+    模块：[全选 / 生图 / 检测 / 标题 / 上架]
     备注：[年费]
-  
-  [生成激活码]
+  [开通权益]
 
-批量匿名：
-  天数：[7]   设备数：[1]
+生成单个兑换码：
+  客户：[可选]
+  天数：[365]   席位数：[3]
+  模块：[全选]
+  [生成兑换码]
+
+批量兑换码：
+  天数：[7]   席位数：[1]
   数量：[100]
   批次备注：[2026春节试用]
   [生成 100 个码 → 下载 CSV]
-
-批量预绑客户：
-  天数：[30]   设备数：[1]
-  上传 CSV：[选择文件] customers.csv
-    格式：name, phone, email?, wechat?, notes?
-  [预览] 50 行
-    ☑ 同手机号已存在 → 复用客户记录（4 个）
-    ☐ 全部新建客户
-  [生成 50 个码 → 下载 CSV: 客户 | 手机 | 码]
 ```
 
 ### 6.5 客户列表
 
 ```
 [客户列表]
-| 客户 | 手机 | 微信 | 激活码数 | 最长剩余天 | 总设备 | 最近活跃 | 状态 | 操作 |
-| 张三 | 138... | wx1 | 3 | 222 天 | 5/9 | 2 分钟前 | ✅ | [详情] |
+| 客户 | 手机 | 微信备注 | 微信用户数 | 生效权益 | 席位占用 | 最近活跃 | 状态 | 操作 |
+| 张三 | 138... | wx1 | 2 | 222 天 | 2/3 | 2 分钟前 | ✅ | [详情] |
 | 李四 | 139... | wx2 | 1 | 5 天 | 1/1 | 5 天前 | ✅ | [详情] |
-| 王五 | 137... | wx3 | 2 | 已过期 | 0/2 | 30 天前 | ✅ | [详情] |
+| 王五 | 137... | wx3 | 1 | 已过期 | 0/2 | 30 天前 | ✅ | [详情] |
 
-搜索按 姓名 / 手机 / 微信
+搜索按 姓名 / 手机 / 微信备注 / unionid
 [+ 新建客户]
 ```
 
@@ -572,24 +576,30 @@ Admin JWT 用单独密钥签名。
 [客户详情：张三]
 
 基本信息：
-  姓名：张三  手机：138...  微信：wx1  
+  姓名：张三  手机：138...  微信备注：wx1
   备注：2026 春节正式购买
-  状态：● 激活
+  状态：● 正常
   创建：2026-01-15
-  [编辑] [封号该客户（影响所有码）]
+  [编辑] [封禁该客户关联权益]
 
-[+ 给该客户发新激活码]
+[+ 绑定微信用户]
+[+ 直接开通权益]
+[+ 生成兑换码]
 
-激活码（3 个）：
-  | 码 | 天数 | 设备 | 已激活 | 剩余 | 状态 | 操作 |
-  | POD-A1B2 | 365 | 3 | 2/3 | 222 | ✅ | [+30天][改设备数][解绑设备][封号] |
-  | POD-X5Y6 | 30  | 1 | 1/1 | 已过期 | ⏹️ | [+30天] [封号] |
-  | POD-Z9W8 | 90  | 1 | 0/1 | 未激活 | ✅ | [作废] |
+微信用户（2 个）：
+  | 昵称 | unionid/openid | 角色 | 最近登录 | 状态 | 操作 |
+  | 张三 | u_xxx | owner | 2 分钟前 | ✅ | [解绑] |
+  | 员工A | u_yyy | member | 5 天前 | ✅ | [解绑] |
 
-所有设备（3 台）：
-  | 码 | 设备名 | 指纹 | 激活 | 最近活跃 | 操作 |
-  | POD-A1B2 | 工作电脑 | abc... | 2026-01-15 | 5 分钟前 | [解绑] |
-  | POD-A1B2 | 家用电脑 | def... | 2026-02-01 | 5 天前 | [解绑] |
+权益（2 个）：
+  | 来源 | 天数/到期 | 席位 | 已占用 | 模块 | 状态 | 操作 |
+  | 人工开通 | 222 天 | 3 | 2/3 | 全模块 | ✅ | [+30天][改席位][封禁] |
+  | POD-X5Y6 | 已过期 | 1 | 0/1 | 标题+检测 | ⏹️ | [+30天] |
+
+当前会话 / 席位：
+  | 微信用户 | 安装备注 | 登录时间 | 最近活跃 | 操作 |
+  | 张三 | 工作电脑 | 2026-01-15 | 5 分钟前 | [解绑席位] |
+  | 员工A | 家用电脑 | 2026-02-01 | 5 天前 | [解绑席位] |
 ```
 
 ### 6.7 Skill 管理
@@ -629,57 +639,9 @@ You are an expert at... output JSON array...
 [保存为新版本] [覆盖当前版本] [取消]
 ```
 
-### 6.8 Provider 管理
+### 6.8 本地生成配置
 
-```
-[Provider 列表]
-类型：[全部 ▼] / paid-generation / comfyui-cloud / vision-llm
-
-| ID | 名称 | 类型 | API Style | Base URL | 启用 | 操作 |
-| grsai | Grsai 付费生图 | paid-generation | grsai-native | https://grsai... | ✅ | [编辑] |
-| aliyun-bailian | 阿里云百炼 | vision-llm | openai-chat | https://dashscope... | ✅ | [编辑] |
-| chenyu | 晨羽智云 ComfyUI | comfyui-cloud | (n/a) | https://chenyu.cn... | ✅ | [编辑] |
-
-[+ 新建 Provider]
-
-[编辑 Provider]
-ID / 名称 / 类型 / Base URL / Fallback URL / API Style /
-端点（JSON）/ 模型选项（JSON）/ 默认参数（JSON）/ 能力（多选）/
-启用 / 排序
-```
-
-### 6.9 ComfyUI 工作流管理
-
-```
-[工作流列表]
-分类：[全部 ▼]
-
-| ID | 分类 | 版本 | 推荐 Pod 关键词 | 最小显存 | 启用 | 操作 |
-| extract-v3 | extract | 3.0.1 | ComfyUI Default | 12GB | ✅ | [编辑][下载 JSON][禁用] |
-| matting-v2 | matting | 2.0 | ComfyUI Default | 8GB | ✅ | [编辑][版本历史] |
-
-[+ 上传新工作流]
-  ID：[matting-v3]
-  分类：[matting ▼]
-  版本：[3.0]
-  上传 workflow.json：[选择文件]
-  Input slots：[手填或自动识别 image 节点]
-  Output slots：[手填或自动识别 output 节点]
-  推荐 Pod 关键词：[ComfyUI Default, Stable Diffusion]
-  最小显存：[8]GB
-  必需模型：[输入]
-  [保存]
-
-Admin API:
-- `GET /admin/api/comfyui-workflows?category=` → latest version per id, includes disabled rows.
-- `POST /admin/api/comfyui-workflows` → creates exact `{ id, version }`; rejects malformed `workflow_json`, `input_slots_json`, or `output_slots_json`.
-- `GET /admin/api/comfyui-workflows/:id?version=` → full parsed workflow content for editing/downloading.
-- `PATCH /admin/api/comfyui-workflows/:id` with `save_mode='overwrite' | 'new_version'`.
-  - `overwrite` updates the selected `{ id, version }` row by `row_id`.
-  - `new_version` creates the next patch version from the selected version.
-- `GET /admin/api/comfyui-workflows/:id/versions` → all versions sorted newest first.
-- `[禁用]` sets `enabled=false` on the current version immediately; it must not create a new version.
-```
+Provider、ComfyUI Workflow 和平台规则都不在服务端后台管理。用户在客户端设置页本地维护 Grsai、百炼和本地 Workflow；服务端只保存 Skill 系统提示词、客户、权益和登录态相关数据。
 
 ### 6.10 公告管理
 
@@ -721,12 +683,12 @@ Admin API:
 模块：[全部 ▼]
 
 按错误码聚合：
-| 错误码 | 模块 | 次数 | 影响设备数 | 客户端版本分布 |
+| 错误码 | 模块 | 次数 | 影响会话数 | 客户端版本分布 |
 | CHENYU_INSTANCE_DOWN | generation | 87 | 23 | v1.2.x: 50, v1.3.0: 37 |
 | SELECTOR_NOT_FOUND | listing | 34 | 12 | v1.2.x: 30, v1.3.0: 4 |
 | PROMPT_PARSE_FAILED | detection | 12 | 8 | v1.3.0: 12 |
 
-点 [详情] → 列出每条错误的设备指纹、时间、堆栈
+点 [详情] → 列出每条错误的会话、时间、堆栈
 ```
 
 ## 7. 路由保护
@@ -744,8 +706,8 @@ export function middleware(req: NextRequest) {
     }
   }
   
-  // /api/* 大部分需要 client token（除了 /api/activate 等）
-  const PUBLIC_API = ['/api/activate', '/api/health']
+  // /api/* 大部分需要 client token（除了微信登录轮询、健康检查等）
+  const PUBLIC_API = ['/api/auth/wechat/qrcode', '/api/auth/wechat/poll', '/api/health']
   if (url.startsWith('/api/') && !PUBLIC_API.includes(url)) {
     const auth = req.headers.get('authorization')
     if (!auth) {
@@ -758,33 +720,33 @@ export function middleware(req: NextRequest) {
 
 ## 8. 风控与监控（v1.5+）
 
-### 8.1 异常激活检测
+### 8.1 异常登录 / 兑换检测
 
 ```ts
-// 每次 /api/activate 后跑：
-async function detectSuspiciousActivation(code: ActivationCode) {
-  // 1. 同码多地理位置同时激活
-  const last24hActivations = await prisma.deviceActivation.findMany({
+// 每次微信登录、兑换码兑换或新会话创建后跑：
+async function detectSuspiciousUsage(user: WechatUser) {
+  // 1. 同一微信用户短时间多地理位置登录
+  const recentSessions = await prisma.clientSession.findMany({
     where: {
-      code_id: code.code,
-      activated_at: { gte: subHours(new Date(), 24) },
+      wechat_user_id: user.id,
+      created_at: { gte: subHours(new Date(), 24) },
     },
   })
-  
-  // 用 IP 推地理（v1.5 加 ip 字段）
-  if (uniqueGeoCountries(last24hActivations) > 2) {
-    await alertAdmin(code, '同码 24h 内激活地理跨国家')
+
+  // 用 IP hash / 粗粒度地理识别异常，不采集硬件机器码
+  if (uniqueGeoCountries(recentSessions) > 2) {
+    await alertAdmin(user, '同一微信用户 24h 内登录地理跨国家')
   }
-  
-  // 2. 同 device_fingerprint 短时间用不同码
-  const sameFingerprint = await prisma.deviceActivation.findMany({
+
+  // 2. 同一兑换码批次短时间异常高兑换
+  const burstRedeems = await prisma.activationCode.findMany({
     where: {
-      device_fingerprint: ...,
-      activated_at: { gte: subDays(new Date(), 7) },
+      batch_id: user.latestBatchId,
+      redeemed_at: { gte: subHours(new Date(), 1) },
     },
   })
-  if (sameFingerprint.length > 3) {
-    await alertAdmin(code, '同设备 7 天内用了 ' + sameFingerprint.length + ' 个码')
+  if (burstRedeems.length > 50) {
+    await alertAdmin(user, '同批次兑换码 1h 内兑换异常')
   }
 }
 ```
@@ -888,25 +850,26 @@ module.exports = {
 - 所有 password_hash 用 bcrypt（cost=12）
 - API Key 风格：`tk_live_xxx`（如果未来引入服务端 token）
 - 不接受跨域请求（CORS 只允许客户端 user-agent 模式 + admin 域名）
-- Rate limit：`/api/activate` 同 IP 每分钟 10 次；`/api/status` 同 token 每分钟 60 次
+- Rate limit：`/api/auth/wechat/*` 同 IP 每分钟 10 次；`/api/redeem-code` 同用户每分钟 5 次；`/api/status` 同 token 每分钟 60 次
 - 输入校验：所有 API 用 zod schema 校验
 
 ## 12. v1 → v1.5 演进
 
 | 项 | v1 | v1.5 |
 |---|---|---|
-| 风控 | 仅 admin 手动看 | 自动检测异常激活 + 飞书告警 |
-| 批次转化率 | 仅看激活数 | 完整漏斗（激活 → 转付费）|
+| 风控 | 仅 admin 手动看 | 自动检测异常登录 / 兑换 + 飞书告警 |
+| 批次转化率 | 仅看兑换数 | 完整漏斗（登录 → 兑换 → 转付费）|
 | 自助续费 | ❌ | 仍 ❌（v2 才上）|
 | 多管理员 | 单管理员 | 多 admin + 角色 |
-| 选择器派发 | ❌（写死客户端）| ✅ 上架选择器云端版本化 |
-| 自定义 Provider | 仅你管理员加 | ❌（继续）|
+| 平台规则 / 选择器 | 客户端内置 | 客户端本地自定义 / 随客户端版本更新 |
+| Provider / Workflow 本地化 | ✅ | ✅ |
 
 ## 13. 测试
 
 - API 端到端测试（Playwright API mode）
 - Prisma 迁移测试
 - JWT 签名验证
-- 激活码激活 → 解绑 → 重激活流程
-- 批量生成激活码的 CSV 导入
-- 异常激活检测
+- 微信扫码登录 → 刷新 token → 登出 / 解绑会话流程
+- 兑换码兑换 → 权益开通流程
+- 批量生成兑换码的 CSV 导入
+- 异常登录 / 兑换检测

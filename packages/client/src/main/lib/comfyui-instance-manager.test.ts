@@ -2,8 +2,10 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChenyuInstanceStatus, type ChenyuServerMapEntry } from './chenyu-cloud-client'
 import {
   ComfyuiInstanceManager,
+  comfyuiUrlCandidates,
   estimateComfyuiCost,
   extractComfyuiUrl,
+  resolveComfyuiUrl,
   stateFromChenyuStatus,
 } from './comfyui-instance-manager'
 import type { SqliteDatabase } from './sqlite'
@@ -103,6 +105,7 @@ function serverMap(url = 'https://comfy.example'): ChenyuServerMapEntry[] {
 
 function manager(
   chenyu: Partial<ConstructorParameters<typeof ComfyuiInstanceManager>[0]['chenyu']>,
+  extra?: Partial<ConstructorParameters<typeof ComfyuiInstanceManager>[0]>,
 ) {
   return new ComfyuiInstanceManager({
     readConfig: async () => ({ workbench_root: '/tmp/workbench' }),
@@ -119,6 +122,7 @@ function manager(
       getBalance: vi.fn(),
       ...chenyu,
     },
+    ...extra,
   })
 }
 
@@ -167,6 +171,51 @@ describe('ComfyuiInstanceManager', () => {
     })
     expect(db.row).toMatchObject({ instanceUuid: 'inst-1', status: 'running' })
     expect(db.execCalls[0]).toContain('CREATE TABLE IF NOT EXISTS comfyui_instances')
+  })
+
+  it('detects ComfyUI from a generic frontend URL when the service title is not stable', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      expect(String(url)).toBe('https://front.example/system_stats')
+      return new Response(JSON.stringify({ system: {}, devices: [] }))
+    }) as unknown as typeof fetch
+    const createByPod = vi.fn().mockResolvedValue({
+      instance_uuid: 'inst-1',
+      status: ChenyuInstanceStatus.Initializing,
+    })
+    const getInstanceInfo = vi.fn().mockResolvedValue({
+      instance_uuid: 'inst-1',
+      status: ChenyuInstanceStatus.Running,
+      server_map: [{ title: 'Frontend', port_type: 'http', url: 'https://front.example/' }],
+    })
+    const service = manager(
+      { createByPod, getInstanceInfo },
+      { fetch: fetchImpl, sleep: async () => undefined },
+    )
+
+    const result = await service.createInstance({
+      pod: { uuid: 'pod-1', title: 'ComfyUI Default', pod_tag: ['4.64'] },
+      gpu: { gpu_uuid: 'gpu-1', gpu_name: 'RTX 4080', status: 1 },
+      autoShutdownMinutes: null,
+    })
+
+    expect(result.comfyuiUrl).toBe('https://front.example')
+    expect(db.row).toMatchObject({ comfyuiUrl: 'https://front.example' })
+  })
+
+  it('accepts a manually selected ComfyUI URL when setting the current instance', async () => {
+    const service = manager({})
+
+    const result = await service.setCurrentInstance(
+      {
+        instance_uuid: 'inst-1',
+        status: ChenyuInstanceStatus.Running,
+        server_map: [{ title: 'Jupyter', port_type: 'http', url: 'https://jupyter.example' }],
+      },
+      { comfyuiUrl: 'https://manual.example/' },
+    )
+
+    expect(result.comfyuiUrl).toBe('https://manual.example')
+    expect(db.row).toMatchObject({ instanceUuid: 'inst-1', comfyuiUrl: 'https://manual.example' })
   })
 
   it('requires a ComfyUI http server_map entry when creating', async () => {
@@ -268,8 +317,16 @@ describe('ComfyuiInstanceManager', () => {
   it('exposes pure helpers for URL extraction, status mapping, and cost estimation', () => {
     expect(extractComfyuiUrl(serverMap('https://comfy.example'))).toBe('https://comfy.example')
     expect(
+      extractComfyuiUrl([{ title: 'Frontend', port_type: 'http', url: 'https://front.example' }]),
+    ).toBe('https://front.example')
+    expect(
       extractComfyuiUrl([{ title: 'Jupyter', port_type: 'http', url: 'https://jupyter' }]),
     ).toBeNull()
+    expect(
+      comfyuiUrlCandidates([], ['https://server.example', 'ssh://ignored']).map(
+        (candidate) => candidate.url,
+      ),
+    ).toEqual(['https://server.example'])
     expect(stateFromChenyuStatus(ChenyuInstanceStatus.Initializing)).toBe('starting')
     expect(stateFromChenyuStatus(ChenyuInstanceStatus.Running)).toBe('running')
     expect(stateFromChenyuStatus(ChenyuInstanceStatus.ShuttingDown)).toBe('shutting_down')
@@ -278,6 +335,28 @@ describe('ComfyuiInstanceManager', () => {
     expect(
       estimateComfyuiCost({ createdAt: now - 90 * 60_000, podPriceHour: 2, gpuPriceHour: 4 }, now),
     ).toEqual({ runningMinutes: 90, estimatedCost: 9 })
+  })
+
+  it('probes ambiguous URLs before choosing a ComfyUI endpoint', async () => {
+    const fetchImpl = vi.fn(async (url: string | URL | Request) => {
+      if (String(url) === 'https://web.example/system_stats') {
+        return new Response(JSON.stringify({ system: {}, devices: [] }))
+      }
+      return new Response('not found', { status: 404 })
+    }) as unknown as typeof fetch
+
+    await expect(
+      resolveComfyuiUrl(
+        {
+          server_map: [
+            { title: 'Jupyter', port_type: 'http', url: 'https://jupyter.example' },
+            { title: 'Web', port_type: 'http', url: 'https://web.example' },
+          ],
+          server_url: [],
+        },
+        { fetch: fetchImpl, timeoutMs: 1 },
+      ),
+    ).resolves.toBe('https://web.example')
   })
 })
 

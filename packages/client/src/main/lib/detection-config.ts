@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import { ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 
 export type DetectionThresholdConfig = {
   passMax: number

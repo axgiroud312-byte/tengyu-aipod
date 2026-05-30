@@ -58,6 +58,7 @@ function createDb() {
       prepare: vi.fn(() => ({
         run: (...values: unknown[]) => rows.push(values),
       })),
+      close: vi.fn(),
     } as unknown as ComfyuiExecutionDatabase,
   }
 }
@@ -122,6 +123,55 @@ describe('ComfyuiChenyuAdapter', () => {
         'extract the floral print',
       ]),
     )
+    expect(db.db.close).toHaveBeenCalledTimes(1)
+  })
+
+  it('uses the refreshed instance URL when creating the ComfyUI client', async () => {
+    const db = createDb()
+    const txtWorkflow: ComfyuiWorkflow = {
+      ...workflow,
+      capability: 'txt2img',
+      inputSlots: [{ name: 'prompt', nodeId: '2', field: 'text' }],
+    }
+    const uploadImage = vi.fn()
+    const queuePrompt = vi.fn().mockResolvedValue('prompt-1')
+    const getHistory = vi.fn().mockResolvedValue({
+      status: { completed: true },
+      outputs: { '9': { images: [{ filename: 'result.png' }] } },
+    })
+    const viewImage = vi.fn().mockResolvedValue(Buffer.from('result-bytes'))
+    const createComfyHttp = vi.fn(() => ({
+      uploadImage,
+      queuePrompt,
+      getHistory,
+      viewImage,
+    }))
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://fresh-comfy.example',
+        }),
+      },
+      createComfyHttp,
+      workflowCache: { get: vi.fn().mockResolvedValue(txtWorkflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+      now: () => 1_700_000_000_000,
+    })
+
+    await adapter.generate({
+      capability: 'txt2img',
+      prompt: 'flower print',
+      workflow_id: 'txt2img-v1',
+      output: { format: 'png' },
+      options: { taskId: 'task-1' },
+    })
+
+    expect(createComfyHttp).toHaveBeenCalledWith('https://fresh-comfy.example')
+    expect(queuePrompt).toHaveBeenCalled()
+    expect(viewImage).toHaveBeenCalledWith('result.png')
   })
 
   it('writes img2img outputs with source print id version names', async () => {
@@ -400,6 +450,7 @@ describe('ComfyuiChenyuAdapter', () => {
       adapter.generate({ capability: 'extract', prompt: 'x', workflow_id: 'wf', output: {} }),
     ).rejects.toMatchObject({
       code: 'CHENYU_INSTANCE_DOWN',
+      message: '默认云机未运行，请先到设置页开机',
       retryable: false,
     })
   })

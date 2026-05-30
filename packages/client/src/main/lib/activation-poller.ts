@@ -14,8 +14,8 @@ import {
   saveActivationSnapshot,
 } from './activation-state'
 import { getSecret } from './keychain'
+import { serverUrl } from './server-base-url'
 
-const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
 const POLL_INTERVAL_MS = CACHE_REFRESH_INTERVAL_MINUTES * 60 * 1000
 const RECENT_CHECK_MS = 60 * 60 * 1000
 
@@ -117,7 +117,7 @@ export class UnauthorizedActivationError extends Error {
 }
 
 async function fetchStatus(token: string) {
-  const response = await fetch(`${SERVER_BASE_URL}${API_PATHS.status}`, {
+  const response = await fetch(serverUrl(API_PATHS.status), {
     headers: { authorization: `Bearer ${token}` },
   })
 

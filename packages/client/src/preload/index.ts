@@ -24,6 +24,17 @@ import type {
 } from '../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../main/lib/browser-profile-lock'
 import type {
+  ChenyuWorkflowMarketInfo,
+  ChenyuWorkflowMarketList,
+} from '../main/lib/chenyu-cloud-client'
+import type {
+  ChenyuCreateFixedPodInstanceInput,
+  ChenyuManagedInstance,
+  ChenyuPodDiscoveryResult,
+  ChenyuSaveSettingsInput,
+  ChenyuSettingsSnapshot,
+} from '../main/lib/chenyu-instance-service'
+import type {
   CollectionClickEvent,
   CollectionClickResult,
   CollectionScrollEvent,
@@ -47,7 +58,12 @@ import type {
   CollectionSessionConfig,
   CollectionSessionEvent,
 } from '../main/lib/collection-session-manager'
-import type { ComfyuiWorkflowSummary } from '../main/lib/comfyui-workflow-cache'
+import type { ComfyuiInstanceSummary } from '../main/lib/comfyui-instance-manager'
+import type {
+  ComfyuiWorkflowCategory,
+  ComfyuiWorkflowSummary,
+  ImportLocalComfyuiWorkflowInput,
+} from '../main/lib/comfyui-workflow-cache'
 import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
   DetectionBatchConfig,
@@ -58,6 +74,8 @@ import type {
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
 import type {
+  ChenyuWorkflowMarketListInput,
+  ChenyuWorkflowRunInput,
   ComfyuiExtractRunInput,
   ComfyuiImg2imgRunInput,
   ComfyuiMattingRunInput,
@@ -72,6 +90,10 @@ import type {
   Txt2imgPromptDraft,
   Txt2imgRunInput,
 } from '../main/lib/generation-service'
+import type {
+  GenerationLocalSettingsSnapshot,
+  SaveGenerationLocalSettingsInput,
+} from '../main/lib/generation-local-config'
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
@@ -101,6 +123,47 @@ const api = {
   keychain: {
     has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,
   },
+  chenyu: {
+    getSettings: () => ipcRenderer.invoke('chenyu:get-settings') as Promise<ChenyuSettingsSnapshot>,
+    saveSettings: (input: ChenyuSaveSettingsInput) =>
+      ipcRenderer.invoke('chenyu:save-settings', input) as Promise<ChenyuSettingsSnapshot>,
+    testConnection: () =>
+      ipcRenderer.invoke('chenyu:test-connection') as Promise<{
+        balance: number
+        card_balance: number
+      }>,
+    discoverPod: (input?: { keyword?: string }) =>
+      ipcRenderer.invoke('chenyu:discover-pod', input) as Promise<ChenyuPodDiscoveryResult>,
+    listGpus: () =>
+      ipcRenderer.invoke('chenyu:list-gpus') as Promise<
+        import('../main/lib/chenyu-cloud-client').ChenyuGpu[]
+      >,
+    listInstances: () =>
+      ipcRenderer.invoke('chenyu:list-instances') as Promise<ChenyuManagedInstance[]>,
+    createFixedPodInstance: (input: ChenyuCreateFixedPodInstanceInput) =>
+      ipcRenderer.invoke(
+        'chenyu:create-fixed-pod-instance',
+        input,
+      ) as Promise<ComfyuiInstanceSummary>,
+    startupInstance: (input: { instanceUuid: string; gpuUuid?: string; gpuNums?: number }) =>
+      ipcRenderer.invoke('chenyu:startup-instance', input) as Promise<
+        import('../main/lib/chenyu-cloud-client').ChenyuInstanceInfo
+      >,
+    shutdownInstance: (input: { instanceUuid: string }) =>
+      ipcRenderer.invoke('chenyu:shutdown-instance', input) as Promise<
+        import('../main/lib/chenyu-cloud-client').ChenyuInstanceInfo
+      >,
+    restartInstance: (input: { instanceUuid: string }) =>
+      ipcRenderer.invoke('chenyu:restart-instance', input) as Promise<
+        import('../main/lib/chenyu-cloud-client').ChenyuInstanceInfo
+      >,
+    destroyInstance: (input: { instanceUuid: string }) =>
+      ipcRenderer.invoke('chenyu:destroy-instance', input) as Promise<{ ok: true }>,
+    setActiveInstance: (input: { instanceUuid: string; comfyuiUrl?: string }) =>
+      ipcRenderer.invoke('chenyu:set-active-instance', input) as Promise<ComfyuiInstanceSummary>,
+    getActiveInstance: () =>
+      ipcRenderer.invoke('chenyu:get-active-instance') as Promise<ComfyuiInstanceSummary | null>,
+  },
   browserProfileLock: {
     list: () => ipcRenderer.invoke('browser-profile-lock:list') as Promise<BrowserProfileHolder[]>,
   },
@@ -113,6 +176,27 @@ const api = {
     }) => ipcRenderer.invoke('skill:list', filter) as Promise<SkillSummary[]>,
     get: (input: { id: string; version?: string }) =>
       ipcRenderer.invoke('skill:get', input) as Promise<Skill>,
+    refresh: () =>
+      ipcRenderer.invoke('skill:refresh') as Promise<
+        { ok: true; count: number } | { ok: false; count: number; error: string }
+      >,
+  },
+  generationSettings: {
+    get: () =>
+      ipcRenderer.invoke('generation-settings:get') as Promise<GenerationLocalSettingsSnapshot>,
+    save: (input: SaveGenerationLocalSettingsInput) =>
+      ipcRenderer.invoke(
+        'generation-settings:save',
+        input,
+      ) as Promise<GenerationLocalSettingsSnapshot>,
+  },
+  workflow: {
+    listLocal: (category?: ComfyuiWorkflowCategory) =>
+      ipcRenderer.invoke('workflow:list-local', category) as Promise<ComfyuiWorkflowSummary[]>,
+    importLocal: (input: ImportLocalComfyuiWorkflowInput) =>
+      ipcRenderer.invoke('workflow:import-local', input) as Promise<ComfyuiWorkflowSummary>,
+    removeLocal: (input: { id: string }) =>
+      ipcRenderer.invoke('workflow:remove-local', input) as Promise<{ ok: true }>,
   },
   tempFile: {
     getUsage: () => ipcRenderer.invoke('temp-file:get-usage') as Promise<Record<string, number>>,
@@ -252,6 +336,16 @@ const api = {
       ipcRenderer.invoke('generation:list-comfyui-mixed-matting-workflows') as Promise<
         ComfyuiWorkflowSummary[]
       >,
+    listChenyuWorkflows: (input?: ChenyuWorkflowMarketListInput) =>
+      ipcRenderer.invoke(
+        'generation:list-chenyu-workflows',
+        input,
+      ) as Promise<ChenyuWorkflowMarketList>,
+    getChenyuWorkflow: (input: { workflowId: string }) =>
+      ipcRenderer.invoke(
+        'generation:get-chenyu-workflow',
+        input,
+      ) as Promise<ChenyuWorkflowMarketInfo>,
     parseManualPrompts: (text: string) =>
       ipcRenderer.invoke('generation:parse-manual-prompts', text) as Promise<string[]>,
     runTxt2img: (input: Txt2imgRunInput) =>
@@ -268,6 +362,8 @@ const api = {
       ipcRenderer.invoke('generation:run-mixed-matting', input) as Promise<string>,
     runComfyuiImg2img: (input: ComfyuiImg2imgRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-img2img', input) as Promise<string>,
+    runChenyuWorkflow: (input: ChenyuWorkflowRunInput) =>
+      ipcRenderer.invoke('generation:run-chenyu-workflow', input) as Promise<string>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: GenerationProgress) => {
         callback(progress)

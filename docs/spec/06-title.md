@@ -11,8 +11,8 @@
 | 参数 | 类型 | 必填 | 默认 | 说明 |
 |---|---|---|---|---|
 | 货号批次目录 | 路径 | ✅ | - | 如 `05-货号成品/模板1_白T正面/` |
-| 平台 | select | ✅ | Temu | 云端拉支持列表 |
-| 语言 | select | ✅ | English | 云端拉支持列表 |
+| 平台 | select | ✅ | Temu | 本地拉支持列表 |
+| 语言 | select | ✅ | English | 本地拉支持列表 |
 | 模型 | select | ✅ | qwen3-vl-plus | 用户可换 flash/max |
 | 取第几张图 | number | ✅ | 1 | 默认第 1 张 |
 | 标题额外要求 | textarea | ❌ | - | "强调原创设计，含 vintage 关键词" |
@@ -28,11 +28,10 @@
   code, title, language, platform, ...
 ```
 
-## 2. 平台与语言（云端派发）
+## 2. 平台与语言（本地配置）
 
 ```ts
-// GET /api/title/platforms → 
-[
+const TITLE_PLATFORMS = [
   { key: 'temu_pop', label: 'Temu PopTemu' },
   { key: 'temu_full', label: 'Temu Full' },
   { key: 'shein', label: 'Shein' },
@@ -43,8 +42,7 @@
   { key: 'mercado', label: 'Mercado Libre' },
 ]
 
-// GET /api/title/languages →
-[
+const TITLE_LANGUAGES = [
   { key: 'en', label: 'English' },
   { key: 'zh', label: '中文' },
   { key: 'es', label: 'Español' },
@@ -58,7 +56,7 @@
 ]
 ```
 
-支持列表可云端调整，新增平台/语言不需要发新版客户端。
+支持列表由客户端本地维护，新增平台/语言需要随客户端版本更新。
 
 ## 3. Skill 系统
 
@@ -430,7 +428,7 @@ CREATE TABLE skus (
 'title:warning'                       → { task_id, sku_code, message }
 ```
 
-## 10. 平台字数约束（参考，可云端调整）
+## 10. 平台字数约束（参考，本地调整）
 
 ```ts
 const PLATFORM_TITLE_MAX_LEN = {
@@ -446,7 +444,7 @@ const PLATFORM_TITLE_MAX_LEN = {
 }
 ```
 
-这个约束实际应该跟 skill 一起从云端拉，本地表是 fallback。
+这个约束由本地平台/语言表和 Skill 配置共同决定，本地表是默认来源。
 
 ## 11. 成本估算
 

@@ -1,4 +1,11 @@
-export type WorkbenchModule = 'collection' | 'title' | 'generation' | 'detection' | 'listing' | 'ps'
+export type WorkbenchModule =
+  | 'collection'
+  | 'title'
+  | 'generation'
+  | 'detection'
+  | 'listing'
+  | 'ps'
+  | 'settings'
 
 export interface WorkbenchModuleMeta {
   key: WorkbenchModule
@@ -56,6 +63,14 @@ export const workbenchModules: WorkbenchModuleMeta[] = [
   },
 ]
 
+export const settingsModule: WorkbenchModuleMeta = {
+  key: 'settings',
+  path: '/settings',
+  label: '设置',
+  title: '设置',
+  description: '管理本机配置、接口密钥和晨羽云实例',
+}
+
 const defaultWorkbenchRoute = '/title'
 const defaultWorkbenchModule: WorkbenchModuleMeta = {
   key: 'title',
@@ -66,15 +81,23 @@ const defaultWorkbenchModule: WorkbenchModuleMeta = {
 }
 
 export function moduleFromPath(pathname: string) {
+  if (pathname === settingsModule.path) {
+    return settingsModule.key
+  }
   return workbenchModules.find((module) => module.path === pathname)?.key ?? null
 }
 
 export function moduleMetaFromPath(pathname: string) {
+  if (pathname === settingsModule.path) {
+    return settingsModule
+  }
   return workbenchModules.find((module) => module.path === pathname) ?? defaultWorkbenchModule
 }
 
 export function isWorkbenchRoute(pathname: string) {
-  return workbenchModules.some((module) => module.path === pathname)
+  return (
+    pathname === settingsModule.path || workbenchModules.some((module) => module.path === pathname)
+  )
 }
 
 export function getStoredWorkbenchRoute() {

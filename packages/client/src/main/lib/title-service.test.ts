@@ -1,7 +1,7 @@
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { type Skill, type SkillSummary, listVisionModels } from '@tengyu-aipod/shared'
+import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { SqliteDatabase } from './sqlite'
@@ -16,6 +16,7 @@ import {
   toXlsxWriteError,
   writeTitlesXlsx,
 } from './title-service'
+import { BAILIAN_VISION_MODELS } from './generation-local-config'
 
 type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
@@ -176,10 +177,15 @@ describe('title service utilities', () => {
 })
 
 describe('TitleService', () => {
-  it('uses the shared vision model list', () => {
+  it('uses the local Bailian vision model snapshot', async () => {
     const service = new TitleService()
 
-    expect(service.listModels()).toEqual(listVisionModels())
+    await expect(service.listModels()).resolves.toEqual(
+      BAILIAN_VISION_MODELS.map((model) => ({
+        key: model.id,
+        label: model.label,
+      })),
+    )
   })
 
   it('runs a title batch with skip mode, retries empty responses, writes xlsx and registers skus', async () => {

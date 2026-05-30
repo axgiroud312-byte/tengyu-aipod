@@ -3,20 +3,30 @@ import { AppErrorClass } from '@tengyu-aipod/shared'
 export const CHENYU_BASE_URL = 'https://www.chenyu.cn/api/open/v2'
 
 export const ChenyuInstanceStatus = {
+  Created: 0,
   Initializing: 1,
   Running: 2,
+  Stopping: 3,
+  StoppedLegacy: 4,
   ShuttingDown: 21,
   Stopped: 22,
+  AbnormalStopped: 23,
+  Starting: 24,
+  Restarting: 27,
 } as const
 
 export type ChenyuInstanceStatusCode =
   (typeof ChenyuInstanceStatus)[keyof typeof ChenyuInstanceStatus]
 
 export type ChenyuInstanceStatusName =
+  | 'created'
   | 'initializing'
   | 'running'
   | 'shutting_down'
   | 'stopped'
+  | 'abnormal_stopped'
+  | 'starting'
+  | 'restarting'
   | 'unknown'
 
 export type ChenyuCloudClientOptions = {
@@ -32,9 +42,22 @@ export type ChenyuListParams = {
   name?: string
 }
 
+export type ChenyuMarketImageListParams = {
+  page?: number
+  page_size?: number
+  cuda_version?: string
+  python_version?: string
+}
+
 export type ChenyuCreateByPodInput = {
   pod_uuid: string
   pod_tag?: string
+  gpu_uuid: string
+  gpu_nums?: number
+}
+
+export type ChenyuCreateByImageInput = {
+  image_uuid: string
   gpu_uuid: string
   gpu_nums?: number
 }
@@ -49,6 +72,16 @@ export type ChenyuShutdownTimerInput = {
   instance_uuid: string
   enable: boolean
   shutdown_time: number
+}
+
+export type ChenyuIdleCloseInput = {
+  instance_uuid: string
+  idle_period_minutes: number
+}
+
+export type ChenyuUpdateTitleInput = {
+  instance_uuid: string
+  title: string
 }
 
 export type ChenyuPod = {
@@ -67,6 +100,19 @@ export type ChenyuGpu = {
 }
 
 export type ChenyuImage = Record<string, unknown>
+
+export type ChenyuPrivateImage = {
+  title: string
+  uuid: string
+  remark?: string
+  layer_count?: number
+  size?: number
+  pod_uuid?: string
+  pod_tag?: string
+  save_image_status?: number
+  create_time?: number
+  [key: string]: unknown
+}
 
 export type ChenyuPrice = {
   hour?: number
@@ -102,8 +148,161 @@ export type ChenyuBalance = {
   card_balance: number
 }
 
+export type ChenyuActionResult = {
+  ok: true
+}
+
+export type ChenyuWorkflowMarketParams = {
+  keyword?: string
+  tag?: string
+  sort?: 'latest' | 'popular' | string
+  page?: number
+  page_size?: number
+}
+
+export type ChenyuWorkflowMarketItem = {
+  workflow_id: string
+  revision_id?: string
+  title: string
+  description?: string
+  cover_url?: string
+  tags?: string[]
+  owner?: Record<string, unknown>
+  quote_currency?: string
+  quote_amount?: string
+  may_incur_external_model_cost?: boolean
+  updated_at?: string
+  [key: string]: unknown
+}
+
+export type ChenyuWorkflowMarketList = {
+  items: ChenyuWorkflowMarketItem[]
+  total: number
+  page?: number
+  page_size?: number
+}
+
+export type ChenyuWorkflowParameter = {
+  key: string
+  display_name?: string
+  type?: string
+  required?: boolean
+  default_value?: unknown
+  [key: string]: unknown
+}
+
+export type ChenyuWorkflowOutputParameter = {
+  key: string
+  type?: string
+  [key: string]: unknown
+}
+
+export type ChenyuWorkflowMarketInfo = {
+  workflow_id: string
+  revision_id?: string
+  title: string
+  description?: string
+  tags?: string[]
+  covers?: string[]
+  owner?: Record<string, unknown>
+  quote_currency?: string
+  quote_amount?: string
+  may_incur_external_model_cost?: boolean
+  external_cost_notice?: string
+  editable_parameter_manifest?: ChenyuWorkflowParameter[]
+  candidate_output_manifest?: ChenyuWorkflowOutputParameter[]
+  [key: string]: unknown
+}
+
+export type ChenyuSubmitWorkflowRunInput = {
+  workflow_id: string
+  revision_id?: string
+  inputs?: Record<string, unknown>
+  idempotency_key: string
+  accept_external_cost_risk?: boolean
+}
+
+export type ChenyuWorkflowRunSubmitResult = {
+  run_order_id: string
+  workflow_id: string
+  revision_id?: string
+  quote_currency?: string
+  quote_amount?: string
+  freeze_status?: string
+  run_status?: string
+  task_id?: string
+  prompt_id?: string
+  billing_run_id?: string
+  idempotent_replay?: boolean
+  [key: string]: unknown
+}
+
+export type ChenyuWorkflowRunsParams = {
+  page?: number
+  page_size?: number
+}
+
+export type ChenyuWorkflowRunInfo = {
+  run_order_id: string
+  workflow_id?: string
+  revision_id?: string
+  run_status?: string
+  outputs?: Record<string, unknown>
+  error_code?: string
+  error_message?: string
+  [key: string]: unknown
+}
+
+export type ChenyuWorkflowRunList = {
+  items?: ChenyuWorkflowRunInfo[]
+  run_list?: ChenyuWorkflowRunInfo[]
+  total?: number
+  page?: number
+  page_size?: number
+}
+
+export type ChenyuWorkflowExecutionLog = {
+  at?: string
+  event_type?: string
+  level?: string
+  message?: string
+  node_id?: string
+  progress_percent?: number | null
+  value?: number | null
+  max?: number | null
+  fraction?: number
+}
+
+export type ChenyuWorkflowExecution = {
+  task_id?: string
+  workflow_id?: string
+  status: string
+  queue_info?: { position?: number; estimated_wait_sec?: number | null } | null
+  progress_percent?: number | null
+  progress_snapshot?: Record<string, unknown>
+  logs?: ChenyuWorkflowExecutionLog[]
+  actual_execution_duration_sec?: number | null
+  compute_cost?: number
+  external_model_cost?: number
+  total_cost?: number
+  outputs?: Record<string, unknown>
+  error?: {
+    code?: string
+    message?: string
+    reason?: string
+    detail?: string
+    engine_code?: string
+    status_code?: number
+  } | null
+  cancel_requested?: boolean
+  created_at?: string
+  started_at?: string | null
+  terminal_at?: string | null
+  [key: string]: unknown
+}
+
 type ChenyuEnvelope<T> = {
-  code: number
+  code: number | string
   msg?: string
   data?: T
 }
@@ -120,6 +319,11 @@ type ChenyuListGpusResponse = {
 
 type ChenyuListImagesResponse = {
   image_list?: ChenyuImage[]
+  total?: number
+}
+
+type ChenyuListPrivateImagesResponse = {
+  image_list?: ChenyuPrivateImage[]
   total?: number
 }
 
@@ -164,12 +368,24 @@ export class ChenyuCloudClient {
     }
   }
 
-  async listImages(params: ChenyuListParams = {}) {
+  async listImages(params: ChenyuMarketImageListParams = {}) {
     const data = await this.get<ChenyuListImagesResponse>('/image/market/list', params)
     return {
       items: data.image_list ?? [],
       total: data.total ?? 0,
     }
+  }
+
+  async listPrivateImages() {
+    const data = await this.get<ChenyuListPrivateImagesResponse>('/image/private/list')
+    return {
+      items: data.image_list ?? [],
+      total: data.total ?? 0,
+    }
+  }
+
+  deletePrivateImage(image_uuid: string) {
+    return this.postAction('/image/private/delete', { image_uuid })
   }
 
   async createByPod(input: ChenyuCreateByPodInput) {
@@ -179,12 +395,19 @@ export class ChenyuCloudClient {
     })
   }
 
+  async createByImage(input: ChenyuCreateByImageInput) {
+    return this.post<ChenyuInstanceInfo>('/instance/create_by_image', {
+      gpu_nums: 1,
+      ...input,
+    })
+  }
+
   async getInstanceInfo(instance_uuid: string) {
     return this.get<ChenyuInstanceInfo>('/instance/info', { instance_uuid })
   }
 
-  async listInstances(params: Omit<ChenyuListParams, 'name'> = {}) {
-    const data = await this.get<ChenyuListInstancesResponse>('/instance/list', params)
+  async listInstances() {
+    const data = await this.get<ChenyuListInstancesResponse>('/instance/list')
     return {
       items: data.instance_list ?? [],
       total: data.total ?? 0,
@@ -207,12 +430,53 @@ export class ChenyuCloudClient {
     return this.post<ChenyuInstanceInfo>('/instance/shutdown_timer', input)
   }
 
+  setIdleClose(input: ChenyuIdleCloseInput) {
+    return this.postAction('/instance/set_idle_close', input)
+  }
+
+  updateTitle(input: ChenyuUpdateTitleInput) {
+    return this.postAction('/instance/update_title', input)
+  }
+
+  saveImage(instance_uuid: string) {
+    return this.postAction('/instance/save_image', { instance_uuid })
+  }
+
   async destroy(instance_uuid: string) {
     return this.post<ChenyuInstanceInfo>('/instance/destroy', { instance_uuid })
   }
 
   async getBalance() {
     return this.get<ChenyuBalance>('/balance/info')
+  }
+
+  async listWorkflowMarket(params: ChenyuWorkflowMarketParams = {}) {
+    const data = await this.get<ChenyuWorkflowMarketList>('/workflow/market/list', params)
+    return {
+      ...data,
+      items: data.items ?? [],
+      total: data.total ?? 0,
+    }
+  }
+
+  getWorkflowMarketInfo(workflow_id: string) {
+    return this.get<ChenyuWorkflowMarketInfo>('/workflow/market/info', { workflow_id })
+  }
+
+  submitWorkflowRun(input: ChenyuSubmitWorkflowRunInput) {
+    return this.post<ChenyuWorkflowRunSubmitResult>('/workflow/run/submit', input)
+  }
+
+  listWorkflowRuns(params: ChenyuWorkflowRunsParams = {}) {
+    return this.get<ChenyuWorkflowRunList>('/workflow/run/list', params)
+  }
+
+  getWorkflowRunInfo(run_order_id: string) {
+    return this.get<ChenyuWorkflowRunInfo>('/workflow/run/info', { run_order_id })
+  }
+
+  getWorkflowRunExecution(run_order_id: string) {
+    return this.get<ChenyuWorkflowExecution>('/workflow/run/execution', { run_order_id })
   }
 
   private async get<T>(path: string, params: Record<string, string | number | undefined> = {}) {
@@ -230,12 +494,31 @@ export class ChenyuCloudClient {
     })
   }
 
-  private async request<T>(path: string, init: RequestInit) {
+  private async postAction(path: string, body: unknown): Promise<ChenyuActionResult> {
+    await this.request<undefined>(
+      path,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+      { allowMissingData: true },
+    )
+    return { ok: true }
+  }
+
+  private async request<T>(
+    path: string,
+    init: RequestInit,
+    options: { allowMissingData?: boolean } = {},
+  ) {
     let attempt = 0
 
     while (true) {
       try {
-        return await this.requestOnce<T>(path, init)
+        return await this.requestOnce<T>(path, init, options)
       } catch (error) {
         const appError = toChenyuAppError(error)
         if (!shouldRetry(appError, attempt, this.maxRetries)) {
@@ -248,7 +531,11 @@ export class ChenyuCloudClient {
     }
   }
 
-  private async requestOnce<T>(path: string, init: RequestInit) {
+  private async requestOnce<T>(
+    path: string,
+    init: RequestInit,
+    options: { allowMissingData?: boolean },
+  ) {
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
 
@@ -265,13 +552,13 @@ export class ChenyuCloudClient {
         throw await httpErrorFromResponse(response)
       }
       const envelope = await parseJsonBody<ChenyuEnvelope<T>>(response)
-      if (envelope.code !== 0) {
+      if (!isChenyuSuccessCode(envelope.code)) {
         throw businessErrorFromEnvelope(envelope)
       }
-      if (envelope.data === undefined) {
+      if (envelope.data === undefined && !options.allowMissingData) {
         throw protocolError('晨羽智云返回缺少 data')
       }
-      return envelope.data
+      return envelope.data as T
     } catch (error) {
       if (error instanceof AppErrorClass) {
         throw error
@@ -284,17 +571,29 @@ export class ChenyuCloudClient {
 }
 
 export function chenyuStatusName(status: number): ChenyuInstanceStatusName {
+  if (status === ChenyuInstanceStatus.Created) {
+    return 'created'
+  }
   if (status === ChenyuInstanceStatus.Initializing) {
     return 'initializing'
   }
   if (status === ChenyuInstanceStatus.Running) {
     return 'running'
   }
-  if (status === ChenyuInstanceStatus.ShuttingDown) {
+  if (status === ChenyuInstanceStatus.Stopping || status === ChenyuInstanceStatus.ShuttingDown) {
     return 'shutting_down'
   }
-  if (status === ChenyuInstanceStatus.Stopped) {
+  if (status === ChenyuInstanceStatus.StoppedLegacy || status === ChenyuInstanceStatus.Stopped) {
     return 'stopped'
+  }
+  if (status === ChenyuInstanceStatus.AbnormalStopped) {
+    return 'abnormal_stopped'
+  }
+  if (status === ChenyuInstanceStatus.Starting) {
+    return 'starting'
+  }
+  if (status === ChenyuInstanceStatus.Restarting) {
+    return 'restarting'
   }
   return 'unknown'
 }
@@ -353,18 +652,27 @@ async function httpErrorFromResponse(response: Response) {
   })
 }
 
-function businessErrorFromEnvelope<T>(envelope: ChenyuEnvelope<T>) {
+function businessErrorFromEnvelope<T>(envelope: Pick<ChenyuEnvelope<T>, 'code' | 'msg'>) {
+  const rateLimited = isRateLimitedCode(envelope.code)
   return new AppErrorClass(
-    envelope.code === 429 ? 'HTTP_429' : 'HTTP_4XX',
+    rateLimited ? 'HTTP_429' : 'HTTP_4XX',
     envelope.msg ?? '晨羽智云请求失败',
-    envelope.code === 429,
+    rateLimited,
     {
-      kind: envelope.code === 429 ? 'network' : 'failed',
+      kind: rateLimited ? 'network' : 'failed',
       provider: 'comfyui-chenyu',
       chenyuCode: envelope.code,
       message: envelope.msg ?? '',
     },
   )
+}
+
+function isChenyuSuccessCode(code: number | string) {
+  return String(code) === '0'
+}
+
+function isRateLimitedCode(code: number | string) {
+  return String(code) === '429'
 }
 
 async function readHttpErrorMessage(response: Response) {

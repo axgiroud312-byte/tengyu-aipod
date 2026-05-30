@@ -1,8 +1,14 @@
-import { AppErrorClass, type GenerationCapability, type Skill } from '@tengyu-aipod/shared'
+import {
+  AppErrorClass,
+  type GenerationCapability,
+  type Skill,
+} from '@tengyu-aipod/shared'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { AliyunBailianAdapter } from './aliyun-bailian-adapter'
+import { normalizeGenerationLocalConfig } from './generation-local-config'
 import { getSecret } from './keychain'
 import { skillCacheManager } from './skill-cache'
+import { readAppConfig } from './workbench-config'
 
 export type PromptReferenceImage = {
   base64: string
@@ -13,7 +19,7 @@ export type GeneratePromptsInput = {
   skill?: Skill
   skillId?: string
   skillVersion?: string
-  category?: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>
+  category?: string
   variables?: Record<string, unknown>
   refImages?: PromptReferenceImage[]
   count: number
@@ -25,6 +31,7 @@ export type GeneratePromptsInput = {
 export type PromptGeneratorDependencies = {
   skillCache?: Pick<typeof skillCacheManager, 'getSkill' | 'listSkills'>
   getSecret?: typeof getSecret
+  readConfig?: typeof readAppConfig
   createBailianAdapter?: (
     apiKey: string,
   ) => Pick<AliyunBailianAdapter, 'chatCompletion' | 'visionCompletion'>
@@ -35,6 +42,7 @@ export class PromptGeneratorService {
     input: GeneratePromptsInput,
     dependencies: PromptGeneratorDependencies = {},
   ): Promise<string[]> {
+    const count = normalizePromptCount(input.count)
     const skill = await this.resolveSkill(input, dependencies.skillCache ?? skillCacheManager)
     const apiKey = await (dependencies.getSecret ?? getSecret)('bailian')
     if (!apiKey) {
@@ -44,34 +52,43 @@ export class PromptGeneratorService {
     }
 
     const adapter =
-      dependencies.createBailianAdapter?.(apiKey) ??
-      new AliyunBailianAdapter({ apiKey, region: 'cn', maxRetries: 0 })
-    const model = input.model ?? skill.recommendedModel ?? 'qwen3-vl-plus'
-    const messages = createPromptMessages(
-      skill,
-      input.variables,
-      input.refImages,
-      input.userMessage,
+      dependencies.createBailianAdapter?.(apiKey) ?? createDefaultBailianAdapter(apiKey)
+    const hasReferenceImages = Boolean(input.refImages?.length)
+    const settings = normalizeGenerationLocalConfig(
+      (await (dependencies.readConfig ?? readAppConfig)()).generation,
     )
+    const model =
+      input.model ?? (hasReferenceImages ? settings.bailian_vision_model : settings.bailian_text_model)
     const wantsJson =
       input.responseFormat === 'json_object' || promptAsksForJson(skill.systemPrompt)
     const response_format = wantsJson ? { type: 'json_object' as const } : undefined
-    const response =
-      input.refImages && input.refImages.length > 0
-        ? await adapter.visionCompletion({
-            model,
-            messages,
-            ...(response_format ? { response_format } : {}),
-          })
-        : await adapter.chatCompletion({
-            model,
-            messages,
-            ...(response_format ? { response_format } : {}),
-          })
+    const chunks = chunkPromptCount(count)
+    const promptChunks = await Promise.all(
+      chunks.map(async (chunkCount) => {
+        const messages = createPromptMessages(
+          skill,
+          { ...input.variables, count: chunkCount },
+          input.refImages,
+          input.userMessage,
+        )
+        const response = hasReferenceImages
+          ? await adapter.visionCompletion({
+              model,
+              messages,
+              ...(response_format ? { response_format } : {}),
+            })
+          : await adapter.chatCompletion({
+              model,
+              messages,
+              ...(response_format ? { response_format } : {}),
+            })
 
-    const prompts = parsePrompts(response.text, input.count)
+        return parsePromptJsonStrict(response.text, chunkCount)
+      }),
+    )
+    const prompts = promptChunks.flat().slice(0, count)
     if (prompts.length === 0) {
-      throw new AppErrorClass('HTTP_5XX', '模型返回无法解析的提示词', true, {
+      throw new AppErrorClass('HTTP_5XX', '模型返回 JSON 缺少 prompts 字符串数组', true, {
         kind: 'llm_parse_failed',
       })
     }
@@ -113,6 +130,19 @@ export class PromptGeneratorService {
 }
 
 export const promptGeneratorService = new PromptGeneratorService()
+
+function createDefaultBailianAdapter(apiKey: string) {
+  return new AliyunBailianAdapter({
+    apiKey,
+    region: 'cn',
+    maxRetries: 0,
+  })
+}
+
+export function parsePromptJsonStrict(text: string, count: number): string[] {
+  const limit = normalizePromptCount(count)
+  return parseStrictPromptJson(text, limit) ?? parseStrictPromptJsonFromCodeBlock(text, limit) ?? []
+}
 
 export function parsePrompts(text: string, count: number): string[] {
   const limit = normalizePromptCount(count)
@@ -180,6 +210,22 @@ function parsePromptJsonFromCodeBlock(text: string, count: number) {
   return parsePromptJson(codeBlock[1], count)
 }
 
+function parseStrictPromptJson(text: string, count: number) {
+  try {
+    return strictPromptsFromParsed(JSON.parse(text), count)
+  } catch {
+    return null
+  }
+}
+
+function parseStrictPromptJsonFromCodeBlock(text: string, count: number) {
+  const codeBlock = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/i)
+  if (!codeBlock?.[1]) {
+    return null
+  }
+  return parseStrictPromptJson(codeBlock[1], count)
+}
+
 function promptsFromParsed(parsed: unknown, count: number) {
   if (Array.isArray(parsed)) {
     return cleanPrompts(parsed, count)
@@ -194,6 +240,18 @@ function promptsFromParsed(parsed: unknown, count: number) {
   }
 
   return null
+}
+
+function strictPromptsFromParsed(parsed: unknown, count: number) {
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    return null
+  }
+
+  const value = (parsed as Record<string, unknown>).prompts
+  if (!Array.isArray(value)) {
+    return null
+  }
+  return cleanPrompts(value, count)
 }
 
 function parsePromptLines(text: string, count: number) {
@@ -214,7 +272,18 @@ function normalizePromptCount(count: number) {
   if (!Number.isFinite(count)) {
     return 1
   }
-  return Math.max(1, Math.floor(count))
+  return Math.max(1, Math.min(1000, Math.floor(count)))
+}
+
+function chunkPromptCount(count: number) {
+  const chunks: number[] = []
+  let remaining = count
+  while (remaining > 0) {
+    const chunk = Math.min(100, remaining)
+    chunks.push(chunk)
+    remaining -= chunk
+  }
+  return chunks
 }
 
 function renderVariables(variables: Record<string, unknown>) {

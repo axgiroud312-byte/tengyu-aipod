@@ -1,4 +1,4 @@
-# ADR-0003 — Skill / Provider / ComfyUI 工作流云端派发，但服务器不代理生图
+# ADR-0003 — 云端只派发 Skill 系统提示词，本地管理模型和 Workflow
 
 **状态**：已采纳
 **日期**：2026-05-23
@@ -7,30 +7,33 @@
 
 腾域的"内置经验"主要由 3 类资产承载：
 
-1. **Skill**：每个模块的 LLM 提示词模板（提取/检测/标题等）
-2. **Provider 配置**：付费生图服务商（Grsai）、视觉 LLM 服务商（百炼）的 API 端点、模型列表等
-3. **ComfyUI 工作流包**：晨羽智云上跑的工作流 JSON + input/output 槽
+1. **Skill**：云端后台维护的系统提示词，当前生图固定 4 个槽位
+2. **本地模型配置**：Grsai、百炼、晨羽 API Key、模型清单、并发、重试等
+3. **本地 ComfyUI Workflow**：用户在客户端导入的 workflow JSON + input/output 槽
 
-这些资产需要**持续优化和迭代**（比如店小秘改版后改选择器、模型升级后改提示词）。理想情况下，**不需要客户端发版**就能更新这些资产。
+Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 和 Workflow 则更适合留在用户本机，避免云端保存服务商账号和复杂工作流文件。
 
 ## 决策
 
-**采纳"配置派发，不代理流量"的设计：**
+**采纳"云端轻配置，本地运行"的设计：**
 
-- ✅ 云端服务器**派发**：Skill、Provider 配置、ComfyUI 工作流包、平台规则、公告、版本通知
-- ❌ 云端服务器**不代理**：用户的图片、生图调用、LLM 调用、设备指纹之外的任何业务数据
-- ❌ 云端服务器**不存储**：用户的 API Key、激活码以外的任何身份信息
+- ✅ 云端服务器**管理**：微信登录、权益、客户、Skill 系统提示词、公告、版本通知
+- ✅ 客户端本地**管理**：Provider / 模型清单 / API Key / ComfyUI Workflow
+- ❌ 云端服务器**不代理**：用户的图片、生图调用、LLM 调用、任务数据等业务数据
+- ❌ 云端服务器**不存储**：用户的 API Key、图片、提示词、生成内容；身份侧只存微信身份、客户、权益、会话和兑换码
 
 ## 数据流
 
 ```
 腾域服务器（你的）
-  ├─ 派发 Skill / Provider / Workflow / Announcement
-  └─ 不接触图片
+  ├─ 微信登录 / 权益校验 / 客户管理
+  ├─ 派发 Skill 系统提示词 / Announcement / ClientVersion
+  └─ 不接触图片、API Key、模型配置、Workflow
         │
         ▼
 腾域客户端（用户的本机）
-  ├─ 缓存 Skill / Provider / Workflow
+  ├─ 缓存 Skill
+  ├─ 本地保存 Provider / 模型清单 / Workflow
   ├─ 用本地存的 API Key（OS keychain）
   └─ 直接调外部服务：
         ├─ 晨羽智云（用户付费）
@@ -42,9 +45,9 @@
 
 | 方案 | 优势 | 劣势 |
 |---|---|---|
-| **配置派发（采纳）** | 服务器轻量（2 核 2G）、隐私好、用户独立付费 | 用户要管理多个外部账号 |
+| **Skill 云端派发 + 模型/Workflow 本地化（采纳）** | 服务器轻量（2 核 2G）、隐私好、服务商账号不进云端 | 用户要管理多个外部账号 |
 | 服务器代理生图 | 用户体验简单（不用注册外部账号）| 服务器流量大、成本高、隐私差、需要存用户 API Key 或自己掏钱 |
-| 完全本地化（不派发）| 最简 | Skill / 工作流不能持续更新，迭代慢 |
+| 完全本地化（不派发）| 最简 | Skill 不能持续更新，迭代慢 |
 
 ## 选择"配置派发"的理由
 
@@ -75,31 +78,30 @@
 
 ### 4. 抗破解的天然护城河
 
-- 破解版客户端**拿不到最新 Skill / 工作流**
+- 破解版客户端**拿不到最新 Skill**
 - 持续更新 = 持续保鲜，破解版迅速过时
 - 见 ADR-0008 / spec/PRD §10
 
 ## 接口设计
 
-派发 API（spec/08-server §4）：
+云端 API（spec/08-server §4）：
 ```
 GET /api/skills
 GET /api/skills/:id
-GET /api/providers
-GET /api/comfyui-workflows
-GET /api/comfyui-workflows/:id/content
-GET /api/platform-rules
+GET /api/status
+GET /api/auth/wechat/*
 GET /api/announcements/active
 GET /api/client-version/check
 ```
 
-腾域客户端**只调这些**和 `/api/activate` `/api/status` `/api/telemetry/error`。**不调任何生图/LLM 端点**。
+腾域客户端**只调这些**和 `/api/auth/wechat/*` `/api/redeem-code` `/api/status` `/api/telemetry/error`。**不调任何生图/LLM 端点**。
 
 ## 缓存策略
 
-- 启动时拉全量并缓存到 `.workbench/cache/`
+- 启动时拉 Skill 并缓存到 `.workbench/cache/skills`
 - 每 30 分钟后台静默刷新
-- 离线时用本地缓存，最长 7 天
+- 离线时用本地 Skill 缓存，最长 7 天
+- Provider / 模型清单 / ComfyUI Workflow 不从云端同步，保存在客户端本地配置和本地 Workflow 目录
 - 见 spec/00-overview §5
 
 ## 影响
@@ -114,7 +116,7 @@ GET /api/client-version/check
 ### 负面
 
 - 用户要管理多个外部账号（晨羽/Grsai/百炼）—— 通过首次启动引导和文档缓解
-- 余额查询体验差（不同 provider 有不同的余额 API，有些没有）—— v1 不强求统一
+- 费用/余额展示不统一（不同 provider 有不同 API，有些没有）—— v1 主界面不做统一余额展示；晨羽只用连接检测和显式开关机降低费用风险
 - 离线场景受限（必须 7 天联网一次）
 
 ## 替代决策的触发条件

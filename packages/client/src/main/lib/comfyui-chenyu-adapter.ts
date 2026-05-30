@@ -21,13 +21,18 @@ export type ComfyuiWorkflowCache = {
   ): Promise<CachedComfyuiWorkflow>
 }
 
-export type ComfyuiExecutionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'>
+export type ComfyuiExecutionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'> & {
+  close?: () => void
+}
 
 export type ComfyuiChenyuAdapterOptions = {
   instanceManager: {
     refreshCurrentInstance(): Promise<ComfyuiInstanceSummary | null>
   }
-  comfyHttp: Pick<ComfyHttpClient, 'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'>
+  comfyHttp?: Pick<ComfyHttpClient, 'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'>
+  createComfyHttp?: (
+    baseUrl: string,
+  ) => Pick<ComfyHttpClient, 'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'>
   workflowCache: ComfyuiWorkflowCache
   workbenchRoot: string
   openDatabase: (workbenchRoot: string) => ComfyuiExecutionDatabase
@@ -61,11 +66,12 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
     const instance = await this.options.instanceManager.refreshCurrentInstance()
     if (!instance || instance.status !== 'running') {
-      throw new AppErrorClass('CHENYU_INSTANCE_DOWN', 'ComfyUI 实例未运行', false, {
+      throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '默认云机未运行，请先到设置页开机', false, {
         provider: 'comfyui-chenyu',
         status: instance?.status ?? 'none',
       })
     }
+    const comfyHttp = this.comfyHttpFor(instance.comfyuiUrl)
 
     if (!req.workflow_id) {
       throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 工作流', false, {
@@ -79,18 +85,19 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       workflowCategoryFromRequest(req),
       workflowVersionFromRequest(req),
     )
-    const uploadedImages = await this.uploadReferenceImages(req)
+    const uploadedImages = await this.uploadReferenceImages(req, comfyHttp)
     const injectedWorkflow = injectComfyuiInputs(workflow.workflowJson, workflow.inputSlots, req, {
       uploadedImages,
     })
-    const promptId = await this.options.comfyHttp.queuePrompt(injectedWorkflow)
-    const history = await this.options.comfyHttp.getHistory(promptId)
+    const promptId = await comfyHttp.queuePrompt(injectedWorkflow)
+    const history = await comfyHttp.getHistory(promptId)
     const outputs = outputsFromHistory(history, workflow.outputSlots)
     const images = await this.downloadAndPersistOutputs({
       req,
       workflow,
       outputs,
       promptId,
+      comfyHttp,
     })
 
     return {
@@ -103,12 +110,25 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     }
   }
 
-  private async uploadReferenceImages(req: GenerateRequest) {
+  private comfyHttpFor(baseUrl: string) {
+    const client = this.options.createComfyHttp?.(baseUrl) ?? this.options.comfyHttp
+    if (!client) {
+      throw new AppErrorClass('HTTP_5XX', '缺少 ComfyUI 客户端', true, {
+        provider: 'comfyui-chenyu',
+      })
+    }
+    return client
+  }
+
+  private async uploadReferenceImages(
+    req: GenerateRequest,
+    comfyHttp: Pick<ComfyHttpClient, 'uploadImage'>,
+  ) {
     const uploaded: string[] = []
     for (const [index, image] of (req.reference_images ?? []).entries()) {
       const filename = referenceFilename(image.mime_type, index)
       const buffer = Buffer.from(stripDataUrlPrefix(image.base64), 'base64')
-      uploaded.push(await this.options.comfyHttp.uploadImage(buffer, filename))
+      uploaded.push(await comfyHttp.uploadImage(buffer, filename))
     }
     return uploaded
   }
@@ -118,6 +138,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     workflow: CachedComfyuiWorkflow
     outputs: ComfyImageOutput[]
     promptId: string
+    comfyHttp: Pick<ComfyHttpClient, 'viewImage'>
   }) {
     const outputFolder = join(
       this.options.workbenchRoot,
@@ -126,45 +147,49 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     )
     await mkdir(outputFolder, { recursive: true })
     const db = this.options.openDatabase(this.options.workbenchRoot)
-    ensureArtifactsTable(db)
+    try {
+      ensureArtifactsTable(db)
 
-    const images: NonNullable<GenerateResponse['images']> = []
-    for (const output of input.outputs) {
-      if (!output.filename) {
-        throw new AppErrorClass('HTTP_5XX', 'ComfyUI 输出缺少文件名', true, {
-          provider: 'comfyui-chenyu',
-          promptId: input.promptId,
+      const images: NonNullable<GenerateResponse['images']> = []
+      for (const output of input.outputs) {
+        if (!output.filename) {
+          throw new AppErrorClass('HTTP_5XX', 'ComfyUI 输出缺少文件名', true, {
+            provider: 'comfyui-chenyu',
+            promptId: input.promptId,
+          })
+        }
+
+        const buffer = await input.comfyHttp.viewImage(output.filename)
+        const printId = printIdFromRequest(input.req) ?? newPrintId()
+        const targetPath =
+          input.req.capability === 'img2img'
+            ? await uniqueVersionedTargetPath(outputFolder, printId, '.png')
+            : join(
+                outputFolder,
+                `${printId}${input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)}`,
+              )
+        await writeFile(targetPath, buffer)
+        const artifactId = await registerComfyuiArtifact(db, {
+          taskId: taskIdFromRequest(input.req),
+          printId,
+          targetPath,
+          capability: input.req.capability,
+          workflow: input.workflow,
+          prompt: input.req.prompt,
+          params: input.req.options ?? {},
+          sourceArtifactIds: sourceArtifactIdsFromRequest(input.req),
+          createdAt: this.now(),
+        })
+        images.push({
+          url: pathToFileURL(targetPath).toString(),
+          local_path: targetPath,
         })
       }
 
-      const buffer = await this.options.comfyHttp.viewImage(output.filename)
-      const printId = printIdFromRequest(input.req) ?? newPrintId()
-      const targetPath =
-        input.req.capability === 'img2img'
-          ? await uniqueVersionedTargetPath(outputFolder, printId, '.png')
-          : join(
-              outputFolder,
-              `${printId}${input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)}`,
-            )
-      await writeFile(targetPath, buffer)
-      const artifactId = await registerComfyuiArtifact(db, {
-        taskId: taskIdFromRequest(input.req),
-        printId,
-        targetPath,
-        capability: input.req.capability,
-        workflow: input.workflow,
-        prompt: input.req.prompt,
-        params: input.req.options ?? {},
-        sourceArtifactIds: sourceArtifactIdsFromRequest(input.req),
-        createdAt: this.now(),
-      })
-      images.push({
-        url: pathToFileURL(targetPath).toString(),
-        local_path: targetPath,
-      })
+      return images
+    } finally {
+      db.close?.()
     }
-
-    return images
   }
 }
 

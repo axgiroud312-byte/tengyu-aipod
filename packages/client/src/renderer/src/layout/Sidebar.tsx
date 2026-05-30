@@ -23,6 +23,7 @@ const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>
   detection: ShieldCheck,
   listing: Rocket,
   ps: Layers,
+  settings: Settings2,
 }
 
 interface SidebarProps {
@@ -78,17 +79,22 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
       </nav>
 
       <div className="space-y-1 border-t px-2 py-3">
-        <button
-          className={cn(
-            'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground',
-            collapsed ? 'justify-center px-0' : null,
-          )}
+        <NavLink
+          className={({ isActive }) =>
+            cn(
+              'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
+              collapsed ? 'justify-center px-0' : null,
+              isActive
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+            )
+          }
           title={collapsed ? '设置' : undefined}
-          type="button"
+          to="/settings"
         >
           <Settings2 className="h-4 w-4 shrink-0" />
           {collapsed ? null : <span>设置</span>}
-        </button>
+        </NavLink>
         <button
           className={cn(
             'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground',

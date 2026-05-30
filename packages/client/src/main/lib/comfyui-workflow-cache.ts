@@ -1,18 +1,10 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
-import {
-  API_PATHS,
-  CACHE_REFRESH_INTERVAL_MINUTES,
-  type ComfyuiWorkflow,
-  type GenerationCapability,
-} from '@tengyu-aipod/shared'
-import { app } from 'electron'
+import { type ComfyuiWorkflow, type GenerationCapability } from '@tengyu-aipod/shared'
+import { app, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
-import { getSecret } from './keychain'
 
-const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
-const REFRESH_INTERVAL_MS = CACHE_REFRESH_INTERVAL_MINUTES * 60 * 1000
-const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const INDEX_FILE_NAME = 'index.json'
 
 export type ComfyuiWorkflowCategory = GenerationCapability | 'matting-mixed'
@@ -24,21 +16,22 @@ export type ComfyuiWorkflowSummary = Pick<
   'id' | 'version' | 'name' | 'capability' | 'requiredModels'
 >
 
-type WorkflowIndexFile = {
-  refreshed_at: number
-  items: ComfyuiWorkflowSummary[]
+export type ImportLocalComfyuiWorkflowInput = {
+  name: string
+  capability: ComfyuiWorkflowCategory
+  workflowJsonText: string
+  requiredModels?: string[]
 }
 
-type ApiResponse<T> = {
-  ok: boolean
-  data?: T
-  error?: { code: string; message?: string }
+type WorkflowIndexFile = {
+  updated_at: number
+  items: ComfyuiWorkflowSummary[]
 }
 
 async function workflowCacheDir() {
   const config = await readAppConfig()
   const root = config.workbench_root ?? app.getPath('userData')
-  return join(root, '.workbench', 'cache', 'comfyui-workflows')
+  return join(root, '.workbench', 'local-workflows')
 }
 
 function indexFilePath(root: string) {
@@ -68,7 +61,7 @@ function stringValue(value: unknown, fallback = '') {
 
 function stringArrayValue(value: unknown) {
   return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === 'string')
+    ? value.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
     : []
 }
 
@@ -119,28 +112,6 @@ function normalizeWorkflow(raw: unknown): CachedComfyuiWorkflow {
   }
 }
 
-function normalizeSummary(raw: unknown): ComfyuiWorkflowSummary | null {
-  const record = isRecord(raw) ? raw : {}
-  if (record.enabled === false) {
-    return null
-  }
-
-  const id = stringValue(record.id)
-  const version = stringValue(record.version)
-  const name = stringValue(record.name)
-  if (!id || !version || !name) {
-    return null
-  }
-
-  return {
-    id,
-    version,
-    name,
-    capability: normalizeCapability(record.capability ?? record.category),
-    requiredModels: stringArrayValue(record.requiredModels ?? record.required_models),
-  }
-}
-
 function matchesCategory(workflow: ComfyuiWorkflowSummary, category?: ComfyuiWorkflowCategory) {
   return !category || workflow.capability === category
 }
@@ -153,32 +124,83 @@ function ensureCapability(workflow: CachedComfyuiWorkflow, capability?: ComfyuiW
   }
 }
 
-function unwrapApiData<T>(raw: unknown): T {
-  if (isRecord(raw) && 'ok' in raw) {
-    const response = raw as ApiResponse<T>
-    if (!response.ok || response.data === undefined) {
-      throw new Error(response.error?.code ?? 'COMFYUI_WORKFLOW_REQUEST_FAILED')
-    }
-    return response.data
+function nodeEntries(workflow: unknown) {
+  if (!isRecord(workflow)) {
+    return []
   }
-  return raw as T
+  return Object.entries(workflow)
+}
+
+function classTypeOf(node: unknown) {
+  return isRecord(node) && typeof node.class_type === 'string' ? node.class_type : ''
+}
+
+function detectSlots(workflowJson: unknown) {
+  const inputSlots = []
+  const outputSlots = []
+
+  for (const [nodeId, node] of nodeEntries(workflowJson)) {
+    const classType = classTypeOf(node)
+    if (/loadimage/i.test(classType)) {
+      inputSlots.push({
+        name: `image_${inputSlots.length + 1}`,
+        nodeId,
+        field: 'image',
+        imageIndex: inputSlots.length,
+      })
+    }
+    if (/saveimage|previewimage/i.test(classType)) {
+      outputSlots.push({
+        name: `output_${outputSlots.length + 1}`,
+        nodeId,
+        field: 'images',
+      })
+    }
+  }
+
+  return { inputSlots, outputSlots }
+}
+
+function workflowSummary(workflow: CachedComfyuiWorkflow): ComfyuiWorkflowSummary {
+  return {
+    id: workflow.id,
+    version: workflow.version,
+    name: workflow.name,
+    capability: workflow.capability,
+    requiredModels: workflow.requiredModels,
+  }
+}
+
+function slugFromName(name: string) {
+  return (
+    name
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9\u4e00-\u9fa5]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 48) || 'workflow'
+  )
+}
+
+function parseWorkflowJson(text: string) {
+  try {
+    const parsed = JSON.parse(text) as unknown
+    if (!isRecord(parsed)) {
+      throw new Error('Workflow JSON 必须是对象')
+    }
+    return parsed
+  } catch (error) {
+    if (error instanceof Error) {
+      throw new Error(`Workflow JSON 无法解析：${error.message}`)
+    }
+    throw new Error('Workflow JSON 无法解析')
+  }
 }
 
 export class ComfyuiWorkflowCacheManager {
-  private lastRefreshAt = 0
-
   async listWorkflows(category?: ComfyuiWorkflowCategory): Promise<ComfyuiWorkflowSummary[]> {
-    if (Date.now() - this.lastRefreshAt > REFRESH_INTERVAL_MS) {
-      await this.refresh(category).catch(() => null)
-    }
-
-    try {
-      const fresh = await this.fetchWorkflowSummaries(category)
-      await this.saveIndex(fresh)
-      return fresh
-    } catch {
-      return this.readCachedSummaries(category)
-    }
+    const index = await this.readIndex()
+    return index.items.filter((workflow) => matchesCategory(workflow, category))
   }
 
   async get(
@@ -186,88 +208,68 @@ export class ComfyuiWorkflowCacheManager {
     capability?: ComfyuiWorkflowCategory,
     version?: string,
   ): Promise<CachedComfyuiWorkflow> {
-    if (version) {
-      const cached = await this.readCachedWorkflow(id, version)
-      if (cached) {
-        ensureCapability(cached, capability)
-        return cached
-      }
+    const workflow = version
+      ? await this.readWorkflow(id, version)
+      : await this.readLatestWorkflow(id)
+    if (!workflow) {
+      throw new Error('本地 ComfyUI Workflow 不存在，请先在设置页导入')
     }
-
-    try {
-      const workflow = await this.fetchWorkflow(id, version)
-      ensureCapability(workflow, capability)
-      await this.saveWorkflow(workflow)
-      return workflow
-    } catch (error) {
-      const cached = version
-        ? await this.readCachedWorkflow(id, version)
-        : await this.readLatestCachedWorkflow(id)
-      if (cached) {
-        ensureCapability(cached, capability)
-        return cached
-      }
-      throw error
-    }
+    ensureCapability(workflow, capability)
+    return workflow
   }
 
   async refresh(category?: ComfyuiWorkflowCategory) {
-    const summaries = await this.fetchWorkflowSummaries(category)
-    await this.saveIndex(summaries)
-    this.lastRefreshAt = Date.now()
-    return summaries
+    return this.listWorkflows(category)
+  }
+
+  async importWorkflow(input: ImportLocalComfyuiWorkflowInput) {
+    const workflowJson = parseWorkflowJson(input.workflowJsonText)
+    const name = input.name.trim() || '未命名 Workflow'
+    const capability = normalizeCapability(input.capability)
+    const id = `${slugFromName(name)}-${randomUUID().slice(0, 8)}`
+    const version = '1.0.0'
+    const slots = detectSlots(workflowJson)
+    const workflow: CachedComfyuiWorkflow = {
+      id,
+      name,
+      version,
+      capability,
+      workflowJson,
+      inputSlots: slots.inputSlots,
+      outputSlots: slots.outputSlots,
+      requiredModels: input.requiredModels ?? [],
+    }
+
+    await this.saveWorkflow(workflow)
+    const index = await this.readIndex()
+    await this.saveIndex([...index.items.filter((item) => item.id !== id), workflowSummary(workflow)])
+    return workflowSummary(workflow)
+  }
+
+  async removeWorkflow(id: string) {
+    const root = await this.rootDir()
+    await rm(join(root, id), { recursive: true, force: true })
+    const index = await this.readIndex()
+    await this.saveIndex(index.items.filter((item) => item.id !== id))
+    return { ok: true as const }
   }
 
   private async rootDir() {
     return workflowCacheDir()
   }
 
-  private async fetchWorkflowSummaries(category?: ComfyuiWorkflowCategory) {
-    const searchParams = new URLSearchParams()
-    if (category) {
-      searchParams.set('category', category)
+  private async readIndex(): Promise<WorkflowIndexFile> {
+    try {
+      return await readJson<WorkflowIndexFile>(indexFilePath(await this.rootDir()))
+    } catch {
+      return { updated_at: 0, items: [] }
     }
-    const query = searchParams.toString()
-    const raw = await this.fetchJson<unknown[]>(
-      `${SERVER_BASE_URL}${API_PATHS.comfyuiWorkflows}${query ? `?${query}` : ''}`,
-    )
-    return raw
-      .map(normalizeSummary)
-      .filter((workflow): workflow is ComfyuiWorkflowSummary => Boolean(workflow))
-      .filter((workflow) => matchesCategory(workflow, category))
-  }
-
-  private async fetchWorkflow(id: string, version?: string) {
-    const searchParams = new URLSearchParams()
-    if (version) {
-      searchParams.set('version', version)
-    }
-    const query = searchParams.toString()
-    const raw = await this.fetchJson<unknown>(
-      `${SERVER_BASE_URL}${API_PATHS.comfyuiWorkflows}/${encodeURIComponent(id)}/content${
-        query ? `?${query}` : ''
-      }`,
-    )
-    return normalizeWorkflow(raw)
-  }
-
-  private async fetchJson<T>(url: string) {
-    const token = await getSecret('activation_token')
-    const response = await fetch(url, {
-      headers: token ? { authorization: `Bearer ${token}` } : {},
-    })
-    if (!response.ok) {
-      throw new Error(`comfyui workflow request failed: ${response.status}`)
-    }
-
-    return unwrapApiData<T>(await response.json())
   }
 
   private async saveIndex(items: ComfyuiWorkflowSummary[]) {
-    const root = await this.rootDir()
-    await writeJson(indexFilePath(root), {
-      refreshed_at: Date.now(),
-      items,
+    await writeJson(indexFilePath(await this.rootDir()), {
+      updated_at: Date.now(),
+      items: items.sort((left, right) => left.name.localeCompare(right.name, 'zh-CN')),
     } satisfies WorkflowIndexFile)
   }
 
@@ -275,19 +277,7 @@ export class ComfyuiWorkflowCacheManager {
     await writeJson(workflowFilePath(await this.rootDir(), workflow.id, workflow.version), workflow)
   }
 
-  private async readCachedSummaries(category?: ComfyuiWorkflowCategory) {
-    try {
-      const index = await readJson<WorkflowIndexFile>(indexFilePath(await this.rootDir()))
-      if (Date.now() - index.refreshed_at > CACHE_MAX_AGE_MS) {
-        return []
-      }
-      return index.items.filter((workflow) => matchesCategory(workflow, category))
-    } catch {
-      return []
-    }
-  }
-
-  private async readCachedWorkflow(id: string, version: string) {
+  private async readWorkflow(id: string, version: string) {
     try {
       return normalizeWorkflow(
         await readJson<unknown>(workflowFilePath(await this.rootDir(), id, version)),
@@ -297,14 +287,13 @@ export class ComfyuiWorkflowCacheManager {
     }
   }
 
-  private async readLatestCachedWorkflow(id: string) {
+  private async readLatestWorkflow(id: string) {
     try {
-      const root = await this.rootDir()
-      const files = await readdir(join(root, id))
+      const files = await readdir(join(await this.rootDir(), id))
       const workflows = await Promise.all(
         files
           .filter((file) => file.endsWith('.json'))
-          .map((file) => this.readCachedWorkflow(id, file.replace(/\.json$/, ''))),
+          .map((file) => this.readWorkflow(id, file.replace(/\.json$/, ''))),
       )
       return (
         workflows
@@ -320,3 +309,15 @@ export class ComfyuiWorkflowCacheManager {
 }
 
 export const comfyuiWorkflowCacheManager = new ComfyuiWorkflowCacheManager()
+
+export function registerComfyuiWorkflowCacheIpc() {
+  ipcMain.handle('workflow:list-local', (_event, category?: ComfyuiWorkflowCategory) =>
+    comfyuiWorkflowCacheManager.listWorkflows(category),
+  )
+  ipcMain.handle('workflow:import-local', (_event, input: ImportLocalComfyuiWorkflowInput) =>
+    comfyuiWorkflowCacheManager.importWorkflow(input),
+  )
+  ipcMain.handle('workflow:remove-local', (_event, input: { id: string }) =>
+    comfyuiWorkflowCacheManager.removeWorkflow(input.id),
+  )
+}

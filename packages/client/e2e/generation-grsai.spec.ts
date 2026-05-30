@@ -484,9 +484,8 @@ test.describe('generation Grsai E2E', () => {
     const txtResult = await runTxt2imgThroughIpc(page, {
       capability: 'txt2img',
       prompts: txtDrafts.map((draft) => draft.text),
-      model: 'nano-banana-2',
-      aspectRatio: '1:1',
-      imageSize: '1K',
+      model: 'gpt-image-2',
+      aspectRatio: '1024x1024',
       concurrency: 3,
     })
     expect(txtResult).toMatchObject({ total: 5, succeeded: 5, failed: 0 })
@@ -512,9 +511,8 @@ test.describe('generation Grsai E2E', () => {
     const imgResult = await runTxt2imgThroughIpc(page, {
       capability: 'img2img',
       prompts: imgDrafts.map((draft) => draft.text),
-      model: 'nano-banana-2',
-      aspectRatio: '1:1',
-      imageSize: '1K',
+      model: 'gpt-image-2',
+      aspectRatio: '1024x1024',
       concurrency: 3,
     })
     expect(imgResult).toMatchObject({ total: 3, succeeded: 3, failed: 0 })
@@ -527,9 +525,8 @@ test.describe('generation Grsai E2E', () => {
       variables: { printAreaPreference: 'auto', allowMultiplePrints: true },
       promptCount: 1,
       llmModel: 'qwen3-vl-plus',
-      model: 'nano-banana-2',
-      aspectRatio: '1:1',
-      imageSize: '1K',
+      model: 'gpt-image-2',
+      aspectRatio: '1024x1024',
       concurrency: 3,
     })
     expect(extractResult).toMatchObject({ total: 1, succeeded: 1, failed: 0 })

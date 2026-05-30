@@ -84,10 +84,15 @@ interface ComfyuiProvider {
   name: string
   cloud_service: 'chenyu'             // 当前只支持晨羽
   api_key_keychain_id: string         // 在 OS keychain 里的 key
-  current_instance: {
+  fixed_pod: {
+    pod_uuid: string                   // 杭州慎思 POD，主界面不让用户编辑
+    default_pod_tag: string
+    default_gpu_uuid: string
+  }
+  default_instance: {
     instance_uuid: string             // 晨羽返回
     comfyui_url: string               // server_map 里 ComfyUI 端口的 url
-    status: 'starting' | 'running' | 'idle_close_pending' | 'stopped'
+    status: 'starting' | 'running' | 'shutting_down' | 'stopped' | 'none'
   } | null
   // 关机策略
   auto_shutdown: {
@@ -142,12 +147,19 @@ class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
   constructor(
     private chenyu: ChenyuCloudClient,    // 晨羽 API 客户端
     private comfyHttp: ComfyHttpClient,   // ComfyUI 原生 HTTP
-    private workflowCache: WorkflowCache  // 云端派发的工作流缓存
+    private workflowCache: WorkflowCache  // 本地导入并缓存的工作流
   ) {}
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
-    // 1. 确保实例就绪
-    await this.ensureInstanceReady()
+    // 1. 刷新默认云机；不自动创建或开机
+    const instance = await this.instanceManager.refreshCurrentInstance()
+    if (!instance || instance.status !== 'running') {
+      throw new AppError({
+        code: 'CHENYU_INSTANCE_DOWN',
+        message: '默认云机未运行，请先到设置页开机',
+      })
+    }
+    const comfyHttp = this.comfyHttpFor(instance.comfyuiUrl)
     
     // 2. 拉取工作流（按 capability + workflow_id）
     const workflow = await this.workflowCache.get(req.workflow_id!, req.capability)
@@ -155,7 +167,7 @@ class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     // 3. 上传素材图（如果有参考图）
     if (req.reference_images) {
       for (const img of req.reference_images) {
-        await this.comfyHttp.uploadImage(img.base64, /* filename */)
+        await comfyHttp.uploadImage(img.base64, /* filename */)
       }
     }
     
@@ -163,7 +175,7 @@ class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     const injected = injectInputs(workflow, req)
     
     // 5. 提交 prompt
-    const { prompt_id } = await this.comfyHttp.queuePrompt(injected)
+    const { prompt_id } = await comfyHttp.queuePrompt(injected)
     
     // 6. 轮询 /history/{prompt_id}
     const result = await this.pollHistory(prompt_id, { intervalMs: 2000, timeoutMs: 600000 })
@@ -174,15 +186,6 @@ class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     return { status: 'succeeded', images }
   }
   
-  private async ensureInstanceReady() {
-    if (!this.currentInstance) {
-      throw new AppError({ code: 'CHENYU_NO_INSTANCE', message: '请先创建 ComfyUI 实例' })
-    }
-    const info = await this.chenyu.getInstanceInfo(this.currentInstance.uuid)
-    if (info.status !== 2) {
-      throw new AppError({ code: 'CHENYU_INSTANCE_DOWN', message: '实例未运行' })
-    }
-  }
 }
 ```
 
@@ -207,11 +210,10 @@ class GrsaiAdapter implements ImageGenerationAdapter {
     
     // 2. 调 POST /v1/api/generate
     const response = await this.http.post(`${this.baseUrl}/v1/api/generate`, {
-      model: req.model ?? 'nano-banana-2',
+      model: req.model ?? 'gpt-image-2',
       prompt: req.prompt,
       images,
-      aspectRatio: req.output.aspect_ratio ?? '1:1',
-      imageSize: req.output.image_size_label ?? '1K',
+      aspectRatio: req.output.aspect_ratio ?? '1024x1024',
       replyType: 'json',  // 同步模式
     })
     
@@ -349,10 +351,9 @@ GET /api/skills/{id}                                → PaidSkill (full)
   [编辑]  [重新生成]  [+ 添加自定义]
 
 【生图设置】
-  生图模型：[nano-banana-2 ▼]
-  比例：[1:1 ▼]
-  分辨率：[1K ▼]
-  并发：[3] (1-10)
+  生图模型：[gpt-image-2 ▼]
+  尺寸：[1024x1024 ▼]
+  并发：[3] (1-20)
 
   [开始生图]
 
@@ -374,13 +375,13 @@ GET /api/skills/{id}                                → PaidSkill (full)
 [AI 模式]
   用户填变量 → 软件拉 skill → 注入变量到 systemPrompt → 调阿里云百炼
     ↓
-  LLM 返回文本（JSON 或换行分隔）
+  LLM 返回 JSON：{ "prompts": ["..."] }
     ↓
   通用解析器拆成数组 → UI 审稿
     ↓
   用户勾选/编辑/添加 → 选择 Grsai 或 ComfyUI → 点"开始生图"
     ↓
-  并发池调对应 provider → 落到 02-生图/01-文生图/
+  并发池调对应运行路径 → 落到 02-生图/01-文生图/
 
 [自己写模式]
   用户填提示词 → 跳过 LLM → 直接进入并发池 → 调对应 provider
@@ -397,9 +398,9 @@ GET /api/skills/{id}                                → PaidSkill (full)
   print_id: 'pri_abc123def456',
   step: 'txt2img',
   provider: 'grsai' | 'comfyui-chenyu',
-  model_or_workflow: 'nano-banana-2' | 'txt2img-workflow-id',
-  skill_id: 'txt2img-print-prompt-v3',
-  skill_version: '3.0.1',
+  model_or_workflow: 'gpt-image-2' | 'txt2img-workflow-id',
+  skill_id: 'txt2img-local-print',
+  skill_version: '1.0.0',
   source_artifact_ids: '[]',  // 文生图无来源
   file_path: '02-生图/01-文生图/pri_abc123def456.png',
   prompt_snapshot: '...',     // 实际发给 grsai 的 prompt
@@ -446,14 +447,14 @@ v1.5 加 UI toggle "把参考图也传给生图模型"。
 ### 6.1 Comfyui 实现
 
 ```
-用户选采集图 → 选 ComfyUI 提取工作流 → 启动晨羽实例 → 上传图 → 调 /prompt
+用户选采集图 → 选 ComfyUI 提取工作流 → 确认默认云机运行 → 上传图 → 调 /prompt
   ↓
 工作流执行（一般 30-90 秒）→ 输出印花（带背景或不带，看工作流设计）
   ↓
 落到 02-生图/03-提取/
 ```
 
-ComfyUI 提取工作流由腾域云端派发（detail 见 [chenyu-cloud-api.md](../../references/generation-comfyui/chenyu-cloud-api.md)）。
+ComfyUI 提取工作流改为客户端本地导入（detail 见 [chenyu-cloud-api.md](../../references/generation-comfyui/chenyu-cloud-api.md)）。
 
 ### 6.2 Grsai 实现（本质是图生图）
 
@@ -479,7 +480,7 @@ ComfyUI 提取工作流由腾域云端派发（detail 见 [chenyu-cloud-api.md](
 落到 02-生图/04-抠图/
 ```
 
-工作流由云端派发，常用 BiRefNet、RMBG 等模型。
+工作流由客户端本地导入和保存，常用 BiRefNet、RMBG 等模型。
 
 ### 7.2 混合路径（付费 + ComfyUI）
 
@@ -499,7 +500,7 @@ ComfyUI 工作流"黑白图转 alpha + 与原图混合"
 
 本地执行合同：
 - 黑白图 skill：`module='generation'`，`category='matting-mask'`，由后台配置；客户端默认取该分类下第一个 skill，并用该 skill 的 `system_prompt` 调 Grsai。
-- 混合工作流：从 `generation:list-comfyui-mixed-matting-workflows` 读取，服务端分类为 `matting-mixed`；本地执行时仍登记 `step='matting'`。
+- 混合工作流：从本地导入的 `matting-mixed` 分类工作流中读取；本地执行时仍登记 `step='matting'`。
 - ComfyUI 输入图顺序：`reference_images[0]` 是原印花，`reference_images[1]` 是临时 `mask.png`。`ComfyuiWorkflowSlot.imageIndex` 和 `options.imageSlotIndexes` 都是 **0-based**，所以原图=0、mask=1；未配置时 slot 名含 `mask` 自动取 1，其它 image slot 取 0。
 - 临时文件：`mask.png` 只能写到 `.workbench/tmp/matting/{taskId}/mask.png`；单张完成后删文件，任务完成后 `TempFileManager.cleanupTask('matting', taskId)` 清目录。
 - artifact provider：混合路径输出登记 `provider='grsai+comfyui-mask'`，直接 ComfyUI 抠图仍登记 `provider='comfyui-chenyu'`。
@@ -592,91 +593,138 @@ async function runWithRetry(unit: WorkUnit, adapter: ImageGenerationAdapter) {
 }
 ```
 
-## 9. Comfyui 实例管理
+## 9. ComfyUI 云机管理
 
-### 9.1 实例生命周期 UI
-
-```
-[ComfyUI 实例 - 设置面板]
-
-当前实例：未创建
-  [创建新实例]
-
-[创建实例向导]
-  1. 选择应用（Pod）：
-     - PyTorch ComfyUI v2.0 [选择]
-     - ...
-  2. 选择 GPU：
-     - RTX 4090 (¥5.50/h) [选择]
-     - RTX 3080 (¥3.20/h)
-  3. 自动关机：
-     ● 1 小时后自动关机（推荐）
-     ○ 4 小时后
-     ○ 8 小时后
-     ○ 不自动关机（不推荐）
-  
-  预估费用：¥5.50/h × N 小时 = ¥X
-  
-  [创建并启动]
-```
-
-创建后：
+### 9.1 设置页 UI
 
 ```
-当前实例：● 运行中 (RTX 4090)
-  实例 UUID: inst_xxxx
-  ComfyUI 地址: https://xxx.chenyu.team
-  已运行：23 分钟 / 1 小时（59 分后自动关机）
-  累计费用：¥2.11
-  
-  操作：
-  [立即关机]  [重启]  [延长关机时间]  [销毁实例]
+[晨羽智云设置]
+
+连接信息：
+  晨羽 API Key
+  连接状态：未配置 / 检测中 / 连接成功 / 连接失败
+  说明：主界面不展示余额，只判断 API Key 是否可用。
+
+创建云机（默认收起）：
+  摘要：创建杭州慎思云机 · {默认版本} · {默认 GPU}
+  展开后：
+    固定 POD UUID（只读展示）
+    POD 版本：[select]
+    GPU：[select]
+    [创建云机]
+
+高级设置（默认收起）：
+  POD 自动发现
+  手动维护固定 POD UUID / 版本列表
+  定时关机分钟数
+  高级实例操作：重启 / 销毁
+
+实例管理（主工作区）：
+  当前 API Key 下的全部实例
+  每行展示：实例 UUID、状态、ComfyUI 地址、开机、关机、设为默认云机
 ```
 
-### 9.2 关机策略
+主列表不展示余额、预估费用、重启、销毁。危险操作只放高级设置。
+
+### 9.2 创建固定杭州慎思 POD 实例
+
+创建入口只服务当前配置的固定 POD，不让普通用户在主界面改 POD UUID。
 
 ```ts
-// 创建实例时立即设定时关机（晨羽侧执行，不依赖客户端）
-async function createInstanceWithAutoShutdown(config: InstanceConfig) {
-  const instance = await chenyu.createByPod({ pod_uuid, gpu_uuid, gpu_nums: 1 })
-  await chenyu.setShutdownTimer({
-    instance_uuid: instance.uuid,
-    enable: true,
-    shutdown_time: Math.floor(Date.now() / 1000) + config.autoShutdownMinutes * 60,
+async function createFixedPodInstance(input: {
+  podTag?: string
+  gpuUuid?: string
+  gpuNums?: number
+  autoShutdownMinutes?: number | null
+}) {
+  const settings = await readChenyuSettings()
+  const podUuid = settings.config.pod_uuid
+  const podTag = input.podTag ?? settings.config.default_pod_tag
+  const gpuUuid = input.gpuUuid ?? settings.config.default_gpu_uuid
+
+  const created = await chenyu.createByPod({
+    pod_uuid: podUuid,
+    pod_tag: podTag,
+    gpu_uuid: gpuUuid,
+    gpu_nums: input.gpuNums ?? 1,
   })
-  return instance
+
+  if (input.autoShutdownMinutes) {
+    await chenyu.setShutdownTimer({
+      instance_uuid: created.instance_uuid,
+      enable: true,
+      shutdown_time: Math.floor(Date.now() / 1000) + input.autoShutdownMinutes * 60,
+    })
+  }
+
+  const ready = await pollUntilRunningAndResolveComfyuiUrl(created.instance_uuid)
+  return saveAsDefaultCloudMachine(ready)
 }
 ```
 
-软件崩了/断网都不影响——晨羽侧会按时关机，最坏多收设定时长内的费用。
+创建成功后新实例会保存为**默认云机**，并进入实例管理列表。
 
-### 9.3 ComfyUI 端口提取
+### 9.3 开机 / 关机状态体验
 
 ```ts
-function extractComfyuiUrl(serverMap: ServerMapEntry[]): string | null {
-  // 找 port_type=http 且 title 含 "ComfyUI" 的条目
-  const entry = serverMap.find(e => 
-    e.port_type === 'http' && /comfyui/i.test(e.title)
-  )
-  return entry?.url ?? null
+async function startupFromSettings(instanceUuid: string) {
+  setRowStatus(instanceUuid, 'initializing') // UI 文案：初始化等待中
+  await chenyu.startup({ instance_uuid: instanceUuid })
+  await pollListInstancesUntil(instanceUuid, ['running'])
+}
+
+async function shutdownFromSettings(instanceUuid: string) {
+  setRowStatus(instanceUuid, 'shutting_down') // UI 文案：关闭中
+  await chenyu.shutdown(instanceUuid)
+  await pollListInstancesUntil(instanceUuid, ['stopped'])
 }
 ```
 
-如果找不到（不同 Pod 可能用不同 title），fallback 取第一个 `port_type=http` 的 url 并 ping `/system_stats`。
+开关机期间只禁用当前行按钮，不锁死整个设置页。
+
+### 9.4 默认云机与生图调用
+
+- `chenyu:set-active-instance` 把某个实例保存为默认云机。
+- 生图模块只读取默认云机，不扫描全部实例挑一台。
+- 默认云机不是 `running` 时，生图模块提示“默认云机未运行，请先到设置页开机”。
+- 默认云机没有可用 ComfyUI 地址时，提示用户刷新实例或手动填写地址。
+- 生图模块不自动开机，避免用户无感产生云 GPU 费用。
+
+### 9.5 关机策略
+
+创建实例时可立即设定晨羽侧定时关机。这个兜底由晨羽执行，软件崩溃、断网、进程被杀都不影响，最坏只多收设定时长内的费用。
+
+### 9.6 ComfyUI 端口提取
+
+```ts
+function resolveComfyuiUrl(info: ChenyuInstanceInfo): string | null {
+  const candidates = comfyuiUrlCandidates(info.server_map, info.server_url)
+  const confident = candidates.find(candidate => candidate.confidence >= 90)
+  if (confident) return confident.url
+
+  for (const candidate of candidates) {
+    if (ping(candidate.url, '/system_stats') || ping(candidate.url, '/object_info')) {
+      return candidate.url
+    }
+  }
+
+  return candidates.length === 1 ? candidates[0].url : null
+}
+```
+
+地址候选来自 `server_map` 和 `server_url`。title / url 含 `comfy` 的候选优先；`frontend` / `web` 类候选次之；无法自动识别时，设置页允许用户手动填 ComfyUI 地址后再设为默认云机。
 
 ## 10. 工作流缓存
 
-### 10.1 拉取
+### 10.1 本地导入
 
-```
-GET /api/comfyui-workflows                  → list with metadata (no full workflow_json)
-GET /api/comfyui-workflows/{id}/content     → full workflow_json
-```
+Workflow 不再从云端拉取。用户在客户端设置页导入 ComfyUI API JSON，客户端校验 JSON、识别输入/输出槽位，并保存到 `.workbench/local-workflows/`。
 
 客户端：
-- 启动时拉 list，缓存到 `.workbench/cache/comfyui-workflows/index.json`
-- 用户选某个 workflow 时再拉 content，缓存到 `.workbench/cache/comfyui-workflows/{id}/{version}.json`
-- 30 分钟刷新一次 list；content 按 version 永久缓存
+- 设置页导入 workflow JSON，按能力分类保存
+- 生图页按能力列出本地 workflow
+- 选中 workflow 后从本地读取完整 JSON
+- 删除 workflow 只影响本机，不影响云端
 
 ### 10.2 input_slots / output_slots
 
@@ -697,10 +745,7 @@ interface ComfyuiWorkflowPack {
     type: 'image'
     label: string
   }[]
-  required_models: string[]           // 工作流依赖的模型，Pod 必须含
-  recommended_pod_keywords: string[]  // 推荐用哪些 Pod
-  min_vram_gb: number
-  enabled: boolean
+  required_models: string[]           // 工作流依赖的模型，用户自查默认云机是否具备
 }
 ```
 
@@ -736,19 +781,22 @@ CREATE TABLE prints (
 -- 生图产物的 artifacts 行：
 --   step = 'txt2img' | 'img2img' | 'extract' | 'matting'
 --   provider = 'grsai' | 'comfyui-chenyu'
---   model_or_workflow = 'nano-banana-2' | 'extract-v3'
+--   model_or_workflow = 'gpt-image-2' | 'extract-v3'
 --   skill_id, skill_version
 --   source_artifact_ids = JSON 数组（图生图/提取/抠图的来源）
 --   prompt_snapshot
 
 CREATE TABLE comfyui_instances (
-  id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- 单例
+  id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- 默认云机记录，不是全部实例列表
   provider            TEXT NOT NULL,                       -- 'chenyu'
   instance_uuid       TEXT NOT NULL,
   comfyui_url         TEXT NOT NULL,
   pod_uuid            TEXT,
   gpu_uuid            TEXT,
-  status              TEXT NOT NULL,                       -- 'starting' | 'running' | 'stopped'
+  gpu_name            TEXT,
+  status              TEXT NOT NULL,                       -- 'starting' | 'running' | 'shutting_down' | 'stopped' | 'none'
+  pod_price_hour      REAL NOT NULL DEFAULT 0,
+  gpu_price_hour      REAL NOT NULL DEFAULT 0,
   auto_shutdown_at    INTEGER,                             -- 计划关机时间戳
   created_at          INTEGER NOT NULL,
   last_used_at        INTEGER
@@ -761,9 +809,22 @@ CREATE TABLE comfyui_instances (
 // 通用
 'generation:list-skills'              → { module, category } → PaidSkill[]
 'generation:get-skill'                → { skill_id } → PaidSkill (full)
-'generation:list-providers'           → PaidProvider[]
-'generation:list-workflows'           → { category } → ComfyuiWorkflowPack[] (no content)
-'generation:get-workflow'             → { id } → ComfyuiWorkflowPack (full)
+
+// 本地工作流与源图列表
+'generation:list-extract-sources'     → ExtractSourcesResult
+'generation:list-img2img-sources'     → Img2imgSourcesResult
+'generation:list-comfyui-txt2img-workflows'
+                                      → ComfyuiWorkflowSummary[]
+'generation:list-comfyui-img2img-workflows'
+                                      → ComfyuiWorkflowSummary[]
+'generation:list-comfyui-extract-workflows'
+                                      → ComfyuiWorkflowSummary[]
+'generation:list-comfyui-matting-workflows'
+                                      → ComfyuiWorkflowSummary[]
+'generation:list-comfyui-mixed-matting-workflows'
+                                      → ComfyuiWorkflowSummary[] where category='matting-mixed'
+'generation:list-chenyu-workflows'    → ChenyuWorkflowSummary[]
+'generation:get-chenyu-workflow'      → ChenyuWorkflow (full)
 
 // LLM 提示词生成
 'generation:generate-prompts'         → {
@@ -789,24 +850,32 @@ CREATE TABLE comfyui_instances (
                                           prompt?,
                                         } → TaskId
 
-// 晨羽实例管理
-'chenyu:list-pods'                    → ChenyuPod[]
+// 晨羽设置和实例管理
+'chenyu:get-settings'                 → ChenyuSettingsSnapshot
+'chenyu:save-settings'                → { apiKey?, config } → ChenyuSettingsSnapshot
+'chenyu:test-connection'              → ChenyuBalance         // UI 只消费成功/失败，不展示余额
+'chenyu:discover-pod'                 → { keyword? } → ChenyuPodDiscoveryResult
 'chenyu:list-gpus'                    → ChenyuGpu[]
-'chenyu:create-instance'              → { pod_uuid, gpu_uuid, auto_shutdown_minutes } → instance
-'chenyu:get-instance-status'          → ChenyuInstanceStatus
-'chenyu:shutdown-instance'            → void
-'chenyu:restart-instance'             → void
-'chenyu:destroy-instance'             → void
-'chenyu:get-balance'                  → { balance, card_balance }
+'chenyu:list-instances'               → ChenyuManagedInstance[]
+'chenyu:create-fixed-pod-instance'    → { podTag?, gpuUuid?, gpuNums?, autoShutdownMinutes? }
+                                      → ComfyuiInstanceSummary
+'chenyu:startup-instance'             → { instanceUuid, gpuUuid?, gpuNums? } → ChenyuInstanceInfo
+'chenyu:shutdown-instance'            → { instanceUuid } → ChenyuInstanceInfo
+'chenyu:set-active-instance'          → { instanceUuid, comfyuiUrl? } → ComfyuiInstanceSummary
+'chenyu:get-active-instance'          → ComfyuiInstanceSummary | null
+
+// 高级设置折叠区才暴露
+'chenyu:restart-instance'             → { instanceUuid } → ChenyuInstanceInfo
+'chenyu:destroy-instance'             → { instanceUuid } → { ok: true }
 ```
 
 ## 13. 错误处理
 
 | 错误码 | 触发 | UI 处理 |
 |---|---|---|
-| `CHENYU_NO_INSTANCE` | 用户未创建晨羽实例就跑 ComfyUI | 弹窗引导用户先创建实例 |
-| `CHENYU_INSTANCE_DOWN` | 实例状态非 running | 提示用户重新启动实例 |
-| `CHENYU_BALANCE_INSUFFICIENT` | 晨羽余额不足 | 提示用户充值，附跳转链接 |
+| `CHENYU_INSTANCE_DOWN` | 默认云机不存在、未运行或正在关机 | 提示用户到设置页选择默认云机并开机；不自动开机 |
+| `HTTP_4XX` | API Key 缺失、POD/GPU/版本配置缺失、手填 ComfyUI 地址不合法 | 在设置页显示短错误 |
+| `HTTP_5XX` | 晨羽实例已运行但无法解析 ComfyUI 地址 | 提示刷新实例；仍失败时允许手动填写地址 |
 | `GRSAI_VIOLATION` | Grsai 内容违规 | 不重试，提示用户改 prompt |
 | `GRSAI_FAILED` | Grsai 通用失败 | 重试 N 次后报错 |
 | `BAILIAN_API_KEY_INVALID` | 阿里云百炼 401 | 提示用户重填 API Key |
@@ -827,7 +896,8 @@ CREATE TABLE comfyui_instances (
 
 - 5 种生成方式（图生图）的视觉 LLM 调用差异
 - 通用解析器对各种 LLM 输出格式的兜底
-- 晨羽实例创建/销毁流程
+- 晨羽固定 POD 实例创建、开机、关机、设为默认云机
+- 默认云机未运行时，ComfyUI 生图提示先去设置页开机，不自动开机
 - 工作流注入参数后的 ComfyUI 提交
 - 并发限制 + 429 自适应降级
 - 印花 ID 生成的唯一性

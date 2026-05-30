@@ -4,12 +4,15 @@ import { BrowserWindow, app, ipcMain } from 'electron'
 import { registerListingRunnerIpc } from '../modules/listing/runner'
 import { activationPoller } from './lib/activation-poller'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
+import { registerChenyuInstanceIpc } from './lib/chenyu-instance-service'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
 import { registerCollectionConfigIpc } from './lib/collection-config'
 import { registerCollectionImageIndexIpc } from './lib/collection-image-index-service'
 import { registerCollectionSessionIpc } from './lib/collection-session-manager'
+import { registerComfyuiWorkflowCacheIpc } from './lib/comfyui-workflow-cache'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
+import { registerGenerationLocalConfigIpc } from './lib/generation-local-config'
 import { registerGenerationIpc } from './lib/generation-service'
 import { runNativeSmoke } from './lib/native-smoke'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
@@ -63,7 +66,10 @@ app.whenReady().then(() => {
   ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
   ipcMain.handle('activation:sync-status', () => activationPoller.poll())
   registerOnboardingIpc()
+  registerChenyuInstanceIpc()
   registerBrowserProfileLockIpc()
+  registerGenerationLocalConfigIpc()
+  registerComfyuiWorkflowCacheIpc()
   registerSkillCacheIpc()
   registerTempFileIpc()
   registerCollectionConfigIpc()

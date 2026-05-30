@@ -1,5 +1,6 @@
 'use client'
 
+import { AdminShell } from '@/components/admin/admin-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatRelativeTime } from '@/lib/relative-time'
@@ -69,23 +70,24 @@ export default function AdminCustomersPage() {
   }, [query])
 
   return (
-    <main className="min-h-screen bg-background p-6 text-foreground">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">客户管理</h1>
-            <p className="text-sm text-muted-foreground">共 {customers.length} 个客户</p>
-          </div>
-          <Button asChild>
-            <a href="/admin/codes/new">+ 新建客户</a>
-          </Button>
-        </section>
+    <AdminShell
+      description="查看客户、设备使用、封号状态和客户名下激活码情况。"
+      title="客户管理"
+    >
+      <section className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-muted-foreground">共 {customers.length} 个客户</p>
+        </div>
+        <Button asChild>
+          <a href="/admin/codes/new">+ 新建客户</a>
+        </Button>
+      </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>客户列表</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <Card>
+        <CardHeader>
+          <CardTitle>客户列表</CardTitle>
+        </CardHeader>
+        <CardContent>
             <div className="mb-4 grid gap-3 md:grid-cols-3">
               <input
                 className="h-10 rounded-md border px-3 text-sm"
@@ -159,9 +161,8 @@ export default function AdminCustomersPage() {
                 </tbody>
               </table>
             </div>
-          </CardContent>
-        </Card>
-      </div>
-    </main>
+        </CardContent>
+      </Card>
+    </AdminShell>
   )
 }

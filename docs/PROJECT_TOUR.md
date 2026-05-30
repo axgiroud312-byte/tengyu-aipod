@@ -1,7 +1,7 @@
 # 项目导览（PROJECT_TOUR）
 
 > 给项目主理人自己看的回神文档。不是给团队的规范，也不是给用户的说明书。
-> 最后更新：2026-05-25（基于 git commit `04d7524`）
+> 最后更新：2026-05-30（基于 git commit `04d7524`）
 
 ---
 
@@ -18,7 +18,7 @@
 | 切片 | 模块 | 状态 | 备注 |
 |---|---|---|---|
 | 0 | 工程骨架 | ✅ 已完成 | monorepo / Electron / Next.js / CI |
-| 1 | 激活码闭环 | ✅ 已完成 | v0.1.0，无账号系统 |
+| 1 | 登录与权益闭环 | ✅ 已完成 | v0.1.0，原授权闭环；文档已对齐微信登录 + 权益 |
 | 2 | 标题生成 | ✅ 已完成 | v0.2.0，百炼 + Skill 缓存 |
 | 3 | 侵权检测 | ✅ 已完成 | v0.3.0，百炼视觉 LLM |
 | 4 | 生图 Grsai | ✅ 已完成 | v0.4.0，付费 API |
@@ -47,7 +47,7 @@ graph TB
     end
     subgraph Cloud[云端 packages/server]
         Admin[Admin 后台 UI]
-        API[Provider/Skill/Rules API]
+        API[微信登录/权益/Skill API]
         PG[(Postgres + Prisma)]
     end
     subgraph Externals[外部服务]
@@ -63,7 +63,7 @@ graph TB
     Renderer <-->|IPC| Preload <--> Main
     Main --> DB
     Main --> Keychain
-    Main -->|HTTP 拉配置| API
+    Main -->|微信登录/权益校验/拉 Skill| API
     Main -->|HTTP API Key 在本地| Bailian
     Main --> Grsai
     Main --> Comfy
@@ -74,7 +74,7 @@ graph TB
     API --> PG
 ```
 
-**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"远程派单台"（只发配置 / 验激活码、不碰图片和 Key）。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
+**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"账号与提示词控制台"（微信登录、权益、客户、Skill 系统提示词），不碰模型配置、图片和 Key。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
 
 ---
 
@@ -136,13 +136,14 @@ sequenceDiagram
 | **Spec** | `docs/spec/04-detection.md` |
 | **相关归档 task** | `detection-module-service` / `module-ui` / `cost-estimator` / `thresholds` / `promote-to-matting` / `e2e` |
 
-### 3️⃣ 生图模块 — 文生图 / 图生图 / 提取（按 provider 切换）
+### 3️⃣ 生图模块 — 按能力组织，ComfyUI 走默认云机
 
 | 部分 | 文件 |
 |---|---|
 | **统一编排** | `packages/client/src/main/lib/generation-service.ts` ← 主调度<br/>`generation-concurrency.ts` ← 并发控制（共享给所有 provider）<br/>`prompt-generator-service.ts` ← 提示词生成（百炼） |
 | **Grsai 路径**（付费） | `grsai-adapter.ts`（节点切换 / 重试 / 异步轮询） |
 | **ComfyUI 路径** | `comfyui-instance-manager.ts` ← 实例生命周期<br/>`comfyui-chenyu-adapter.ts` ← 晨羽智云<br/>`comfy-http-client.ts` ← HTTP 直连<br/>`chenyu-cloud-client.ts` ← 晨羽 API<br/>`comfyui-workflow-cache.ts` ← 工作流缓存 |
+| **晨羽设置** | `SettingsPage.tsx` ← API Key 连接状态、固定杭州慎思 POD 创建、全部实例开关机、设为默认云机 |
 | **图像预处理** | `preprocess-pool.ts` |
 | **UI 工作台** | `packages/client/src/renderer/src/components/generation-workbench.tsx` |
 | **Spec** | `docs/spec/03-generation.md` |
@@ -163,7 +164,7 @@ sequenceDiagram
 
 | 部分 | 文件 |
 |---|---|
-| **主进程业务** | `packages/client/src/main/lib/title-service.ts`<br/>`skill-cache.ts` ← 云端 Skill 缓存 |
+| **主进程业务** | `packages/client/src/main/lib/title-service.ts`<br/>`skill-cache.ts` ← 云端 Skill 系统提示词缓存 |
 | **UI** | 集成在生图 / 检测工作台 |
 | **Spec** | `docs/spec/06-title.md` |
 
@@ -180,12 +181,12 @@ sequenceDiagram
 | **守护变量** | `REAL_LISTING=1` / `REAL_LISTING_MUTATE=1` |
 | **相关归档 task** | `listing-skill-import` / `profile-lock` / `types-port` / `runner-port` / `temu-*` / `shein-*` / `batch-loader` / `resume` / `evidence` / `module-ui` / `failure-retry` / `module-e2e` |
 
-### 7️⃣ 激活码 & 账号 — 唯一授权凭证，无注册系统
+### 7️⃣ 微信登录 & 权益 — 身份用微信，授权看权益
 
 | 部分 | 文件 |
 |---|---|
-| **主进程业务** | `packages/client/src/main/lib/activation-state.ts` ← 激活态机<br/>`activation-poller.ts` ← 7 天内联网验证（不变规则 #8）<br/>`keychain.ts` ← OS 钥匙串加密<br/>`packages/client/src/main/onboarding.ts` ← 入门流程 + Dev 跳过开关 |
-| **后台**（发码 / 管码） | `packages/server/src/app/admin/codes/`<br/>`packages/server/src/app/admin/customers/` |
+| **主进程业务** | `packages/client/src/main/lib/activation-state.ts`（历史命名，后续应迁到 auth/entitlement）← 登录/权益态机<br/>`activation-poller.ts`（历史命名）← 7 天内联网验证（不变规则 #8）<br/>`keychain.ts` ← OS 钥匙串加密<br/>`packages/client/src/main/onboarding.ts` ← 入门流程 + Dev 跳过开关 |
+| **后台**（微信账户 / 客户 / 权益） | `packages/server/src/app/admin/customers/`（客户与微信账户）<br/>`packages/server/src/app/admin/skills/`（生图 Skill 系统提示词） |
 | **Spec** | `docs/adr/0002-activation-code-no-accounts.md` |
 
 ### 公共基础设施（所有模块共用）
@@ -198,19 +199,17 @@ sequenceDiagram
 | `packages/shared/src/errors.ts` | `AppError` 错误结构 |
 | `packages/shared/src/schemas.ts` | IPC zod 校验 |
 | `packages/shared/src/types.ts` | 业务类型 |
-| `packages/shared/src/constants.ts` | Provider 枚举 / 路径常量 |
+| `packages/shared/src/constants.ts` | 路径常量 / 模块常量 |
 
 ### 服务端（Admin 后台）
 
 | 路径 | 干什么 |
 |---|---|
-| `packages/server/src/app/admin/codes/` | 激活码生成 / 管理 |
-| `packages/server/src/app/admin/customers/` | 客户列表 |
-| `packages/server/src/app/admin/providers/` | 生图 / LLM Provider 配置 |
-| `packages/server/src/app/admin/skills/` | Skill（提示词模板）管理 |
-| `packages/server/src/app/admin/platform-rules/` | 上架平台规则 |
-| `packages/server/src/app/admin/comfyui-workflows/` | ComfyUI 工作流派发 |
-| `packages/server/src/app/api/` | 给客户端拉配置的 HTTP API |
+| `packages/server/src/app/admin/customers/` | 客户 / 微信账户 / 权益管理 |
+| `packages/server/src/app/admin/skills/` | 4 个固定生图 Skill 系统提示词槽位 |
+| `packages/server/src/app/api/skills/` | 客户端拉取 Skill 系统提示词 |
+| `packages/server/src/app/api/status/` | 客户端登录态和权益状态校验 |
+| `packages/server/src/app/api/health/` | 服务健康检查 |
 | `packages/server/prisma/schema.prisma` | 数据库表结构 |
 
 ---
@@ -246,7 +245,7 @@ flowchart LR
 
 | 表（概念） | 干什么 |
 |---|---|
-| `workbench_config` | 工作台路径 / 当前激活态 |
+| `workbench_config` | 工作台路径 / 当前登录与权益态 |
 | `print_artifact` | 印花 ID 全局唯一（不变规则 #9） |
 | `detection_result` | 检测历史 |
 | `generation_record` | 生图记录 |
@@ -254,16 +253,16 @@ flowchart LR
 | `listing_task` / `listing_stage` | 上架任务 + 12 阶段状态 |
 | `ps_job` | PS 套版任务 |
 
-**服务端 Postgres（云端，只放配置和激活码）**：
+**服务端 Postgres（云端，只放微信身份、客户、权益和 Skill）**：
 
 ```mermaid
 erDiagram
-    CUSTOMER ||--o{ ACTIVATION_CODE : owns
-    ACTIVATION_CODE ||--o{ DEVICE_BINDING : binds
-    PROVIDER }o--|| CUSTOMER : assigned-to
-    SKILL }o--|| CUSTOMER : assigned-to
-    PLATFORM_RULE }o--|| CUSTOMER : assigned-to
+    CUSTOMER ||--o{ WECHAT_USER : binds
+    CUSTOMER ||--o{ ENTITLEMENT : owns
+    WECHAT_USER ||--o{ CLIENT_SESSION : logs-in
 ```
+
+Skill 作为云端提示词资源单独管理，不再和 Provider / Workflow / Platform Rules 放在同一张云端关系图里。
 
 ---
 
@@ -273,7 +272,7 @@ erDiagram
 
 1. `CLAUDE.md` — 项目协作规则 + 当前阶段
 2. `ROADMAP.md` — 108 task 总路线图 + 切片划分
-3. `docs/CONTEXT.md` — 领域语言（货号 / 印花 / Skill / 激活码）
+3. `docs/CONTEXT.md` — 领域语言（货号 / 印花 / Skill / 微信登录 / 权益）
 4. `docs/spec/00-overview.md` — 整体架构 + **10 条不可违反规则**
 5. `CHANGELOG.md` — 切片 1-8 已交付的能力
 

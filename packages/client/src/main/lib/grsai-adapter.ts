@@ -1,22 +1,10 @@
 import { type AppError, AppErrorClass } from '@tengyu-aipod/shared'
+import { GRSAI_IMAGE_MODELS } from './generation-local-config'
 
 export type GrsaiNode = 'cn' | 'global'
 export type GrsaiReplyType = 'json' | 'stream' | 'async'
 
-export const GRSAI_SUPPORTED_MODELS = [
-  'nano-banana',
-  'nano-banana-fast',
-  'nano-banana-2',
-  'nano-banana-2-cl',
-  'nano-banana-2-4k-cl',
-  'nano-banana-pro',
-  'nano-banana-pro-cl',
-  'nano-banana-pro-vip',
-  'nano-banana-pro-4k-vip',
-  'gpt-image-2',
-  'gpt-image-2-vip',
-] as const
-
+export const GRSAI_SUPPORTED_MODELS = ['gpt-image-2', 'gpt-image-2-vip'] as const
 export type GrsaiModel = (typeof GRSAI_SUPPORTED_MODELS)[number]
 export type GenerationCapability = 'txt2img' | 'img2img' | 'extract' | 'matting'
 
@@ -27,7 +15,6 @@ export type GenerateRequest = {
   output: {
     aspect_ratio?: string
     size_px?: { width: number; height: number }
-    image_size_label?: '1K' | '2K' | '4K'
     format?: 'jpg' | 'png'
   }
   model?: string
@@ -52,6 +39,7 @@ export type GrsaiAdapterOptions = {
   timeoutMs?: number
   pollIntervalMs?: number
   pollTimeoutMs?: number
+  retries?: number
 }
 
 type GrsaiApiStatus = 'running' | 'violation' | 'succeeded' | 'failed'
@@ -70,7 +58,6 @@ type GrsaiGeneratePayload = {
   prompt: string
   images: string[]
   aspectRatio: string
-  imageSize: string
   replyType: GrsaiReplyType
 }
 
@@ -79,7 +66,7 @@ const GRSAI_BASE_URLS: Record<GrsaiNode, string> = {
   global: 'https://grsaiapi.com',
 }
 
-const DEFAULT_MODEL: GrsaiModel = 'nano-banana-2'
+const DEFAULT_MODEL: GrsaiModel = 'gpt-image-2'
 const DEFAULT_TIMEOUT_MS = 300_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
 const DEFAULT_POLL_TIMEOUT_MS = 300_000
@@ -102,10 +89,50 @@ export function stripDataUrlPrefix(value: string) {
   return commaIndex === -1 ? value.slice('data:'.length) : value.slice(commaIndex + 1)
 }
 
+export function normalizeGrsaiModel(model?: string): GrsaiModel {
+  return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? (model as GrsaiModel) : DEFAULT_MODEL
+}
+
+export function validateGrsaiSize(model: string, size: string) {
+  const normalizedModel = normalizeGrsaiModel(model)
+  const catalog = GRSAI_IMAGE_MODELS.find((item) => item.id === normalizedModel)
+  if (!catalog) {
+    return false
+  }
+  if (catalog.sizes.includes(size)) {
+    return true
+  }
+  return catalog.allowCustomSize && isValidVipCustomSize(size)
+}
+
+export function isValidVipCustomSize(size: string) {
+  const [width = Number.NaN, height = Number.NaN] = size
+    .toLowerCase()
+    .split('x')
+    .map((part) => Number(part))
+  if (!Number.isFinite(width) || !Number.isFinite(height)) {
+    return false
+  }
+  if (width <= 0 || height <= 0 || width > 3840 || height > 3840) {
+    return false
+  }
+  if (width % 16 !== 0 || height % 16 !== 0) {
+    return false
+  }
+  const longSide = Math.max(width, height)
+  const shortSide = Math.min(width, height)
+  if (longSide / shortSide > 3) {
+    return false
+  }
+  const pixels = width * height
+  return pixels >= 655_360 && pixels <= 8_294_400
+}
+
 export class GrsaiAdapter implements ImageGenerationAdapter {
   private readonly timeoutMs: number
   private readonly pollIntervalMs: number
   private readonly pollTimeoutMs: number
+  private readonly retries: number
 
   constructor(
     private readonly apiKey: string,
@@ -115,9 +142,26 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     this.pollTimeoutMs = options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS
+    this.retries = clampInt(options.retries ?? 2, 0, 5, 2)
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
+    let attempt = 0
+    while (true) {
+      try {
+        return await this.generateWithFallback(req)
+      } catch (error) {
+        const appError = toGrsaiAppError(error)
+        if (attempt >= this.retries || !isRetryableGrsaiError(appError)) {
+          throw appError
+        }
+        await sleep(retryDelayMs(attempt))
+        attempt += 1
+      }
+    }
+  }
+
+  private async generateWithFallback(req: GenerateRequest): Promise<GenerateResponse> {
     try {
       const primary = await this.generateOnNode(this.node, req)
       if (!shouldFallbackResponse(primary)) {
@@ -227,7 +271,8 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
 
     try {
-      const response = await fetch(`${grsaiBaseUrl(node)}${path}`, {
+      const url = /^https?:\/\//i.test(path) ? path : `${grsaiBaseUrl(node)}${path}`
+      const response = await fetch(url, {
         ...init,
         signal: controller.signal,
       })
@@ -246,16 +291,23 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
   }
 }
 
-function buildGeneratePayload(
-  req: GenerateRequest,
-  replyType: GrsaiReplyType,
-): GrsaiGeneratePayload {
+function buildGeneratePayload(req: GenerateRequest, replyType: GrsaiReplyType): GrsaiGeneratePayload {
+  const model = normalizeGrsaiModel(req.model)
+  const aspectRatio = req.output.aspect_ratio ?? '1024x1024'
+  if (!validateGrsaiSize(model, aspectRatio)) {
+    throw new AppErrorClass('HTTP_4XX', 'Grsai gpt-image 尺寸不支持', false, {
+      kind: 'failed',
+      provider: 'grsai',
+      model,
+      aspectRatio,
+    })
+  }
+
   return {
-    model: req.model ?? DEFAULT_MODEL,
+    model,
     prompt: req.prompt,
     images: (req.reference_images ?? []).map((image) => stripDataUrlPrefix(image.base64)),
-    aspectRatio: req.output.aspect_ratio ?? '1:1',
-    imageSize: req.output.image_size_label ?? '1K',
+    aspectRatio,
     replyType,
   }
 }
@@ -517,6 +569,10 @@ function isRetryableNodeFailure(error: AppErrorClass) {
   return error.retryable && error.details?.kind === 'network'
 }
 
+function isRetryableGrsaiError(error: AppErrorClass) {
+  return error.retryable && (error.code === 'HTTP_429' || error.details?.kind === 'network')
+}
+
 function shouldFallbackResponse(response: GenerateResponse) {
   return response.status === 'failed' && response.error?.retryable === true
 }
@@ -527,6 +583,17 @@ function isAbortError(error: unknown) {
 
 function otherNode(node: GrsaiNode): GrsaiNode {
   return node === 'cn' ? 'global' : 'cn'
+}
+
+function retryDelayMs(attempt: number) {
+  return Math.min(2_000 * 2 ** attempt, 10_000)
+}
+
+function clampInt(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback
+  }
+  return Math.max(min, Math.min(max, Math.floor(value)))
 }
 
 function sleep(ms: number) {

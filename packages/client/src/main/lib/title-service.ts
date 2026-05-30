@@ -6,13 +6,13 @@ import {
   AppErrorClass,
   type Skill,
   type SkillSummary,
-  listVisionModels,
 } from '@tengyu-aipod/shared'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { readAppConfig } from '../onboarding'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
+import { BAILIAN_VISION_MODELS } from './generation-local-config'
 import { getSecret } from './keychain'
 import {
   type PreprocessFormat,
@@ -20,7 +20,7 @@ import {
   SharpPreprocessPool,
 } from './preprocess-pool'
 import { skillCacheManager } from './skill-cache'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 
 export type ExistingTitleStrategy = 'skip' | 'regenerate'
@@ -161,6 +161,27 @@ const LANGUAGE_OPTIONS = [
   { key: 'ru', label: '俄语' },
   { key: 'ar', label: '阿拉伯语' },
 ]
+
+function createDefaultBailianAdapter(apiKey: string) {
+  return new AliyunBailianAdapter({
+    apiKey,
+    region: 'cn',
+    maxRetries: 0,
+  })
+}
+
+async function listBailianProviderModels(
+  recommendedFor: 'detection' | 'title' | 'prompt',
+  needsVision: boolean,
+) {
+  const models = BAILIAN_VISION_MODELS.map((model) => ({
+    id: model.id,
+    label: model.label,
+    modalities: [needsVision ? 'vision' : 'text'],
+    recommendedFor: [recommendedFor],
+  }))
+  return models
+}
 
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, undefined, { numeric: true, sensitivity: 'base' })
@@ -587,8 +608,11 @@ export class TitleService {
     return LANGUAGE_OPTIONS
   }
 
-  listModels() {
-    return listVisionModels()
+  async listModels() {
+    return (await listBailianProviderModels('title', true)).map((model) => ({
+      key: model.id,
+      label: model.label ?? model.id,
+    }))
   }
 
   async scanBatchDir(batchDir: string): Promise<TitleScanResult> {
@@ -670,9 +694,7 @@ export class TitleService {
     let keepFailedTemp = false
     const resolved = {
       skillCache: dependencies.skillCache ?? skillCacheManager,
-      createBailianAdapter:
-        dependencies.createBailianAdapter ??
-        ((apiKey: string) => new AliyunBailianAdapter({ apiKey, region: 'cn', maxRetries: 0 })),
+      createBailianAdapter: dependencies.createBailianAdapter,
       preprocessPool: dependencies.preprocessPool ?? new SharpPreprocessPool(),
       readConfig: dependencies.readConfig ?? readAppConfig,
       getSecret: dependencies.getSecret ?? getSecret,
@@ -758,7 +780,9 @@ export class TitleService {
       if (!apiKey) {
         throw new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key，请先在设置中填写', false)
       }
-      const adapter = resolved.createBailianAdapter(apiKey)
+      const adapter =
+        resolved.createBailianAdapter?.(apiKey) ??
+        createDefaultBailianAdapter(apiKey)
       const maxRetries = clampInt(config.maxRetries, 0, 5, 2)
       const concurrency = clampInt(config.concurrency, 1, 10, 3)
       const imageIndex = clampInt(config.imageIndex, 1, Number.MAX_SAFE_INTEGER, 1)

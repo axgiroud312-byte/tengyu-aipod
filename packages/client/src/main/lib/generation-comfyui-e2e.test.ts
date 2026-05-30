@@ -252,7 +252,7 @@ function extractMaskSkill(overrides: Partial<Skill> = {}): Skill {
     language: null,
     version: '1.0.0',
     enabled: true,
-    recommendedModel: 'nano-banana-2',
+    recommendedModel: 'gpt-image-2',
     notes: null,
     systemPrompt: 'Make a white background black print mask.',
     variables: [],

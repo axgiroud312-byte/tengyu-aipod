@@ -1,6 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
+import type { GenerationCapability, Skill, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CircleDashed,
   ImagePlus,
@@ -8,6 +8,7 @@ import {
   Loader2,
   Play,
   Plus,
+  RefreshCw,
   Scissors,
   WandSparkles,
 } from 'lucide-react'
@@ -40,6 +41,13 @@ type ReferenceImageDraft = {
   mime_type: string
 }
 type SkillVariablesState = Record<string, string | boolean>
+type ChenyuWorkflowInfo = Awaited<ReturnType<typeof window.api.generation.getChenyuWorkflow>>
+type ChenyuWorkflowParameter = NonNullable<
+  ChenyuWorkflowInfo['editable_parameter_manifest']
+>[number]
+type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
+type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
+type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
 
 const capabilityIcons: Record<GenerationCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
@@ -60,21 +68,28 @@ const unavailableText: Record<GenerationCapability, string> = {
   matting: 'Grsai 不内置透明底抠图，请使用 ComfyUI 或后续混合路径。',
 }
 
-const grsaiModels = [
-  'nano-banana',
-  'nano-banana-fast',
-  'nano-banana-2',
-  'nano-banana-2-cl',
-  'nano-banana-2-4k-cl',
-  'nano-banana-pro',
-  'nano-banana-pro-cl',
-  'nano-banana-pro-vip',
-  'nano-banana-pro-4k-vip',
-  'gpt-image-2',
-  'gpt-image-2-vip',
+const fallbackGrsaiModels: GrsaiImageModelOption[] = [
+  {
+    id: 'gpt-image-2',
+    label: 'gpt-image-2',
+    sizes: ['1024x1024', '1536x1024', '1024x1536'],
+    allowCustomSize: false,
+  },
+  {
+    id: 'gpt-image-2-vip',
+    label: 'gpt-image-2-vip',
+    sizes: ['1024x1024', '2048x2048', '3840x2160', '2160x3840'],
+    allowCustomSize: true,
+  },
 ]
+const fallbackGrsaiSizes = ['1024x1024', '1536x1024', '1024x1536']
 
-const aspectRatios = ['1:1', '16:9', '9:16', '4:3', '3:4', '3:2', '2:3', '5:4', '4:5']
+const fallbackBailianTextModels: LocalModelOption[] = [
+  { id: 'qwen-plus', label: 'qwen-plus', modality: 'text' },
+]
+const fallbackBailianVisionModels: LocalModelOption[] = [
+  { id: 'qwen3-vl-plus', label: 'qwen3-vl-plus', modality: 'vision' },
+]
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
     key: 'text',
@@ -148,21 +163,68 @@ function readFileAsDataUrl(file: File) {
   })
 }
 
-function skillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
-  return `${skill.id}@${skill.version}`
-}
-
 function workflowOptionKey(workflow: Pick<ComfyuiWorkflowSummary, 'id' | 'version'>) {
   return `${workflow.id}@${workflow.version}`
 }
 
-function isGenerationCapabilityKey(value: string): value is GenerationCapability {
-  return generationCapabilities.some((capability) => capability.key === value)
+function useGenerationLocalSettings() {
+  const [settings, setSettings] = useState<GenerationSettingsSnapshot | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.generationSettings
+      .get()
+      .then((nextSettings) => {
+        if (!cancelled) {
+          setSettings(nextSettings)
+          setError(null)
+        }
+      })
+      .catch((nextError) => {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : '读取本地生图设置失败')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  return { settings, error }
 }
 
-function parseSkillOptionKey(value: string) {
-  const [id = '', version = ''] = value.split('@')
-  return { id, version }
+function modelOptionsForCapability(
+  settings: GenerationSettingsSnapshot | null,
+  capability: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>,
+) {
+  void capability
+  return settings?.grsaiModels.length ? settings.grsaiModels : fallbackGrsaiModels
+}
+
+function bailianModelsForUse(
+  settings: GenerationSettingsSnapshot | null,
+  needsVision: boolean,
+) {
+  if (needsVision) {
+    return settings?.bailianVisionModels.length
+      ? settings.bailianVisionModels
+      : fallbackBailianVisionModels
+  }
+  return settings?.bailianTextModels.length ? settings.bailianTextModels : fallbackBailianTextModels
+}
+
+function modelLabel(model: { id: string; label?: string }) {
+  return model.label ?? model.id
+}
+
+function grsaiSizes(model: GrsaiImageModelOption | null) {
+  return model?.sizes.length ? model.sizes : fallbackGrsaiSizes
+}
+
+function isGenerationCapabilityKey(value: string): value is GenerationCapability {
+  return generationCapabilities.some((capability) => capability.key === value)
 }
 
 function defaultVariableValue(variable: SkillVariable): string | boolean {
@@ -182,6 +244,424 @@ function variablePayload(variables: SkillVariable[], values: SkillVariablesState
       }
       return [variable.key, value]
     }),
+  )
+}
+
+function workflowParameterType(parameter: ChenyuWorkflowParameter) {
+  return String(parameter.type ?? 'string').toLowerCase()
+}
+
+function workflowParameterValue(value: unknown) {
+  if (value === undefined || value === null) {
+    return ''
+  }
+  if (typeof value === 'object') {
+    return JSON.stringify(value, null, 2)
+  }
+  return String(value)
+}
+
+function defaultWorkflowInputValues(
+  manifest: ChenyuWorkflowParameter[] | undefined,
+  prompt: string,
+) {
+  const result = Object.fromEntries(
+    (manifest ?? [])
+      .filter((item) => item.key)
+      .map((item) => [item.key, workflowParameterValue(item.default_value)]),
+  )
+  const firstString = (manifest ?? []).find(
+    (item) => workflowParameterType(item) === 'string' && item.key,
+  )
+  if (firstString && prompt.trim()) {
+    result[firstString.key] = prompt.trim()
+  }
+  return result
+}
+
+function coerceWorkflowInputValue(parameter: ChenyuWorkflowParameter, rawValue: string) {
+  const type = workflowParameterType(parameter)
+  if (type === 'number' || type === 'integer' || type === 'float') {
+    const parsed = Number(rawValue)
+    return Number.isFinite(parsed) ? parsed : rawValue
+  }
+  if (type === 'boolean' || type === 'bool') {
+    return rawValue === 'true'
+  }
+  if (type === 'json' || type === 'object' || type === 'array') {
+    return rawValue.trim() ? JSON.parse(rawValue) : type === 'array' ? [] : {}
+  }
+  return rawValue
+}
+
+function workflowInputPayload(
+  parameters: ChenyuWorkflowParameter[],
+  values: Record<string, string>,
+  prompt: string,
+) {
+  const result: Record<string, unknown> = {}
+  const firstStringKey = parameters.find((item) => workflowParameterType(item) === 'string')?.key
+  for (const parameter of parameters) {
+    if (!parameter.key) {
+      continue
+    }
+    const rawValue =
+      parameter.key === firstStringKey && !values[parameter.key]?.trim() && prompt.trim()
+        ? prompt.trim()
+        : (values[parameter.key] ?? '')
+    result[parameter.key] = coerceWorkflowInputValue(parameter, rawValue)
+  }
+  return result
+}
+
+function formatChenyuQuote(input: { quote_amount?: string; quote_currency?: string } | null) {
+  const amount = input?.quote_amount?.trim()
+  if (!amount) {
+    return '按晨羽工作流报价'
+  }
+  return `${amount} ${input?.quote_currency?.trim() || 'CNY'}`
+}
+
+function ChenyuOfficialWorkflowPanel({ capability }: { capability: GenerationCapability }) {
+  const [workflows, setWorkflows] = useState<
+    Awaited<ReturnType<typeof window.api.generation.listChenyuWorkflows>>['items']
+  >([])
+  const [workflowId, setWorkflowId] = useState('')
+  const [revisionId, setRevisionId] = useState('')
+  const [parameters, setParameters] = useState<ChenyuWorkflowParameter[]>([])
+  const [workflowInfo, setWorkflowInfo] = useState<ChenyuWorkflowInfo | null>(null)
+  const [inputValues, setInputValues] = useState<Record<string, string>>({})
+  const [prompt, setPrompt] = useState('')
+  const [acceptExternalCostRisk, setAcceptExternalCostRisk] = useState(false)
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [result, setResult] = useState<GenerationRunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [running, setRunning] = useState(false)
+  const needsExternalCostAccept = workflowInfo?.may_incur_external_model_cost === true
+
+  useEffect(() => {
+    void loadWorkflows()
+  }, [])
+
+  useEffect(() => {
+    const offProgress = window.api.generation.onProgress((nextProgress) => {
+      if (nextProgress.task_id === taskId) {
+        setProgress(nextProgress)
+      }
+    })
+    const offCompleted = window.api.generation.onCompleted((event) => {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
+        return
+      }
+      setRunning(false)
+      if (event.ok) {
+        setResult(event.result)
+        setError(null)
+      } else {
+        setError(event.error)
+      }
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [taskId])
+
+  async function loadWorkflows() {
+    setLoading(true)
+    setError(null)
+    try {
+      const nextWorkflows = await window.api.generation.listChenyuWorkflows({
+        page: 1,
+        page_size: 50,
+      })
+      setWorkflows(nextWorkflows.items)
+      const first = nextWorkflows.items[0]
+      if (first) {
+        await selectWorkflow(first.workflow_id, first.revision_id)
+      } else {
+        setWorkflowId('')
+        setRevisionId('')
+        setWorkflowInfo(null)
+        setParameters([])
+        setInputValues({})
+        setAcceptExternalCostRisk(false)
+      }
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取晨羽工作流失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function selectWorkflow(nextWorkflowId: string, fallbackRevisionId?: string) {
+    setWorkflowId(nextWorkflowId)
+    setError(null)
+    try {
+      const detail = await window.api.generation.getChenyuWorkflow({ workflowId: nextWorkflowId })
+      const manifest = (detail.editable_parameter_manifest ?? []).filter((item) => item.key)
+      setWorkflowInfo(detail)
+      setRevisionId(detail.revision_id ?? fallbackRevisionId ?? '')
+      setParameters(manifest)
+      setInputValues(defaultWorkflowInputValues(manifest, prompt))
+      setAcceptExternalCostRisk(false)
+      setResult(null)
+      setProgress(null)
+    } catch (nextError) {
+      setWorkflowInfo(null)
+      setParameters([])
+      setInputValues({})
+      setError(nextError instanceof Error ? nextError.message : '读取晨羽工作流失败')
+    }
+  }
+
+  async function startWorkflow() {
+    setError(null)
+    if (!workflowId) {
+      setError('请选择晨羽工作流')
+      return
+    }
+    if (needsExternalCostAccept && !acceptExternalCostRisk) {
+      setError('该工作流可能产生外部模型费用，请先确认费用风险')
+      return
+    }
+    let inputs: Record<string, unknown>
+    try {
+      inputs = workflowInputPayload(parameters, inputValues, prompt)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '工作流参数不正确')
+      return
+    }
+    setResult(null)
+    setRunning(true)
+    try {
+      const nextTaskId = await window.api.generation.runChenyuWorkflow({
+        capability,
+        workflowId,
+        ...(revisionId ? { revisionId } : {}),
+        inputs,
+        prompt,
+        ...(needsExternalCostAccept ? { acceptExternalCostRisk } : {}),
+      })
+      setTaskId(nextTaskId)
+      setProgress({
+        task_id: nextTaskId,
+        capability,
+        processed: 0,
+        total: 1,
+        succeeded: 0,
+        failed: 0,
+      })
+    } catch (nextError) {
+      setRunning(false)
+      setError(nextError instanceof Error ? nextError.message : '启动晨羽工作流失败')
+    }
+  }
+
+  return (
+    <div className="mt-5 rounded-md border bg-background p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="font-semibold">晨羽官方工作流</h4>
+          <p className="mt-1 text-sm text-muted-foreground">
+            从晨羽工作流市场读取参数，本地只保存 API Key 和生成结果。
+          </p>
+        </div>
+        <Button
+          disabled={loading || running}
+          onClick={() => void loadWorkflows()}
+          type="button"
+          variant="secondary"
+        >
+          {loading ? <Loader2 className="mr-2 h-4 w-4" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+          刷新工作流
+        </Button>
+      </div>
+      {error ? (
+        <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
+          {error}
+        </div>
+      ) : null}
+      <div className="mt-4 grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
+        <div className="space-y-3">
+          <label className="block space-y-2 text-sm font-medium">
+            <span>工作流</span>
+            <select
+              className="h-10 w-full rounded-md border bg-background px-3"
+              onChange={(event) => {
+                const workflow = workflows.find((item) => item.workflow_id === event.target.value)
+                void selectWorkflow(event.target.value, workflow?.revision_id)
+              }}
+              value={workflowId}
+            >
+              {!workflows.length ? <option value="">暂无可用工作流</option> : null}
+              {workflows.map((workflow) => (
+                <option key={workflow.workflow_id} value={workflow.workflow_id}>
+                  {workflow.title} · {formatChenyuQuote(workflow)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {workflowInfo ? (
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="font-medium">{workflowInfo.title}</div>
+              {workflowInfo.description ? (
+                <div className="mt-1 text-muted-foreground">{workflowInfo.description}</div>
+              ) : null}
+              <div className="mt-2 text-xs text-muted-foreground">
+                报价：{formatChenyuQuote(workflowInfo)}
+              </div>
+            </div>
+          ) : null}
+          <label className="block space-y-2 text-sm font-medium">
+            <span>版本 revision_id</span>
+            <input
+              className="h-10 w-full rounded-md border bg-background px-3"
+              onChange={(event) => setRevisionId(event.target.value)}
+              value={revisionId}
+            />
+          </label>
+          <label className="block space-y-2 text-sm font-medium">
+            <span>提示词</span>
+            <textarea
+              className="min-h-24 w-full rounded-md border bg-background px-3 py-2"
+              onChange={(event) => setPrompt(event.target.value)}
+              value={prompt}
+            />
+          </label>
+          {needsExternalCostAccept ? (
+            <label className="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+              <input
+                checked={acceptExternalCostRisk}
+                className="mt-1"
+                onChange={(event) => setAcceptExternalCostRisk(event.target.checked)}
+                type="checkbox"
+              />
+              <span>
+                <span className="block font-medium">确认该工作流可能产生额外模型费用</span>
+                <span className="mt-1 block text-xs leading-5">
+                  {workflowInfo?.external_cost_notice?.trim() ||
+                    `晨羽报价为 ${formatChenyuQuote(workflowInfo)}，实际费用以服务商返回为准。`}
+                </span>
+              </span>
+            </label>
+          ) : null}
+          <Button
+            className="w-full"
+            disabled={running || !workflowId}
+            onClick={() => void startWorkflow()}
+            type="button"
+          >
+            {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+            运行官方工作流
+          </Button>
+          {progress ? (
+            <div className="text-sm text-muted-foreground">
+              进度 {progressPercent(progress)}%，成功 {progress.succeeded}，失败 {progress.failed}
+            </div>
+          ) : null}
+          {result ? (
+            <div className="rounded-md border bg-muted/20 p-3 text-sm">
+              <div className="font-medium">
+                完成：成功 {result.succeeded}，失败 {result.failed}
+              </div>
+              {result.images.length ? (
+                <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                  {result.images.map((image) => (
+                    <div
+                      className="rounded-md border bg-background p-2"
+                      key={image.localPath ?? image.url}
+                    >
+                      <img
+                        alt={image.prompt || '晨羽工作流输出'}
+                        className="h-32 w-full rounded-sm object-cover"
+                        src={image.url}
+                      />
+                      {image.prompt ? (
+                        <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                          {image.prompt}
+                        </div>
+                      ) : null}
+                      {image.localPath ? (
+                        <div className="mt-1 truncate text-xs text-muted-foreground">
+                          {image.localPath}
+                        </div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+        <div className="space-y-3">
+          {parameters.length > 0 ? (
+            parameters.map((parameter) => {
+              const type = workflowParameterType(parameter)
+              const label = parameter.display_name ?? parameter.key
+              const inputId = `chenyu-workflow-${parameter.key}`
+              return (
+                <div className="space-y-2" key={parameter.key}>
+                  <label className="block text-sm font-medium" htmlFor={inputId}>
+                    {label}
+                  </label>
+                  {type === 'boolean' || type === 'bool' ? (
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-3"
+                      id={inputId}
+                      onChange={(event) =>
+                        setInputValues((currentValues) => ({
+                          ...currentValues,
+                          [parameter.key]: event.target.value,
+                        }))
+                      }
+                      value={inputValues[parameter.key] ?? 'false'}
+                    >
+                      <option value="true">true</option>
+                      <option value="false">false</option>
+                    </select>
+                  ) : type === 'number' || type === 'integer' || type === 'float' ? (
+                    <input
+                      className="h-10 w-full rounded-md border bg-background px-3"
+                      id={inputId}
+                      onChange={(event) =>
+                        setInputValues((currentValues) => ({
+                          ...currentValues,
+                          [parameter.key]: event.target.value,
+                        }))
+                      }
+                      type="number"
+                      value={inputValues[parameter.key] ?? ''}
+                    />
+                  ) : (
+                    <textarea
+                      className="min-h-20 w-full resize-y rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      id={inputId}
+                      onChange={(event) =>
+                        setInputValues((currentValues) => ({
+                          ...currentValues,
+                          [parameter.key]: event.target.value,
+                        }))
+                      }
+                      value={inputValues[parameter.key] ?? ''}
+                    />
+                  )}
+                </div>
+              )
+            })
+          ) : (
+            <div className="rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground">
+              当前工作流没有可编辑参数。
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -206,7 +686,7 @@ function capabilityCopy(capability: GenerationCapability, provider: GenerationPr
       description:
         provider === 'grsai'
           ? '后续接入纯文字、参考构图、参考风格、构图+风格、自己写五种模式。'
-          : '后续接入云端派发的图生图工作流列表和参数表单。',
+          : '后续接入本地导入的图生图工作流列表和参数表单。',
     }
   }
 
@@ -231,22 +711,20 @@ function GrsaiPromptGenerationPanel({
 }: {
   capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>
 }) {
+  const { settings, error: settingsError } = useGenerationLocalSettings()
   const [mode, setMode] = useState<Txt2imgMode>('ai')
   const [img2imgMode, setImg2imgMode] = useState<Img2imgMode>('text')
   const [printMode, setPrintMode] = useState<'local' | 'full'>('local')
   const [promptCount, setPromptCount] = useState('5')
   const [requirement, setRequirement] = useState('')
-  const [skillId, setSkillId] = useState(
-    capability === 'img2img' ? 'img2img-print-prompt-v3' : 'txt2img-print-prompt-v3',
-  )
-  const [llmModel, setLlmModel] = useState('qwen3-vl-plus')
+  const [llmModel, setLlmModel] = useState('qwen-plus')
   const [manualText, setManualText] = useState('')
   const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>([])
   const [drafts, setDrafts] = useState<Txt2imgPromptDraft[]>([])
-  const [generationModel, setGenerationModel] = useState('nano-banana-2')
-  const [aspectRatio, setAspectRatio] = useState('1:1')
-  const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K')
+  const [generationModel, setGenerationModel] = useState('gpt-image-2')
+  const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
+  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -255,12 +733,18 @@ function GrsaiPromptGenerationPanel({
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== capability) {
+      if (nextProgress.task_id !== taskId) {
         return
       }
       setProgress(nextProgress)
     })
     const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
+        return
+      }
       setRunning(false)
       if (event.ok) {
         setResult(event.result)
@@ -273,7 +757,7 @@ function GrsaiPromptGenerationPanel({
       offProgress()
       offCompleted()
     }
-  }, [capability])
+  }, [taskId])
 
   const activeImg2imgMode = img2imgModes.find((item) => item.key === img2imgMode) ?? img2imgModes[0]
   const aiMode = capability === 'txt2img' ? mode === 'ai' : img2imgMode !== 'manual'
@@ -281,6 +765,21 @@ function GrsaiPromptGenerationPanel({
   const usesReference =
     capability === 'img2img' &&
     (img2imgMode === 'layout' || img2imgMode === 'style' || img2imgMode === 'layout-style')
+  const generationModels = useMemo(
+    () => modelOptionsForCapability(settings, capability),
+    [capability, settings],
+  )
+  const selectedGenerationModel = useMemo(
+    () => generationModels.find((model) => model.id === generationModel) ?? null,
+    [generationModel, generationModels],
+  )
+  const sizeOptions = grsaiSizes(selectedGenerationModel)
+  const maxConcurrency = 20
+  const defaultConcurrency = settings?.config.grsai_concurrency ?? 3
+  const llmModels = useMemo(
+    () => bailianModelsForUse(settings, usesReference),
+    [settings, usesReference],
+  )
 
   const selectedPrompts = useMemo(
     () => drafts.filter((draft) => draft.selected && draft.text.trim()).map((draft) => draft.text),
@@ -288,16 +787,39 @@ function GrsaiPromptGenerationPanel({
   )
   const percent = progressPercent(progress)
 
+  useEffect(() => {
+    const firstModel = generationModels[0]
+    if (firstModel && !generationModels.some((model) => model.id === generationModel)) {
+      setGenerationModel(firstModel.id)
+    }
+  }, [generationModel, generationModels])
+
+  useEffect(() => {
+    if (!sizeOptions.includes(aspectRatio)) {
+      setAspectRatio(sizeOptions[0] ?? '1024x1024')
+    }
+  }, [aspectRatio, sizeOptions])
+
+  useEffect(() => {
+    const preferredModel = usesReference
+      ? settings?.config.bailian_vision_model
+      : settings?.config.bailian_text_model
+    const firstLlm =
+      llmModels.find((model) => model.id === preferredModel) ?? llmModels[0]
+    if (firstLlm && !llmModels.some((model) => model.id === llmModel)) {
+      setLlmModel(firstLlm.id)
+    }
+  }, [llmModel, llmModels, settings, usesReference])
+
   async function generatePrompts() {
     setGeneratingPrompts(true)
     setError(null)
     try {
       const nextDrafts = await window.api.generation.generatePrompts({
         capability,
-        ...(skillId.trim() ? { skillId: skillId.trim() } : {}),
         printMode,
         requirement,
-        count: clampNumber(promptCount, 1, 20, 5),
+        count: clampNumber(promptCount, 1, 100, 5),
         model: llmModel,
         ...(capability === 'img2img' && activeImg2imgMode
           ? { modeInstruction: activeImg2imgMode.instruction }
@@ -374,25 +896,42 @@ function GrsaiPromptGenerationPanel({
       setError('请先准备至少一条提示词')
       return
     }
+    if (usesReference && referenceImages.length === 0) {
+      setError('请先添加至少一张参考图')
+      return
+    }
 
     setResult(null)
     setRunning(true)
-    const taskId = await window.api.generation.runTxt2img({
-      capability,
-      prompts,
-      model: generationModel,
-      aspectRatio,
-      imageSize,
-      concurrency: clampNumber(concurrency, 1, 10, 3),
-    })
-    setProgress({
-      task_id: taskId,
-      capability,
-      processed: 0,
-      total: prompts.length,
-      succeeded: 0,
-      failed: 0,
-    })
+    try {
+      const taskId = await window.api.generation.runTxt2img({
+        capability,
+        prompts,
+        model: generationModel,
+        aspectRatio,
+        ...(usesReference
+          ? {
+              referenceImages: referenceImages.map((image) => ({
+                base64: image.base64,
+                mime_type: image.mime_type,
+              })),
+            }
+          : {}),
+        concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
+      })
+      setTaskId(taskId)
+      setProgress({
+        task_id: taskId,
+        capability,
+        processed: 0,
+        total: prompts.length,
+        succeeded: 0,
+        failed: 0,
+      })
+    } catch (nextError) {
+      setRunning(false)
+      setError(nextError instanceof Error ? nextError.message : '启动生图任务失败')
+    }
   }
 
   return (
@@ -487,7 +1026,7 @@ function GrsaiPromptGenerationPanel({
                   <span>提示词数量</span>
                   <input
                     className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    max={20}
+                    max={100}
                     min={1}
                     onChange={(event) => setPromptCount(event.target.value)}
                     type="number"
@@ -501,9 +1040,11 @@ function GrsaiPromptGenerationPanel({
                     onChange={(event) => setLlmModel(event.target.value)}
                     value={llmModel}
                   >
-                    <option value="qwen3-vl-plus">qwen3-vl-plus</option>
-                    <option value="qwen3.6-plus">qwen3.6-plus</option>
-                    <option value="qwen3-vl-flash">qwen3-vl-flash</option>
+                    {llmModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {modelLabel(model)}
+                      </option>
+                    ))}
                   </select>
                 </label>
               </div>
@@ -522,15 +1063,17 @@ function GrsaiPromptGenerationPanel({
                 />
               </label>
 
-              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                <label className="block space-y-2 text-sm font-medium">
-                  <span>提示词模板</span>
-                  <input
-                    className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    onChange={(event) => setSkillId(event.target.value)}
-                    value={skillId}
-                  />
-                </label>
+              <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border bg-muted/30 px-3 py-3">
+                <div className="min-w-0 text-sm text-muted-foreground">
+                  当前会自动使用后台固定槽位：
+                  {capability === 'txt2img'
+                    ? printMode === 'full'
+                      ? '文生图满印'
+                      : '文生图局部印花'
+                    : printMode === 'full'
+                      ? '图生图满印参考图'
+                      : '图生图局部参考图'}
+                </div>
                 <div className="flex items-end">
                   <Button
                     disabled={generatingPrompts}
@@ -602,6 +1145,11 @@ function GrsaiPromptGenerationPanel({
       <aside className="space-y-5">
         <div className="rounded-md border bg-background p-4">
           <h4 className="font-semibold">生图设置</h4>
+          {settingsError ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {settingsError}
+            </div>
+          ) : null}
           <div className="mt-4 grid gap-3">
             <label className="block space-y-2 text-sm font-medium">
               <span>生图模型</span>
@@ -610,38 +1158,26 @@ function GrsaiPromptGenerationPanel({
                 onChange={(event) => setGenerationModel(event.target.value)}
                 value={generationModel}
               >
-                {grsaiModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
+                {generationModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {modelLabel(model)}
                   </option>
                 ))}
               </select>
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3">
               <label className="block space-y-2 text-sm font-medium">
-                <span>比例</span>
+                <span>尺寸</span>
                 <select
                   className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   onChange={(event) => setAspectRatio(event.target.value)}
                   value={aspectRatio}
                 >
-                  {aspectRatios.map((ratio) => (
-                    <option key={ratio} value={ratio}>
-                      {ratio}
+                  {sizeOptions.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
                     </option>
                   ))}
-                </select>
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>分辨率</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setImageSize(event.target.value as '1K' | '2K' | '4K')}
-                  value={imageSize}
-                >
-                  <option value="1K">1K</option>
-                  <option value="2K">2K</option>
-                  <option value="4K">4K</option>
                 </select>
               </label>
             </div>
@@ -649,7 +1185,7 @@ function GrsaiPromptGenerationPanel({
               <span>并发</span>
               <input
                 className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                max={10}
+                max={maxConcurrency}
                 min={1}
                 onChange={(event) => setConcurrency(event.target.value)}
                 type="number"
@@ -712,6 +1248,7 @@ function ComfyuiTxt2imgPanel() {
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [concurrency, setConcurrency] = useState('1')
+  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -724,13 +1261,16 @@ function ComfyuiTxt2imgPanel() {
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== 'txt2img') {
+      if (nextProgress.task_id !== taskId) {
         return
       }
       setProgress(nextProgress)
     })
     const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== progress?.task_id) {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
         return
       }
       setRunning(false)
@@ -745,7 +1285,7 @@ function ComfyuiTxt2imgPanel() {
       offProgress()
       offCompleted()
     }
-  }, [progress?.task_id])
+  }, [taskId])
 
   const percent = progressPercent(progress)
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
@@ -788,6 +1328,7 @@ function ComfyuiTxt2imgPanel() {
       height: clampNumber(height, 256, 4096, 1024),
       concurrency: clampNumber(concurrency, 1, 10, 1),
     })
+    setTaskId(taskId)
     setProgress({
       task_id: taskId,
       capability: 'txt2img',
@@ -826,7 +1367,7 @@ function ComfyuiTxt2imgPanel() {
             <div>
               <h4 className="font-semibold">ComfyUI 工作流</h4>
               <p className="mt-1 text-sm text-muted-foreground">
-                工作流包由云端派发，本地只注入提示词和尺寸。
+                工作流从设置页本地导入，这里只注入提示词和尺寸。
               </p>
             </div>
             <Button onClick={() => void loadWorkflows()} type="button" variant="secondary">
@@ -964,19 +1505,19 @@ function ComfyuiTxt2imgPanel() {
 }
 
 function GrsaiExtractPanel() {
+  const { settings, error: settingsError } = useGenerationLocalSettings()
   const [sources, setSources] = useState<GenerationImageSource[]>([])
   const [sourceFolder, setSourceFolder] = useState('')
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
-  const [skills, setSkills] = useState<SkillSummary[]>([])
-  const [selectedSkillKey, setSelectedSkillKey] = useState('')
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
   const [variables, setVariables] = useState<SkillVariablesState>({})
+  const [printMode, setPrintMode] = useState<'local' | 'full'>('local')
   const [promptCount, setPromptCount] = useState('1')
   const [llmModel, setLlmModel] = useState('qwen3-vl-plus')
-  const [generationModel, setGenerationModel] = useState('nano-banana-2')
-  const [aspectRatio, setAspectRatio] = useState('1:1')
-  const [imageSize, setImageSize] = useState<'1K' | '2K' | '4K'>('1K')
+  const [generationModel, setGenerationModel] = useState('gpt-image-2')
+  const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
+  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -985,17 +1526,12 @@ function GrsaiExtractPanel() {
 
   useEffect(() => {
     void loadSources()
-    void loadSkills()
   }, [])
 
   useEffect(() => {
-    if (!selectedSkillKey) {
-      setSelectedSkill(null)
-      return
-    }
-    const { id, version } = parseSkillOptionKey(selectedSkillKey)
+    const id = printMode === 'full' ? 'img2img-full-reference' : 'img2img-local-reference'
     window.api.skill
-      .get({ id, version })
+      .get({ id })
       .then((skill) => {
         setSelectedSkill(skill)
         setVariables(
@@ -1003,22 +1539,26 @@ function GrsaiExtractPanel() {
             skill.variables.map((variable) => [variable.key, defaultVariableValue(variable)]),
           ),
         )
-        setLlmModel(skill.recommendedModel ?? 'qwen3-vl-plus')
+        setLlmModel(skill.recommendedModel ?? settings?.config.bailian_vision_model ?? 'qwen3-vl-plus')
       })
       .catch((nextError) => {
-        setError(nextError instanceof Error ? nextError.message : '读取提取模板失败')
+        setSelectedSkill(null)
+        setError(nextError instanceof Error ? nextError.message : '读取参考图 Skill 失败，请先在后台配置')
       })
-  }, [selectedSkillKey])
+  }, [printMode, settings?.config.bailian_vision_model])
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== 'extract') {
+      if (nextProgress.task_id !== taskId) {
         return
       }
       setProgress(nextProgress)
     })
     const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== progress?.task_id) {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
         return
       }
       setRunning(false)
@@ -1033,10 +1573,46 @@ function GrsaiExtractPanel() {
       offProgress()
       offCompleted()
     }
-  }, [progress?.task_id])
+  }, [taskId])
 
   const selectedCount = selectedPaths.length
   const percent = progressPercent(progress)
+  const generationModels = useMemo(
+    () => modelOptionsForCapability(settings, 'extract'),
+    [settings],
+  )
+  const selectedGenerationModel = useMemo(
+    () => generationModels.find((model) => model.id === generationModel) ?? null,
+    [generationModel, generationModels],
+  )
+  const sizeOptions = grsaiSizes(selectedGenerationModel)
+  const maxConcurrency = 20
+  const defaultConcurrency = settings?.config.grsai_concurrency ?? 3
+  const llmModels = useMemo(
+    () => bailianModelsForUse(settings, true),
+    [settings],
+  )
+
+  useEffect(() => {
+    const firstModel = generationModels[0]
+    if (firstModel && !generationModels.some((model) => model.id === generationModel)) {
+      setGenerationModel(firstModel.id)
+    }
+  }, [generationModel, generationModels])
+
+  useEffect(() => {
+    if (!sizeOptions.includes(aspectRatio)) {
+      setAspectRatio(sizeOptions[0] ?? '1024x1024')
+    }
+  }, [aspectRatio, sizeOptions])
+
+  useEffect(() => {
+    const firstLlm =
+      llmModels.find((model) => model.id === settings?.config.bailian_vision_model) ?? llmModels[0]
+    if (firstLlm && !llmModels.some((model) => model.id === llmModel)) {
+      setLlmModel(firstLlm.id)
+    }
+  }, [llmModel, llmModels, settings?.config.bailian_vision_model])
 
   async function loadSources() {
     setLoadingSources(true)
@@ -1052,19 +1628,6 @@ function GrsaiExtractPanel() {
       setError(nextError instanceof Error ? nextError.message : '读取采集源图失败')
     } finally {
       setLoadingSources(false)
-    }
-  }
-
-  async function loadSkills() {
-    try {
-      const nextSkills = await window.api.skill.list({ module: 'generation', category: 'extract' })
-      setSkills(nextSkills)
-      const first = nextSkills[0]
-      if (first) {
-        setSelectedSkillKey(skillOptionKey(first))
-      }
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取提取模板列表失败')
     }
   }
 
@@ -1089,7 +1652,7 @@ function GrsaiExtractPanel() {
   async function startExtract() {
     setError(null)
     if (!selectedSkill) {
-      setError('请选择提取模板')
+      setError('请先在后台配置图生图参考图 Skill')
       return
     }
     if (selectedPaths.length === 0) {
@@ -1104,18 +1667,18 @@ function GrsaiExtractPanel() {
       skillId: selectedSkill.id,
       skillVersion: selectedSkill.version,
       variables: variablePayload(selectedSkill.variables, variables),
-      promptCount: clampNumber(promptCount, 1, 20, 1),
+      promptCount: clampNumber(promptCount, 1, 100, 1),
       llmModel,
       model: generationModel,
       aspectRatio,
-      imageSize,
-      concurrency: clampNumber(concurrency, 1, 10, 3),
+      concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
     })
+    setTaskId(taskId)
     setProgress({
       task_id: taskId,
       capability: 'extract',
       processed: 0,
-      total: selectedPaths.length * clampNumber(promptCount, 1, 20, 1),
+      total: selectedPaths.length * clampNumber(promptCount, 1, 100, 1),
       succeeded: 0,
       failed: 0,
     })
@@ -1183,27 +1746,39 @@ function GrsaiExtractPanel() {
         </div>
 
         <div className="rounded-md border bg-background p-4">
-          <h4 className="font-semibold">提取模板</h4>
+          <h4 className="font-semibold">参考图 Skill</h4>
           <div className="mt-4 grid gap-4 md:grid-cols-3">
-            <label className="block space-y-2 text-sm font-medium md:col-span-2">
-              <span>提示词模板</span>
-              <select
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setSelectedSkillKey(event.target.value)}
-                value={selectedSkillKey}
-              >
-                {skills.map((skill) => (
-                  <option key={skillOptionKey(skill)} value={skillOptionKey(skill)}>
-                    {skill.id} · {skill.version}
-                  </option>
-                ))}
-              </select>
-            </label>
+            <fieldset className="rounded-md border p-3 md:col-span-2">
+              <legend className="px-1 text-sm font-medium">印花类型</legend>
+              <div className="mt-2 flex gap-4 text-sm">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    checked={printMode === 'local'}
+                    onChange={() => setPrintMode('local')}
+                    type="radio"
+                  />
+                  局部参考图
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    checked={printMode === 'full'}
+                    onChange={() => setPrintMode('full')}
+                    type="radio"
+                  />
+                  满印参考图
+                </label>
+              </div>
+              <p className="mt-2 text-xs text-muted-foreground">
+                {selectedSkill
+                  ? `${selectedSkill.id} · ${selectedSkill.version}`
+                  : '未读取到固定 Skill'}
+              </p>
+            </fieldset>
             <label className="block space-y-2 text-sm font-medium">
               <span>每张提示词数</span>
               <input
                 className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                max={20}
+                max={100}
                 min={1}
                 onChange={(event) => setPromptCount(event.target.value)}
                 type="number"
@@ -1253,6 +1828,11 @@ function GrsaiExtractPanel() {
       <aside className="space-y-5">
         <div className="rounded-md border bg-background p-4">
           <h4 className="font-semibold">执行设置</h4>
+          {settingsError ? (
+            <div className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+              {settingsError}
+            </div>
+          ) : null}
           <div className="mt-4 grid gap-3">
             <label className="block space-y-2 text-sm font-medium">
               <span>语言模型</span>
@@ -1261,9 +1841,11 @@ function GrsaiExtractPanel() {
                 onChange={(event) => setLlmModel(event.target.value)}
                 value={llmModel}
               >
-                <option value="qwen3-vl-plus">qwen3-vl-plus</option>
-                <option value="qwen3-vl-flash">qwen3-vl-flash</option>
-                <option value="qwen-vl-max">qwen-vl-max</option>
+                {llmModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {modelLabel(model)}
+                  </option>
+                ))}
               </select>
             </label>
             <label className="block space-y-2 text-sm font-medium">
@@ -1273,38 +1855,26 @@ function GrsaiExtractPanel() {
                 onChange={(event) => setGenerationModel(event.target.value)}
                 value={generationModel}
               >
-                {grsaiModels.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
+                {generationModels.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {modelLabel(model)}
                   </option>
                 ))}
               </select>
             </label>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid gap-3">
               <label className="block space-y-2 text-sm font-medium">
-                <span>比例</span>
+                <span>尺寸</span>
                 <select
                   className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                   onChange={(event) => setAspectRatio(event.target.value)}
                   value={aspectRatio}
                 >
-                  {aspectRatios.map((ratio) => (
-                    <option key={ratio} value={ratio}>
-                      {ratio}
+                  {sizeOptions.map((size) => (
+                    <option key={size} value={size}>
+                      {size}
                     </option>
                   ))}
-                </select>
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>分辨率</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setImageSize(event.target.value as '1K' | '2K' | '4K')}
-                  value={imageSize}
-                >
-                  <option value="1K">1K</option>
-                  <option value="2K">2K</option>
-                  <option value="4K">4K</option>
                 </select>
               </label>
             </div>
@@ -1312,7 +1882,7 @@ function GrsaiExtractPanel() {
               <span>并发</span>
               <input
                 className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                max={10}
+                max={maxConcurrency}
                 min={1}
                 onChange={(event) => setConcurrency(event.target.value)}
                 type="number"
@@ -1375,6 +1945,7 @@ function ComfyuiImg2imgPanel() {
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [workflowKey, setWorkflowKey] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1388,13 +1959,16 @@ function ComfyuiImg2imgPanel() {
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== 'img2img') {
+      if (nextProgress.task_id !== taskId) {
         return
       }
       setProgress(nextProgress)
     })
     const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== progress?.task_id) {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
         return
       }
       setRunning(false)
@@ -1409,7 +1983,7 @@ function ComfyuiImg2imgPanel() {
       offProgress()
       offCompleted()
     }
-  }, [progress?.task_id])
+  }, [taskId])
 
   const percent = progressPercent(progress)
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
@@ -1470,6 +2044,7 @@ function ComfyuiImg2imgPanel() {
       workflowVersion: selectedWorkflow.version,
       prompt,
     })
+    setTaskId(taskId)
     setProgress({
       task_id: taskId,
       capability: 'img2img',
@@ -1634,6 +2209,7 @@ function ComfyuiExtractPanel() {
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [workflowKey, setWorkflowKey] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1647,13 +2223,16 @@ function ComfyuiExtractPanel() {
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== 'extract') {
+      if (nextProgress.task_id !== taskId) {
         return
       }
       setProgress(nextProgress)
     })
     const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== progress?.task_id) {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
         return
       }
       setRunning(false)
@@ -1668,7 +2247,7 @@ function ComfyuiExtractPanel() {
       offProgress()
       offCompleted()
     }
-  }, [progress?.task_id])
+  }, [taskId])
 
   const percent = progressPercent(progress)
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
@@ -1735,6 +2314,7 @@ function ComfyuiExtractPanel() {
       workflowVersion: selectedWorkflow.version,
       prompt,
     })
+    setTaskId(taskId)
     setProgress({
       task_id: taskId,
       capability: 'extract',
@@ -1908,6 +2488,7 @@ function ComfyuiMattingPanel() {
   const [mixedWorkflows, setMixedWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [prompt, setPrompt] = useState('')
+  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -1921,13 +2502,16 @@ function ComfyuiMattingPanel() {
 
   useEffect(() => {
     const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.capability !== 'matting') {
+      if (nextProgress.task_id !== taskId) {
         return
       }
       setProgress(nextProgress)
     })
     const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== progress?.task_id) {
+      if (event.ok && event.result.taskId !== taskId) {
+        return
+      }
+      if (!event.ok && event.taskId !== taskId) {
         return
       }
       setRunning(false)
@@ -1942,7 +2526,7 @@ function ComfyuiMattingPanel() {
       offProgress()
       offCompleted()
     }
-  }, [progress?.task_id])
+  }, [taskId])
 
   const percent = progressPercent(progress)
   const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows
@@ -2024,6 +2608,7 @@ function ComfyuiMattingPanel() {
         ...(workflowVersion ? { workflowVersion } : {}),
       })
     }
+    setTaskId(taskId)
     setProgress({
       task_id: taskId,
       capability: 'matting',
@@ -2369,7 +2954,10 @@ export function GenerationWorkbench() {
         </div>
 
         {activeCapability === 'txt2img' && activeProvider === 'comfyui-chenyu' ? (
-          <ComfyuiTxt2imgPanel />
+          <>
+            <ComfyuiTxt2imgPanel />
+            <ChenyuOfficialWorkflowPanel capability={activeCapability} />
+          </>
         ) : activeCapability === 'extract' && activeProvider === 'grsai' ? (
           <GrsaiExtractPanel />
         ) : activeCapability === 'extract' && activeProvider === 'comfyui-chenyu' ? (
@@ -2377,7 +2965,10 @@ export function GenerationWorkbench() {
         ) : activeCapability === 'matting' && activeProvider === 'comfyui-chenyu' ? (
           <ComfyuiMattingPanel />
         ) : activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu' ? (
-          <ComfyuiImg2imgPanel />
+          <>
+            <ComfyuiImg2imgPanel />
+            <ChenyuOfficialWorkflowPanel capability={activeCapability} />
+          </>
         ) : (activeCapability === 'txt2img' || activeCapability === 'img2img') &&
           activeProvider === 'grsai' ? (
           <GrsaiPromptGenerationPanel capability={activeCapability} />

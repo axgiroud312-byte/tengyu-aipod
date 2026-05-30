@@ -35,7 +35,7 @@
 | 认证 | 自实现 JWT（不用 Auth.js，需求简单）|
 | Admin UI | shadcn/ui dashboard 模板 |
 | API 验证 | zod schema |
-| 邮件（如发激活码邮件）| Resend / 阿里云 DM |
+| 邮件（运营通知，可选）| Resend / 阿里云 DM |
 
 ### 共享
 
@@ -82,7 +82,7 @@
 │   │   │   │   │   └─ orchestration/    ← v1.5
 │   │   │   │   ├─ db/                   ← SQLite 模式 + 迁移
 │   │   │   │   ├─ cache/                ← Skill/Provider/Workflow 缓存
-│   │   │   │   ├─ activation/           ← 激活码客户端逻辑
+│   │   │   │   ├─ auth/                 ← 微信登录 + 权益客户端逻辑
 │   │   │   │   └─ logger.ts
 │   │   │   ├─ preload/
 │   │   │   └─ renderer/                 ← React UI
@@ -111,7 +111,7 @@
 │   │   └─ src/
 │   │       ├─ app/
 │   │       │   ├─ api/                  ← /api/* REST 路由
-│   │       │   │   ├─ activate/
+│   │       │   │   ├─ auth/wechat/
 │   │       │   │   ├─ status/
 │   │       │   │   ├─ skills/
 │   │       │   │   ├─ providers/
@@ -278,14 +278,14 @@ CREATE TABLE listing_status (
   UNIQUE(batch_path, sku_code, platform, workspace_id)
 );
 
--- 客户端激活态（本地缓存）
-CREATE TABLE activation_state (
+-- 客户端登录与权益态（本地缓存）
+CREATE TABLE auth_state (
   id              INTEGER PRIMARY KEY CHECK (id = 1),
-  activation_token TEXT NOT NULL,
-  device_name     TEXT,
-  device_fingerprint TEXT NOT NULL,
+  auth_token      TEXT NOT NULL,
+  wechat_user_json TEXT NOT NULL,
+  entitlement_json TEXT,
   last_server_check INTEGER NOT NULL,
-  cached_status_json TEXT NOT NULL                   -- { status, days_remaining, ... }
+  cached_status_json TEXT NOT NULL                   -- { status, days_remaining, modules, seat_count, ... }
 );
 
 -- 采集会话和记录（详见 spec/02-collection.md）
@@ -308,16 +308,15 @@ CREATE INDEX idx_workflow_steps_task ON workflow_steps(task_id);
 │   ├─ {skill_id}/
 │   │   ├─ {version}.json
 │   │   └─ latest.json (symlink 或字段)
-├─ providers/                           ← Provider Registry 缓存
-│   └─ registry.json
-├─ comfyui-workflows/                   ← ComfyUI 工作流包元数据
-│   ├─ index.json
-│   └─ {workflow_id}/{version}.json    ← 含完整 workflow JSON
 └─ announcements/
     └─ active.json
+
+.workbench/local-workflows/
+├─ index.json                           ← 用户本地导入的 ComfyUI Workflow
+└─ {workflow_id}/{version}.json         ← 含完整 workflow JSON
 ```
 
-**缓存策略**：启动时拉一次；每 30 分钟后台静默刷新；用户进具体模块面板时若超 30 分钟立即刷新。离线场景用缓存，最长 7 天。
+**缓存策略**：启动时拉 Skill；每 30 分钟后台静默刷新；用户进具体模块面板时若超 30 分钟立即刷新。Provider、模型清单、API Key 和 Workflow 均由客户端本地配置管理。
 
 ## 6. 临时文件（.workbench/tmp/）
 
@@ -403,11 +402,10 @@ export const ErrorCode = {
   ACTIVATION_INVALID: 'ACTIVATION_INVALID',
   ACTIVATION_EXPIRED: 'ACTIVATION_EXPIRED',
   ACTIVATION_BANNED: 'ACTIVATION_BANNED',
-  ACTIVATION_DEVICE_LIMIT: 'ACTIVATION_DEVICE_LIMIT',
+  AUTH_SEAT_LIMIT: 'AUTH_SEAT_LIMIT',
 
   // 外部 API
   CHENYU_INSTANCE_DOWN: 'CHENYU_INSTANCE_DOWN',
-  CHENYU_BALANCE_INSUFFICIENT: 'CHENYU_BALANCE_INSUFFICIENT',
   GRSAI_VIOLATION: 'GRSAI_VIOLATION',
   GRSAI_FAILED: 'GRSAI_FAILED',
   BAILIAN_QUOTA_EXCEEDED: 'BAILIAN_QUOTA_EXCEEDED',
@@ -454,7 +452,7 @@ export interface AppError {
 5. **同一比特浏览器 profile 同时刻最多 1 个模块占用**
 6. **服务端不接触图片/API Key/任务数据**
 7. **客户端 API Key 永远 OS keychain 加密存储**
-8. **激活码在 7 天内必须联网验证一次**
+8. **微信登录权益在 7 天内必须联网验证一次**
 9. **印花 ID 全局唯一**，跨 provider 共享同一 ID 空间
 10. **临时文件用完即删**，最长保留 24 小时
 

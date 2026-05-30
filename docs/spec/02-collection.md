@@ -29,7 +29,7 @@
 | `1688` | 1688 | 含 `/offer/` |
 | `mercado` | Mercado Libre | 含 `/MLB-` 或 `/p/MLB` |
 
-各平台的 URL 规则、原图提取规则、登录辅助检测规则在云端 Skill / Provider 之外，**单独有一个 platform-rules 配置**也由云端派发，详见 §12.1。
+各平台的 URL 规则、原图提取规则、登录辅助检测规则都由客户端本地维护，平台规则随客户端版本发布，详见 §12.1。
 
 ## 3. 采集会话生命周期
 
@@ -185,7 +185,7 @@ CDP 监听滚动事件 + 图片加载，自动判断符合条件的图。
 - 下载失败保留在图池中，并在日志里显示错误原因。
 - 文件保存路径由扫描时的 `bucket`、`pageKind`、`groupKey` 决定，避免保存时再重新判断页面类型。
 
-## 7. 平台规则（云端可派发）
+## 7. 平台规则（客户端内置 / 本地自定义）
 
 ```ts
 interface PlatformRule {
@@ -205,7 +205,7 @@ interface PlatformRule {
 }
 ```
 
-腾域客户端启动时从云端拉取最新 platform-rules，缓存到 `.workbench/cache/platform-rules.json`。
+腾域客户端启动时加载内置平台规则，并读取本地 `.workbench/cache/platform-rules.json` 中的自定义覆盖项。
 
 **用户也可创建自定义采集平台**：
 ```ts
@@ -377,21 +377,11 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 - 简单重试：再次下载 source_url
 - 多次失败：保存为 0-byte 占位，标记永久失败
 
-## 12. 云端派发的资源
+## 12. 平台规则
 
-### 12.1 Platform Rules
+采集平台规则当前由客户端内置维护。规则更新需要随客户端版本发布，避免规则和本地采集脚本版本错配。
 
-`GET /api/platform-rules`
-
-```json
-{
-  "version": "20260520-01",
-  "rules": [
-    { "key": "temu", "name": "Temu", "allowed_domains": [...], ... },
-    ...
-  ]
-}
-```
+后续如果要重新引入云端规则包，必须同时版本化采集脚本、平台规则和选择器 contract。
 
 客户端按 version 比较，新版才更新本地。
 
@@ -447,7 +437,7 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 | `BROWSER_NOT_CONNECTED` | 比特浏览器未启动 | UI 提示用户启动 |
 | `PROFILE_LOCKED` | profile 被其他模块（上架）占用 | UI 提示用户先停掉冲突任务 |
 | `LOGIN_REQUIRED` | 平台需要登录 | UI 提示用户在比特浏览器手动登录 |
-| `PLATFORM_RULE_NOT_FOUND` | 平台规则缺失 | UI 提示等待云端派发或创建自定义 |
+| `PLATFORM_RULE_NOT_FOUND` | 平台规则缺失 | UI 提示检查本地规则版本或创建自定义 |
 | `OUTPUT_DIR_NOT_WRITABLE` | 输出目录权限问题 | UI 提示用户检查权限 |
 
 ## 16. 测试

@@ -1,25 +1,16 @@
+import { clientIp, createRateLimiter } from '@/lib/rate-limit'
 import { StatusAuthError, getActivationStatus } from '@/lib/status'
 import { NextResponse } from 'next/server'
 
 const rateLimitWindowMs = 60 * 1000
 const rateLimitMaxAttempts = 60
-const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
+const rateLimiter = createRateLimiter({
+  windowMs: rateLimitWindowMs,
+  maxAttempts: rateLimitMaxAttempts,
+})
 
 function errorResponse(code: string, status: number) {
   return NextResponse.json({ ok: false, error: { code } }, { status })
-}
-
-function isRateLimited(token: string) {
-  const now = Date.now()
-  const bucket = rateLimitBuckets.get(token)
-
-  if (!bucket || bucket.resetAt <= now) {
-    rateLimitBuckets.set(token, { count: 1, resetAt: now + rateLimitWindowMs })
-    return false
-  }
-
-  bucket.count += 1
-  return bucket.count > rateLimitMaxAttempts
 }
 
 export async function GET(request: Request) {
@@ -27,7 +18,7 @@ export async function GET(request: Request) {
   const token = authorization?.startsWith('Bearer ')
     ? authorization.slice('Bearer '.length).trim()
     : ''
-  if (token && isRateLimited(token)) {
+  if (rateLimiter.isRateLimited(token || clientIp(request))) {
     return errorResponse('RATE_LIMITED', 429)
   }
 

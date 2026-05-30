@@ -13,25 +13,8 @@ export const TaskTypeSchema = z.enum(['lightweight', 'full'])
 export const RiskLevelSchema = z.enum(['pass', 'review', 'block'])
 export const GenerationCapabilitySchema = z.enum(['txt2img', 'img2img', 'extract', 'matting'])
 
-export const ProviderIdSchema = z.enum(['comfyui-chenyu', 'grsai', 'aliyun-bailian'])
-export const ProviderApiStyleSchema = z.enum([
-  'grsai-native',
-  'openai-images',
-  'openai-chat',
-  'dashscope-native',
-])
 export const SkillModuleSchema = z.enum(['generation', 'detection', 'title'])
 export const SkillVariableTypeSchema = z.enum(['select', 'number', 'text', 'textarea', 'checkbox'])
-
-export const ProviderSchema = z.object({
-  id: ProviderIdSchema,
-  name: z.string().min(1),
-  apiStyle: ProviderApiStyleSchema,
-  baseUrl: z.string().url(),
-  capabilities: z.array(GenerationCapabilitySchema),
-  modelOptions: z.array(z.string().min(1)),
-  enabled: z.boolean(),
-})
 
 export const SkillVariableSchema = z.object({
   key: z.string().min(1),

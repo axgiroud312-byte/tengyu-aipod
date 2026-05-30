@@ -2,11 +2,13 @@ import { cn } from '@/lib/utils'
 import { Slot } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 
-type ButtonVariant = 'default' | 'secondary'
+type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost'
 
 const variantClassName: Record<ButtonVariant, string> = {
   default: 'bg-primary text-primary-foreground hover:bg-primary/90',
-  secondary: 'bg-muted text-foreground hover:bg-muted/80',
+  secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+  outline: 'border bg-card text-foreground hover:bg-accent',
+  ghost: 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
 }
 
 export interface ButtonProps extends ComponentProps<'button'> {

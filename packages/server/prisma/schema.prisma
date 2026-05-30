@@ -85,57 +85,6 @@ model Skill {
   @@map("skills")
 }
 
-model Provider {
-  id                  String   @id
-  name                String
-  type                String
-  base_url            String
-  fallback_url        String?
-  api_style           String
-  endpoints_json      String   @db.Text
-  model_options_json  String   @db.Text
-  default_params_json String   @db.Text
-  capabilities        String[]
-  enabled             Boolean  @default(true)
-  sort_order          Int      @default(0)
-  notes               String?
-  updated_at          DateTime @updatedAt
-
-  @@map("providers")
-}
-
-model ComfyuiWorkflow {
-  row_id                   String   @id @default(cuid())
-  id                       String
-  category                 String
-  version                  String
-  workflow_json            String   @db.Text
-  input_slots_json         String   @db.Text
-  output_slots_json        String   @db.Text
-  required_models          String[]
-  recommended_pod_keywords String[]
-  min_vram_gb              Int      @default(8)
-  enabled                  Boolean  @default(true)
-  notes                    String?
-  updated_at               DateTime @updatedAt
-
-  @@unique([id, version])
-  @@index([category, enabled])
-  @@map("comfyui_workflows")
-}
-
-model PlatformRule {
-  key        String   @id
-  name       String
-  category   String
-  rules_json String   @db.Text
-  enabled    Boolean  @default(true)
-  version    String
-  updated_at DateTime @updatedAt
-
-  @@map("platform_rules")
-}
-
 model Announcement {
   id         String    @id @default(cuid())
   title      String

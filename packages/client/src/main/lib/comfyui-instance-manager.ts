@@ -1,6 +1,5 @@
 import { join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
-import { ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 import {
   type ChenyuBalance,
@@ -11,7 +10,7 @@ import {
   ChenyuInstanceStatus,
   type ChenyuPod,
 } from './chenyu-cloud-client'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 
 export type ComfyuiInstanceState = 'none' | 'starting' | 'running' | 'shutting_down' | 'stopped'
 
@@ -40,7 +39,7 @@ export type CreateComfyuiInstanceInput = {
   gpu: ChenyuGpu
   podTag?: string
   gpuNums?: number
-  autoShutdownMinutes?: number
+  autoShutdownMinutes?: number | null
 }
 
 export type ComfyuiInstanceManagerDependencies = {
@@ -58,6 +57,8 @@ export type ComfyuiInstanceManagerDependencies = {
     | 'getBalance'
   >
   now?: () => number
+  sleep?: (ms: number) => Promise<void>
+  fetch?: typeof fetch
 }
 
 type ComfyuiInstanceDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -77,8 +78,18 @@ type ComfyuiInstanceRow = {
   lastUsedAt: number | null
 }
 
+export type ComfyuiUrlCandidate = {
+  url: string
+  title: string | null
+  source: 'server_map' | 'server_url'
+  confidence: number
+}
+
 const DEFAULT_AUTO_SHUTDOWN_MINUTES = 60
 const MINUTE_MS = 60_000
+const READY_POLL_INTERVAL_MS = 5_000
+const READY_POLL_TIMEOUT_MS = 10 * 60_000
+const COMFYUI_PROBE_TIMEOUT_MS = 2_500
 
 function workbenchDbPath(workbenchRoot: string) {
   return join(workbenchRoot, '.workbench', 'workbench.db')
@@ -112,18 +123,28 @@ export class ComfyuiInstanceManager {
   private readonly readConfig: typeof readAppConfig
   private readonly openDatabase: (workbenchRoot: string) => ComfyuiInstanceDatabase
   private readonly now: () => number
+  private readonly sleep: (ms: number) => Promise<void>
+  private readonly fetchImpl: typeof fetch
 
   constructor(private readonly dependencies: ComfyuiInstanceManagerDependencies) {
     this.readConfig = dependencies.readConfig ?? readAppConfig
     this.openDatabase = dependencies.openDatabase ?? openWorkbenchDatabase
     this.now = dependencies.now ?? Date.now
+    this.sleep = dependencies.sleep ?? delay
+    this.fetchImpl = dependencies.fetch ?? fetch
   }
 
   async createInstance(input: CreateComfyuiInstanceInput) {
     const workbenchRoot = await this.readWorkbenchRoot()
     const now = this.now()
-    const autoShutdownMinutes = input.autoShutdownMinutes ?? DEFAULT_AUTO_SHUTDOWN_MINUTES
-    const autoShutdownAt = Math.floor((now + autoShutdownMinutes * MINUTE_MS) / 1000)
+    const autoShutdownMinutes =
+      input.autoShutdownMinutes === undefined
+        ? DEFAULT_AUTO_SHUTDOWN_MINUTES
+        : input.autoShutdownMinutes
+    const autoShutdownAt =
+      typeof autoShutdownMinutes === 'number' && autoShutdownMinutes > 0
+        ? Math.floor((now + autoShutdownMinutes * MINUTE_MS) / 1000)
+        : null
     const gpuNums = input.gpuNums ?? 1
     const payload: ChenyuCreateByPodInput = {
       pod_uuid: input.pod.uuid,
@@ -133,20 +154,14 @@ export class ComfyuiInstanceManager {
     }
 
     const created = await this.dependencies.chenyu.createByPod(payload)
-    await this.dependencies.chenyu.setShutdownTimer({
-      instance_uuid: created.instance_uuid,
-      enable: true,
-      shutdown_time: autoShutdownAt,
-    })
-    const latest = await this.dependencies.chenyu.getInstanceInfo(created.instance_uuid)
-    const comfyuiUrl = extractComfyuiUrl(latest.server_map ?? created.server_map)
-    if (!comfyuiUrl) {
-      throw new AppErrorClass('HTTP_5XX', '晨羽实例未返回 ComfyUI 地址', true, {
-        kind: 'network',
-        provider: 'comfyui-chenyu',
-        instanceUuid: created.instance_uuid,
+    if (autoShutdownAt) {
+      await this.dependencies.chenyu.setShutdownTimer({
+        instance_uuid: created.instance_uuid,
+        enable: true,
+        shutdown_time: autoShutdownAt,
       })
     }
+    const { info: latest, comfyuiUrl } = await this.waitForReadyInstance(created)
 
     const record: ComfyuiInstanceRecord = {
       provider: 'chenyu',
@@ -159,6 +174,45 @@ export class ComfyuiInstanceManager {
       podPriceHour: priceHour(input.pod),
       gpuPriceHour: priceHour(input.gpu) * gpuNums,
       autoShutdownAt,
+      createdAt: now,
+      lastUsedAt: now,
+    }
+
+    return this.withDb(workbenchRoot, (db) => {
+      saveInstanceRecord(db, record)
+      return toSummary(record, now)
+    })
+  }
+
+  async setCurrentInstance(info: ChenyuInstanceInfo, input: { comfyuiUrl?: string } = {}) {
+    const workbenchRoot = await this.readWorkbenchRoot()
+    const now = this.now()
+    const comfyuiUrl = input.comfyuiUrl
+      ? requireManualComfyuiUrl(input.comfyuiUrl)
+      : await resolveComfyuiUrl(info, { fetch: this.fetchImpl })
+    if (!comfyuiUrl) {
+      throw new AppErrorClass(
+        'CHENYU_INSTANCE_DOWN',
+        '该实例未返回 ComfyUI 地址，请刷新实例或手动填写地址',
+        false,
+        {
+          provider: 'comfyui-chenyu',
+          instanceUuid: info.instance_uuid,
+        },
+      )
+    }
+
+    const record: ComfyuiInstanceRecord = {
+      provider: 'chenyu',
+      instanceUuid: info.instance_uuid,
+      comfyuiUrl,
+      podUuid: stringField(info, 'pod_uuid') ?? null,
+      gpuUuid: stringField(info, 'gpu_uuid') ?? null,
+      gpuName: stringField(info, 'gpu_name') ?? null,
+      status: stateFromChenyuStatus(info.status),
+      podPriceHour: 0,
+      gpuPriceHour: 0,
+      autoShutdownAt: shutdownTimeFromInfo(info),
       createdAt: now,
       lastUsedAt: now,
     }
@@ -184,7 +238,8 @@ export class ComfyuiInstanceManager {
     }
 
     const latest = await this.dependencies.chenyu.getInstanceInfo(current.instanceUuid)
-    const updated = mergeInstanceInfo(current, latest, this.now())
+    const comfyuiUrl = await resolveComfyuiUrl(latest, { fetch: this.fetchImpl })
+    const updated = mergeInstanceInfo(current, latest, this.now(), comfyuiUrl)
     const workbenchRoot = await this.readWorkbenchRoot()
     return this.withDb(workbenchRoot, (db) => {
       saveInstanceRecord(db, updated)
@@ -211,6 +266,11 @@ export class ComfyuiInstanceManager {
     this.withDb(workbenchRoot, (db) => clearInstanceRecord(db))
   }
 
+  async clearCurrentInstance() {
+    const workbenchRoot = await this.readWorkbenchRoot()
+    this.withDb(workbenchRoot, (db) => clearInstanceRecord(db))
+  }
+
   async extendShutdown(minutesFromNow: number) {
     const current = await this.requireCurrentInstance()
     const autoShutdownAt = Math.floor((this.now() + minutesFromNow * MINUTE_MS) / 1000)
@@ -227,6 +287,40 @@ export class ComfyuiInstanceManager {
 
   getBalance(): Promise<ChenyuBalance> {
     return this.dependencies.chenyu.getBalance()
+  }
+
+  private async waitForReadyInstance(created: ChenyuInstanceInfo) {
+    const deadline = this.now() + READY_POLL_TIMEOUT_MS
+    let latest = created
+
+    while (true) {
+      latest = await this.dependencies.chenyu.getInstanceInfo(created.instance_uuid)
+      if (latest.status === ChenyuInstanceStatus.Running) {
+        const merged = mergeServerInfo(latest, created)
+        const candidates = comfyuiUrlCandidates(merged.server_map, merged.server_url)
+        const comfyuiUrl = await resolveComfyuiUrl(merged, { fetch: this.fetchImpl })
+        if (comfyuiUrl) {
+          return { info: latest, comfyuiUrl }
+        }
+        if (candidates.length > 0 && this.now() < deadline) {
+          await this.sleep(READY_POLL_INTERVAL_MS)
+          continue
+        }
+        throw new AppErrorClass('HTTP_5XX', '晨羽实例未返回 ComfyUI 地址', true, {
+          kind: 'network',
+          provider: 'comfyui-chenyu',
+          instanceUuid: created.instance_uuid,
+        })
+      }
+      if (this.now() >= deadline) {
+        throw new AppErrorClass('NETWORK_TIMEOUT', '等待晨羽 ComfyUI 实例启动超时', true, {
+          provider: 'comfyui-chenyu',
+          instanceUuid: created.instance_uuid,
+          status: latest.status,
+        })
+      }
+      await this.sleep(READY_POLL_INTERVAL_MS)
+    }
   }
 
   private async updateStatus(status: ComfyuiInstanceState) {
@@ -250,7 +344,7 @@ export class ComfyuiInstanceManager {
   private async requireCurrentInstance() {
     const current = await this.getCurrentInstance()
     if (!current) {
-      throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '请先创建 ComfyUI 实例', false, {
+      throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '请先设置默认云机', false, {
         provider: 'comfyui-chenyu',
       })
     }
@@ -277,10 +371,79 @@ export class ComfyuiInstanceManager {
 }
 
 export function extractComfyuiUrl(serverMap: ChenyuInstanceInfo['server_map']) {
-  const entry = (serverMap ?? []).find(
-    (item) => item.port_type === 'http' && /comfyui/i.test(item.title ?? ''),
+  return (
+    comfyuiUrlCandidates(serverMap).find((candidate) => candidate.confidence >= 80)?.url ?? null
   )
-  return entry?.url ?? null
+}
+
+export function comfyuiUrlCandidates(
+  serverMap: ChenyuInstanceInfo['server_map'],
+  serverUrls: ChenyuInstanceInfo['server_url'] = [],
+): ComfyuiUrlCandidate[] {
+  const candidates: ComfyuiUrlCandidate[] = []
+  const seen = new Set<string>()
+
+  for (const entry of serverMap ?? []) {
+    const url = normalizeHttpUrl(entry.url)
+    if (!url || seen.has(url)) {
+      continue
+    }
+    seen.add(url)
+    candidates.push({
+      url,
+      title: entry.title?.trim() || null,
+      source: 'server_map',
+      confidence: confidenceForServerEntry(entry.title, url),
+    })
+  }
+
+  for (const rawUrl of serverUrls ?? []) {
+    const url = normalizeHttpUrl(rawUrl)
+    if (!url || seen.has(url)) {
+      continue
+    }
+    seen.add(url)
+    candidates.push({
+      url,
+      title: null,
+      source: 'server_url',
+      confidence: confidenceForServerEntry(null, url),
+    })
+  }
+
+  return candidates.sort((left, right) => right.confidence - left.confidence)
+}
+
+export async function resolveComfyuiUrl(
+  info: {
+    server_map?: ChenyuInstanceInfo['server_map']
+    server_url?: ChenyuInstanceInfo['server_url']
+  },
+  options: { fetch?: typeof fetch; timeoutMs?: number } = {},
+) {
+  const candidates = comfyuiUrlCandidates(info.server_map, info.server_url)
+  if (candidates.length === 0) {
+    return null
+  }
+
+  const confident = candidates.find((candidate) => candidate.confidence >= 90)
+  if (confident) {
+    return confident.url
+  }
+
+  const fetchImpl = options.fetch ?? fetch
+  for (const candidate of candidates) {
+    if (await isComfyuiEndpoint(candidate.url, fetchImpl, options.timeoutMs)) {
+      return candidate.url
+    }
+  }
+
+  const firstCandidate = candidates[0]
+  if (candidates.length === 1 || (firstCandidate && firstCandidate.confidence >= 80)) {
+    return firstCandidate?.url ?? null
+  }
+
+  return null
 }
 
 export function stateFromChenyuStatus(status: number | undefined): ComfyuiInstanceState {
@@ -322,10 +485,11 @@ function mergeInstanceInfo(
   current: ComfyuiInstanceRecord,
   latest: ChenyuInstanceInfo,
   now: number,
+  comfyuiUrl: string | null,
 ): ComfyuiInstanceRecord {
   return {
     ...current,
-    comfyuiUrl: extractComfyuiUrl(latest.server_map) ?? current.comfyuiUrl,
+    comfyuiUrl: comfyuiUrl ?? current.comfyuiUrl,
     status: stateFromChenyuStatus(latest.status),
     lastUsedAt: now,
   }
@@ -415,10 +579,102 @@ function clearInstanceRecord(db: Pick<SqliteDatabase, 'prepare'>) {
   db.prepare('DELETE FROM comfyui_instances WHERE id = 1').run()
 }
 
-export function registerComfyuiInstanceManagerIpc(manager: ComfyuiInstanceManager) {
-  ipcMain.handle('chenyu:get-instance-status', () => manager.refreshCurrentInstance())
-  ipcMain.handle('chenyu:shutdown-instance', () => manager.shutdownCurrentInstance())
-  ipcMain.handle('chenyu:restart-instance', () => manager.restartCurrentInstance())
-  ipcMain.handle('chenyu:destroy-instance', () => manager.destroyCurrentInstance())
-  ipcMain.handle('chenyu:get-balance', () => manager.getBalance())
+function delay(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+function stringField(record: Record<string, unknown>, key: string) {
+  const value = record[key]
+  return typeof value === 'string' && value.trim() ? value : null
+}
+
+function shutdownTimeFromInfo(info: ChenyuInstanceInfo) {
+  const value = info.shutdown_regular?.shutdown_time
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function confidenceForServerEntry(title: string | undefined | null, url: string) {
+  const text = `${title ?? ''} ${url}`.toLowerCase()
+  if (text.includes('comfy')) {
+    return 100
+  }
+  if (/(frontend|front-end|web|网页|前端)/i.test(text)) {
+    return 80
+  }
+  return 10
+}
+
+function normalizeHttpUrl(value: unknown) {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null
+  }
+  try {
+    const url = new URL(value.trim())
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null
+    }
+    url.hash = ''
+    return url.toString().replace(/\/+$/, '')
+  } catch {
+    return null
+  }
+}
+
+function requireManualComfyuiUrl(value: string) {
+  const url = normalizeHttpUrl(value)
+  if (!url) {
+    throw new AppErrorClass('HTTP_4XX', 'ComfyUI 地址必须是 http 或 https 链接', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+  return url
+}
+
+async function isComfyuiEndpoint(
+  baseUrl: string,
+  fetchImpl: typeof fetch,
+  timeoutMs = COMFYUI_PROBE_TIMEOUT_MS,
+) {
+  return (
+    (await probeComfyuiEndpoint(baseUrl, 'system_stats', fetchImpl, timeoutMs)) ||
+    (await probeComfyuiEndpoint(baseUrl, 'object_info', fetchImpl, timeoutMs))
+  )
+}
+
+async function probeComfyuiEndpoint(
+  baseUrl: string,
+  endpoint: 'system_stats' | 'object_info',
+  fetchImpl: typeof fetch,
+  timeoutMs: number,
+) {
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    const response = await fetchImpl(`${baseUrl}/${endpoint}`, {
+      method: 'GET',
+      signal: controller.signal,
+    })
+    if (!response.ok) {
+      return false
+    }
+    const text = await response.text()
+    if (endpoint === 'system_stats') {
+      return text.includes('"system"') || text.includes('"devices"')
+    }
+    return (
+      text.includes('KSampler') || text.includes('CLIPTextEncode') || text.includes('VAEDecode')
+    )
+  } catch {
+    return false
+  } finally {
+    clearTimeout(timeout)
+  }
+}
+
+function mergeServerInfo(latest: ChenyuInstanceInfo, created: ChenyuInstanceInfo) {
+  return {
+    ...latest,
+    server_map: latest.server_map ?? created.server_map,
+    server_url: latest.server_url ?? created.server_url,
+  }
 }

@@ -85,6 +85,30 @@ describe('ChenyuCloudClient', () => {
     expect(calls).toEqual(['/gpu/list', '/image/market/list', '/instance/list'])
   })
 
+  it('lists and deletes private images', async () => {
+    let deleteBody: unknown = null
+    server.use(
+      http.get(`${CHENYU_BASE_URL}/image/private/list`, () =>
+        ok({
+          image_list: [{ uuid: 'img-1', title: 'My ComfyUI', save_image_status: 2 }],
+          total: 1,
+        }),
+      ),
+      http.post(`${CHENYU_BASE_URL}/image/private/delete`, async ({ request }) => {
+        deleteBody = await request.json()
+        return HttpResponse.json({ code: 0, msg: 'success' })
+      }),
+    )
+    const client = new ChenyuCloudClient('cy-test')
+
+    await expect(client.listPrivateImages()).resolves.toEqual({
+      items: [{ uuid: 'img-1', title: 'My ComfyUI', save_image_status: 2 }],
+      total: 1,
+    })
+    await expect(client.deletePrivateImage('img-1')).resolves.toEqual({ ok: true })
+    expect(deleteBody).toEqual({ image_uuid: 'img-1' })
+  })
+
   it('creates by pod and defaults gpu_nums to 1', async () => {
     let body: unknown = null
     server.use(
@@ -104,6 +128,50 @@ describe('ChenyuCloudClient', () => {
       gpu_uuid: 'gpu-1',
       gpu_nums: 1,
     })
+  })
+
+  it('creates by image and wraps new instance management actions', async () => {
+    const requests: Array<{ path: string; body: unknown }> = []
+    for (const path of [
+      '/instance/create_by_image',
+      '/instance/update_title',
+      '/instance/set_idle_close',
+      '/instance/save_image',
+    ]) {
+      server.use(
+        http.post(`${CHENYU_BASE_URL}${path}`, async ({ request }) => {
+          requests.push({ path, body: await request.json() })
+          if (path === '/instance/create_by_image') {
+            return ok({ instance_uuid: 'inst-image', status: ChenyuInstanceStatus.Initializing })
+          }
+          return HttpResponse.json({ code: 0, msg: 'success' })
+        }),
+      )
+    }
+    const client = new ChenyuCloudClient('cy-test')
+
+    await expect(
+      client.createByImage({ image_uuid: 'img-1', gpu_uuid: 'gpu-1' }),
+    ).resolves.toMatchObject({ instance_uuid: 'inst-image', status: 1 })
+    await client.updateTitle({ instance_uuid: 'inst-image', title: 'ComfyUI 生产实例' })
+    await client.setIdleClose({ instance_uuid: 'inst-image', idle_period_minutes: 30 })
+    await client.saveImage('inst-image')
+
+    expect(requests).toEqual([
+      {
+        path: '/instance/create_by_image',
+        body: { image_uuid: 'img-1', gpu_uuid: 'gpu-1', gpu_nums: 1 },
+      },
+      {
+        path: '/instance/update_title',
+        body: { instance_uuid: 'inst-image', title: 'ComfyUI 生产实例' },
+      },
+      {
+        path: '/instance/set_idle_close',
+        body: { instance_uuid: 'inst-image', idle_period_minutes: 30 },
+      },
+      { path: '/instance/save_image', body: { instance_uuid: 'inst-image' } },
+    ])
   })
 
   it('wraps instance lifecycle endpoints', async () => {
@@ -170,6 +238,90 @@ describe('ChenyuCloudClient', () => {
     const client = new ChenyuCloudClient('cy-test')
 
     await expect(client.getBalance()).resolves.toEqual({ balance: 1250.5, card_balance: 500 })
+  })
+
+  it('wraps workflow market, details, submit, and execution endpoints', async () => {
+    const calls: Array<{ path: string; query?: string; body?: unknown }> = []
+    server.use(
+      http.get(`${CHENYU_BASE_URL}/workflow/market/list`, ({ request }) => {
+        const query = new URL(request.url).search
+        calls.push({ path: '/workflow/market/list', query })
+        return ok({
+          items: [{ workflow_id: 'wf-1', revision_id: 'rev-1', title: '文生图' }],
+          total: 1,
+          page: 1,
+          page_size: 20,
+        })
+      }),
+      http.get(`${CHENYU_BASE_URL}/workflow/market/info`, ({ request }) => {
+        calls.push({
+          path: '/workflow/market/info',
+          query: new URL(request.url).search,
+        })
+        return ok({
+          workflow_id: 'wf-1',
+          revision_id: 'rev-1',
+          title: '文生图',
+          editable_parameter_manifest: [{ key: 'n6_text', type: 'string' }],
+          candidate_output_manifest: [{ key: 'n9_images', type: 'image' }],
+        })
+      }),
+      http.post(`${CHENYU_BASE_URL}/workflow/run/submit`, async ({ request }) => {
+        calls.push({ path: '/workflow/run/submit', body: await request.json() })
+        return ok({ run_order_id: 'wfrun-1', workflow_id: 'wf-1', run_status: 'queued' })
+      }),
+      http.get(`${CHENYU_BASE_URL}/workflow/run/execution`, ({ request }) => {
+        calls.push({
+          path: '/workflow/run/execution',
+          query: new URL(request.url).search,
+        })
+        return ok({
+          task_id: 'task-1',
+          workflow_id: 'wf-1',
+          status: 'succeeded',
+          progress_percent: 100,
+          outputs: { n9_images: 'https://file.example/output.png' },
+          error: null,
+        })
+      }),
+    )
+    const client = new ChenyuCloudClient('cy-test')
+
+    await expect(client.listWorkflowMarket({ keyword: '文生图', page: 1 })).resolves.toMatchObject({
+      items: [{ workflow_id: 'wf-1' }],
+      total: 1,
+    })
+    await expect(client.getWorkflowMarketInfo('wf-1')).resolves.toMatchObject({
+      workflow_id: 'wf-1',
+      editable_parameter_manifest: [{ key: 'n6_text', type: 'string' }],
+    })
+    await expect(
+      client.submitWorkflowRun({
+        workflow_id: 'wf-1',
+        revision_id: 'rev-1',
+        inputs: { n6_text: 'prompt' },
+        idempotency_key: 'idem-1',
+      }),
+    ).resolves.toMatchObject({ run_order_id: 'wfrun-1' })
+    await expect(client.getWorkflowRunExecution('wfrun-1')).resolves.toMatchObject({
+      status: 'succeeded',
+      outputs: { n9_images: 'https://file.example/output.png' },
+    })
+
+    expect(calls).toEqual([
+      { path: '/workflow/market/list', query: '?keyword=%E6%96%87%E7%94%9F%E5%9B%BE&page=1' },
+      { path: '/workflow/market/info', query: '?workflow_id=wf-1' },
+      {
+        path: '/workflow/run/submit',
+        body: {
+          workflow_id: 'wf-1',
+          revision_id: 'rev-1',
+          inputs: { n6_text: 'prompt' },
+          idempotency_key: 'idem-1',
+        },
+      },
+      { path: '/workflow/run/execution', query: '?run_order_id=wfrun-1' },
+    ])
   })
 
   it('throws non-zero business code responses as AppError', async () => {
@@ -252,10 +404,16 @@ describe('ChenyuCloudClient', () => {
   })
 
   it('maps instance status codes to stable names', () => {
+    expect(chenyuStatusName(ChenyuInstanceStatus.Created)).toBe('created')
     expect(chenyuStatusName(ChenyuInstanceStatus.Initializing)).toBe('initializing')
     expect(chenyuStatusName(ChenyuInstanceStatus.Running)).toBe('running')
+    expect(chenyuStatusName(ChenyuInstanceStatus.Stopping)).toBe('shutting_down')
     expect(chenyuStatusName(ChenyuInstanceStatus.ShuttingDown)).toBe('shutting_down')
+    expect(chenyuStatusName(ChenyuInstanceStatus.StoppedLegacy)).toBe('stopped')
     expect(chenyuStatusName(ChenyuInstanceStatus.Stopped)).toBe('stopped')
+    expect(chenyuStatusName(ChenyuInstanceStatus.AbnormalStopped)).toBe('abnormal_stopped')
+    expect(chenyuStatusName(ChenyuInstanceStatus.Starting)).toBe('starting')
+    expect(chenyuStatusName(ChenyuInstanceStatus.Restarting)).toBe('restarting')
     expect(chenyuStatusName(999)).toBe('unknown')
   })
 })

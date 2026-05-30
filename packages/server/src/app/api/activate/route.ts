@@ -1,4 +1,5 @@
 import { ActivateError, activateDevice } from '@/lib/activate'
+import { clientIp, createRateLimiter } from '@/lib/rate-limit'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -10,25 +11,13 @@ const activateSchema = z.object({
 
 const rateLimitWindowMs = 60 * 1000
 const rateLimitMaxAttempts = 10
-const rateLimitBuckets = new Map<string, { count: number; resetAt: number }>()
-
-function clientIp(request: Request) {
-  const forwardedFor = request.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
-  return forwardedFor || request.headers.get('x-real-ip') || 'unknown'
-}
+const rateLimiter = createRateLimiter({
+  windowMs: rateLimitWindowMs,
+  maxAttempts: rateLimitMaxAttempts,
+})
 
 function isRateLimited(request: Request) {
-  const key = clientIp(request)
-  const now = Date.now()
-  const bucket = rateLimitBuckets.get(key)
-
-  if (!bucket || bucket.resetAt <= now) {
-    rateLimitBuckets.set(key, { count: 1, resetAt: now + rateLimitWindowMs })
-    return false
-  }
-
-  bucket.count += 1
-  return bucket.count > rateLimitMaxAttempts
+  return rateLimiter.isRateLimited(clientIp(request))
 }
 
 function errorResponse(code: string, message: string, status: number) {

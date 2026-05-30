@@ -9,8 +9,8 @@
 
 ```
 切片 0   项目骨架        ← 当前位置（5 个 task 已建好 prd）
-切片 1   激活码闭环      ← 切片 0 完成后立即进行（9 个 task 已建好 prd）
-v0.1.0   ↑ 发版本：激活码可用
+切片 1   登录与权益闭环  ← 原激活码闭环，后续对齐微信登录 + 权益
+v0.1.0   ↑ 发版本：授权可用
 切片 2   标题生成模块    ← 用百炼，最简单的业务模块（状态：✅ 已完成并归档）
 v0.2.0
 切片 3   侵权检测模块    ← 复用百炼 adapter（状态：✅ 已完成并归档）
@@ -28,7 +28,7 @@ v1.0.0   ↑ 全功能 v1 发布
 v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 ```
 
-每切片完成 = 一个可演示版本。**v0.1.0 起就能发给信任的朋友试**（哪怕只有"激活码"功能）。
+每切片完成 = 一个可演示版本。**v0.1.0 起就能发给信任的朋友试**（哪怕只有"登录与授权"功能）。
 
 ---
 
@@ -50,9 +50,9 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 
 ---
 
-## 切片 1 — 激活码闭环（9 个 task）
+## 切片 1 — 登录与权益闭环（原激活码闭环，9 个 task）
 
-目标：激活码可发可激活，admin 后台可管理。
+目标：微信登录、权益开通、兑换码兑换可用，admin 后台可管理。
 
 | # | Task | 路径 | 优先级 |
 |---|---|---|---|
@@ -60,7 +60,7 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 | 7 | admin auth jwt | `.trellis/tasks/05-23-admin-auth-jwt/` | P0 |
 | 8 | admin codes ui | `.trellis/tasks/05-23-admin-codes-ui/` | P0 |
 | 9 | admin customers ui | `.trellis/tasks/05-23-admin-customers-ui/` | P1 |
-| 10 | api activate | `.trellis/tasks/05-23-api-activate/` | P0 |
+| 10 | auth/redeem API（历史 task: api activate） | `.trellis/tasks/05-23-api-activate/` | P0 |
 | 11 | api status | `.trellis/tasks/05-23-api-status/` | P0 |
 | 12 | client onboarding | `.trellis/tasks/05-23-client-onboarding/` | P0 |
 | 13 | client keychain | `.trellis/tasks/05-23-client-keychain/` | P0 |
@@ -69,9 +69,9 @@ v1.5     编排引擎 + 第 3-6 上架平台 + electron-updater + 代码签名
 **预计工时**：5-7 个工作日
 
 **完成后**：
-- 你能在 admin 后台创建激活码
-- 客户端能用激活码激活
-- 客户端右上角实时显示状态
+- 你能在 admin 后台开通权益 / 创建兑换码
+- 客户端能用微信登录并兑换权益
+- 客户端右上角实时显示权益状态
 - ✅ **发 v0.1.0**
 
 ---

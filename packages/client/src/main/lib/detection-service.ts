@@ -9,18 +9,18 @@ import {
   type Skill,
   type SkillSummary,
   WORKBENCH_DIRECTORIES,
-  listVisionModels,
 } from '@tengyu-aipod/shared'
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
+import { BAILIAN_VISION_MODELS } from './generation-local-config'
 import {
   PreprocessError,
   type PreprocessFormat,
   type PreprocessOptions,
   SharpPreprocessPool,
 } from './preprocess-pool'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -206,6 +206,27 @@ const DETECTION_INPUT_SOURCE_DEFS = [
     parts: [WORKBENCH_DIRECTORIES.generation, '04-抠图'],
   },
 ] as const
+
+function createDefaultBailianAdapter(apiKey: string) {
+  return new AliyunBailianAdapter({
+    apiKey,
+    region: 'cn',
+    maxRetries: 0,
+  })
+}
+
+async function listBailianProviderModels(
+  recommendedFor: 'detection' | 'title' | 'prompt',
+  needsVision: boolean,
+) {
+  const models = BAILIAN_VISION_MODELS.map((model) => ({
+    id: model.id,
+    label: model.label,
+    modalities: [needsVision ? 'vision' : 'text'],
+    recommendedFor: [recommendedFor],
+  }))
+  return models
+}
 
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })
@@ -505,9 +526,10 @@ function registerSourceArtifact(
 
 function readCachedDetection(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
-  input: { artifactId: string; model: string; skill: SkillSummary },
+  input: { artifactId: string; model: string; skill: SkillSummary; threshold: DetectionThreshold },
 ) {
   ensureDetectionTables(db)
+  const thresholdSnapshot = JSON.stringify(normalizeThreshold(input.threshold))
   const row = db
     .prepare(
       `
@@ -528,11 +550,12 @@ function readCachedDetection(
           AND model = ?
           AND skill_id = ?
           AND skill_version = ?
+          AND threshold_snapshot = ?
         ORDER BY created_at DESC
         LIMIT 1
       `,
     )
-    .get(input.artifactId, input.model, input.skill.id, input.skill.version) as
+    .get(input.artifactId, input.model, input.skill.id, input.skill.version, thresholdSnapshot) as
     | CachedDetectionRow
     | undefined
 
@@ -758,8 +781,8 @@ function resultSelectSql(whereSql: string) {
 }
 
 export class DetectionService {
-  listModels() {
-    return listVisionModels().map((model) => model.key)
+  async listModels() {
+    return (await listBailianProviderModels('detection', true)).map((model) => model.id)
   }
 
   async listInputSources(
@@ -991,9 +1014,7 @@ export class DetectionService {
     let keepFailedTemp = false
     const resolved = {
       skillCache: dependencies.skillCache ?? skillCacheManager,
-      createBailianAdapter:
-        dependencies.createBailianAdapter ??
-        ((apiKey: string) => new AliyunBailianAdapter({ apiKey, region: 'cn', maxRetries: 0 })),
+      createBailianAdapter: dependencies.createBailianAdapter,
       preprocessPool: dependencies.preprocessPool ?? new SharpPreprocessPool(),
       readConfig: dependencies.readConfig ?? readAppConfig,
       getSecret: dependencies.getSecret ?? getSecret,
@@ -1029,7 +1050,9 @@ export class DetectionService {
         throw new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key，请先在设置中填写', false)
       }
 
-      const adapter = resolved.createBailianAdapter(apiKey)
+      const adapter =
+        resolved.createBailianAdapter?.(apiKey) ??
+        createDefaultBailianAdapter(apiKey)
       const maxRetries = clampInt(config.maxRetries, 0, 5, 1)
       const concurrency = clampInt(config.concurrency, 1, 8, 3)
       const threshold = normalizeThreshold(config.threshold)
@@ -1160,6 +1183,7 @@ export class DetectionService {
           artifactId: identity.artifactId,
           model: input.model,
           skill: input.skill,
+          threshold: input.threshold,
         })
         if (cached) {
           return {

@@ -1,7 +1,7 @@
 import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { type Skill, listVisionModels } from '@tengyu-aipod/shared'
+import type { Skill } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   type DetectionBatchConfig,
@@ -9,7 +9,8 @@ import {
   classifyRisk,
   parseDetectionResponse,
 } from './detection-service'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { BAILIAN_VISION_MODELS } from './generation-local-config'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { TempFileManager } from './temp-file-manager'
 
 type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -87,14 +88,21 @@ function createFakeDb() {
     prepare: vi.fn((sql: string) => {
       if (sql.includes('SELECT') && sql.includes('FROM detection_results')) {
         return {
-          get: (artifactId: string, model: string, skillId: string, skillVersion: string) =>
+          get: (
+            artifactId: string,
+            model: string,
+            skillId: string,
+            skillVersion: string,
+            thresholdSnapshot: string,
+          ) =>
             detectionRows
               .filter(
                 (row) =>
                   row.artifactId === artifactId &&
                   row.model === model &&
                   row.skillId === skillId &&
-                  row.skillVersion === skillVersion,
+                  row.skillVersion === skillVersion &&
+                  row.thresholdSnapshot === thresholdSnapshot,
               )
               .sort((left, right) => right.createdAt - left.createdAt)[0],
         }
@@ -305,10 +313,10 @@ describe('detection service utilities', () => {
 })
 
 describe('DetectionService', () => {
-  it('uses the shared vision model list', () => {
+  it('uses the local Bailian vision model snapshot', async () => {
     const service = new DetectionService()
 
-    expect(service.listModels()).toEqual(listVisionModels().map((model) => model.key))
+    await expect(service.listModels()).resolves.toEqual(BAILIAN_VISION_MODELS.map((model) => model.id))
   })
 
   it('preprocesses, calls Bailian with JSON response format, copies outputs, stores results, and emits progress', async () => {
@@ -465,6 +473,101 @@ describe('DetectionService', () => {
     })
     expect(secondPreprocess).not.toHaveBeenCalled()
     expect(secondVision).not.toHaveBeenCalled()
+  })
+
+  it('retests cached detections when thresholds change', async () => {
+    const imagePath = join(tempRoot, 'inputs', 'threshold-cached.png')
+    await createImage(imagePath, 'same-threshold-image')
+    const fakeDb = createFakeDb()
+    const service = new DetectionService()
+    const baseConfig = {
+      imagePaths: [imagePath],
+      skillId: 'infringement-v2',
+      model: 'qwen3-vl-flash',
+      concurrency: 1,
+    } satisfies DetectionBatchConfig
+    const skill = detectionSkill()
+
+    await service.runDetectionBatch(
+      { ...baseConfig, threshold: { passMax: 39, reviewMax: 69 }, taskId: 'first-threshold-run' },
+      {
+        skillCache: { getSkill: vi.fn().mockResolvedValue(skill) },
+        createBailianAdapter: () => ({
+          visionCompletion: vi.fn().mockResolvedValue({
+            text: '{"risk_score": 50, "reason": "中风险"}',
+          }),
+        }),
+        preprocessPool: {
+          process: vi.fn(async (options: { taskId: string; inputName?: string }) => {
+            const outputPath = join(
+              workbenchRoot,
+              '.workbench',
+              'tmp',
+              'detection',
+              options.taskId,
+              `${options.inputName ?? 'image'}_processed.jpg`,
+            )
+            await mkdir(dirname(outputPath), { recursive: true })
+            await writeFile(outputPath, 'processed')
+            return {
+              outputPath,
+              mimeType: 'image/jpeg',
+              sizeBytes: 9,
+              dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+            }
+          }),
+          close: vi.fn(),
+        },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    const secondPreprocess = vi.fn(async (options: { taskId: string; inputName?: string }) => {
+      const outputPath = join(
+        workbenchRoot,
+        '.workbench',
+        'tmp',
+        'detection',
+        options.taskId,
+        `${options.inputName ?? 'image'}_processed.jpg`,
+      )
+      await mkdir(dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, 'processed-again')
+      return {
+        outputPath,
+        mimeType: 'image/jpeg',
+        sizeBytes: 15,
+        dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2VkLWFnYWlu',
+      }
+    })
+    const secondVision = vi.fn().mockResolvedValue({
+      text: '{"risk_score": 50, "reason": "按新阈值通过"}',
+    })
+    const second = await service.runDetectionBatch(
+      { ...baseConfig, threshold: { passMax: 60, reviewMax: 80 }, taskId: 'second-threshold-run' },
+      {
+        skillCache: { getSkill: vi.fn().mockResolvedValue(skill) },
+        createBailianAdapter: () => ({ visionCompletion: secondVision }),
+        preprocessPool: { process: secondPreprocess, close: vi.fn() },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(second).toMatchObject({ succeeded: 1, failed: 0, skipped: 0 })
+    expect(second.results[0]).toMatchObject({
+      status: 'success',
+      riskScore: 50,
+      riskLevel: 'pass',
+      cached: false,
+    })
+    expect(secondPreprocess).toHaveBeenCalledTimes(1)
+    expect(secondVision).toHaveBeenCalledTimes(1)
   })
 
   it('marks unparseable model output as llm_parse_failed without copying to risk folders', async () => {

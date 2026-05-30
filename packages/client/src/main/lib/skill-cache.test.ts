@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
@@ -97,6 +97,7 @@ describe('SkillCacheManager', () => {
     await expect(manager.listSkills({ module: 'title', platform: 'temu_pop' })).resolves.toEqual([
       summary(),
     ])
+    expect(fetch).toHaveBeenCalledTimes(1)
   })
 
   it('fetches and caches skill details by version', async () => {
@@ -136,5 +137,21 @@ describe('SkillCacheManager', () => {
 
     vi.setSystemTime(new Date('2026-06-01T00:00:00.000Z'))
     await expect(manager.listSkills({ module: 'title' })).resolves.toEqual([])
+  })
+
+  it('removes cached skill details that disappeared from a full server refresh', async () => {
+    const root = join(workbenchRoot, '.workbench', 'cache', 'skills')
+    await mkdir(join(root, 'txt2img-print-prompt-v3'), { recursive: true })
+    await mkdir(join(root, 'title-temu-en'), { recursive: true })
+    await writeFile(join(root, 'txt2img-print-prompt-v3', '3.0.1.json'), '{}', 'utf8')
+    await writeFile(join(root, 'title-temu-en', '1.0.0.json'), '{}', 'utf8')
+    await writeFile(join(root, 'title-temu-en', '3.0.1.json'), '{}', 'utf8')
+    vi.mocked(fetch).mockResolvedValue(okResponse([summary()]))
+    const manager = new SkillCacheManager()
+
+    await manager.refresh()
+
+    await expect(readdir(join(root, 'txt2img-print-prompt-v3'))).rejects.toThrow()
+    await expect(readdir(join(root, 'title-temu-en'))).resolves.toEqual(['3.0.1.json'])
   })
 })

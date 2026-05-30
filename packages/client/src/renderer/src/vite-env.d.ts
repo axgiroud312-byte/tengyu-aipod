@@ -1,5 +1,7 @@
 /// <reference types="vite/client" />
 
+export {}
+
 declare global {
   interface Window {
     api: {
@@ -20,6 +22,44 @@ declare global {
       keychain: {
         has: (key: string) => Promise<boolean>
       }
+      chenyu: {
+        getSettings: () => Promise<
+          import('../../main/lib/chenyu-instance-service').ChenyuSettingsSnapshot
+        >
+        saveSettings: (
+          input: import('../../main/lib/chenyu-instance-service').ChenyuSaveSettingsInput,
+        ) => Promise<import('../../main/lib/chenyu-instance-service').ChenyuSettingsSnapshot>
+        testConnection: () => Promise<{ balance: number; card_balance: number }>
+        discoverPod: (input?: { keyword?: string }) => Promise<
+          import('../../main/lib/chenyu-instance-service').ChenyuPodDiscoveryResult
+        >
+        listGpus: () => Promise<import('../../main/lib/chenyu-cloud-client').ChenyuGpu[]>
+        listInstances: () => Promise<
+          import('../../main/lib/chenyu-instance-service').ChenyuManagedInstance[]
+        >
+        createFixedPodInstance: (
+          input: import('../../main/lib/chenyu-instance-service').ChenyuCreateFixedPodInstanceInput,
+        ) => Promise<import('../../main/lib/comfyui-instance-manager').ComfyuiInstanceSummary>
+        startupInstance: (input: {
+          instanceUuid: string
+          gpuUuid?: string
+          gpuNums?: number
+        }) => Promise<import('../../main/lib/chenyu-cloud-client').ChenyuInstanceInfo>
+        shutdownInstance: (input: {
+          instanceUuid: string
+        }) => Promise<import('../../main/lib/chenyu-cloud-client').ChenyuInstanceInfo>
+        restartInstance: (input: {
+          instanceUuid: string
+        }) => Promise<import('../../main/lib/chenyu-cloud-client').ChenyuInstanceInfo>
+        destroyInstance: (input: { instanceUuid: string }) => Promise<{ ok: true }>
+        setActiveInstance: (input: {
+          instanceUuid: string
+          comfyuiUrl?: string
+        }) => Promise<import('../../main/lib/comfyui-instance-manager').ComfyuiInstanceSummary>
+        getActiveInstance: () => Promise<
+          import('../../main/lib/comfyui-instance-manager').ComfyuiInstanceSummary | null
+        >
+      }
       browserProfileLock: {
         list: () => Promise<import('../../main/lib/browser-profile-lock').BrowserProfileHolder[]>
       }
@@ -34,6 +74,24 @@ declare global {
           id: string
           version?: string
         }) => Promise<import('@tengyu-aipod/shared').Skill>
+        refresh: () => Promise<
+          { ok: true; count: number } | { ok: false; count: number; error: string }
+        >
+      }
+      generationSettings: {
+        get: () => Promise<import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot>
+        save: (
+          input: import('../../main/lib/generation-local-config').SaveGenerationLocalSettingsInput,
+        ) => Promise<import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot>
+      }
+      workflow: {
+        listLocal: (
+          category?: import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowCategory,
+        ) => Promise<import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]>
+        importLocal: (
+          input: import('../../main/lib/comfyui-workflow-cache').ImportLocalComfyuiWorkflowInput,
+        ) => Promise<import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary>
+        removeLocal: (input: { id: string }) => Promise<{ ok: true }>
       }
       tempFile: {
         getUsage: () => Promise<Record<string, number>>
@@ -169,6 +227,12 @@ declare global {
         listComfyuiMixedMattingWorkflows: () => Promise<
           import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]
         >
+        listChenyuWorkflows: (
+          input?: import('../../main/lib/generation-service').ChenyuWorkflowMarketListInput,
+        ) => Promise<import('../../main/lib/chenyu-cloud-client').ChenyuWorkflowMarketList>
+        getChenyuWorkflow: (input: { workflowId: string }) => Promise<
+          import('../../main/lib/chenyu-cloud-client').ChenyuWorkflowMarketInfo
+        >
         parseManualPrompts: (text: string) => Promise<string[]>
         runTxt2img: (
           input: import('../../main/lib/generation-service').Txt2imgRunInput,
@@ -190,6 +254,9 @@ declare global {
         ) => Promise<string>
         runComfyuiImg2img: (
           input: import('../../main/lib/generation-service').ComfyuiImg2imgRunInput,
+        ) => Promise<string>
+        runChenyuWorkflow: (
+          input: import('../../main/lib/generation-service').ChenyuWorkflowRunInput,
         ) => Promise<string>
         onProgress: (
           callback: (
@@ -355,5 +422,3 @@ declare global {
     }
   }
 }
-
-export {}

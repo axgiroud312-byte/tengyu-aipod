@@ -28,8 +28,7 @@ function request(overrides: Partial<GenerateRequest> = {}): GenerateRequest {
     capability: 'txt2img',
     prompt: '生成一张复古花朵印花',
     output: {
-      aspect_ratio: '1:1',
-      image_size_label: '1K',
+      aspect_ratio: '1024x1024',
     },
     ...overrides,
   }
@@ -72,11 +71,10 @@ describe('GrsaiAdapter', () => {
     })
     expect(authorization).toBe('Bearer sk-test')
     expect(requestBody).toMatchObject({
-      model: 'nano-banana-2',
+      model: 'gpt-image-2',
       prompt: '生成一张复古花朵印花',
       images: ['iVBORw0KGgo='],
-      aspectRatio: '1:1',
-      imageSize: '1K',
+      aspectRatio: '1024x1024',
       replyType: 'json',
     })
   })
@@ -90,7 +88,7 @@ describe('GrsaiAdapter', () => {
         return HttpResponse.json(succeededResponse(`https://file.example/${body.model}.png`))
       }),
     )
-    const adapter = new GrsaiAdapter('sk-test')
+    const adapter = new GrsaiAdapter('sk-test', 'cn', { retries: 0 })
 
     for (const model of GRSAI_SUPPORTED_MODELS) {
       await adapter.generate(request({ model }))
@@ -241,6 +239,70 @@ describe('GrsaiAdapter', () => {
     expect(requestBody).toMatchObject({ replyType: 'stream' })
   })
 
+  it('sends gpt-image-2 img2img requests to the native generate endpoint', async () => {
+    let requestBody: unknown = null
+    server.use(
+      http.post(`${grsaiBaseUrl('cn')}/v1/api/generate`, async ({ request }) => {
+        requestBody = await request.json()
+        return HttpResponse.json(succeededResponse('https://file.example/gpt-image.png'))
+      }),
+    )
+    const adapter = new GrsaiAdapter('sk-test', 'cn')
+
+    await expect(
+      adapter.generate(
+        request({
+          capability: 'img2img',
+          model: 'gpt-image-2',
+          reference_images: [
+            { base64: 'data:image/png;base64,iVBORw0KGgo=', mime_type: 'image/png' },
+          ],
+          output: { aspect_ratio: '1536x1024' },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      status: 'succeeded',
+      images: [{ url: 'https://file.example/gpt-image.png' }],
+    })
+    expect(requestBody).toEqual({
+      model: 'gpt-image-2',
+      prompt: '生成一张复古花朵印花',
+      images: ['iVBORw0KGgo='],
+      aspectRatio: '1536x1024',
+      replyType: 'json',
+    })
+  })
+
+  it('keeps gpt-image-2-vip on the native generate endpoint', async () => {
+    let requestBody: Record<string, unknown> | null = null
+    server.use(
+      http.post(`${grsaiBaseUrl('cn')}/v1/api/generate`, async ({ request }) => {
+        requestBody = (await request.json()) as Record<string, unknown>
+        return HttpResponse.json(succeededResponse('https://file.example/gpt-image-vip.png'))
+      }),
+    )
+    const adapter = new GrsaiAdapter('sk-test', 'cn')
+
+    await expect(
+      adapter.generate(
+        request({
+          model: 'gpt-image-2-vip',
+          output: { aspect_ratio: '2048x2048' },
+        }),
+      ),
+    ).resolves.toMatchObject({
+      status: 'succeeded',
+      images: [{ url: 'https://file.example/gpt-image-vip.png' }],
+    })
+    expect(requestBody).toMatchObject({
+      model: 'gpt-image-2-vip',
+      aspectRatio: '2048x2048',
+      images: [],
+      replyType: 'json',
+    })
+    expect(requestBody).not.toHaveProperty('imageSize')
+  })
+
   it('throws transport errors as retryable AppError after fallback also fails', async () => {
     server.use(
       http.post(`${grsaiBaseUrl('cn')}/v1/api/generate`, () =>
@@ -250,7 +312,7 @@ describe('GrsaiAdapter', () => {
         HttpResponse.json({ error: 'bad gateway' }, { status: 503 }),
       ),
     )
-    const adapter = new GrsaiAdapter('sk-test')
+    const adapter = new GrsaiAdapter('sk-test', 'cn', { retries: 0 })
 
     await expect(adapter.generate(request())).rejects.toMatchObject({
       code: 'HTTP_5XX',

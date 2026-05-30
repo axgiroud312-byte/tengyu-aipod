@@ -12,15 +12,15 @@
 - _外部参考待补_ — 比特浏览器 API、Chrome DevTools Protocol 等；当前实现规则见 [采集 Spec](../docs/spec/02-collection.md) 和 [ADR-0010](../docs/adr/0010-collection-image-pool-and-runtime-logs.md)
 
 ### 生图 - ComfyUI（generation-comfyui/）
-- [chenyu-cloud-api.md](./generation-comfyui/chenyu-cloud-api.md) — 晨羽智云开放接口，对接 comfyui 生图模块
+- [chenyu-cloud-api.md](./generation-comfyui/chenyu-cloud-api.md) — 晨羽智云开放接口，对接 ComfyUI 生图模块；当前主链路是"默认云机 + ComfyUI 原生 HTTP"，不是晨羽 workflow/run
 - _待编写_ — ComfyUI 原生 HTTP API（/prompt、/history、/upload/image、/view）
 
 ### 生图 - 付费中转站（generation-paid/）
-- [grsai-api.md](./generation-paid/grsai-api.md) — Grsai 付费 AI API 中转站，nano-banana / gpt-image-2 系列模型，原生 + OpenAI 兼容接口
+- [grsai-api.md](./generation-paid/grsai-api.md) — Grsai 付费 AI API 中转站；腾域当前只接入 `gpt-image-2` / `gpt-image-2-vip`，统一走原生 `/v1/api/generate`
 - _待编写_ — skill 提示词设计原则、各模型对比
 
 ### 视觉/LLM 横切 provider（vision-llm-providers/）
-- [aliyun-bailian-api.md](./vision-llm-providers/aliyun-bailian-api.md) — 阿里云百炼，qwen3-vl-* 视觉 + qwen-max/qwen3-max LLM，OpenAI 兼容接入，服务于检测+标题两个模块
+- [aliyun-bailian-api.md](./vision-llm-providers/aliyun-bailian-api.md) — 阿里云百炼，qwen3.5-plus / qwen3.5-flash / qwen3.6-plus 文本与视觉模型、qwen3-vl-*、qwen-vl-*，OpenAI 兼容接入
 
 ### 侵权检测（detection/）业务规则
 - _待编写_ — 侵权判定阈值、风险分级、skill 提示词设计

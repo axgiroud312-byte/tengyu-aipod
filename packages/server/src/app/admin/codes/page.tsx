@@ -1,5 +1,6 @@
 'use client'
 
+import { AdminShell } from '@/components/admin/admin-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useEffect, useMemo, useState } from 'react'
@@ -280,23 +281,24 @@ export default function AdminCodesPage() {
   }
 
   return (
-    <main className="min-h-screen bg-background p-6 text-foreground">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">激活码管理</h1>
-            <p className="text-sm text-muted-foreground">共 {total} 个激活码</p>
-          </div>
-          <Button asChild>
-            <a href="#new-code">+ 新建激活码</a>
-          </Button>
-        </section>
+    <AdminShell
+      description="生成激活码、批量预绑客户、查看激活与设备占用。"
+      title="激活码管理"
+    >
+      <section className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-muted-foreground">共 {total} 个激活码</p>
+        </div>
+        <Button asChild>
+          <a href="#new-code">+ 新建激活码</a>
+        </Button>
+      </section>
 
-        <Card id="new-code">
-          <CardHeader>
-            <CardTitle>新建激活码</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <Card id="new-code">
+        <CardHeader>
+          <CardTitle>新建激活码</CardTitle>
+        </CardHeader>
+        <CardContent>
             <div className="mb-4 flex flex-wrap gap-2">
               {[
                 ['single', '单个创建'],
@@ -422,14 +424,14 @@ export default function AdminCodesPage() {
                 <Button type="submit">生成激活码</Button>
               </div>
             </form>
-          </CardContent>
-        </Card>
+        </CardContent>
+      </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>激活码列表</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <Card>
+        <CardHeader>
+          <CardTitle>激活码列表</CardTitle>
+        </CardHeader>
+        <CardContent>
             <div className="mb-4 grid gap-3 md:grid-cols-5">
               <input
                 className="h-10 rounded-md border px-3 text-sm"
@@ -627,9 +629,8 @@ export default function AdminCodesPage() {
                 </Button>
               </div>
             </div>
-          </CardContent>
-        </Card>
-      </div>
-    </main>
+        </CardContent>
+      </Card>
+    </AdminShell>
   )
 }

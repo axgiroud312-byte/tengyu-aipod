@@ -190,9 +190,8 @@ describe('generation extract service', () => {
         },
         promptCount: 1,
         llmModel: 'qwen3-vl-plus',
-        model: 'nano-banana-2',
-        aspectRatio: '1:1',
-        imageSize: '1K',
+        model: 'gpt-image-2',
+        aspectRatio: '1024x1024',
         concurrency: 1,
         taskId: 'extract-task',
       },
@@ -454,7 +453,7 @@ describe('generation comfyui service', () => {
       ),
     ).rejects.toMatchObject({
       code: 'CHENYU_INSTANCE_DOWN',
-      message: '请先创建并启动 ComfyUI 实例',
+      message: '请先到设置页选择默认云机并开机',
     })
   })
 })
@@ -606,7 +605,7 @@ describe('generation comfyui img2img service', () => {
       ),
     ).rejects.toMatchObject({
       code: 'CHENYU_INSTANCE_DOWN',
-      message: '请先创建并启动 ComfyUI 实例',
+      message: '请先到设置页选择默认云机并开机',
     })
   })
 })
@@ -785,7 +784,7 @@ describe('generation comfyui matting service', () => {
         language: null,
         version: '1.0.0',
         enabled: true,
-        recommendedModel: 'nano-banana-2',
+        recommendedModel: 'gpt-image-2',
         notes: null,
       },
     ])

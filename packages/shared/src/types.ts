@@ -11,20 +11,8 @@ export type TaskType = 'lightweight' | 'full'
 export type RiskLevel = 'pass' | 'review' | 'block'
 export type GenerationCapability = 'txt2img' | 'img2img' | 'extract' | 'matting'
 
-export type ProviderId = 'comfyui-chenyu' | 'grsai' | 'aliyun-bailian'
-export type ProviderApiStyle = 'grsai-native' | 'openai-images' | 'openai-chat' | 'dashscope-native'
 export type SkillModule = 'generation' | 'detection' | 'title'
 export type SkillVariableType = 'select' | 'number' | 'text' | 'textarea' | 'checkbox'
-
-export interface Provider {
-  id: ProviderId
-  name: string
-  apiStyle: ProviderApiStyle
-  baseUrl: string
-  capabilities: GenerationCapability[]
-  modelOptions: string[]
-  enabled: boolean
-}
 
 export interface SkillVariable {
   key: string

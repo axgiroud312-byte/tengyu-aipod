@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Settings2 } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { NavLink } from 'react-router-dom'
 import type { WorkbenchModuleMeta } from './navigation'
 
 interface HeaderProps {
@@ -20,8 +21,10 @@ export function Header({ module, activationBadge }: HeaderProps) {
 
       <div className="flex items-center gap-3">
         {activationBadge}
-        <Button className="h-10 w-10 px-0" title="设置" type="button" variant="outline">
-          <Settings2 className="h-4 w-4" />
+        <Button asChild className="h-10 w-10 px-0" title="设置" type="button" variant="outline">
+          <NavLink to="/settings">
+            <Settings2 className="h-4 w-4" />
+          </NavLink>
         </Button>
       </div>
     </header>

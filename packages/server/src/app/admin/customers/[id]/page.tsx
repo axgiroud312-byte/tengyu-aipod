@@ -1,5 +1,6 @@
 'use client'
 
+import { AdminShell } from '@/components/admin/admin-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { formatRelativeTime } from '@/lib/relative-time'
@@ -204,47 +205,45 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
 
   if (isLoading && !customer) {
     return (
-      <main className="min-h-screen bg-background p-6 text-foreground">
-        <div className="mx-auto max-w-7xl text-sm text-muted-foreground">加载中...</div>
-      </main>
+      <AdminShell description="读取客户设备和激活码明细。" title="客户详情">
+        <p className="text-sm text-muted-foreground">加载中...</p>
+      </AdminShell>
     )
   }
 
   if (!customer) {
     return (
-      <main className="min-h-screen bg-background p-6 text-foreground">
-        <div className="mx-auto max-w-7xl space-y-4">
+      <AdminShell description="读取客户设备和激活码明细。" title="客户详情">
+        <div className="space-y-4">
           <p className="text-sm text-muted-foreground">{message ?? '客户不存在'}</p>
           <Button asChild variant="secondary">
             <a href="/admin/customers">返回客户列表</a>
           </Button>
         </div>
-      </main>
+      </AdminShell>
     )
   }
 
   return (
-    <main className="min-h-screen bg-background p-6 text-foreground">
-      <div className="mx-auto max-w-7xl space-y-6">
-        <section className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <h1 className="text-2xl font-semibold">客户详情：{customer.name}</h1>
-            <p className="text-sm text-muted-foreground">
-              {customer.total_devices}/{customer.total_device_slots} 台设备，最近活跃{' '}
-              {formatRelativeTime(customer.recent_active_at)}
-            </p>
-          </div>
-          <div className="flex flex-wrap gap-2">
-            <Button asChild variant="secondary">
-              <a href="/admin/customers">返回列表</a>
-            </Button>
-            <Button asChild>
-              <a href={newCodeUrl}>+ 给该客户发新激活码</a>
-            </Button>
-          </div>
-        </section>
+    <AdminShell
+      description={`${customer.total_devices}/${customer.total_device_slots} 台设备，最近活跃 ${formatRelativeTime(customer.recent_active_at)}`}
+      title={`客户详情：${customer.name}`}
+    >
+      <section className="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <p className="text-sm text-muted-foreground">客户、激活码和设备明细</p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button asChild variant="secondary">
+            <a href="/admin/customers">返回列表</a>
+          </Button>
+          <Button asChild>
+            <a href={newCodeUrl}>+ 给该客户发新激活码</a>
+          </Button>
+        </div>
+      </section>
 
-        {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
+      {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
 
         <Card>
           <CardHeader>
@@ -407,7 +406,6 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
             </div>
           </CardContent>
         </Card>
-      </div>
-    </main>
+    </AdminShell>
   )
 }

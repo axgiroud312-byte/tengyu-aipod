@@ -607,22 +607,20 @@ Runner 契约：`ListingRunConfig.workspaces[]` 可以携带 `workspace_id` 和 
 'listing:workspace-paused'         → { task_id, profile_id, reason }
 ```
 
-## 12. 选择器云端派发（v1.5+）
+## 12. 选择器本地版本化（v1.5+）
 
-v1 选择器写死在代码里（每个平台目录）。v1.5 加云端派发能力：
+v1 选择器写死在代码里（每个平台目录）。v1.5 仍保持本地版本化：规则随客户端版本发布，或者由用户在本地导入更新包。
 
 ```
-GET /api/listing/selectors/{platform}?version=...
-
-→ {
-  platform: 'dianxiaomi-temu-pop',
-  version: 'v3',
-  selectors: { title_input: [...], ... },
-  effective_from: timestamp,
-}
+packages/client/src/modules/listing/platforms/
+└─ dianxiaomi-temu-pop/
+   ├─ selectors.ts
+   ├─ page-parser.ts
+   ├─ action-executor.ts
+   └─ workflow.ts
 ```
 
-客户端启动时检查最新版，覆盖本地默认。这样店小秘改版时**你只发布新选择器版本，客户端不用升级**。
+客户端启动时读取本地版本和用户自定义覆盖项。这样店小秘改版时，直接随客户端更新或本地替换选择器文件即可。
 
 ## 13. IPC 接口
 

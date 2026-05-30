@@ -15,6 +15,28 @@ export const workbenchSubdirectories = [
 
 export interface AppConfig {
   workbench_root?: string
+  chenyu?: ChenyuConfig
+  generation?: GenerationLocalConfig
+}
+
+export interface ChenyuConfig {
+  pod_search_keyword?: string | undefined
+  pod_title?: string | undefined
+  pod_uuid?: string | undefined
+  pod_tags?: string[]
+  default_pod_tag?: string | undefined
+  default_gpu_uuid?: string | undefined
+  default_gpu_name?: string | undefined
+  default_gpu_nums?: number
+  auto_shutdown_minutes?: number | null
+}
+
+export interface GenerationLocalConfig {
+  bailian_text_model?: string
+  bailian_vision_model?: string
+  grsai_node?: 'cn' | 'global'
+  grsai_concurrency?: number
+  grsai_retries?: number
 }
 
 async function electronApp() {

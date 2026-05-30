@@ -2,8 +2,9 @@
 
 > 抓取自 https://help.aliyun.com/zh/model-studio/ 于 2026-05-23。
 > 阿里云百炼是腾域的**视觉/LLM 横切 provider**，同时服务于：
-> - **侵权检测模块**：用 qwen-vl-* 视觉模型判断印花风险
-> - **标题生成模块**：用 qwen-vl-* 看图 + qwen-max/qwen3-max LLM 拼标题
+> - **生图提示词模块**：文本用 qwen3.5/qwen3.6 系列，图生图/提取用视觉模型看参考图后返回 `{ "prompts": [...] }`
+> - **侵权检测模块**：用 qwen3-vl-* / qwen-vl-* / qwen3.5-plus 等视觉模型判断印花风险
+> - **标题生成模块**：可用视觉模型一步看图写标题，也可用两阶段（视觉描述 + 文本模型）
 
 ## 官方文档入口
 
@@ -79,11 +80,14 @@ API Key 前缀：`sk-`，长度约 32 字符。**各地域 Key 不通用**，要
 | **qwen-vl-max** | 上代旗舰，仍可用 | 输入 1.6 / 输出 4 |
 | **qwen-vl-plus** | 上代均衡 | 输入 0.8 / 输出 2 |
 | **qwen3.6-plus**（含视觉） | 全模态 | 输入 2 / 输出 12 |
+| **qwen3.5-plus**（含视觉） | 通用视觉/文本 | 以百炼控制台当前价格为准 |
+| **qwen3.5-flash**（含视觉） | 快速低价 | 以百炼控制台当前价格为准 |
 
 **腾域推荐**：
 - 侵权检测：**qwen3-vl-flash**（便宜，判侵权不需要旗舰能力）
 - 标题生成：**qwen3-vl-plus**（标题质量直接影响转化率，值得花贵的）
-- 二者最终选哪个 model 在 skill 配置里可云端切换（用户不感知）
+- 生图参考图提示词：**qwen3.5-plus** 或 **qwen3.6-plus**
+- 最终选哪个 model 在客户端本地设置页选择，云端 Skill 不保存模型 ID
 
 ### 2.2 调用示例（OpenAI 兼容，图片用 URL）
 
@@ -138,8 +142,10 @@ print(completion.choices[0].message.content)
 | **qwen3-max** | 新一代旗舰 | 输入 2.5 / 输出 10（0-32K档） |
 | **qwen3.6-plus** | 性价比款 | 输入 2 / 输出 12（0-32K档） |
 | **qwen3.6-max-preview** | 顶级 | 输入 9 / 输出 54（贵） |
+| **qwen3.5-plus** | 通用高质量 | 以百炼控制台当前价格为准 |
+| **qwen3.5-flash** | 快速低价 | 以百炼控制台当前价格为准 |
 
-**腾域推荐**：**qwen3.6-plus**（标题这种任务用便宜的够了；如果效果不行升 qwen3-max）。
+**腾域推荐**：标题/提示词优先用 **qwen3.5-plus** 或 **qwen3.6-plus**；追求成本时用 flash，效果不够再升旗舰模型。
 
 **也可以"一步到位"**：直接用 qwen3-vl-plus 看图+写标题一气呵成，省一次 API 调用。这是更简洁的方案。
 
@@ -163,7 +169,7 @@ completion = client.chat.completions.create(
 - `pod-workbench/src/modules/detection/` — 侵权检测
 - `pod-workbench/src/modules/title-generation/` — 标题生成
 
-⚠️ **同一份 API Key 服务两个模块**，但**两个模块用不同的 skill（prompt 模板）+ 可能不同的 model**。skill 配置由云服务器派发，模块只关心"我要做这件事，调哪个 skill"。
+⚠️ **同一份 API Key 服务两个模块**，但**两个模块用不同的 skill（prompt 模板）+ 可能不同的 model**。skill 配置由云端派发，模型由客户端本地设置页选择，模块只关心"我要做这件事，调哪个 skill"。
 
 ### 4.2 API Key 存储
 

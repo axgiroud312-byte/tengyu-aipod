@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   API_PATHS,
@@ -10,8 +10,8 @@ import {
 import { app, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 import { getSecret } from './keychain'
+import { serverUrl } from './server-base-url'
 
-const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
 const REFRESH_INTERVAL_MS = CACHE_REFRESH_INTERVAL_MINUTES * 60 * 1000
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const SKILL_INDEX_FILE_NAME = 'index.json'
@@ -77,7 +77,6 @@ async function writeJson(path: string, value: unknown) {
 
 export class SkillCacheManager {
   private intervalId: NodeJS.Timeout | null = null
-  private lastRefreshAt = 0
 
   start() {
     if (this.intervalId) {
@@ -101,15 +100,13 @@ export class SkillCacheManager {
 
   async listSkills(filter: SkillListFilter = {}): Promise<SkillSummary[]> {
     const normalized = normalizeFilter(filter)
-
-    if (Date.now() - this.lastRefreshAt > REFRESH_INTERVAL_MS) {
-      await this.refresh(normalized).catch(() => null)
+    const cachedIndex = await this.readCachedIndex(REFRESH_INTERVAL_MS)
+    if (cachedIndex) {
+      return cachedIndex.items.filter((skill) => matchesFilter(skill, normalized))
     }
 
     try {
-      const fresh = await this.fetchSkillSummaries(normalized)
-      await this.saveIndex(fresh)
-      return fresh
+      return await this.refresh(normalized)
     } catch {
       return this.readCachedSummaries(normalized)
     }
@@ -139,9 +136,12 @@ export class SkillCacheManager {
   }
 
   async refresh(filter: SkillListFilter = {}) {
-    const summaries = await this.fetchSkillSummaries(normalizeFilter(filter))
+    const normalizedFilter = normalizeFilter(filter)
+    const summaries = await this.fetchSkillSummaries(normalizedFilter)
     await this.saveIndex(summaries)
-    this.lastRefreshAt = Date.now()
+    if (!Object.keys(normalizedFilter).length) {
+      await this.cleanupMissingSkillDetails(summaries)
+    }
     return summaries
   }
 
@@ -157,7 +157,7 @@ export class SkillCacheManager {
       }
     }
     const query = searchParams.toString()
-    const url = `${SERVER_BASE_URL}${API_PATHS.skills}${query ? `?${query}` : ''}`
+    const url = serverUrl(`${API_PATHS.skills}${query ? `?${query}` : ''}`)
     const result = await this.fetchJson<SkillSummary[]>(url)
     return result
   }
@@ -169,7 +169,7 @@ export class SkillCacheManager {
     }
     const query = searchParams.toString()
     return this.fetchJson<Skill>(
-      `${SERVER_BASE_URL}${API_PATHS.skills}/${encodeURIComponent(id)}${query ? `?${query}` : ''}`,
+      serverUrl(`${API_PATHS.skills}/${encodeURIComponent(id)}${query ? `?${query}` : ''}`),
     )
   }
 
@@ -202,15 +202,56 @@ export class SkillCacheManager {
     await writeJson(skillFilePath(await this.rootDir(), skill.id, skill.version), skill)
   }
 
+  private async cleanupMissingSkillDetails(items: SkillSummary[]) {
+    const root = await this.rootDir()
+    const allowedById = new Map<string, Set<string>>()
+    for (const item of items) {
+      const versions = allowedById.get(item.id) ?? new Set<string>()
+      versions.add(item.version)
+      allowedById.set(item.id, versions)
+    }
+
+    try {
+      const entries = await readdir(root, { withFileTypes: true })
+      await Promise.all(
+        entries
+          .filter((entry) => entry.isDirectory())
+          .map(async (entry) => {
+            const versions = allowedById.get(entry.name)
+            const skillDir = join(root, entry.name)
+            if (!versions) {
+              await rm(skillDir, { recursive: true, force: true })
+              return
+            }
+
+            const files = await readdir(skillDir)
+            await Promise.all(
+              files
+                .filter((file) => file.endsWith('.json'))
+                .filter((file) => !versions.has(file.replace(/\.json$/, '')))
+                .map((file) => rm(join(skillDir, file), { force: true })),
+            )
+          }),
+      )
+    } catch {
+      return
+    }
+  }
+
   private async readCachedSummaries(filter: SkillListFilter) {
+    const index = await this.readCachedIndex(CACHE_MAX_AGE_MS)
+    return index?.items.filter((skill) => matchesFilter(skill, filter)) ?? []
+  }
+
+  private async readCachedIndex(maxAgeMs: number) {
     try {
       const index = await readJson<SkillIndexFile>(indexFilePath(await this.rootDir()))
-      if (Date.now() - index.refreshed_at > CACHE_MAX_AGE_MS) {
-        return []
+      if (Date.now() - index.refreshed_at > maxAgeMs) {
+        return null
       }
-      return index.items.filter((skill) => matchesFilter(skill, filter))
+      return index
     } catch {
-      return []
+      return null
     }
   }
 
@@ -253,4 +294,16 @@ export function registerSkillCacheIpc() {
   ipcMain.handle('skill:get', (_event, input: { id: string; version?: string }) =>
     skillCacheManager.getSkill(input.id, input.version),
   )
+  ipcMain.handle('skill:refresh', async () => {
+    try {
+      const items = await skillCacheManager.refresh()
+      return { ok: true as const, count: items.length }
+    } catch (error) {
+      return {
+        ok: false as const,
+        count: 0,
+        error: error instanceof Error ? error.message : 'Skill 同步失败',
+      }
+    }
+  })
 }

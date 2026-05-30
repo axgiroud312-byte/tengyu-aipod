@@ -9,6 +9,7 @@ import {
   saveActivationSnapshot,
 } from './lib/activation-state'
 import { hasSecret, setSecret } from './lib/keychain'
+import { serverUrl } from './lib/server-base-url'
 import {
   defaultWorkbenchRoot,
   ensureWorkbenchDirectories,
@@ -18,7 +19,6 @@ import {
 
 export { readAppConfig }
 
-const SERVER_BASE_URL = process.env.TENGYU_SERVER_URL ?? 'http://localhost:3000'
 const DEV_SKIP_ACTIVATION_ENV = 'TENGYU_DEV_SKIP_ACTIVATION'
 
 interface ActivateResponse {
@@ -108,7 +108,7 @@ export function registerOnboardingIpc() {
   ipcMain.handle(
     'activation:activate',
     async (_event, input: { code: string; device_name: string }) => {
-      const response = await fetch(`${SERVER_BASE_URL}/api/activate`, {
+      const response = await fetch(serverUrl('/api/activate'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({

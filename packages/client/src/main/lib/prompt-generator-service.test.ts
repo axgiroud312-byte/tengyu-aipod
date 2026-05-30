@@ -63,7 +63,9 @@ describe('parsePrompts', () => {
 
 describe('PromptGeneratorService', () => {
   it('injects variables into system prompts and calls chat completion without images', async () => {
-    const chatCompletion = vi.fn().mockResolvedValue({ text: '["Prompt A","Prompt B"]' })
+    const chatCompletion = vi.fn().mockResolvedValue({
+      text: '{"prompts":["Prompt A","Prompt B"]}',
+    })
     const service = new PromptGeneratorService()
 
     await expect(
@@ -75,6 +77,7 @@ describe('PromptGeneratorService', () => {
         },
         {
           getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
           createBailianAdapter: () => ({
             chatCompletion,
             visionCompletion: vi.fn(),
@@ -85,7 +88,7 @@ describe('PromptGeneratorService', () => {
 
     expect(chatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'qwen3-vl-plus',
+        model: 'qwen-plus',
         response_format: { type: 'json_object' },
         messages: [
           {
@@ -100,7 +103,7 @@ describe('PromptGeneratorService', () => {
 
   it('uses vision completion and data URLs when reference images are present', async () => {
     const visionCompletion = vi.fn().mockResolvedValue({
-      text: '1. Use only art style\n2. New floral motif',
+      text: '{"prompts":["Use only art style","New floral motif"]}',
     })
     const service = new PromptGeneratorService()
 
@@ -114,6 +117,7 @@ describe('PromptGeneratorService', () => {
         },
         {
           getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
           createBailianAdapter: () => ({
             chatCompletion: vi.fn(),
             visionCompletion,
@@ -130,7 +134,7 @@ describe('PromptGeneratorService', () => {
             role: 'user',
             content: [
               { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
-              { type: 'text', text: 'Use only art style' },
+              { type: 'text', text: expect.stringContaining('Use only art style') },
             ],
           }),
         ],
@@ -139,7 +143,7 @@ describe('PromptGeneratorService', () => {
   })
 
   it('resolves the first matching generation skill by category', async () => {
-    const chatCompletion = vi.fn().mockResolvedValue({ text: 'Prompt from cache' })
+    const chatCompletion = vi.fn().mockResolvedValue({ text: '{"prompts":["Prompt from cache"]}' })
     const getSkill = vi.fn().mockResolvedValue(skill({ id: 'cached-skill', version: '1.0.0' }))
     const listSkills = vi
       .fn()
@@ -152,6 +156,7 @@ describe('PromptGeneratorService', () => {
         {
           skillCache: { getSkill, listSkills },
           getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
           createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
         },
       ),
@@ -159,6 +164,50 @@ describe('PromptGeneratorService', () => {
 
     expect(listSkills).toHaveBeenCalledWith({ module: 'generation', category: 'txt2img' })
     expect(getSkill).toHaveBeenCalledWith('cached-skill', '1.0.0')
+  })
+
+  it('chunks large prompt requests and injects each chunk count', async () => {
+    const chatCompletion = vi.fn(async (request) => {
+      const systemMessage = request.messages[0]
+      const content = typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      const count = Number(content.match(/Generate (\d+)/)?.[1] ?? 0)
+      return {
+        text: JSON.stringify({
+          prompts: Array.from({ length: count }, (_, index) => `Prompt ${count}-${index + 1}`),
+        }),
+        model: 'qwen-plus',
+        finishReason: 'stop' as const,
+        raw: {} as never,
+      }
+    })
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill({ systemPrompt: 'Generate {{count}} JSON prompts for {requirement}.' }),
+          variables: { requirement: '圣诞小熊' },
+          count: 250,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).resolves.toHaveLength(250)
+
+    expect(chatCompletion).toHaveBeenCalledTimes(3)
+    expect(
+      chatCompletion.mock.calls.map(([request]) => {
+        const systemMessage = request.messages[0]
+        return typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      }),
+    ).toEqual([
+      'Generate 100 JSON prompts for 圣诞小熊.',
+      'Generate 100 JSON prompts for 圣诞小熊.',
+      'Generate 50 JSON prompts for 圣诞小熊.',
+    ])
   })
 
   it('throws when prompts cannot be parsed', async () => {
@@ -169,6 +218,7 @@ describe('PromptGeneratorService', () => {
         { skill: skill(), count: 2 },
         {
           getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
           createBailianAdapter: () => ({
             chatCompletion: vi.fn().mockResolvedValue({ text: '' }),
             visionCompletion: vi.fn(),

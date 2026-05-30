@@ -19,6 +19,7 @@ import {
   type OnboardingStep,
 } from '@/features/onboarding/OnboardingPage'
 import { PhotoshopPage } from '@/features/photoshop/PhotoshopPage'
+import { SettingsPage } from '@/features/settings/SettingsPage'
 import {
   type TitleExistingStrategy,
   type TitleFormState,
@@ -1364,6 +1365,8 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               <ListingPage />
             ) : activeModule === 'ps' ? (
               <PhotoshopPage />
+            ) : activeModule === 'settings' ? (
+              <SettingsPage />
             ) : (
               <DetectionPage />
             )}

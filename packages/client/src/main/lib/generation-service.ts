@@ -11,11 +11,17 @@ import {
 import { BrowserWindow, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 import { ChenyuCloudClient } from './chenyu-cloud-client'
+import {
+  type ChenyuRunImageWorkflowInput,
+  type ChenyuRunImageWorkflowResult,
+  ChenyuWorkflowRunner,
+} from './chenyu-workflow-runner'
 import { ComfyHttpClient } from './comfy-http-client'
 import { ComfyuiChenyuAdapter } from './comfyui-chenyu-adapter'
 import { ComfyuiInstanceManager } from './comfyui-instance-manager'
 import { type ComfyuiWorkflowSummary, comfyuiWorkflowCacheManager } from './comfyui-workflow-cache'
 import { GenerationConcurrencyController } from './generation-concurrency'
+import { normalizeGenerationLocalConfig } from './generation-local-config'
 import {
   GRSAI_SUPPORTED_MODELS,
   type GenerateRequest,
@@ -29,7 +35,7 @@ import {
   promptGeneratorService,
 } from './prompt-generator-service'
 import { skillCacheManager } from './skill-cache'
-import { openSqliteDatabase, type SqliteDatabase } from './sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { type TempFileManager, tempFileManager } from './temp-file-manager'
 
 export type Txt2imgPromptDraft = {
@@ -55,7 +61,8 @@ export type Txt2imgRunInput = {
   prompts: string[]
   model: string
   aspectRatio: string
-  imageSize: '1K' | '2K' | '4K'
+  imageSize?: '1K' | '2K' | '4K'
+  referenceImages?: Array<{ base64: string; mime_type: string }>
   concurrency: number
 }
 
@@ -134,7 +141,7 @@ export type ExtractRunInput = {
   llmModel?: string
   model: string
   aspectRatio: string
-  imageSize: '1K' | '2K' | '4K'
+  imageSize?: '1K' | '2K' | '4K'
   concurrency: number
   taskId?: string
 }
@@ -170,6 +177,24 @@ export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & 
   maskModel?: string
 }
 
+export type ChenyuWorkflowMarketListInput = {
+  keyword?: string
+  tag?: string
+  sort?: string
+  page?: number
+  page_size?: number
+}
+
+export type ChenyuWorkflowRunInput = {
+  capability: GenerationCapability
+  workflowId: string
+  revisionId?: string
+  inputs?: Record<string, unknown>
+  prompt?: string
+  acceptExternalCostRisk?: boolean
+  taskId?: string
+}
+
 type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 type Img2imgReference = {
   artifactId: string
@@ -190,12 +215,16 @@ type GenerationServiceDependencies = {
     apiKey: string
     workbenchRoot: string
   }) => Pick<ComfyuiChenyuAdapter, 'generate'>
+  createChenyuWorkflowRunner?: (input: {
+    apiKey: string
+    workbenchRoot: string
+  }) => Pick<ChenyuWorkflowRunner, 'listWorkflows' | 'getWorkflowInfo' | 'runImageWorkflow'>
   downloadImage?: (url: string) => Promise<Buffer>
   emitProgress?: (progress: GenerationProgress) => void
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
 
-const DEFAULT_GENERATION_MODEL: GrsaiModel = 'nano-banana-2'
+const DEFAULT_GENERATION_MODEL: GrsaiModel = 'gpt-image-2'
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 
 function clampInt(value: number, min: number, max: number, fallback: number) {
@@ -211,6 +240,25 @@ function naturalCompare(left: string, right: string) {
 
 function normalizeModel(model: string) {
   return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? model : DEFAULT_GENERATION_MODEL
+}
+
+function promptSkillCategory(
+  capability: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>,
+  printMode: 'local' | 'full' = 'local',
+) {
+  if (capability === 'txt2img') {
+    return printMode === 'full' ? 'txt2img-full-print' : 'txt2img-local-print'
+  }
+  return printMode === 'full' ? 'img2img-full-reference' : 'img2img-local-reference'
+}
+
+function observeGenerationError(
+  controller: Pick<GenerationConcurrencyController, 'onResponse'>,
+  error: unknown,
+) {
+  if (error instanceof AppErrorClass && error.code === 'HTTP_429') {
+    controller.onResponse(429)
+  }
 }
 
 async function resolveMixedMattingMaskSkill(
@@ -790,10 +838,12 @@ export async function listComfyuiMixedMattingWorkflows(
 }
 
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
-  const count = clampInt(input.count, 1, 20, 5)
+  const count = clampInt(input.count, 1, 100, 5)
   const capability = input.capability ?? 'txt2img'
   const prompts = await promptGeneratorService.generatePrompts({
-    ...(input.skillId ? { skillId: input.skillId } : { category: capability }),
+    ...(input.skillId
+      ? { skillId: input.skillId }
+      : { category: promptSkillCategory(capability, input.printMode) }),
     variables: {
       printMode: input.printMode === 'full' ? '满印' : '局部',
       requirement: input.requirement,
@@ -1074,10 +1124,12 @@ async function runTxt2imgTask(
   apiKey: string,
 ) {
   const capability = input.capability ?? 'txt2img'
+  const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
   const controller = new GenerationConcurrencyController({
-    workers: clampInt(input.concurrency, 1, 10, 3),
+    workers: clampInt(input.concurrency, 1, 20, settings.grsai_concurrency),
   })
-  const adapter = new GrsaiAdapter(apiKey)
+  const adapter = new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
+  const model = normalizeModel(input.model)
   const result: GenerationRunResult = {
     taskId,
     total: prompts.length,
@@ -1103,20 +1155,22 @@ async function runTxt2imgTask(
 
           try {
             const response = await adapter.generate({
-              capability: 'txt2img',
+              capability,
               prompt,
+              ...(input.referenceImages?.length ? { reference_images: input.referenceImages } : {}),
               output: {
                 aspect_ratio: input.aspectRatio,
-                image_size_label: input.imageSize,
               },
-              model: normalizeModel(input.model),
+              model,
             } satisfies GenerateRequest)
             if (response.status !== 'succeeded') {
               throw response.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 生成失败', true)
             }
+            controller.onResponse(200)
             result.succeeded += response.images.length
             result.images.push(...response.images.map((image) => ({ prompt, url: image.url })))
           } catch (error) {
+            observeGenerationError(controller, error)
             result.failed += 1
             result.failures.push({ prompt, error: appErrorMessage(error) })
           } finally {
@@ -1159,7 +1213,7 @@ export async function runExtractBatch(
   }
 
   const taskId = input.taskId ?? `extract_${randomUUID()}`
-  const promptCount = clampInt(input.promptCount, 1, 20, 1)
+  const promptCount = clampInt(input.promptCount, 1, 100, 1)
   const result: GenerationRunResult = {
     taskId,
     total: sourceImagePaths.length * promptCount,
@@ -1172,10 +1226,13 @@ export async function runExtractBatch(
   const emit = dependencies.emitProgress ?? emitProgress
 
   try {
-    const concurrency = clampInt(input.concurrency, 1, 10, 3)
+    const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
+    const concurrency = clampInt(input.concurrency, 1, 20, settings.grsai_concurrency)
     const model = normalizeModel(input.model)
     const controller = new GenerationConcurrencyController({ workers: concurrency })
-    const adapter = dependencies.createGrsaiAdapter?.(apiKey) ?? new GrsaiAdapter(apiKey)
+    const adapter =
+      dependencies.createGrsaiAdapter?.(apiKey) ??
+      new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
     const promptGenerator = dependencies.promptGenerator ?? promptGeneratorService
     const skillCache = dependencies.skillCache ?? skillCacheManager
     const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
@@ -1224,7 +1281,6 @@ export async function runExtractBatch(
                 reference_images: [reference],
                 output: {
                   aspect_ratio: input.aspectRatio,
-                  image_size_label: input.imageSize,
                   format: 'png',
                 },
                 model,
@@ -1237,6 +1293,7 @@ export async function runExtractBatch(
                 throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回结果图', true)
               }
 
+              controller.onResponse(200)
               for (const image of response.images) {
                 const printId = newPrintId()
                 const targetPath = await uniqueTargetPath(outputFolder, printId, '.png')
@@ -1254,7 +1311,6 @@ export async function runExtractBatch(
                   skill,
                   params: {
                     aspectRatio: input.aspectRatio,
-                    imageSize: input.imageSize,
                     variables: input.variables ?? {},
                   },
                   createdAt: Date.now(),
@@ -1270,6 +1326,7 @@ export async function runExtractBatch(
                 })
               }
             } catch (error) {
+              observeGenerationError(controller, error)
               result.failed += 1
               result.failures.push({
                 prompt,
@@ -1339,6 +1396,7 @@ export async function runComfyuiExtractBatch(
           chenyu: new ChenyuCloudClient(apiKey),
         }),
         comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
         workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
@@ -1443,6 +1501,7 @@ export async function runComfyuiMattingBatch(
           chenyu: new ChenyuCloudClient(apiKey),
         }),
         comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
         workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
@@ -1550,7 +1609,10 @@ export async function runMixedMattingBatch(
       input,
       dependencies.skillCache ?? skillCacheManager,
     )
-    const grsai = dependencies.createGrsaiAdapter?.(grsaiKey) ?? new GrsaiAdapter(grsaiKey)
+    const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
+    const grsai =
+      dependencies.createGrsaiAdapter?.(grsaiKey) ??
+      new GrsaiAdapter(grsaiKey, settings.grsai_node, { retries: settings.grsai_retries })
     const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
     const comfyui =
       dependencies.createComfyuiAdapter?.({ apiKey: chenyuKey, workbenchRoot }) ??
@@ -1559,6 +1621,7 @@ export async function runMixedMattingBatch(
           chenyu: new ChenyuCloudClient(chenyuKey),
         }),
         comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
         workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
@@ -1581,8 +1644,7 @@ export async function runMixedMattingBatch(
           prompt: skill.systemPrompt,
           reference_images: [source.reference],
           output: {
-            aspect_ratio: '1:1',
-            image_size_label: '1K',
+            aspect_ratio: '1024x1024',
             format: 'png',
           },
           model: maskModel,
@@ -1715,6 +1777,7 @@ export async function runComfyuiTxt2imgBatch(
           chenyu: new ChenyuCloudClient(apiKey),
         }),
         comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
         workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
@@ -1814,6 +1877,7 @@ export async function runComfyuiImg2imgBatch(
           chenyu: new ChenyuCloudClient(apiKey),
         }),
         comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
+        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
         workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
@@ -1881,10 +1945,161 @@ function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prep
     }
   } catch {}
 
-  throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '请先创建并启动 ComfyUI 实例', false, {
+  throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '请先到设置页选择默认云机并开机', false, {
     provider: 'comfyui-chenyu',
     workbenchRoot,
   })
+}
+
+export async function listChenyuWorkflowMarket(
+  input: ChenyuWorkflowMarketListInput = {},
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu-workflow',
+    })
+  }
+  const runner =
+    dependencies.createChenyuWorkflowRunner?.({ apiKey, workbenchRoot: '' }) ??
+    new ChenyuWorkflowRunner({
+      chenyu: new ChenyuCloudClient(apiKey),
+      workbenchRoot: '',
+      openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+    })
+  return runner.listWorkflows(input)
+}
+
+export async function getChenyuWorkflowInfo(
+  workflowId: string,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  if (!workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择晨羽工作流', false, {
+      provider: 'comfyui-chenyu-workflow',
+    })
+  }
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu-workflow',
+    })
+  }
+  const runner =
+    dependencies.createChenyuWorkflowRunner?.({ apiKey, workbenchRoot: '' }) ??
+    new ChenyuWorkflowRunner({
+      chenyu: new ChenyuCloudClient(apiKey),
+      workbenchRoot: '',
+      openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+    })
+  return runner.getWorkflowInfo(workflowId)
+}
+
+export async function runChenyuWorkflow(
+  input: ChenyuWorkflowRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  if (!input.workflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择晨羽工作流', false, {
+      provider: 'comfyui-chenyu-workflow',
+    })
+  }
+  const config = await (dependencies.readConfig ?? readAppConfig)()
+  if (!config.workbench_root) {
+    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+  }
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu-workflow',
+    })
+  }
+
+  const taskId = input.taskId ?? `chenyu_wf_${randomUUID()}`
+  void runChenyuWorkflowTask(
+    {
+      workflowId: input.workflowId,
+      capability: input.capability,
+      ...(input.revisionId ? { revisionId: input.revisionId } : {}),
+      ...(input.inputs ? { inputs: input.inputs } : {}),
+      ...(input.prompt ? { prompt: input.prompt } : {}),
+      ...(input.acceptExternalCostRisk !== undefined
+        ? { acceptExternalCostRisk: input.acceptExternalCostRisk }
+        : {}),
+      taskId,
+    },
+    {
+      ...dependencies,
+      getSecret: async () => apiKey,
+    },
+    config.workbench_root,
+    apiKey,
+  )
+    .then((result) => {
+      emitCompleted({ ok: true, result })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
+  return taskId
+}
+
+async function runChenyuWorkflowTask(
+  input: ChenyuRunImageWorkflowInput,
+  dependencies: GenerationServiceDependencies,
+  workbenchRoot: string,
+  apiKey: string,
+): Promise<GenerationRunResult> {
+  const emit = dependencies.emitProgress ?? emitProgress
+  const taskId = input.taskId ?? ''
+  emit({
+    task_id: taskId,
+    capability: input.capability,
+    processed: 0,
+    total: 1,
+    succeeded: 0,
+    failed: 0,
+    ...(input.prompt ? { current_prompt: input.prompt } : {}),
+  })
+  const runner =
+    dependencies.createChenyuWorkflowRunner?.({ apiKey, workbenchRoot }) ??
+    new ChenyuWorkflowRunner({
+      chenyu: new ChenyuCloudClient(apiKey),
+      workbenchRoot,
+      openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+    })
+  const response = await runner.runImageWorkflow(input)
+  const result = chenyuWorkflowRunResult(input, response)
+  emit({
+    task_id: result.taskId,
+    capability: input.capability,
+    processed: 1,
+    total: 1,
+    succeeded: result.succeeded,
+    failed: result.failed,
+    ...(input.prompt ? { current_prompt: input.prompt } : {}),
+  })
+  return result
+}
+
+function chenyuWorkflowRunResult(
+  input: ChenyuRunImageWorkflowInput,
+  response: ChenyuRunImageWorkflowResult,
+): GenerationRunResult {
+  return {
+    taskId: input.taskId ?? response.submit.run_order_id,
+    total: 1,
+    succeeded: response.images.length,
+    failed: 0,
+    images: response.images.map((image) => ({
+      prompt: input.prompt ?? '',
+      url: image.url,
+      localPath: image.local_path,
+      artifactId: image.artifact_id,
+    })),
+    failures: [],
+  }
 }
 
 function emitImg2imgProgress(
@@ -1973,6 +2188,13 @@ export function registerGenerationIpc() {
   ipcMain.handle('generation:list-comfyui-mixed-matting-workflows', () =>
     listComfyuiMixedMattingWorkflows(),
   )
+  ipcMain.handle(
+    'generation:list-chenyu-workflows',
+    (_event, input?: ChenyuWorkflowMarketListInput) => listChenyuWorkflowMarket(input),
+  )
+  ipcMain.handle('generation:get-chenyu-workflow', (_event, input: { workflowId: string }) =>
+    getChenyuWorkflowInfo(input.workflowId),
+  )
   ipcMain.handle('generation:parse-manual-prompts', (_event, text: string) =>
     parseManualPrompts(text),
   )
@@ -1992,5 +2214,8 @@ export function registerGenerationIpc() {
   )
   ipcMain.handle('generation:run-comfyui-img2img', (_event, input: ComfyuiImg2imgRunInput) =>
     runComfyuiImg2img(input),
+  )
+  ipcMain.handle('generation:run-chenyu-workflow', (_event, input: ChenyuWorkflowRunInput) =>
+    runChenyuWorkflow(input),
   )
 }

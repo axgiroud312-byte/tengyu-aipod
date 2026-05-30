@@ -9,8 +9,6 @@ export const API_PATHS = {
   activate: '/api/activate',
   status: '/api/status',
   skills: '/api/skills',
-  providers: '/api/providers',
-  comfyuiWorkflows: '/api/comfyui-workflows',
   announcements: '/api/announcements',
   clientVersion: '/api/client-version',
   telemetry: '/api/telemetry',
