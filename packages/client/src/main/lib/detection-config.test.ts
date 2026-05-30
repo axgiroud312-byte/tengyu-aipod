@@ -180,7 +180,7 @@ describe('detection-config', () => {
       threshold: { passMax: 39, reviewMax: 69 },
       skillId: 'infringement-v2',
       skillVersion: '2.0.0',
-      model: 'qwen3-vl-flash',
+      model: 'qwen3.6-flash',
       variables: {
         focus: ['brand', 'movie'],
         output_reason: true,
@@ -199,14 +199,14 @@ describe('detection-config', () => {
       threshold: { passMax: 120.9, reviewMax: -5.2 },
       skillId: 'infringement-v2',
       skillVersion: '2.0.0',
-      model: 'qwen3-vl-plus',
+      model: 'qwen3.6-flash',
       variables: { focus: ['brand'] },
     }
     const second = {
       threshold: { passMax: 70.2, reviewMax: 40.8 },
       skillId: 'infringement-v3',
       skillVersion: '2.1.0',
-      model: 'qwen-vl-max',
+      model: 'qwen3.6-flash',
       variables: {
         focus: ['cartoon', 'celebrity'],
         output_reason: false,

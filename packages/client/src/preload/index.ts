@@ -77,6 +77,10 @@ import type {
   DetectionTaskEvent,
 } from '../main/lib/detection-service'
 import type {
+  GenerationLocalSettingsSnapshot,
+  SaveGenerationLocalSettingsInput,
+} from '../main/lib/generation-local-config'
+import type {
   ChenyuWorkflowMarketListInput,
   ChenyuWorkflowRunInput,
   ComfyuiExtractRunInput,
@@ -88,15 +92,12 @@ import type {
   GenerationProgress,
   GenerationPromptInput,
   GenerationTaskEvent,
+  Img2imgReferencePayload,
   Img2imgSourcesResult,
   MixedMattingRunInput,
   Txt2imgPromptDraft,
   Txt2imgRunInput,
 } from '../main/lib/generation-service'
-import type {
-  GenerationLocalSettingsSnapshot,
-  SaveGenerationLocalSettingsInput,
-} from '../main/lib/generation-local-config'
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
@@ -328,6 +329,10 @@ const api = {
       ipcRenderer.invoke('generation:list-extract-sources') as Promise<ExtractSourcesResult>,
     listImg2imgSources: () =>
       ipcRenderer.invoke('generation:list-img2img-sources') as Promise<Img2imgSourcesResult>,
+    resolveImg2imgReferences: (input: { artifactIds: string[] }) =>
+      ipcRenderer.invoke('generation:resolve-img2img-references', input) as Promise<
+        Img2imgReferencePayload[]
+      >,
     listComfyuiTxt2imgWorkflows: () =>
       ipcRenderer.invoke('generation:list-comfyui-txt2img-workflows') as Promise<
         ComfyuiWorkflowSummary[]

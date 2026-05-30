@@ -83,10 +83,14 @@ declare global {
         >
       }
       generationSettings: {
-        get: () => Promise<import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot>
+        get: () => Promise<
+          import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot
+        >
         save: (
           input: import('../../main/lib/generation-local-config').SaveGenerationLocalSettingsInput,
-        ) => Promise<import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot>
+        ) => Promise<
+          import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot
+        >
       }
       workflow: {
         chooseDirectory: () => Promise<WorkflowDirectoryChooseResult>
@@ -219,6 +223,9 @@ declare global {
         >
         listImg2imgSources: () => Promise<
           import('../../main/lib/generation-service').Img2imgSourcesResult
+        >
+        resolveImg2imgReferences: (input: { artifactIds: string[] }) => Promise<
+          import('../../main/lib/generation-service').Img2imgReferencePayload[]
         >
         listComfyuiTxt2imgWorkflows: () => Promise<
           import('../../main/lib/comfyui-workflow-cache').ComfyuiWorkflowSummary[]

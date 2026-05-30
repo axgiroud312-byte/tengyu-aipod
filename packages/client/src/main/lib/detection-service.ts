@@ -191,7 +191,7 @@ type CachedDetectionRow = {
   createdAt: number
 }
 
-const DEFAULT_MODEL = 'qwen3-vl-flash'
+const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const DETECTION_INPUT_SOURCE_DEFS = [
@@ -1050,9 +1050,7 @@ export class DetectionService {
         throw new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key，请先在设置中填写', false)
       }
 
-      const adapter =
-        resolved.createBailianAdapter?.(apiKey) ??
-        createDefaultBailianAdapter(apiKey)
+      const adapter = resolved.createBailianAdapter?.(apiKey) ?? createDefaultBailianAdapter(apiKey)
       const maxRetries = clampInt(config.maxRetries, 0, 5, 1)
       const concurrency = clampInt(config.concurrency, 1, 8, 3)
       const threshold = normalizeThreshold(config.threshold)

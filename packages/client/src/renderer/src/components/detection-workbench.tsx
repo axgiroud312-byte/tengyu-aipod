@@ -435,7 +435,7 @@ export function DetectionWorkbench() {
   const selectedCount = selectedImages.length
   const progressPercentValue = progressPercent(progress)
   const estimatedCost = useMemo(
-    () => estimateDetectionCost(selectedCount, config?.model ?? 'qwen3-vl-flash', compression),
+    () => estimateDetectionCost(selectedCount, config?.model ?? 'qwen3.6-flash', compression),
     [compression, config?.model, selectedCount],
   )
   const balanceValue = balance.trim() ? Number(balance) : null

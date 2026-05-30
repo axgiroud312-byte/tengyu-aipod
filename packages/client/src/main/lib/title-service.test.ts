@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { BAILIAN_VISION_MODELS } from './generation-local-config'
 import type { SqliteDatabase } from './sqlite'
 import { TempFileManager } from './temp-file-manager'
 import {
@@ -16,7 +17,6 @@ import {
   toXlsxWriteError,
   writeTitlesXlsx,
 } from './title-service'
-import { BAILIAN_VISION_MODELS } from './generation-local-config'
 
 type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
@@ -54,7 +54,7 @@ function summary(overrides: Partial<SkillSummary> = {}): SkillSummary {
     language: 'en',
     version: '3.0.1',
     enabled: true,
-    recommendedModel: 'qwen3-vl-plus',
+    recommendedModel: 'qwen3.6-flash',
     notes: null,
     ...overrides,
   }
@@ -222,7 +222,7 @@ describe('TitleService', () => {
       batchDir,
       platform: 'temu_pop',
       language: 'en',
-      model: 'qwen3-vl-plus',
+      model: 'qwen3.6-flash',
       imageIndex: 1,
       existingStrategy: 'skip',
       maxRetries: 1,
@@ -280,7 +280,7 @@ describe('TitleService', () => {
         batchDir,
         platform: 'temu_pop',
         language: 'en',
-        model: 'qwen3-vl-plus',
+        model: 'qwen3.6-flash',
         existingStrategy: 'skip',
         taskId: 'skip-all',
       },

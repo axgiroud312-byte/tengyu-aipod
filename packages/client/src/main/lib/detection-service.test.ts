@@ -71,7 +71,7 @@ function detectionSkill(overrides: Partial<Skill> = {}): Skill {
     language: null,
     version: '2.0.0',
     enabled: true,
-    recommendedModel: 'qwen3-vl-flash',
+    recommendedModel: 'qwen3.6-flash',
     notes: null,
     systemPrompt: 'Return JSON with risk_score and reason.',
     variables: [],
@@ -233,7 +233,7 @@ function seedDetectionResult(
     12,
     'pass',
     '原创图案',
-    'qwen3-vl-flash',
+    'qwen3.6-flash',
     'infringement-v2',
     '2.0.0',
     '{"passMax":39,"reviewMax":69}',
@@ -316,7 +316,9 @@ describe('DetectionService', () => {
   it('uses the local Bailian vision model snapshot', async () => {
     const service = new DetectionService()
 
-    await expect(service.listModels()).resolves.toEqual(BAILIAN_VISION_MODELS.map((model) => model.id))
+    await expect(service.listModels()).resolves.toEqual(
+      BAILIAN_VISION_MODELS.map((model) => model.id),
+    )
   })
 
   it('preprocesses, calls Bailian with JSON response format, copies outputs, stores results, and emits progress', async () => {
@@ -357,7 +359,7 @@ describe('DetectionService', () => {
       {
         imagePaths,
         skillId: 'infringement-v2',
-        model: 'qwen3-vl-flash',
+        model: 'qwen3.6-flash',
         threshold: { passMax: 39, reviewMax: 69 },
         concurrency: 1,
         taskId: 'task-detection',
@@ -410,7 +412,7 @@ describe('DetectionService', () => {
     const baseConfig = {
       imagePaths: [imagePath],
       skillId: 'infringement-v2',
-      model: 'qwen3-vl-flash',
+      model: 'qwen3.6-flash',
       concurrency: 1,
     } satisfies DetectionBatchConfig
     const skill = detectionSkill()
@@ -483,7 +485,7 @@ describe('DetectionService', () => {
     const baseConfig = {
       imagePaths: [imagePath],
       skillId: 'infringement-v2',
-      model: 'qwen3-vl-flash',
+      model: 'qwen3.6-flash',
       concurrency: 1,
     } satisfies DetectionBatchConfig
     const skill = detectionSkill()
@@ -581,7 +583,7 @@ describe('DetectionService', () => {
       {
         imagePaths: [imagePath],
         skillId: 'infringement-v2',
-        model: 'qwen3-vl-flash',
+        model: 'qwen3.6-flash',
         maxRetries: 0,
         taskId: 'parse-fail',
       },

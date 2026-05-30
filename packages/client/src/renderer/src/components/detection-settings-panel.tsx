@@ -11,7 +11,7 @@ type DetectionSettingsPanelProps = {
 }
 
 const DEFAULT_THRESHOLD: DetectionThresholdConfig = { passMax: 39, reviewMax: 69 }
-const DEFAULT_MODEL = 'qwen3-vl-flash'
+const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_DETECTION_SKILL_ID = 'infringement-detection'
 
 function skillKey(skill: SkillSummary) {

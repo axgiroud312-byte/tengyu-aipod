@@ -79,15 +79,21 @@ describe('ComfyuiWorkflowCacheManager', () => {
           _meta: { title: 'Prompt' },
         },
         '2': { class_type: 'EmptyLatentImage', inputs: { width: 512, height: 512 } },
-        '3': { class_type: 'SaveImage', inputs: {} },
+        '3': { class_type: 'Flux2Scheduler', inputs: { steps: 4, width: 512, height: 512 } },
+        '4': { class_type: 'SaveImage', inputs: {} },
       }),
       'utf8',
     )
     await writeFile(
       join(img2imgDir, '参考图.json'),
       JSON.stringify({
-        '1': { class_type: 'LoadImage', inputs: { image: '' } },
-        '2': { class_type: 'SaveImage', inputs: {} },
+        '1': {
+          class_type: 'CLIPTextEncode',
+          inputs: { text: 'old prompt' },
+          _meta: { title: 'Prompt' },
+        },
+        '2': { class_type: 'LoadImage', inputs: { image: '' } },
+        '3': { class_type: 'Image Save', inputs: {} },
       }),
       'utf8',
     )
@@ -111,12 +117,26 @@ describe('ComfyuiWorkflowCacheManager', () => {
           { name: 'prompt', nodeId: '1', field: 'text' },
           { name: 'width', nodeId: '2', field: 'width' },
           { name: 'height', nodeId: '2', field: 'height' },
+          { name: 'width', nodeId: '3', field: 'width' },
+          { name: 'height', nodeId: '3', field: 'height' },
         ]),
-        outputSlots: [{ name: 'output_1', nodeId: '3', field: 'images' }],
+        outputSlots: [{ name: 'output_1', nodeId: '4', field: 'images' }],
       })
       await expect(manager.listWorkflows('img2img')).resolves.toMatchObject([
         { name: '参考图', capability: 'img2img' },
       ])
+      const imgWorkflow = (await manager.listWorkflows('img2img'))[0]
+      expect(imgWorkflow).toBeDefined()
+      if (!imgWorkflow) {
+        throw new Error('img2img workflow was not imported')
+      }
+      await expect(manager.get(imgWorkflow.id, 'img2img')).resolves.toMatchObject({
+        inputSlots: expect.arrayContaining([
+          { name: 'prompt', nodeId: '1', field: 'text' },
+          { name: 'image_1', nodeId: '2', field: 'image', imageIndex: 0 },
+        ]),
+        outputSlots: [{ name: 'output_1', nodeId: '3', field: 'images' }],
+      })
     } finally {
       await rm(root, { recursive: true, force: true })
     }

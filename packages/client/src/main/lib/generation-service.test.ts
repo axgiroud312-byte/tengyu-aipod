@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  generateTxt2imgPrompts,
   listComfyuiExtractWorkflows,
   listComfyuiImg2imgWorkflows,
   listComfyuiMattingWorkflows,
@@ -11,6 +12,7 @@ import {
   listComfyuiTxt2imgWorkflows,
   listExtractSources,
   listImg2imgSources,
+  resolveImg2imgReferences,
   runComfyuiExtractBatch,
   runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
@@ -18,6 +20,7 @@ import {
   runExtractBatch,
   runMixedMattingBatch,
 } from './generation-service'
+import { promptGeneratorService } from './prompt-generator-service'
 import type { SqliteDatabase } from './sqlite'
 
 type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -47,7 +50,7 @@ function extractSkill(overrides: Partial<Skill> = {}): Skill {
     language: null,
     version: '3.0.1',
     enabled: true,
-    recommendedModel: 'qwen3-vl-plus',
+    recommendedModel: 'qwen3.6-flash',
     notes: null,
     systemPrompt: 'Extract print prompts.',
     variables: [
@@ -148,6 +151,32 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await rm(tempRoot, { recursive: true, force: true })
+  vi.restoreAllMocks()
+})
+
+describe('generation prompt service entrypoint', () => {
+  it('allows 1000 prompt requests to reach the prompt generator', async () => {
+    const generatePrompts = vi
+      .spyOn(promptGeneratorService, 'generatePrompts')
+      .mockResolvedValue(Array.from({ length: 1000 }, (_, index) => `Prompt ${index + 1}`))
+
+    const result = await generateTxt2imgPrompts({
+      capability: 'txt2img',
+      skillId: 'txt2img-local-print',
+      requirement: 'christmas teddy bear print',
+      count: 1000,
+      model: 'qwen3.6-flash',
+    })
+
+    expect(result).toHaveLength(1000)
+    expect(generatePrompts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        count: 1000,
+        variables: expect.objectContaining({ count: 1000 }),
+        userMessage: expect.stringContaining('1000'),
+      }),
+    )
+  })
 })
 
 describe('generation extract service', () => {
@@ -189,7 +218,7 @@ describe('generation extract service', () => {
           allowMultiplePrints: true,
         },
         promptCount: 1,
-        llmModel: 'qwen3-vl-plus',
+        llmModel: 'qwen3.6-flash',
         model: 'gpt-image-2',
         aspectRatio: '1024x1024',
         concurrency: 1,
@@ -217,7 +246,7 @@ describe('generation extract service', () => {
       expect.objectContaining({
         refImages: [expect.objectContaining({ mime_type: 'image/png' })],
         count: 1,
-        model: 'qwen3-vl-plus',
+        model: 'qwen3.6-flash',
       }),
     )
     expect(generate).toHaveBeenCalledWith(
@@ -529,6 +558,38 @@ describe('generation comfyui img2img service', () => {
 
     expect(result.images.map((image) => image.artifactId)).toEqual(['print-artifact'])
     expect(result.folders).toContain(join(workbenchRoot, '02-生图', '03-提取'))
+  })
+
+  it('resolves img2img references for selected print artifacts', async () => {
+    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+
+    const result = await resolveImg2imgReferences(
+      { artifactIds: ['print-artifact', 'print-artifact'] },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        openDatabase: fakeDb.openDatabase,
+      },
+    )
+
+    expect(result).toHaveLength(1)
+    expect(result[0]).toMatchObject({
+      artifactId: 'print-artifact',
+      printId: 'pri_print',
+      reference: expect.objectContaining({
+        mime_type: 'image/png',
+        base64: expect.any(String),
+      }),
+    })
   })
 
   it('registers eligible generation folder images as img2img sources', async () => {

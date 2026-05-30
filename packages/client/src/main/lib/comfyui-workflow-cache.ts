@@ -208,18 +208,20 @@ function detectSlots(workflowJson: unknown) {
   const inputSlots = []
   const outputSlots = []
   let foundPromptSlot = false
-  let foundSizeSlot = false
+  let imageSlotCount = 0
 
   for (const [nodeId, node] of nodeEntries(workflowJson)) {
     const classType = classTypeOf(node)
     const inputs = nodeInputs(node)
     if (/loadimage/i.test(classType)) {
+      const imageIndex = imageSlotCount
       inputSlots.push({
-        name: `image_${inputSlots.length + 1}`,
+        name: `image_${imageIndex + 1}`,
         nodeId,
         field: 'image',
-        imageIndex: inputSlots.length,
+        imageIndex,
       })
+      imageSlotCount += 1
     }
     if (
       !foundPromptSlot &&
@@ -234,24 +236,18 @@ function detectSlots(workflowJson: unknown) {
       })
       foundPromptSlot = true
     }
-    if (!foundSizeSlot && /emptylatentimage/i.test(classType)) {
-      if ('width' in inputs) {
-        inputSlots.push({
-          name: 'width',
-          nodeId,
-          field: 'width',
-        })
+    if (hasSizeInputs(classType, inputs)) {
+      for (const field of ['width', 'height']) {
+        if (field in inputs) {
+          inputSlots.push({
+            name: field,
+            nodeId,
+            field,
+          })
+        }
       }
-      if ('height' in inputs) {
-        inputSlots.push({
-          name: 'height',
-          nodeId,
-          field: 'height',
-        })
-      }
-      foundSizeSlot = true
     }
-    if (/saveimage|previewimage/i.test(classType)) {
+    if (/save\s*image|saveimage|preview\s*image|previewimage|image\s*save/i.test(classType)) {
       outputSlots.push({
         name: `output_${outputSlots.length + 1}`,
         nodeId,
@@ -261,6 +257,13 @@ function detectSlots(workflowJson: unknown) {
   }
 
   return { inputSlots, outputSlots }
+}
+
+function hasSizeInputs(classType: string, inputs: Record<string, unknown>) {
+  if (!('width' in inputs) && !('height' in inputs)) {
+    return false
+  }
+  return /latentimage|scheduler/i.test(classType)
 }
 
 function workflowSummary(workflow: CachedComfyuiWorkflow): ComfyuiWorkflowSummary {

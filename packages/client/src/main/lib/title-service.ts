@@ -2,11 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, readdir, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import {
-  AppErrorClass,
-  type Skill,
-  type SkillSummary,
-} from '@tengyu-aipod/shared'
+import { AppErrorClass, type Skill, type SkillSummary } from '@tengyu-aipod/shared'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
@@ -125,7 +121,7 @@ type ImageSelection =
     }
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
-const DEFAULT_MODEL = 'qwen3-vl-plus'
+const DEFAULT_MODEL = 'qwen3.6-flash'
 const PLATFORM_TITLE_MAX_LEN: Record<string, number> = {
   temu_pop: 150,
   temu_full: 130,
@@ -780,9 +776,7 @@ export class TitleService {
       if (!apiKey) {
         throw new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key，请先在设置中填写', false)
       }
-      const adapter =
-        resolved.createBailianAdapter?.(apiKey) ??
-        createDefaultBailianAdapter(apiKey)
+      const adapter = resolved.createBailianAdapter?.(apiKey) ?? createDefaultBailianAdapter(apiKey)
       const maxRetries = clampInt(config.maxRetries, 0, 5, 2)
       const concurrency = clampInt(config.concurrency, 1, 10, 3)
       const imageIndex = clampInt(config.imageIndex, 1, Number.MAX_SAFE_INTEGER, 1)

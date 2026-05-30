@@ -16,7 +16,7 @@ describe('resolveServerBaseUrl', () => {
   })
 
   it('keeps localhost fallback only for unpackaged development', () => {
-    expect(resolveServerBaseUrl({ isPackaged: false })).toBe('http://localhost:3000')
+    expect(resolveServerBaseUrl({ isPackaged: false })).toBe('http://127.0.0.1:3100')
   })
 
   it('fails clearly when packaged app has no server URL', () => {

@@ -205,6 +205,8 @@ type Img2imgReference = {
   reference: PromptReferenceImage
 }
 
+export type Img2imgReferencePayload = Img2imgReference
+
 type GenerationServiceDependencies = {
   readConfig?: typeof readAppConfig
   getSecret?: typeof getSecret
@@ -789,6 +791,33 @@ export async function listImg2imgSources(
   }
 }
 
+export async function resolveImg2imgReferences(
+  input: { artifactIds: string[] },
+  dependencies: Pick<GenerationServiceDependencies, 'readConfig' | 'openDatabase'> = {},
+): Promise<Img2imgReferencePayload[]> {
+  const artifactIds = Array.from(
+    new Set(input.artifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
+  )
+  if (artifactIds.length === 0) {
+    return []
+  }
+
+  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+  const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
+  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+
+  try {
+    ensureGenerationTables(db)
+    return Promise.all(
+      artifactIds.map((artifactId) =>
+        readReferenceForArtifact(db, workbenchRoot, collectionFolder, artifactId),
+      ),
+    )
+  } finally {
+    db.close()
+  }
+}
+
 export async function listComfyuiImg2imgWorkflows(
   dependencies: {
     workflowCache?: Pick<typeof comfyuiWorkflowCacheManager, 'listWorkflows'>
@@ -840,7 +869,7 @@ export async function listComfyuiMixedMattingWorkflows(
 }
 
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
-  const count = clampInt(input.count, 1, 100, 5)
+  const count = clampInt(input.count, 1, 1000, 5)
   const capability = input.capability ?? 'txt2img'
   const prompts = await promptGeneratorService.generatePrompts({
     ...(input.skillId
@@ -2191,6 +2220,10 @@ export function registerGenerationIpc() {
   )
   ipcMain.handle('generation:list-extract-sources', () => listExtractSources())
   ipcMain.handle('generation:list-img2img-sources', () => listImg2imgSources())
+  ipcMain.handle(
+    'generation:resolve-img2img-references',
+    (_event, input: { artifactIds: string[] }) => resolveImg2imgReferences(input),
+  )
   ipcMain.handle('generation:list-comfyui-txt2img-workflows', () => listComfyuiTxt2imgWorkflows())
   ipcMain.handle('generation:list-comfyui-img2img-workflows', () => listComfyuiImg2imgWorkflows())
   ipcMain.handle('generation:list-comfyui-extract-workflows', () => listComfyuiExtractWorkflows())

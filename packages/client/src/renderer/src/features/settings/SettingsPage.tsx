@@ -69,8 +69,8 @@ const emptyConfig: ChenyuConfig = {
 }
 
 const defaultGenerationConfig: GenerationConfig = {
-  bailian_text_model: 'qwen-plus',
-  bailian_vision_model: 'qwen3-vl-plus',
+  bailian_text_model: 'qwen3.6-flash',
+  bailian_vision_model: 'qwen3.6-flash',
   grsai_node: 'cn',
   grsai_concurrency: 3,
   grsai_retries: 2,

@@ -24,11 +24,7 @@ export const WORKBENCH_DIRECTORIES = {
 } as const
 
 export const VISION_MODEL_PRICES = {
-  'qwen3-vl-plus': { input: 1, output: 10 },
-  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
-  'qwen-vl-max': { input: 1.6, output: 4 },
-  'qwen-vl-plus': { input: 0.8, output: 2 },
-  'qwen3.6-plus': { input: 2, output: 12 },
+  'qwen3.6-flash': { input: 1.2, output: 7.2 },
 } as const
 
 export type VisionModelKey = keyof typeof VISION_MODEL_PRICES
@@ -43,38 +39,10 @@ export type VisionModelOption = {
 
 const VISION_MODEL_OPTIONS: VisionModelOption[] = [
   {
-    key: 'qwen3-vl-plus',
-    label: 'qwen3-vl-plus',
-    inputPrice: VISION_MODEL_PRICES['qwen3-vl-plus'].input,
-    outputPrice: VISION_MODEL_PRICES['qwen3-vl-plus'].output,
-    recommendedFor: 'title',
-  },
-  {
-    key: 'qwen3-vl-flash',
-    label: 'qwen3-vl-flash',
-    inputPrice: VISION_MODEL_PRICES['qwen3-vl-flash'].input,
-    outputPrice: VISION_MODEL_PRICES['qwen3-vl-flash'].output,
-    recommendedFor: 'detection',
-  },
-  {
-    key: 'qwen-vl-max',
-    label: 'qwen-vl-max',
-    inputPrice: VISION_MODEL_PRICES['qwen-vl-max'].input,
-    outputPrice: VISION_MODEL_PRICES['qwen-vl-max'].output,
-    recommendedFor: 'general',
-  },
-  {
-    key: 'qwen-vl-plus',
-    label: 'qwen-vl-plus',
-    inputPrice: VISION_MODEL_PRICES['qwen-vl-plus'].input,
-    outputPrice: VISION_MODEL_PRICES['qwen-vl-plus'].output,
-    recommendedFor: 'general',
-  },
-  {
-    key: 'qwen3.6-plus',
-    label: 'qwen3.6-plus',
-    inputPrice: VISION_MODEL_PRICES['qwen3.6-plus'].input,
-    outputPrice: VISION_MODEL_PRICES['qwen3.6-plus'].output,
+    key: 'qwen3.6-flash',
+    label: 'qwen3.6-flash',
+    inputPrice: VISION_MODEL_PRICES['qwen3.6-flash'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen3.6-flash'].output,
     recommendedFor: 'general',
   },
 ]
@@ -94,7 +62,7 @@ export function estimateDetectionCost(
 ): { yuan: number; tokensPerImage: number } {
   const safeImageCount = Number.isFinite(imageCount) ? Math.max(0, Math.floor(imageCount)) : 0
   const price =
-    DETECTION_MODEL_PRICES[model as DetectionModel] ?? DETECTION_MODEL_PRICES['qwen3-vl-flash']
+    DETECTION_MODEL_PRICES[model as DetectionModel] ?? DETECTION_MODEL_PRICES['qwen3.6-flash']
   const tokensPerImagePixels = withCompression ? 256 : 1024
   const tokensOutput = 100
   const yuan =

@@ -1,8 +1,4 @@
-import {
-  AppErrorClass,
-  type GenerationCapability,
-  type Skill,
-} from '@tengyu-aipod/shared'
+import { AppErrorClass, type GenerationCapability, type Skill } from '@tengyu-aipod/shared'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { AliyunBailianAdapter } from './aliyun-bailian-adapter'
 import { normalizeGenerationLocalConfig } from './generation-local-config'
@@ -27,6 +23,11 @@ export type GeneratePromptsInput = {
   userMessage?: string
   responseFormat?: 'json_object' | 'text'
 }
+
+const DEFAULT_BAILIAN_TIMEOUT_MS = 600_000
+const DEFAULT_PROMPT_CHUNK_SIZE = 100
+const PROMPT_CHUNK_CONCURRENCY = 10
+const DEFAULT_PROMPT_CHUNK_RETRIES = 2
 
 export type PromptGeneratorDependencies = {
   skillCache?: Pick<typeof skillCacheManager, 'getSkill' | 'listSkills'>
@@ -58,38 +59,55 @@ export class PromptGeneratorService {
       (await (dependencies.readConfig ?? readAppConfig)()).generation,
     )
     const model =
-      input.model ?? (hasReferenceImages ? settings.bailian_vision_model : settings.bailian_text_model)
+      input.model ??
+      (hasReferenceImages ? settings.bailian_vision_model : settings.bailian_text_model)
     const wantsJson =
       input.responseFormat === 'json_object' || promptAsksForJson(skill.systemPrompt)
     const response_format = wantsJson ? { type: 'json_object' as const } : undefined
-    const chunks = chunkPromptCount(count)
-    const promptChunks = await Promise.all(
-      chunks.map(async (chunkCount) => {
-        const messages = createPromptMessages(
-          skill,
-          { ...input.variables, count: chunkCount },
-          input.refImages,
-          input.userMessage,
-        )
-        const response = hasReferenceImages
-          ? await adapter.visionCompletion({
-              model,
-              messages,
-              ...(response_format ? { response_format } : {}),
-            })
-          : await adapter.chatCompletion({
-              model,
-              messages,
-              ...(response_format ? { response_format } : {}),
-            })
+    const chunks = chunkPromptCount(
+      count,
+      envInt('TENGYU_BAILIAN_PROMPT_CHUNK_SIZE', 1, 100, DEFAULT_PROMPT_CHUNK_SIZE),
+    )
+    const promptChunks = await mapWithConcurrency(chunks, PROMPT_CHUNK_CONCURRENCY, (chunkCount) =>
+      retryPromptChunk(
+        async () => {
+          const messages = createPromptMessages(
+            skill,
+            { ...input.variables, count: chunkCount },
+            input.refImages,
+            input.userMessage,
+          )
+          const response = hasReferenceImages
+            ? await adapter.visionCompletion({
+                model,
+                messages,
+                ...(response_format ? { response_format } : {}),
+              })
+            : await adapter.chatCompletion({
+                model,
+                messages,
+                ...(response_format ? { response_format } : {}),
+              })
 
-        return parsePromptJsonStrict(response.text, chunkCount)
-      }),
+          const prompts = parsePromptJsonStrict(response.text, chunkCount)
+          if (prompts.length !== chunkCount) {
+            throw new AppErrorClass('HTTP_5XX', '模型返回 JSON 缺少 prompts 字符串数组', true, {
+              kind: 'llm_parse_failed',
+              expected: chunkCount,
+              actual: prompts.length,
+            })
+          }
+          return prompts
+        },
+        envInt('TENGYU_BAILIAN_PROMPT_CHUNK_RETRIES', 0, 5, DEFAULT_PROMPT_CHUNK_RETRIES),
+      ),
     )
     const prompts = promptChunks.flat().slice(0, count)
-    if (prompts.length === 0) {
+    if (prompts.length !== count) {
       throw new AppErrorClass('HTTP_5XX', '模型返回 JSON 缺少 prompts 字符串数组', true, {
         kind: 'llm_parse_failed',
+        expected: count,
+        actual: prompts.length,
       })
     }
     return prompts
@@ -136,7 +154,48 @@ function createDefaultBailianAdapter(apiKey: string) {
     apiKey,
     region: 'cn',
     maxRetries: 0,
+    timeoutMs: envInt('TENGYU_BAILIAN_TIMEOUT_MS', 1_000, 600_000, DEFAULT_BAILIAN_TIMEOUT_MS),
   })
+}
+
+async function retryPromptChunk<T>(operation: () => Promise<T>, retries: number) {
+  let attempt = 0
+  while (true) {
+    try {
+      return await operation()
+    } catch (error) {
+      if (attempt >= retries) {
+        throw error
+      }
+      attempt += 1
+    }
+  }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>,
+) {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex
+      nextIndex += 1
+      results[index] = await mapper(items[index] as T)
+    }
+  })
+  await Promise.all(workers)
+  return results
+}
+
+function envInt(name: string, min: number, max: number, fallback: number) {
+  const parsed = Number(process.env[name])
+  if (!Number.isFinite(parsed)) {
+    return fallback
+  }
+  return Math.max(min, Math.min(max, Math.floor(parsed)))
 }
 
 export function parsePromptJsonStrict(text: string, count: number): string[] {
@@ -228,14 +287,14 @@ function parseStrictPromptJsonFromCodeBlock(text: string, count: number) {
 
 function promptsFromParsed(parsed: unknown, count: number) {
   if (Array.isArray(parsed)) {
-    return cleanPrompts(parsed, count)
+    return promptsFromItems(parsed, count)
   }
 
   if (parsed && typeof parsed === 'object') {
     const record = parsed as Record<string, unknown>
     const value = record.prompts ?? record.items ?? record.data
     if (Array.isArray(value)) {
-      return cleanPrompts(value, count)
+      return promptsFromItems(value, count)
     }
   }
 
@@ -251,7 +310,7 @@ function strictPromptsFromParsed(parsed: unknown, count: number) {
   if (!Array.isArray(value)) {
     return null
   }
-  return cleanPrompts(value, count)
+  return promptsFromItems(value, count)
 }
 
 function parsePromptLines(text: string, count: number) {
@@ -268,6 +327,51 @@ function cleanPrompts(values: unknown[], count: number) {
     .slice(0, count)
 }
 
+function promptsFromItems(values: unknown[], count: number) {
+  const items = values.map((value, position) => promptItemFromValue(value, position))
+  if (items.some((item) => item === null)) {
+    return null
+  }
+
+  const promptItems = items.filter((item): item is NonNullable<typeof item> => Boolean(item))
+  const sortedItems = hasCompleteIndexSequence(promptItems)
+    ? [...promptItems].sort((left, right) => left.index - right.index)
+    : promptItems
+
+  return cleanPrompts(
+    sortedItems.map((item) => item.prompt),
+    count,
+  )
+}
+
+function promptItemFromValue(value: unknown, position: number) {
+  if (typeof value === 'string') {
+    return { index: position + 1, prompt: value }
+  }
+
+  if (!value || typeof value !== 'object') {
+    return null
+  }
+
+  const record = value as Record<string, unknown>
+  if (typeof record.prompt !== 'string') {
+    return null
+  }
+
+  return {
+    index:
+      typeof record.index === 'number' && Number.isInteger(record.index)
+        ? record.index
+        : position + 1,
+    prompt: record.prompt,
+  }
+}
+
+function hasCompleteIndexSequence(items: Array<{ index: number }>) {
+  const indexes = items.map((item) => item.index).sort((left, right) => left - right)
+  return indexes.every((index, position) => index === position + 1)
+}
+
 function normalizePromptCount(count: number) {
   if (!Number.isFinite(count)) {
     return 1
@@ -275,11 +379,11 @@ function normalizePromptCount(count: number) {
   return Math.max(1, Math.min(1000, Math.floor(count)))
 }
 
-function chunkPromptCount(count: number) {
+function chunkPromptCount(count: number, chunkSize = DEFAULT_PROMPT_CHUNK_SIZE) {
   const chunks: number[] = []
   let remaining = count
   while (remaining > 0) {
-    const chunk = Math.min(100, remaining)
+    const chunk = Math.min(chunkSize, remaining)
     chunks.push(chunk)
     remaining -= chunk
   }

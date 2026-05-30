@@ -1,5 +1,5 @@
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PromptGeneratorService,
   createPromptMessages,
@@ -16,7 +16,7 @@ function skill(overrides: Partial<Skill> = {}): Skill {
     language: null,
     version: '3.0.1',
     enabled: true,
-    recommendedModel: 'qwen3-vl-plus',
+    recommendedModel: 'qwen3.6-flash',
     notes: null,
     systemPrompt: 'Output JSON prompts for {{printMode}}. Requirement: {requirement}',
     variables: [],
@@ -33,16 +33,23 @@ function summary(overrides: Partial<SkillSummary> = {}): SkillSummary {
     language: null,
     version: '3.0.1',
     enabled: true,
-    recommendedModel: 'qwen3-vl-plus',
+    recommendedModel: 'qwen3.6-flash',
     notes: null,
     ...overrides,
   }
 }
 
+afterEach(() => {
+  vi.unstubAllEnvs()
+})
+
 describe('parsePrompts', () => {
   it('parses JSON arrays and object prompt arrays', () => {
     expect(parsePrompts('["A", "B", "C"]', 2)).toEqual(['A', 'B'])
     expect(parsePrompts('{"prompts":["A","B"]}', 5)).toEqual(['A', 'B'])
+    expect(
+      parsePrompts('{"prompts":[{"index":2,"prompt":"B"},{"index":1,"prompt":"A"}]}', 5),
+    ).toEqual(['A', 'B'])
   })
 
   it('parses JSON arrays from markdown code blocks', () => {
@@ -88,7 +95,7 @@ describe('PromptGeneratorService', () => {
 
     expect(chatCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
-        model: 'qwen-plus',
+        model: 'qwen3.6-flash',
         response_format: { type: 'json_object' },
         messages: [
           {
@@ -99,6 +106,33 @@ describe('PromptGeneratorService', () => {
         ],
       }),
     )
+    expect(JSON.stringify(chatCompletion.mock.calls[0]?.[0].messages)).not.toContain(
+      '输出格式必须是标准 JSON 对象',
+    )
+  })
+
+  it('extracts prompt text from indexed prompt objects', async () => {
+    const chatCompletion = vi.fn().mockResolvedValue({
+      text: '{"prompts":[{"index":2,"prompt":"Prompt B"},{"index":1,"prompt":"Prompt A"}]}',
+    })
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill(),
+          count: 2,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({
+            chatCompletion,
+            visionCompletion: vi.fn(),
+          }),
+        },
+      ),
+    ).resolves.toEqual(['Prompt A', 'Prompt B'])
   })
 
   it('uses vision completion and data URLs when reference images are present', async () => {
@@ -175,7 +209,7 @@ describe('PromptGeneratorService', () => {
         text: JSON.stringify({
           prompts: Array.from({ length: count }, (_, index) => `Prompt ${count}-${index + 1}`),
         }),
-        model: 'qwen-plus',
+        model: 'qwen3.6-flash',
         finishReason: 'stop' as const,
         raw: {} as never,
       }
@@ -210,8 +244,129 @@ describe('PromptGeneratorService', () => {
     ])
   })
 
+  it('splits 1000 prompts into ten 100-prompt model calls', async () => {
+    const chatCompletion = vi.fn(async (request) => {
+      const systemMessage = request.messages[0]
+      const content = typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      const count = Number(content.match(/Generate (\d+)/)?.[1] ?? 0)
+      return {
+        text: JSON.stringify({
+          prompts: Array.from({ length: count }, (_, index) => `Prompt ${index + 1}`),
+        }),
+        model: 'qwen3.6-flash',
+        finishReason: 'stop' as const,
+        raw: {} as never,
+      }
+    })
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill({ systemPrompt: 'Generate {{count}} JSON prompts.' }),
+          count: 1000,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).resolves.toHaveLength(1000)
+
+    expect(chatCompletion).toHaveBeenCalledTimes(10)
+    expect(
+      chatCompletion.mock.calls.map(([request]) => {
+        const systemMessage = request.messages[0]
+        return typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      }),
+    ).toEqual(Array.from({ length: 10 }, () => 'Generate 100 JSON prompts.'))
+  })
+
+  it('uses a smaller prompt chunk size when configured for live stability', async () => {
+    vi.stubEnv('TENGYU_BAILIAN_PROMPT_CHUNK_SIZE', '25')
+    const chatCompletion = vi.fn(async (request) => {
+      const systemMessage = request.messages[0]
+      const content = typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      const count = Number(content.match(/Generate (\d+)/)?.[1] ?? 0)
+      return {
+        text: JSON.stringify({
+          prompts: Array.from({ length: count }, (_, index) => `Prompt ${index + 1}`),
+        }),
+        model: 'qwen3.6-flash',
+        finishReason: 'stop' as const,
+        raw: {} as never,
+      }
+    })
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill({ systemPrompt: 'Generate {{count}} JSON prompts.' }),
+          count: 60,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).resolves.toHaveLength(60)
+
+    expect(
+      chatCompletion.mock.calls.map(([request]) => {
+        const systemMessage = request.messages[0]
+        return typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      }),
+    ).toEqual([
+      'Generate 25 JSON prompts.',
+      'Generate 25 JSON prompts.',
+      'Generate 10 JSON prompts.',
+    ])
+  })
+
+  it('retries a failed LLM prompt chunk before failing the whole request', async () => {
+    let failedOnce = false
+    const chatCompletion = vi.fn(async (request) => {
+      const systemMessage = request.messages[0]
+      const content = typeof systemMessage.content === 'string' ? systemMessage.content : ''
+      const count = Number(content.match(/Generate (\d+)/)?.[1] ?? 0)
+      if (!failedOnce && count === 100) {
+        failedOnce = true
+        throw new Error('temporary timeout')
+      }
+      return {
+        text: JSON.stringify({
+          prompts: Array.from({ length: count }, (_, index) => `Prompt ${index + 1}`),
+        }),
+        model: 'qwen3.6-flash',
+        finishReason: 'stop' as const,
+        raw: {} as never,
+      }
+    })
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill({ systemPrompt: 'Generate {{count}} JSON prompts.' }),
+          count: 250,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).resolves.toHaveLength(250)
+
+    expect(chatCompletion).toHaveBeenCalledTimes(4)
+  })
+
   it('throws when prompts cannot be parsed', async () => {
     const service = new PromptGeneratorService()
+    const chatCompletion = vi.fn().mockResolvedValue({ text: '' })
 
     await expect(
       service.generatePrompts(
@@ -220,7 +375,7 @@ describe('PromptGeneratorService', () => {
           getSecret: async () => 'sk-test',
           readConfig: async () => ({}),
           createBailianAdapter: () => ({
-            chatCompletion: vi.fn().mockResolvedValue({ text: '' }),
+            chatCompletion,
             visionCompletion: vi.fn(),
           }),
         },
@@ -229,6 +384,51 @@ describe('PromptGeneratorService', () => {
       code: 'HTTP_5XX',
       retryable: true,
       details: { kind: 'llm_parse_failed' },
+    })
+    expect(chatCompletion).toHaveBeenCalledTimes(3)
+  })
+
+  it('throws when strict JSON contains fewer prompt strings than requested', async () => {
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        { skill: skill(), count: 3 },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({
+            chatCompletion: vi.fn().mockResolvedValue({ text: '{"prompts":["Only one"]}' }),
+            visionCompletion: vi.fn(),
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'HTTP_5XX',
+      retryable: true,
+      details: { kind: 'llm_parse_failed', expected: 3, actual: 1 },
+    })
+  })
+
+  it('throws when strict JSON prompts contain unsupported values', async () => {
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        { skill: skill(), count: 1 },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({
+            chatCompletion: vi.fn().mockResolvedValue({ text: '{"prompts":[123]}' }),
+            visionCompletion: vi.fn(),
+          }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'HTTP_5XX',
+      retryable: true,
+      details: { kind: 'llm_parse_failed', expected: 1, actual: 0 },
     })
   })
 })

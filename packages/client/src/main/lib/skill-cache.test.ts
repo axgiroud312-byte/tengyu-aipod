@@ -41,7 +41,7 @@ function summary(overrides: Partial<SkillSummary> = {}): SkillSummary {
     language: 'en',
     version: '3.0.1',
     enabled: true,
-    recommendedModel: 'qwen3-vl-plus',
+    recommendedModel: 'qwen3.6-flash',
     notes: null,
     ...overrides,
   }
@@ -123,6 +123,50 @@ describe('SkillCacheManager', () => {
       id: 'title-temu-en',
       version: '3.0.1',
     })
+  })
+
+  it('refreshes generation skills and fetches uncached generation skill details', async () => {
+    const generationSummary = summary({
+      id: 'txt2img-local-print',
+      module: 'generation',
+      category: 'txt2img-local-print',
+      platform: null,
+      language: null,
+      version: '1.0.0',
+      recommendedModel: null,
+    })
+    const generationSkill = skill({
+      ...generationSummary,
+      systemPrompt: 'Generate local print prompts from server skill.',
+    })
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl.endsWith('/api/skills')) {
+        return okResponse([generationSummary])
+      }
+      if (requestUrl.endsWith('/api/skills/txt2img-local-print?version=1.0.0')) {
+        return okResponse(generationSkill)
+      }
+      throw new Error(`unexpected URL: ${requestUrl}`)
+    })
+    const manager = new SkillCacheManager()
+
+    await expect(manager.refresh()).resolves.toEqual([generationSummary])
+    await expect(
+      manager.listSkills({ module: 'generation', category: 'txt2img-local-print' }),
+    ).resolves.toEqual([generationSummary])
+    await expect(manager.getSkill('txt2img-local-print', '1.0.0')).resolves.toMatchObject({
+      id: 'txt2img-local-print',
+      systemPrompt: 'Generate local print prompts from server skill.',
+    })
+    await expect(
+      import('node:fs/promises').then(({ readFile }) =>
+        readFile(
+          join(workbenchRoot, '.workbench', 'cache', 'skills', 'txt2img-local-print', '1.0.0.json'),
+          'utf8',
+        ),
+      ),
+    ).resolves.toContain('Generate local print prompts from server skill.')
   })
 
   it('does not use summary cache older than seven days', async () => {

@@ -84,7 +84,7 @@ function isVisionModelKey(value: string): value is VisionModelKey {
 function estimateTitleCost(imageCount: number, model: string, compression: boolean) {
   const price = isVisionModelKey(model)
     ? VISION_MODEL_PRICES[model]
-    : VISION_MODEL_PRICES['qwen3-vl-plus']
+    : VISION_MODEL_PRICES['qwen3.6-flash']
   const imageTokens = compression ? 256 : 1024
   const outputTokens = 80
   return (imageCount * (imageTokens * price.input + outputTokens * price.output)) / 1_000_000

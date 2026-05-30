@@ -106,56 +106,16 @@ export const GRSAI_IMAGE_MODELS: GrsaiImageModelOption[] = [
 ]
 
 export const BAILIAN_TEXT_MODELS: LocalModelOption[] = [
-  { id: 'qwen-plus', label: 'qwen-plus', modality: 'text' },
-  { id: 'qwen-turbo', label: 'qwen-turbo', modality: 'text' },
-  { id: 'qwen-max', label: 'qwen-max', modality: 'text' },
-  { id: 'qwen-long', label: 'qwen-long', modality: 'text' },
-  { id: 'qwen3-max', label: 'qwen3-max', modality: 'text' },
-  { id: 'qwen3.6-plus', label: 'qwen3.6-plus', modality: 'text' },
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'text' },
-  { id: 'qwen3.5-plus', label: 'qwen3.5-plus', modality: 'text' },
-  { id: 'qwen3.5-plus-2026-02-15', label: 'qwen3.5-plus-2026-02-15', modality: 'text' },
-  { id: 'qwen3.5-flash', label: 'qwen3.5-flash', modality: 'text' },
-  { id: 'qwen3.5-flash-2026-02-23', label: 'qwen3.5-flash-2026-02-23', modality: 'text' },
-  { id: 'qwen3.5-397b-a17b', label: 'qwen3.5-397b-a17b', modality: 'text' },
-  { id: 'qwen3.5-122b-a10b', label: 'qwen3.5-122b-a10b', modality: 'text' },
-  { id: 'qwen3.5-27b', label: 'qwen3.5-27b', modality: 'text' },
-  { id: 'qwen3.5-35b-a3b', label: 'qwen3.5-35b-a3b', modality: 'text' },
 ]
 
 export const BAILIAN_VISION_MODELS: LocalModelOption[] = [
-  { id: 'qwen3.6-plus', label: 'qwen3.6-plus', modality: 'vision' },
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'vision' },
-  { id: 'qwen3.5-plus', label: 'qwen3.5-plus', modality: 'vision' },
-  { id: 'qwen3.5-plus-2026-02-15', label: 'qwen3.5-plus-2026-02-15', modality: 'vision' },
-  { id: 'qwen3.5-flash', label: 'qwen3.5-flash', modality: 'vision' },
-  { id: 'qwen3.5-flash-2026-02-23', label: 'qwen3.5-flash-2026-02-23', modality: 'vision' },
-  { id: 'qwen3.5-397b-a17b', label: 'qwen3.5-397b-a17b', modality: 'vision' },
-  { id: 'qwen3.5-122b-a10b', label: 'qwen3.5-122b-a10b', modality: 'vision' },
-  { id: 'qwen3.5-27b', label: 'qwen3.5-27b', modality: 'vision' },
-  { id: 'qwen3.5-35b-a3b', label: 'qwen3.5-35b-a3b', modality: 'vision' },
-  { id: 'qwen3-vl-plus', label: 'qwen3-vl-plus', modality: 'vision' },
-  { id: 'qwen3-vl-plus-2026-01-25', label: 'qwen3-vl-plus-2026-01-25', modality: 'vision' },
-  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'vision' },
-  { id: 'qwen3-vl-flash-2026-01-25', label: 'qwen3-vl-flash-2026-01-25', modality: 'vision' },
-  { id: 'qwen-vl-max', label: 'qwen-vl-max', modality: 'vision' },
-  { id: 'qwen-vl-plus', label: 'qwen-vl-plus', modality: 'vision' },
-  { id: 'qwen-vl-ocr', label: 'qwen-vl-ocr', modality: 'vision' },
-  { id: 'qwen-vl-ocr-latest', label: 'qwen-vl-ocr-latest', modality: 'vision' },
-  { id: 'qwen-vl-ocr-2025-07-14', label: 'qwen-vl-ocr-2025-07-14', modality: 'vision' },
-  { id: 'qwen2.5-vl-72b-instruct', label: 'qwen2.5-vl-72b-instruct', modality: 'vision' },
-  { id: 'qwen2.5-vl-32b-instruct', label: 'qwen2.5-vl-32b-instruct', modality: 'vision' },
-  { id: 'qwen2.5-vl-7b-instruct', label: 'qwen2.5-vl-7b-instruct', modality: 'vision' },
-  { id: 'qwen2.5-vl-3b-instruct', label: 'qwen2.5-vl-3b-instruct', modality: 'vision' },
-  { id: 'qwen2-vl-72b-instruct', label: 'qwen2-vl-72b-instruct', modality: 'vision' },
-  { id: 'qwen2-vl-7b-instruct', label: 'qwen2-vl-7b-instruct', modality: 'vision' },
-  { id: 'qvq-max', label: 'qvq-max', modality: 'vision' },
-  { id: 'qvq-plus', label: 'qvq-plus', modality: 'vision' },
 ]
 
 export const DEFAULT_GENERATION_LOCAL_CONFIG: Required<GenerationLocalConfig> = {
-  bailian_text_model: 'qwen-plus',
-  bailian_vision_model: 'qwen3-vl-plus',
+  bailian_text_model: 'qwen3.6-flash',
+  bailian_vision_model: 'qwen3.6-flash',
   grsai_node: 'cn',
   grsai_concurrency: 3,
   grsai_retries: 2,
@@ -175,7 +135,9 @@ export function normalizeGenerationLocalConfig(
   const textModel = BAILIAN_TEXT_MODELS.some((model) => model.id === config.bailian_text_model)
     ? config.bailian_text_model
     : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_text_model
-  const visionModel = BAILIAN_VISION_MODELS.some((model) => model.id === config.bailian_vision_model)
+  const visionModel = BAILIAN_VISION_MODELS.some(
+    (model) => model.id === config.bailian_vision_model,
+  )
     ? config.bailian_vision_model
     : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_vision_model
 

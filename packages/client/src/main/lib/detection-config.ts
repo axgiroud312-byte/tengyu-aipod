@@ -30,7 +30,7 @@ const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   threshold: { passMax: 39, reviewMax: 69 },
   skillId: '',
   skillVersion: '',
-  model: 'qwen3-vl-flash',
+  model: 'qwen3.6-flash',
   variables: {},
 }
 

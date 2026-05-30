@@ -1,6 +1,6 @@
 import { app } from 'electron'
 
-const DEV_SERVER_BASE_URL = 'http://localhost:3000'
+const DEV_SERVER_BASE_URL = 'http://127.0.0.1:3100'
 
 export function resolveServerBaseUrl(input: {
   configuredUrl?: string | undefined
