@@ -64,6 +64,7 @@ export type Txt2imgRunInput = {
   imageSize?: '1K' | '2K' | '4K'
   referenceImages?: Array<{ base64: string; mime_type: string }>
   concurrency: number
+  taskId?: string
 }
 
 export type ComfyuiTxt2imgRunInput = {
@@ -105,6 +106,18 @@ export type GenerationRunResult = {
 export type GenerationTaskEvent =
   | { ok: true; result: GenerationRunResult }
   | { ok: false; taskId: string; error: string }
+
+export type GenerationDebugLogLevel = 'debug' | 'info' | 'warn' | 'error'
+
+export type GenerationDebugLogEntry = {
+  id: string
+  timestamp: number
+  level: GenerationDebugLogLevel
+  message: string
+  taskId?: string
+  capability?: GenerationCapability
+  details?: Record<string, string | number | boolean | null>
+}
 
 export type GenerationImageSource = {
   id: string
@@ -198,6 +211,11 @@ export type ChenyuWorkflowRunInput = {
 }
 
 type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
+type GenerationDebugLogDetails = Record<string, string | number | boolean | null | undefined>
+type GenerationDebugLogContext = {
+  taskId?: string | undefined
+  capability?: GenerationCapability | undefined
+}
 type Img2imgReference = {
   artifactId: string
   printId: string
@@ -225,11 +243,19 @@ type GenerationServiceDependencies = {
   }) => Pick<ChenyuWorkflowRunner, 'listWorkflows' | 'getWorkflowInfo' | 'runImageWorkflow'>
   downloadImage?: (url: string) => Promise<Buffer>
   emitProgress?: (progress: GenerationProgress) => void
+  emitDebugLog?: (entry: GenerationDebugLogEntry) => void
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
 
 const DEFAULT_GENERATION_MODEL: GrsaiModel = 'gpt-image-2'
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+const GENERATION_CAPABILITY_FOLDERS = {
+  txt2img: '01-文生图',
+  img2img: '02-图生图',
+  extract: '03-提取',
+  matting: '04-抠图',
+} satisfies Record<GenerationCapability, string>
+let generationDebugLogSequence = 0
 
 function clampInt(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) {
@@ -375,6 +401,19 @@ function newPrintId() {
   return `pri_${randomUUID().replace(/-/g, '').slice(0, 12)}`
 }
 
+function generationTaskOutputFolder(
+  workbenchRoot: string,
+  capability: GenerationCapability,
+  taskId: string,
+) {
+  return join(
+    workbenchRoot,
+    WORKBENCH_DIRECTORIES.generation,
+    GENERATION_CAPABILITY_FOLDERS[capability],
+    safeBaseName(taskId),
+  )
+}
+
 async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
   let index = 0
   while (true) {
@@ -455,7 +494,7 @@ function readImg2imgArtifactRows(db: Pick<SqliteDatabase, 'prepare'>) {
     .prepare(`
       SELECT id, print_id, step, file_path
       FROM artifacts
-      WHERE step IN ('txt2img', 'img2img', 'extract', 'manual-import')
+      WHERE step IN ('txt2img', 'img2img', 'extract', 'matting', 'manual-import')
       ORDER BY created_at DESC
     `)
     .all() as Array<Record<string, unknown>>
@@ -466,7 +505,7 @@ function registerPrintSourceArtifact(
   input: {
     identity: Awaited<ReturnType<typeof imageIdentity>>
     imagePath: string
-    step: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>
+    step: GenerationCapability
     taskId: string
     createdAt: number
   },
@@ -508,7 +547,7 @@ async function ensureFolderPrintArtifacts(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   folders: Array<{
     path: string
-    step: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>
+    step: GenerationCapability
   }>,
   existingRows: Array<Record<string, unknown>>,
 ) {
@@ -581,7 +620,7 @@ async function readReferenceForArtifact(
   const rowArtifactId = rowString(row, 'id')
   const imagePath = rowString(row, 'file_path')
   const step = rowString(row, 'step')
-  if (!['txt2img', 'img2img', 'extract', 'manual-import'].includes(step)) {
+  if (!['txt2img', 'img2img', 'extract', 'matting', 'manual-import'].includes(step)) {
     throw new AppErrorClass('HTTP_4XX', '图生图只能选择已生成或导入的印花', false, {
       artifactId,
       step,
@@ -698,6 +737,58 @@ async function registerExtractArtifact(
   return { artifactId, printId: input.printId }
 }
 
+async function registerGeneratedArtifact(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    taskId: string
+    printId: string
+    targetPath: string
+    capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>
+    prompt: string
+    model: string
+    params: Record<string, unknown>
+    sourceArtifactIds?: string[]
+    createdAt: number
+  },
+) {
+  ensureGenerationTables(db)
+  const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
+  const artifactId = randomUUID()
+  db.prepare(`
+    INSERT INTO artifacts (
+      id,
+      task_id,
+      print_id,
+      step,
+      provider,
+      model_or_workflow,
+      source_artifact_ids,
+      file_path,
+      file_size,
+      file_hash,
+      prompt_snapshot,
+      params_snapshot,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artifactId,
+    input.taskId,
+    input.printId,
+    input.capability,
+    'grsai',
+    input.model,
+    JSON.stringify(input.sourceArtifactIds ?? []),
+    input.targetPath,
+    info.size,
+    fileHash,
+    input.prompt,
+    JSON.stringify(input.params),
+    input.createdAt,
+  )
+  return { artifactId, printId: input.printId }
+}
+
 async function defaultDownloadImage(url: string) {
   if (url.startsWith('file://')) {
     return readFile(new URL(url))
@@ -711,6 +802,22 @@ async function defaultDownloadImage(url: string) {
     })
   }
   return Buffer.from(await response.arrayBuffer())
+}
+
+function generatedImageExtension(image: { url: string; local_path?: string }) {
+  const localExt = image.local_path ? extname(image.local_path).toLowerCase() : ''
+  if (localExt && IMAGE_EXTENSIONS.test(localExt)) {
+    return localExt
+  }
+
+  try {
+    const urlExt = extname(new URL(image.url).pathname).toLowerCase()
+    if (urlExt && IMAGE_EXTENSIONS.test(urlExt)) {
+      return urlExt
+    }
+  } catch {}
+
+  return '.png'
 }
 
 function appErrorMessage(error: unknown) {
@@ -733,6 +840,115 @@ function emitCompleted(event: GenerationTaskEvent) {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('generation:completed', event)
   }
+  if (event.ok) {
+    createGenerationDebugLogger(
+      {},
+      { taskId: event.result.taskId, capability: capabilityFromResult(event.result) },
+    )('任务完成', event.result.failed > 0 ? 'warn' : 'info', {
+      operation: 'completed',
+      total: event.result.total,
+      succeeded: event.result.succeeded,
+      failed: event.result.failed,
+      savedPath: event.result.images[0]?.localPath ?? null,
+    })
+    return
+  }
+  createGenerationDebugLogger({}, { taskId: event.taskId })('任务失败', 'error', {
+    operation: 'completed',
+    error: event.error,
+  })
+}
+
+function emitGenerationDebugLog(entry: GenerationDebugLogEntry) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('generation:debug-log', entry)
+  }
+}
+
+function createGenerationDebugLogger(
+  dependencies: Pick<GenerationServiceDependencies, 'emitDebugLog'> = {},
+  baseContext: GenerationDebugLogContext = {},
+) {
+  const emit = dependencies.emitDebugLog ?? emitGenerationDebugLog
+  return (
+    message: string,
+    level: GenerationDebugLogLevel = 'info',
+    details?: GenerationDebugLogDetails,
+    context: GenerationDebugLogContext = {},
+  ) => {
+    const nextContext = { ...baseContext, ...context }
+    emit({
+      id: `${Date.now()}-${++generationDebugLogSequence}`,
+      timestamp: Date.now(),
+      level,
+      message,
+      ...(nextContext.taskId ? { taskId: nextContext.taskId } : {}),
+      ...(nextContext.capability ? { capability: nextContext.capability } : {}),
+      ...(details ? { details: compactGenerationDebugDetails(details) } : {}),
+    })
+  }
+}
+
+function createGenerationProgressEmitter(
+  dependencies: Pick<GenerationServiceDependencies, 'emitProgress' | 'emitDebugLog'>,
+) {
+  const emit = dependencies.emitProgress ?? emitProgress
+  const debug = createGenerationDebugLogger(dependencies)
+  return (progress: GenerationProgress) => {
+    emit(progress)
+    debug(
+      generationProgressMessage(progress),
+      'debug',
+      {
+        operation: 'progress',
+        processed: progress.processed,
+        total: progress.total,
+        succeeded: progress.succeeded,
+        failed: progress.failed,
+        prompt: progress.current_prompt ? promptPreview(progress.current_prompt) : undefined,
+      },
+      { taskId: progress.task_id, capability: progress.capability },
+    )
+  }
+}
+
+function generationProgressMessage(progress: GenerationProgress) {
+  if (progress.total > 0 && progress.processed >= progress.total) {
+    return progress.failed > 0 ? '任务处理完成，有失败项' : '任务处理完成'
+  }
+  if (progress.current_prompt) {
+    return '正在处理提示词'
+  }
+  if (progress.processed === 0) {
+    return '任务开始处理'
+  }
+  return '任务进度更新'
+}
+
+function capabilityFromResult(result: GenerationRunResult): GenerationCapability | undefined {
+  const image = result.images[0]
+  const capability = image?.localPath
+    ? (Object.entries(GENERATION_CAPABILITY_FOLDERS).find(([, folder]) =>
+        image.localPath?.includes(folder),
+      )?.[0] as GenerationCapability | undefined)
+    : undefined
+  return capability
+}
+
+function compactGenerationDebugDetails(details: GenerationDebugLogDetails) {
+  return Object.fromEntries(
+    Object.entries(details).filter((entry): entry is [string, string | number | boolean | null] => {
+      return entry[1] !== undefined
+    }),
+  )
+}
+
+function promptPreview(prompt: string, maxLength = 120) {
+  const normalized = prompt.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength)}...`
 }
 
 export async function listExtractSources(
@@ -752,16 +968,36 @@ export async function listImg2imgSources(
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
   const sourceFolders = [
     {
-      path: join(workbenchRoot, WORKBENCH_DIRECTORIES.generation, '01-文生图'),
+      path: join(
+        workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        GENERATION_CAPABILITY_FOLDERS.txt2img,
+      ),
       step: 'txt2img' as const,
     },
     {
-      path: join(workbenchRoot, WORKBENCH_DIRECTORIES.generation, '02-图生图'),
+      path: join(
+        workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        GENERATION_CAPABILITY_FOLDERS.img2img,
+      ),
       step: 'img2img' as const,
     },
     {
-      path: join(workbenchRoot, WORKBENCH_DIRECTORIES.generation, '03-提取'),
+      path: join(
+        workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        GENERATION_CAPABILITY_FOLDERS.extract,
+      ),
       step: 'extract' as const,
+    },
+    {
+      path: join(
+        workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        GENERATION_CAPABILITY_FOLDERS.matting,
+      ),
+      step: 'matting' as const,
     },
   ]
   const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
@@ -871,30 +1107,50 @@ export async function listComfyuiMixedMattingWorkflows(
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
   const count = clampInt(input.count, 1, 1000, 5)
   const capability = input.capability ?? 'txt2img'
-  const prompts = await promptGeneratorService.generatePrompts({
-    ...(input.skillId
-      ? { skillId: input.skillId }
-      : { category: promptSkillCategory(capability, input.printMode) }),
-    variables: {
-      printMode: input.printMode === 'full' ? '满印' : '局部',
-      requirement: input.requirement,
-      count,
-      modeInstruction: input.modeInstruction ?? '',
-    },
+  const debug = createGenerationDebugLogger({}, { capability })
+  debug('开始生成提示词', 'info', {
+    operation: 'prompt',
     count,
-    ...(input.model ? { model: input.model } : {}),
-    ...(input.referenceImages?.length ? { refImages: input.referenceImages } : {}),
-    userMessage:
-      input.modeInstruction ??
-      `生成 ${count} 条适合 Grsai ${capability === 'img2img' ? '图生图' : '文生图'}的英文印花提示词。`,
-    responseFormat: 'json_object',
+    model: input.model ?? null,
+    referenceImageCount: input.referenceImages?.length ?? 0,
+    printMode: input.printMode ?? 'local',
   })
+  try {
+    const prompts = await promptGeneratorService.generatePrompts({
+      ...(input.skillId
+        ? { skillId: input.skillId }
+        : { category: promptSkillCategory(capability, input.printMode) }),
+      variables: {
+        printMode: input.printMode === 'full' ? '满印' : '局部',
+        requirement: input.requirement,
+        count,
+        modeInstruction: input.modeInstruction ?? '',
+      },
+      count,
+      ...(input.model ? { model: input.model } : {}),
+      ...(input.referenceImages?.length ? { refImages: input.referenceImages } : {}),
+      userMessage:
+        input.modeInstruction ??
+        `生成 ${count} 条适合 Grsai ${capability === 'img2img' ? '图生图' : '文生图'}的英文印花提示词。`,
+      responseFormat: 'json_object',
+    })
 
-  return prompts.map((text) => ({
-    id: randomUUID(),
-    text,
-    selected: true,
-  })) satisfies Txt2imgPromptDraft[]
+    debug('提示词生成完成', 'info', {
+      operation: 'prompt',
+      count: prompts.length,
+    })
+    return prompts.map((text) => ({
+      id: randomUUID(),
+      text,
+      selected: true,
+    })) satisfies Txt2imgPromptDraft[]
+  } catch (error) {
+    debug('提示词生成失败', 'error', {
+      operation: 'prompt',
+      error: appErrorMessage(error),
+    })
+    throw error
+  }
 }
 
 export async function runTxt2img(input: Txt2imgRunInput) {
@@ -908,9 +1164,45 @@ export async function runTxt2img(input: Txt2imgRunInput) {
     throw new AppErrorClass('HTTP_4XX', '缺少 Grsai API Key', false, { provider: 'grsai' })
   }
 
-  const taskId = `gen_${randomUUID()}`
+  const taskId = input.taskId ?? `gen_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: input.capability ?? 'txt2img' })(
+    '任务已提交',
+    'info',
+    {
+      operation: 'submit',
+      provider: 'grsai',
+      total: prompts.length,
+      model: input.model,
+      aspectRatio: input.aspectRatio,
+      concurrency: input.concurrency,
+      referenceImageCount: input.referenceImages?.length ?? 0,
+    },
+  )
   void runTxt2imgTask(taskId, prompts, input, apiKey)
+    .then((result) => {
+      emitCompleted({ ok: true, result })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
   return taskId
+}
+
+export async function runTxt2imgBatch(
+  input: Txt2imgRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const prompts = input.prompts.map((prompt) => prompt.trim()).filter(Boolean)
+  if (prompts.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先准备至少一条提示词', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('grsai')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少 Grsai API Key', false, { provider: 'grsai' })
+  }
+
+  return runTxt2imgTask(input.taskId ?? `gen_${randomUUID()}`, prompts, input, apiKey, dependencies)
 }
 
 export async function runExtract(
@@ -933,6 +1225,15 @@ export async function runExtract(
   }
 
   const taskId = input.taskId ?? `extract_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: 'extract' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'grsai',
+    sourceCount: sourceImagePaths.length,
+    promptCount: input.promptCount,
+    model: input.model,
+    llmModel: input.llmModel ?? null,
+    concurrency: input.concurrency,
+  })
   void runExtractBatch(
     { ...input, taskId, sourceImagePaths },
     {
@@ -971,6 +1272,12 @@ export async function runComfyuiImg2img(
   }
 
   const taskId = input.taskId ?? `img2img_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: 'img2img' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'comfyui-chenyu',
+    sourceCount: sourceArtifactIds.length,
+    workflowId: input.workflowId,
+  })
   void runComfyuiImg2imgBatch(
     { ...input, taskId, sourceArtifactIds },
     {
@@ -1007,6 +1314,15 @@ export async function runComfyuiTxt2img(
   }
 
   const taskId = input.taskId ?? `txt2img_comfy_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: 'txt2img' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'comfyui-chenyu',
+    total: prompts.length,
+    workflowId: input.workflowId,
+    width: input.width ?? 1024,
+    height: input.height ?? 1024,
+    concurrency: input.concurrency ?? 1,
+  })
   void runComfyuiTxt2imgBatch(
     { ...input, taskId, prompts },
     {
@@ -1045,6 +1361,12 @@ export async function runComfyuiExtract(
   }
 
   const taskId = input.taskId ?? `extract_comfy_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: 'extract' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'comfyui-chenyu',
+    sourceCount: sourceImagePaths.length,
+    workflowId: input.workflowId,
+  })
   void runComfyuiExtractBatch(
     { ...input, taskId, sourceImagePaths },
     {
@@ -1083,6 +1405,12 @@ export async function runComfyuiMatting(
   }
 
   const taskId = input.taskId ?? `matting_comfy_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: 'matting' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'comfyui-chenyu',
+    sourceCount: sourceArtifactIds.length,
+    workflowId: input.workflowId,
+  })
   void runComfyuiMattingBatch(
     { ...input, taskId, sourceArtifactIds },
     {
@@ -1124,6 +1452,13 @@ export async function runMixedMatting(
   }
 
   const taskId = input.taskId ?? `matting_mixed_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: 'matting' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'grsai+comfyui',
+    sourceCount: sourceArtifactIds.length,
+    workflowId: input.workflowId,
+    maskModel: input.maskModel ?? null,
+  })
   void runMixedMattingBatch(
     { ...input, taskId, sourceArtifactIds },
     {
@@ -1153,14 +1488,26 @@ async function runTxt2imgTask(
   prompts: string[],
   input: Txt2imgRunInput,
   apiKey: string,
+  dependencies: GenerationServiceDependencies = {},
 ) {
   const capability = input.capability ?? 'txt2img'
-  const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
+  const workbenchConfig = await (dependencies.readConfig ?? readAppConfig)()
+  if (!workbenchConfig.workbench_root) {
+    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+  }
+  const workbenchRoot = workbenchConfig.workbench_root
+  const settings = normalizeGenerationLocalConfig(workbenchConfig.generation)
   const controller = new GenerationConcurrencyController({
     workers: clampInt(input.concurrency, 1, 20, settings.grsai_concurrency),
   })
-  const adapter = new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
+  const adapter =
+    dependencies.createGrsaiAdapter?.(apiKey) ??
+    new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
+  const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
   const model = normalizeModel(input.model)
+  const outputFolder = generationTaskOutputFolder(workbenchRoot, capability, taskId)
+  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+  const emit = createGenerationProgressEmitter(dependencies)
   const result: GenerationRunResult = {
     taskId,
     total: prompts.length,
@@ -1171,10 +1518,12 @@ async function runTxt2imgTask(
   }
 
   try {
+    ensureGenerationTables(db)
+    await mkdir(outputFolder, { recursive: true })
     await Promise.all(
       prompts.map((prompt, index) =>
         controller.run(`${taskId}-${index}`, async () => {
-          emitProgress({
+          emit({
             task_id: taskId,
             capability,
             processed: result.succeeded + result.failed,
@@ -1191,21 +1540,57 @@ async function runTxt2imgTask(
               ...(input.referenceImages?.length ? { reference_images: input.referenceImages } : {}),
               output: {
                 aspect_ratio: input.aspectRatio,
+                ...(input.imageSize ? { image_size_label: input.imageSize } : {}),
               },
               model,
             } satisfies GenerateRequest)
             if (response.status !== 'succeeded') {
               throw response.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 生成失败', true)
             }
+            if (response.images.length === 0) {
+              throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回结果图', true)
+            }
             controller.onResponse(200)
-            result.succeeded += response.images.length
-            result.images.push(...response.images.map((image) => ({ prompt, url: image.url })))
+            for (const image of response.images) {
+              const printId = newPrintId()
+              const targetPath = await uniqueTargetPath(
+                outputFolder,
+                printId,
+                generatedImageExtension(image),
+              )
+              const imageBuffer = image.local_path
+                ? await readFile(image.local_path)
+                : await downloadImage(image.url)
+              await writeFile(targetPath, imageBuffer)
+              const artifact = await registerGeneratedArtifact(db, {
+                taskId,
+                printId,
+                targetPath,
+                capability,
+                prompt,
+                model,
+                params: {
+                  aspectRatio: input.aspectRatio,
+                  imageSize: input.imageSize ?? null,
+                  referenceImageCount: input.referenceImages?.length ?? 0,
+                },
+                createdAt: Date.now(),
+              })
+              result.succeeded += 1
+              result.images.push({
+                prompt,
+                url: fileUrl(targetPath),
+                localPath: targetPath,
+                artifactId: artifact.artifactId,
+                printId: artifact.printId,
+              })
+            }
           } catch (error) {
             observeGenerationError(controller, error)
             result.failed += 1
             result.failures.push({ prompt, error: appErrorMessage(error) })
           } finally {
-            emitProgress({
+            emit({
               task_id: taskId,
               capability,
               processed: result.succeeded + result.failed,
@@ -1218,9 +1603,9 @@ async function runTxt2imgTask(
         }),
       ),
     )
-    emitCompleted({ ok: true, result })
-  } catch (error) {
-    emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    return result
+  } finally {
+    db.close()
   }
 }
 
@@ -1254,7 +1639,7 @@ export async function runExtractBatch(
     failures: [],
   }
   let db: GenerationDatabase | null = null
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
 
   try {
     const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
@@ -1269,7 +1654,7 @@ export async function runExtractBatch(
     const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const sourceFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
-    const outputFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.generation, '03-提取')
+    const outputFolder = generationTaskOutputFolder(workbenchRoot, 'extract', taskId)
     db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     const activeDb = db
     ensureGenerationTables(db)
@@ -1413,7 +1798,7 @@ export async function runComfyuiExtractBatch(
     images: [],
     failures: [],
   }
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
   const skillId = input.skillId?.trim()
   const skill = skillId
     ? await (dependencies.skillCache ?? skillCacheManager).getSkill(skillId, input.skillVersion)
@@ -1526,7 +1911,7 @@ export async function runComfyuiMattingBatch(
     images: [],
     failures: [],
   }
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
   const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
@@ -1633,7 +2018,7 @@ export async function runMixedMattingBatch(
     images: [],
     failures: [],
   }
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
   const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
@@ -1801,7 +2186,7 @@ export async function runComfyuiTxt2imgBatch(
     images: [],
     failures: [],
   }
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
@@ -1902,7 +2287,7 @@ export async function runComfyuiImg2imgBatch(
     images: [],
     failures: [],
   }
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
   const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
@@ -2056,6 +2441,12 @@ export async function runChenyuWorkflow(
   }
 
   const taskId = input.taskId ?? `chenyu_wf_${randomUUID()}`
+  createGenerationDebugLogger({}, { taskId, capability: input.capability })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'comfyui-chenyu-workflow',
+    workflowId: input.workflowId,
+    revisionId: input.revisionId ?? null,
+  })
   void runChenyuWorkflowTask(
     {
       workflowId: input.workflowId,
@@ -2090,7 +2481,7 @@ async function runChenyuWorkflowTask(
   workbenchRoot: string,
   apiKey: string,
 ): Promise<GenerationRunResult> {
-  const emit = dependencies.emitProgress ?? emitProgress
+  const emit = createGenerationProgressEmitter(dependencies)
   const taskId = input.taskId ?? ''
   emit({
     task_id: taskId,

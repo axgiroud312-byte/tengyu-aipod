@@ -1,7 +1,7 @@
 # 项目导览（PROJECT_TOUR）
 
 > 给项目主理人自己看的回神文档。不是给团队的规范，也不是给用户的说明书。
-> 最后更新：2026-05-30（基于 git commit `04d7524`）
+> 最后更新：2026-05-31
 
 ---
 
@@ -106,11 +106,13 @@ sequenceDiagram
 ```
 ~/腾域aipod工作台/
 ├─ 01-采集/           ← 比特浏览器采集回来，含散图池和商品页主图分组
-├─ 02-生图/           ← Grsai / ComfyUI 出图
+├─ 02-生图/           ← 文生图/图生图/提取/抠图，按任务子目录保存出图
 ├─ 03-检测结果/        ← 百炼判定 pass 的进这里
 ├─ 04-待套版印花/       ← 生产入口，PS 模块的输入
 └─ 05-货号成品/        ← PS 输出 + 上架输入（上架唯一来源）
 ```
+
+`02-生图` 下面固定四个能力目录：`01-文生图` / `02-图生图` / `03-提取` / `04-抠图`。每次运行会在能力目录下再建一个 `{taskId}` 文件夹，避免不同批次结果混在一起。
 
 ---
 
@@ -138,16 +140,22 @@ sequenceDiagram
 
 ### 3️⃣ 生图模块 — 按能力组织，ComfyUI 走默认云机
 
+当前 UI 只把**文生图**收敛成统一页：提示词生成、自己写提示词、提示词审稿共用，右侧“生图路径”选择 Grsai 或 ComfyUI 工作流，默认 Grsai。**图生图不合并**，Grsai 图生图和 ComfyUI 图生图继续按原入口走。
+
 | 部分 | 文件 |
 |---|---|
-| **统一编排** | `packages/client/src/main/lib/generation-service.ts` ← 主调度<br/>`generation-concurrency.ts` ← 并发控制（共享给所有 provider）<br/>`prompt-generator-service.ts` ← 提示词生成（百炼） |
+| **统一编排** | `packages/client/src/main/lib/generation-service.ts` ← 主调度 + `generation:debug-log` 运行期日志事件<br/>`generation-concurrency.ts` ← 并发控制（共享给所有 provider）<br/>`prompt-generator-service.ts` ← 提示词生成（百炼） |
 | **Grsai 路径**（付费） | `grsai-adapter.ts`（节点切换 / 重试 / 异步轮询） |
 | **ComfyUI 路径** | `comfyui-instance-manager.ts` ← 实例生命周期<br/>`comfyui-chenyu-adapter.ts` ← 晨羽智云<br/>`comfy-http-client.ts` ← HTTP 直连<br/>`chenyu-cloud-client.ts` ← 晨羽 API<br/>`comfyui-workflow-cache.ts` ← 工作流缓存 |
 | **晨羽设置** | `SettingsPage.tsx` ← API Key 连接状态、固定杭州慎思 POD 创建、全部实例开关机、设为默认云机 |
 | **图像预处理** | `preprocess-pool.ts` |
-| **UI 工作台** | `packages/client/src/renderer/src/components/generation-workbench.tsx` |
+| **UI 工作台** | `packages/client/src/renderer/src/components/generation-workbench.tsx` ← 生图主界面 + 日志弹窗<br/>`packages/client/src/renderer/src/features/generation/generation-debug-log.ts` ← 命令行式日志格式化 |
 | **Spec** | `docs/spec/03-generation.md` |
 | **相关归档 task** | `grsai-adapter` / `generation-*` / `comfyui-*` / `chenyu-cloud-adapter` / `txt2img-*` / `img2img-*` / `extract-*` / `matting-*` |
+
+ComfyUI 路径页面只显示默认云机状态卡：状态、实例 UUID、ComfyUI 地址和刷新按钮。开机、关机、设为默认云机仍在设置页处理。
+
+生图页顶部的“日志”按钮打开运行期日志弹窗，实时显示提示词生成、任务提交、模型调用进度、完成/失败和保存路径。它只保存在前端内存中，最近 `1000` 条，重启后清空。
 
 ### 4️⃣ PS 套版模块 — Windows-only，真实 Photoshop COM
 

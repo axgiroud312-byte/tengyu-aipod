@@ -1,7 +1,7 @@
 # Spec 03 — 生图模块
 
-> 统一生图模块，按业务能力分 4 个 Tab，每个 Tab 用户可选 provider 实现方式。
-> v1 支持两个 provider：`comfyui-chenyu`（晨羽智云 ComfyUI）和 `grsai`（付费模型）。
+> 统一生图模块，按业务能力分 4 个 Tab。v1 支持两个生图 provider：`comfyui-chenyu`（晨羽智云 ComfyUI）和 `grsai`（付费模型）。
+> 当前 UI 收敛规则：**只合并文生图**；图生图、提取、抠图仍保留各自路径交互。
 
 ## 1. 模块结构
 
@@ -9,7 +9,10 @@
 ┌─ 生图模块 ────────────────────────────────────────────┐
 │ Tab 切换：[文生图] [图生图] [提取] [抠图]              │
 │                                                       │
-│ Tab 内：实现方式切换 + 配置表单 + 提示词审稿 + 进度    │
+│ 文生图：统一页面 + 右侧生图路径切换（Grsai / ComfyUI） │
+│ 图生图：保持 Grsai / ComfyUI 原入口与原交互            │
+│ ComfyUI 路径：右侧显示默认云机状态卡                  │
+│ 顶部：日志按钮打开命令行式生图运行期日志弹窗           │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -18,7 +21,7 @@
 | 能力 | comfyui-chenyu | grsai |
 |---|---|---|
 | 文生图 | ✅（文生图工作流可选）| ✅ |
-| 图生图 | ✅（多个工作流可选）| ✅（5 种生成方式）|
+| 图生图 | ✅（多个工作流可选）| ✅（4 种模式：参考构图/参考风格/构图+风格/自己写）|
 | 提取 | ✅（提取工作流）| ✅（图生图 + 提取 skill）|
 | 抠图 | ✅（抠图工作流 / 混合路径）| ❌（不内置）|
 
@@ -39,13 +42,13 @@
 
 ```
 02-生图/
-├─ 01-文生图/{印花ID}.png
-├─ 02-图生图/{印花ID}_v1.png ({印花ID}_v2.png ...)
-├─ 03-提取/{印花ID}.png
-└─ 04-抠图/{印花ID}.png         ← 抠图后的最终透明底图
+├─ 01-文生图/{taskId}/{印花ID}.png
+├─ 02-图生图/{taskId}/{印花ID}_v1.png ({印花ID}_v2.png ...)
+├─ 03-提取/{taskId}/{印花ID}.png
+└─ 04-抠图/{taskId}/{印花ID}.png         ← 抠图后的最终透明底图
 ```
 
-文件名带印花 ID + 版本号。**目录只放最终成品图，中间产物（如黑白遮罩）走 TempFileManager 临时区**。
+能力目录下按任务建子文件夹，避免多次运行的图片混在一起。文件名带印花 ID + 版本号。**目录只放最终成品图，中间产物（如黑白遮罩）走 TempFileManager 临时区**。
 
 ## 2. Provider 抽象
 
@@ -249,7 +252,7 @@ interface PaidSkill {
   enabled: boolean
   system_prompt: string               // LLM 的 systemMessage
   variables: SkillVariable[]          // UI 渲染所需
-  recommended_llm: string             // "qwen3.6-plus" | "qwen3-vl-plus" | ...
+  recommended_llm: string             // 当前默认 "qwen3.6-flash"
   // 不包含 output_format / output_schema
   // 客户端用通用解析器兜底
 }
@@ -270,27 +273,82 @@ interface SkillVariable {
 
 ### 3.2 输出格式约束（Skill 自描述，客户端兜底解析）
 
+生图提示词 Skill 应要求模型返回对象数组：
+
+```json
+{
+  "prompts": [
+    { "index": 1, "prompt": "prompt text" },
+    { "index": 2, "prompt": "prompt text" }
+  ]
+}
+```
+
+客户端只读取 `prompt` 字段。`index` 只用于单批结果内部排序；当 1000 条提示词被拆成 10 批时，每批都可能返回 `index=1..100`，客户端不会依赖跨批 index 唯一性。
+
 ```ts
 // 通用解析器
 function parsePrompts(text: string, count: number): string[] {
-  // 1. 试 JSON 数组
+  // 1. 试 {"prompts":[{"index":1,"prompt":"..."}]}
+  // 2. 兼容 JSON 数组 / {"prompts":["..."]}
+  // 3. 兼容 markdown 代码块里的 JSON
+  // 4. 最后按行拆 + 去序号
+}
+```
+
+### 3.3 提示词批量拆分
+
+百炼只负责写提示词，不参与最终生图。客户端负责把用户要求拆成批次并并发调用：
+
+```ts
+const total = 1000
+const batchSize = 100
+const batches = 10
+const llmConcurrency = 10
+const timeoutMs = 10 * 60_000
+const retryOnFailure = true
+const model = 'qwen3.6-flash'
+```
+
+规则：
+- 文生图和图生图提示词生成都默认使用 `qwen3.6-flash`，该模型按当前配置同时承担文本和多模态输入。
+- 客户端按 `100 条/批` 拆分，例如 1000 条 = 10 批。
+- 10 批并发发送给百炼；单批 10 分钟不返回则视为超时并重试。
+- 每批返回后单独解析为 100 条提示词，最后按批次顺序合并成 1000 条进入提示词审稿。
+- 程序不在 Skill 之外额外强加业务内容，只负责批次拆分、超时、重试和结果解析。
+
+兼容兜底解析：
+
+```ts
+function parsePrompts(text: string, count: number): string[] {
   try {
     const parsed = JSON.parse(text)
-    if (Array.isArray(parsed)) {
-      return parsed.map(String).slice(0, count)
+    const prompts = Array.isArray(parsed) ? parsed : parsed.prompts
+    if (Array.isArray(prompts)) {
+      return prompts
+        .map(item => typeof item === 'object' && item ? item.prompt : item)
+        .map(String)
+        .filter(Boolean)
+        .slice(0, count)
     }
   } catch {}
   
-  // 2. 试 markdown 代码块里的 JSON
+  // 试 markdown 代码块里的 JSON
   const codeBlock = text.match(/```(?:json)?\s*([\s\S]+?)\s*```/)
   if (codeBlock) {
     try {
       const parsed = JSON.parse(codeBlock[1])
-      if (Array.isArray(parsed)) return parsed.map(String).slice(0, count)
+      const prompts = Array.isArray(parsed) ? parsed : parsed.prompts
+      if (Array.isArray(prompts)) {
+        return prompts
+          .map(item => typeof item === 'object' && item ? item.prompt : item)
+          .map(String)
+          .filter(Boolean)
+          .slice(0, count)
+      }
     } catch {}
   }
   
-  // 3. 按行拆 + 去序号
   return text
     .split(/\r?\n/)
     .map(s => s.replace(/^\s*(?:\d+[.、）)]|[-*•])\s*/, '').trim())
@@ -299,7 +357,7 @@ function parsePrompts(text: string, count: number): string[] {
 }
 ```
 
-### 3.3 Skill 在云端的派发
+### 3.4 Skill 在云端的派发
 
 ```
 GET /api/skills?module=generation&category=txt2img → [PaidSkill]
@@ -317,11 +375,9 @@ GET /api/skills/{id}                                → PaidSkill (full)
 ```
 [Tab: 文生图]
 
-实现方式：● 付费（Grsai）  ○ ComfyUI 晨羽
-
 模式：
   ┌─────────────────────────────┐
-  │ ● AI 生成提示词              │
+  │ ● 智能生成提示词             │
   │ ○ 自己写提示词               │
   └─────────────────────────────┘
 
@@ -329,13 +385,13 @@ GET /api/skills/{id}                                → PaidSkill (full)
   ① 印花类型：
      ● 局部（白底居中）  ○ 满印（铺满画面）
   
-  ② 提示词数量：[5] (1-20)
+  ② 提示词数量：[5] (1-1000)
   
   ③ 印花要求：
      [textarea，placeholder: "圣诞风格小熊主题，复古海报感"]
   
-  Skill：[txt2img-print-prompt-v3 ▼]（用户可选其他版本）
-  LLM：[qwen3-vl-plus ▼]
+  固定 Skill 槽位：txt2img-local-print / txt2img-full-print
+  语言模型：[qwen3.6-flash ▼]
   
   [生成提示词] ← 调阿里云百炼
 
@@ -350,24 +406,30 @@ GET /api/skills/{id}                                → PaidSkill (full)
   └──────────────────────────────────────────┘
   [编辑]  [重新生成]  [+ 添加自定义]
 
-【生图设置】
-  生图模型：[gpt-image-2 ▼]
-  尺寸：[1024x1024 ▼]
-  并发：[3] (1-20)
+【右侧：生图设置】
+  生图路径：● Grsai  ○ ComfyUI 工作流
 
-  [开始生图]
+  当选择 Grsai：
+    生图模型：[gpt-image-2 ▼]
+    尺寸：[1024x1024 ▼]
+    并发：[3] (1-20)
+    右侧显示进度卡：百分比 / 处理 / 成功 / 失败 / 已选提示词
 
-【ComfyUI 生成设置】
-  工作流：[文生图工作流 ▼]
-  尺寸：宽 [1024] × 高 [1024]
-  并发：[1] (1-10)
+  当选择 ComfyUI 工作流：
+    文生图工作流：[workflow ▼]
+    尺寸：宽 [1024] × 高 [1024]
+    并发：[1] (1-10)
+    右侧显示默认云机状态卡：状态 / 实例 UUID / ComfyUI 地址 / 刷新按钮
+    不显示原百分比进度卡；错误和完成结果仍显示在页面上
 
-  [开始生成]
+  [一键运行] [开始生图]
 
 【自己写提示词模式】
   [textarea，每行一条提示词，或粘贴 JSON 数组]
-  [开始生图]
+  [解析到审稿列表] → [开始生图]
 ```
+
+文生图页不再在顶部用“付费 Grsai / ComfyUI 晨羽”按钮区分路径。路径选择只放在右侧“生图设置”里，默认路径是 Grsai。
 
 ### 4.2 流程
 
@@ -375,16 +437,20 @@ GET /api/skills/{id}                                → PaidSkill (full)
 [AI 模式]
   用户填变量 → 软件拉 skill → 注入变量到 systemPrompt → 调阿里云百炼
     ↓
-  LLM 返回 JSON：{ "prompts": ["..."] }
+  LLM 返回 JSON：{ "prompts": [{ "index": 1, "prompt": "..." }] }
     ↓
   通用解析器拆成数组 → UI 审稿
     ↓
-  用户勾选/编辑/添加 → 选择 Grsai 或 ComfyUI → 点"开始生图"
+  用户勾选/编辑/添加 → 在右侧选择 Grsai 或 ComfyUI 工作流 → 点"开始生图"
     ↓
-  并发池调对应运行路径 → 落到 02-生图/01-文生图/
+  并发池调对应运行路径 → 落到 02-生图/01-文生图/{taskId}/
 
 [自己写模式]
-  用户填提示词 → 跳过 LLM → 直接进入并发池 → 调对应 provider
+  用户填提示词 → 解析到审稿列表 → 直接进入并发池 → 调当前生图路径
+
+[一键运行]
+  智能模式：先生成提示词 → 写入审稿列表 → 用已选提示词按当前生图路径生图
+  自己写模式：先解析手写提示词 → 写入审稿列表 → 用已选提示词按当前生图路径生图
 ```
 
 ### 4.3 印花 ID 生成
@@ -402,7 +468,7 @@ GET /api/skills/{id}                                → PaidSkill (full)
   skill_id: 'txt2img-local-print',
   skill_version: '1.0.0',
   source_artifact_ids: '[]',  // 文生图无来源
-  file_path: '02-生图/01-文生图/pri_abc123def456.png',
+  file_path: '02-生图/01-文生图/{taskId}/pri_abc123def456.png',
   prompt_snapshot: '...',     // 实际发给 grsai 的 prompt
   params_snapshot: '{...}',
 }
@@ -410,17 +476,20 @@ GET /api/skills/{id}                                → PaidSkill (full)
 
 ## 5. 图生图能力
 
-### 5.1 5 种生成方式
+图生图**不做文生图式合并**。顶部实现方式切换继续存在：
+- Grsai 图生图：使用参考图、提示词模式、提示词审稿和“生图时带参考图”开关。
+- ComfyUI 图生图：使用已生成/已提取印花选择器 + 本地导入的图生图工作流。
+
+### 5.1 Grsai 图生图模式
 
 | 方式 | 视觉 LLM 看图 | LLM 写提示词 | 备注 |
 |---|---|---|---|
-| 纯文字 | - | ✅ 看用户文字要求 | 等同于文生图 |
 | 参考构图 | ✅ 只学版式 | ✅ | "复制构图，画新内容" |
 | 参考风格 | ✅ 只学画风 | ✅ | "新内容，原画风" |
 | 构图+风格 | ✅ 学全部 | ✅ | "同款" |
-| 自己写 | - | ❌ | 跳过 LLM |
+| 自己写 | - | ❌ | 跳过 LLM，仍可选择是否把参考图传给生图模型 |
 
-UI：4 个 toggle 按钮 + "自己写"独立 Tab。
+UI：4 个按钮。原“纯文字”选项已删除；纯文字需求应使用文生图 Tab。
 
 ### 5.2 参考图传递
 
@@ -429,18 +498,22 @@ UI：4 个 toggle 按钮 + "自己写"独立 Tab。
 - **Grsai**：纯 base64（无 `data:` 前缀），通过 `images: string[]` 字段
 - **阿里云百炼**：data URL（`data:image/png;base64,...`），通过 `messages[].content[].image_url`
 
-### 5.3 "真 img2img"接口预留（v1 UI 不开）
+Grsai 图生图里有一个用户可控开关：
+- “生图时带参考图”默认关闭。
+- 关闭时：参考图只给百炼视觉模型看，用来生成提示词；最终 Grsai 生图接口只收到提示词和尺寸等参数。
+- 开启时：参考图既给百炼视觉模型看，也随 `referenceImages` 发送给 Grsai 生图接口。
+- 自己写提示词模式同样遵守这个开关；用户可以只用手写提示词，也可以手写提示词 + 参考图一起发给生图模型。
 
-ComfyuiChenyuAdapter 和 GrsaiAdapter 已支持把参考图传给生图模型（不只是给 LLM 看）。v1 UI 上不暴露这个选项，**代码层保留接口**：
+### 5.3 ComfyUI 图生图
 
-```ts
-interface GenerateRequest {
-  // ...
-  pass_reference_to_image_model?: boolean  // v1 UI 默认 false
-}
-```
+ComfyUI 图生图不使用 Grsai 的参考图上传框。它从 `02-生图` 下已登记的印花 artifact 中选择来源，主进程通过安全 IPC 把 artifactId 解析成 reference image，再把 reference image 注入本地导入的图生图工作流。
 
-v1.5 加 UI toggle "把参考图也传给生图模型"。
+ComfyUI 图生图右侧显示：
+- 执行卡：已选印花、工作流、开始图生图按钮。
+- 默认云机状态卡。
+- 错误和完成结果反馈。
+
+不再显示原百分比、处理、成功、失败进度卡。
 
 ## 6. 提取能力
 
@@ -451,17 +524,19 @@ v1.5 加 UI toggle "把参考图也传给生图模型"。
   ↓
 工作流执行（一般 30-90 秒）→ 输出印花（带背景或不带，看工作流设计）
   ↓
-落到 02-生图/03-提取/
+落到 02-生图/03-提取/{taskId}/
 ```
 
 ComfyUI 提取工作流改为客户端本地导入（detail 见 [chenyu-cloud-api.md](../../references/generation-comfyui/chenyu-cloud-api.md)）。
+
+ComfyUI 提取右侧显示默认云机状态卡；不显示原百分比、处理、成功、失败进度卡。错误和完成结果仍在页面可见位置展示。
 
 ### 6.2 Grsai 实现（本质是图生图）
 
 ```
 用户选采集图 → 用云端"提取 skill"提示词 → Grsai 图生图（带参考图）
   ↓
-落到 02-生图/03-提取/
+落到 02-生图/03-提取/{taskId}/
 ```
 
 提取 skill 提示词约束 LLM 写出"识别图中的印花元素，生成白底居中的印花"这种提示词。
@@ -477,10 +552,12 @@ ComfyUI 提取工作流改为客户端本地导入（detail 见 [chenyu-cloud-ap
 ```
 用户选印花（02-生图 任一目录的图）→ 选抠图工作流 → ComfyUI 跑 → 输出透明底 PNG
   ↓
-落到 02-生图/04-抠图/
+落到 02-生图/04-抠图/{taskId}/
 ```
 
 工作流由客户端本地导入和保存，常用 BiRefNet、RMBG 等模型。
+
+ComfyUI 抠图右侧显示默认云机状态卡；不显示原百分比、处理、成功、失败进度卡。错误和完成结果仍在页面可见位置展示。
 
 ### 7.2 混合路径（付费 + ComfyUI）
 
@@ -491,7 +568,7 @@ ComfyUI 提取工作流改为客户端本地导入（detail 见 [chenyu-cloud-ap
   ↓
 ComfyUI 工作流"黑白图转 alpha + 与原图混合"
   ↓
-透明底图 → 02-生图/04-抠图/
+透明底图 → 02-生图/04-抠图/{taskId}/
   ↓
 临时 mask.png 自动清理
 ```
@@ -593,6 +670,31 @@ async function runWithRetry(unit: WorkUnit, adapter: ImageGenerationAdapter) {
 }
 ```
 
+### 8.3 生图运行期日志
+
+生图模块提供与采集页一致的命令行式日志弹窗，用于用户当场判断当前卡在哪一步。
+
+展示入口：
+- 生图页顶部右侧“日志 {count}”按钮。
+- 点击后打开“生图日志”弹窗，终端风格逐行展示。
+- 弹窗支持清空；打开时自动滚动到底部。
+
+数据来源：
+- 主进程通过 `generation:debug-log` 推送 `GenerationDebugLogEntry`。
+- 前端只在当前运行期间保留最近 `1000` 条，应用重启后清空。
+
+覆盖阶段：
+- 提示词生成：开始、完成、失败。
+- 任务提交：provider、模型/工作流、尺寸、并发、参考图数量。
+- 运行进度：processed / total、成功数、失败数、当前提示词预览。
+- 完成/失败：总数、成功、失败、首张保存路径或错误原因。
+
+安全边界：
+- 不写入 `.workbench/logs/`，不是长期审计日志。
+- 不记录 API Key。
+- 不记录 base64 图片内容。
+- 提示词只展示短预览，避免长文本刷屏。
+
 ## 9. ComfyUI 云机管理
 
 ### 9.1 设置页 UI
@@ -690,6 +792,24 @@ async function shutdownFromSettings(instanceUuid: string) {
 - 默认云机没有可用 ComfyUI 地址时，提示用户刷新实例或手动填写地址。
 - 生图模块不自动开机，避免用户无感产生云 GPU 费用。
 
+### 9.4.1 生图页默认云机状态卡
+
+只在 ComfyUI 路径页面显示默认云机状态卡：
+- 文生图选择“ComfyUI 工作流”时。
+- ComfyUI 图生图。
+- ComfyUI 提取。
+- ComfyUI 抠图（含混合路径的 ComfyUI 输出阶段）。
+
+状态卡内容：
+- 状态：未设置 / 开机中 / 运行中 / 关机中 / 已关机。
+- 实例 UUID。
+- ComfyUI 地址。
+- 刷新按钮。
+
+状态卡不放开机/关机按钮。开机、关机、设为默认云机仍只在设置页处理。
+
+刷新按钮调用 `chenyu:refresh-active-instance`，真实查询晨羽并更新本地默认云机缓存。普通页面加载时可用 `chenyu:get-active-instance` 读取本地缓存。
+
 ### 9.5 关机策略
 
 创建实例时可立即设定晨羽侧定时关机。这个兜底由晨羽执行，软件崩溃、断网、进程被杀都不影响，最坏只多收设定时长内的费用。
@@ -785,6 +905,7 @@ CREATE TABLE prints (
 --   skill_id, skill_version
 --   source_artifact_ids = JSON 数组（图生图/提取/抠图的来源）
 --   prompt_snapshot
+--   file_path = 02-生图/{能力目录}/{taskId}/{印花ID}.png
 
 CREATE TABLE comfyui_instances (
   id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- 默认云机记录，不是全部实例列表
@@ -834,10 +955,19 @@ CREATE TABLE comfyui_instances (
                                         } → string[]
 
 // 实际生图
-'generation:run-txt2img'              → { prompts, params, concurrency } → TaskId
-'generation:run-img2img'              → { prompts, reference_images, mode, params } → TaskId
-'generation:run-extract'              → { source_images, provider, workflow_id?, params } → TaskId
-'generation:run-matting'              → { source_images, mode: 'comfyui' | 'mixed' } → TaskId
+'generation:run-txt2img'              → {
+                                          capability?: 'txt2img' | 'img2img',
+                                          prompts,
+                                          model,
+                                          aspectRatio,
+                                          referenceImages?,
+                                          concurrency
+                                        } → TaskId
+'generation:run-comfyui-txt2img'      → { prompts, workflowId, workflowVersion?, width, height, concurrency } → TaskId
+'generation:run-extract'              → { sourceImagePaths, skillId, promptCount, model, aspectRatio, concurrency } → TaskId
+'generation:run-comfyui-img2img'      → { sourceArtifactIds, workflowId, workflowVersion?, prompt } → TaskId
+'generation:run-comfyui-extract'      → { sourceImagePaths, workflowId, workflowVersion?, skillId?, prompt? } → TaskId
+'generation:run-comfyui-matting'      → { sourceArtifactIds, workflowId, workflowVersion?, prompt? } → TaskId
 'generation:list-comfyui-mixed-matting-workflows'
                                       → ComfyuiWorkflowSummary[] where category='matting-mixed'
 'generation:run-mixed-matting'        → {
@@ -849,6 +979,17 @@ CREATE TABLE comfyui_instances (
                                           maskModel?,
                                           prompt?,
                                         } → TaskId
+
+// 运行期日志事件（主进程推送，preload 暴露 onDebugLog）
+'generation:debug-log'                → {
+                                          id,
+                                          timestamp,
+                                          level: 'debug' | 'info' | 'warn' | 'error',
+                                          message,
+                                          taskId?,
+                                          capability?,
+                                          details?
+                                        }
 
 // 晨羽设置和实例管理
 'chenyu:get-settings'                 → ChenyuSettingsSnapshot
@@ -863,6 +1004,7 @@ CREATE TABLE comfyui_instances (
 'chenyu:shutdown-instance'            → { instanceUuid } → ChenyuInstanceInfo
 'chenyu:set-active-instance'          → { instanceUuid, comfyuiUrl? } → ComfyuiInstanceSummary
 'chenyu:get-active-instance'          → ComfyuiInstanceSummary | null
+'chenyu:refresh-active-instance'      → ComfyuiInstanceSummary | null
 
 // 高级设置折叠区才暴露
 'chenyu:restart-instance'             → { instanceUuid } → ChenyuInstanceInfo
@@ -894,10 +1036,11 @@ CREATE TABLE comfyui_instances (
 
 ## 15. 测试
 
-- 5 种生成方式（图生图）的视觉 LLM 调用差异
+- Grsai 图生图 4 种模式的视觉 LLM 调用差异，以及“生图时带参考图”默认关闭
 - 通用解析器对各种 LLM 输出格式的兜底
 - 晨羽固定 POD 实例创建、开机、关机、设为默认云机
 - 默认云机未运行时，ComfyUI 生图提示先去设置页开机，不自动开机
 - 工作流注入参数后的 ComfyUI 提交
 - 并发限制 + 429 自适应降级
 - 印花 ID 生成的唯一性
+- 生图运行期日志格式化、最近 `1000` 条保留、`generation:debug-log` IPC 事件

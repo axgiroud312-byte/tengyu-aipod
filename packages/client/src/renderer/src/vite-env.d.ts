@@ -63,6 +63,9 @@ declare global {
         getActiveInstance: () => Promise<
           import('../../main/lib/comfyui-instance-manager').ComfyuiInstanceSummary | null
         >
+        refreshActiveInstance: () => Promise<
+          import('../../main/lib/comfyui-instance-manager').ComfyuiInstanceSummary | null
+        >
       }
       browserProfileLock: {
         list: () => Promise<import('../../main/lib/browser-profile-lock').BrowserProfileHolder[]>
@@ -281,6 +284,11 @@ declare global {
         onCompleted: (
           callback: (
             event: import('../../main/lib/generation-service').GenerationTaskEvent,
+          ) => void,
+        ) => () => void
+        onDebugLog: (
+          callback: (
+            entry: import('../../main/lib/generation-service').GenerationDebugLogEntry,
           ) => void,
         ) => () => void
       }

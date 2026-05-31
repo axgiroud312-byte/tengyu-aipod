@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  type GenerationDebugLogEntry,
   generateTxt2imgPrompts,
   listComfyuiExtractWorkflows,
   listComfyuiImg2imgWorkflows,
@@ -19,6 +20,7 @@ import {
   runComfyuiTxt2imgBatch,
   runExtractBatch,
   runMixedMattingBatch,
+  runTxt2imgBatch,
 } from './generation-service'
 import { promptGeneratorService } from './prompt-generator-service'
 import type { SqliteDatabase } from './sqlite'
@@ -179,6 +181,102 @@ describe('generation prompt service entrypoint', () => {
   })
 })
 
+describe('generation Grsai paid image service', () => {
+  it('saves txt2img outputs under the task folder and stores artifacts', async () => {
+    const fakeDb = createFakeDb()
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'https://example.test/txt-result.png' }],
+    })
+    const downloadImage = vi.fn().mockResolvedValue(Buffer.from('txt-result-image'))
+    const debugLogs: GenerationDebugLogEntry[] = []
+
+    const result = await runTxt2imgBatch(
+      {
+        prompts: ['centered y2k star print'],
+        model: 'gpt-image-2',
+        aspectRatio: '1024x1024',
+        concurrency: 1,
+        taskId: 'txt-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-grsai',
+        openDatabase: fakeDb.openDatabase,
+        createGrsaiAdapter: () => ({ generate }),
+        downloadImage,
+        emitDebugLog: (entry) => debugLogs.push(entry),
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'txt-task', total: 1, succeeded: 1, failed: 0 })
+    expect(result.images[0]?.localPath).toContain(join('02-生图', '01-文生图', 'txt-task'))
+    expect(result.images[0]?.url).toMatch(/^file:/)
+    await expect(stat(result.images[0]?.localPath ?? '')).resolves.toBeTruthy()
+    expect(downloadImage).toHaveBeenCalledWith('https://example.test/txt-result.png')
+    expect(fakeDb.artifacts).toHaveLength(1)
+    expect(fakeDb.artifacts[0]?.[1]).toBe('txt-task')
+    expect(fakeDb.artifacts[0]?.[3]).toBe('txt2img')
+    expect(fakeDb.artifacts[0]?.[4]).toBe('grsai')
+    expect(fakeDb.artifacts[0]?.[10]).toBe('centered y2k star print')
+    expect(debugLogs).toContainEqual(
+      expect.objectContaining({
+        level: 'debug',
+        message: '正在处理提示词',
+        capability: 'txt2img',
+        taskId: 'txt-task',
+        details: expect.objectContaining({
+          operation: 'progress',
+          prompt: 'centered y2k star print',
+        }),
+      }),
+    )
+  })
+
+  it('saves img2img outputs under the task folder with reference images', async () => {
+    const fakeDb = createFakeDb()
+    const referenceImage = {
+      base64: Buffer.from('reference-image').toString('base64'),
+      mime_type: 'image/png',
+    }
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'https://example.test/img-result.png' }],
+    })
+
+    const result = await runTxt2imgBatch(
+      {
+        capability: 'img2img',
+        prompts: ['make a y2k variation'],
+        model: 'gpt-image-2',
+        aspectRatio: '1536x1024',
+        referenceImages: [referenceImage],
+        concurrency: 1,
+        taskId: 'img-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-grsai',
+        openDatabase: fakeDb.openDatabase,
+        createGrsaiAdapter: () => ({ generate }),
+        downloadImage: vi.fn().mockResolvedValue(Buffer.from('img-result-image')),
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'img-task', total: 1, succeeded: 1, failed: 0 })
+    expect(result.images[0]?.localPath).toContain(join('02-生图', '02-图生图', 'img-task'))
+    await expect(stat(result.images[0]?.localPath ?? '')).resolves.toBeTruthy()
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'img2img',
+        reference_images: [referenceImage],
+        output: expect.objectContaining({ aspect_ratio: '1536x1024' }),
+      }),
+    )
+    expect(fakeDb.artifacts[0]?.[3]).toBe('img2img')
+  })
+})
+
 describe('generation extract service', () => {
   it('lists collection images recursively for extract sources', async () => {
     await createImage(join(workbenchRoot, '01-采集', 'sku-a', 'a.png'), 'image-a')
@@ -240,7 +338,7 @@ describe('generation extract service', () => {
     )
 
     expect(result).toMatchObject({ taskId: 'extract-task', total: 1, succeeded: 1, failed: 0 })
-    expect(result.images[0]?.localPath).toContain(join('02-生图', '03-提取'))
+    expect(result.images[0]?.localPath).toContain(join('02-生图', '03-提取', 'extract-task'))
     await expect(stat(result.images[0]?.localPath ?? '')).resolves.toBeTruthy()
     expect(generatePrompts).toHaveBeenCalledWith(
       expect.objectContaining({

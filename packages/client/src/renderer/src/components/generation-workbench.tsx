@@ -1,5 +1,11 @@
 import { Button } from '@/components/ui/button'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import {
+  formatGenerationDebugLogLine,
+  generationDebugLogLevelCounts,
+} from '@/features/generation/generation-debug-log'
 import type { GenerationCapability, Skill, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CircleDashed,
@@ -8,12 +14,15 @@ import {
   Loader2,
   Play,
   Plus,
+  RefreshCw,
   Scissors,
+  Terminal,
   WandSparkles,
 } from 'lucide-react'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComfyuiWorkflowSummary } from '../../../main/lib/comfyui-workflow-cache'
 import type {
+  GenerationDebugLogEntry,
   GenerationImageSource,
   GenerationProgress,
   GenerationRunResult,
@@ -32,6 +41,7 @@ import {
 type Txt2imgMode = 'ai' | 'manual'
 type Img2imgMode = 'layout' | 'style' | 'layout-style' | 'manual'
 type MattingMode = 'comfyui' | 'mixed'
+type Txt2imgGenerationPath = 'grsai' | 'comfyui'
 type ReferenceImageDraft = {
   id: string
   name: string
@@ -40,6 +50,8 @@ type ReferenceImageDraft = {
   mime_type: string
 }
 type SkillVariablesState = Record<string, string | boolean>
+type ActiveComfyuiInstance = Awaited<ReturnType<typeof window.api.chenyu.getActiveInstance>>
+type ComfyuiInstanceStatus = NonNullable<ActiveComfyuiInstance>['status'] | 'none'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
 type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
@@ -61,6 +73,35 @@ const unavailableText: Record<GenerationCapability, string> = {
   img2img: '当前组合不可用，请切换实现方式。',
   extract: '当前组合不可用，请切换实现方式。',
   matting: 'Grsai 不内置透明底抠图，请使用 ComfyUI 或后续混合路径。',
+}
+
+const comfyuiInstanceStatusText: Record<ComfyuiInstanceStatus, string> = {
+  none: '未设置',
+  starting: '开机中',
+  running: '运行中',
+  shutting_down: '关机中',
+  stopped: '已关机',
+}
+
+const comfyuiInstanceStatusClassName: Record<ComfyuiInstanceStatus, string> = {
+  none: 'border-slate-200 bg-slate-50 text-slate-700',
+  starting: 'border-blue-200 bg-blue-50 text-blue-700',
+  running: 'border-emerald-200 bg-emerald-50 text-emerald-700',
+  shutting_down: 'border-amber-200 bg-amber-50 text-amber-800',
+  stopped: 'border-slate-200 bg-slate-50 text-slate-700',
+}
+
+function generationDebugLogLevelClassName(level: GenerationDebugLogEntry['level']) {
+  switch (level) {
+    case 'error':
+      return 'break-all whitespace-pre-wrap text-red-300'
+    case 'warn':
+      return 'break-all whitespace-pre-wrap text-amber-300'
+    case 'info':
+      return 'break-all whitespace-pre-wrap text-emerald-200'
+    default:
+      return 'break-all whitespace-pre-wrap text-zinc-400'
+  }
 }
 
 const fallbackGrsaiModels: GrsaiImageModelOption[] = [
@@ -88,6 +129,7 @@ const fallbackBailianVisionModels: LocalModelOption[] = [
 const GRSAI_EXTRACT_SKILL_ID = 'extract-paid-model'
 const COMFYUI_EXTRACT_SKILL_ID = 'extract-comfyui-workflow'
 const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
+const GENERATION_DEBUG_LOG_LIMIT = 1000
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
     key: 'layout',
@@ -269,6 +311,133 @@ function variablePayload(variables: SkillVariable[], values: SkillVariablesState
   )
 }
 
+function isBusyComfyuiStatus(status: ComfyuiInstanceStatus) {
+  return status === 'starting' || status === 'shutting_down'
+}
+
+function ComfyuiInstanceStatusBadge({ status }: { status: ComfyuiInstanceStatus }) {
+  return (
+    <span
+      className={`inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs font-medium ${comfyuiInstanceStatusClassName[status]}`}
+    >
+      {isBusyComfyuiStatus(status) ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
+      {comfyuiInstanceStatusText[status]}
+    </span>
+  )
+}
+
+function DefaultComfyuiInstanceStatusCard() {
+  const [instance, setInstance] = useState<ActiveComfyuiInstance>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    window.api.chenyu
+      .getActiveInstance()
+      .then((nextInstance) => {
+        if (!cancelled) {
+          setInstance(nextInstance)
+          setError(null)
+        }
+      })
+      .catch((nextError) => {
+        if (!cancelled) {
+          setError(nextError instanceof Error ? nextError.message : '读取默认云机失败')
+        }
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function refreshInstance() {
+    setLoading(true)
+    setError(null)
+    try {
+      const nextInstance = await window.api.chenyu.refreshActiveInstance()
+      setInstance(nextInstance)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '刷新默认云机失败')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const status = instance?.status ?? 'none'
+
+  return (
+    <div className="rounded-md border bg-background p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <h4 className="font-semibold">默认云机</h4>
+          <p className="mt-1 text-sm text-muted-foreground">晨羽智云 ComfyUI 实例状态</p>
+        </div>
+        <Button
+          className="h-9 px-3"
+          disabled={loading}
+          onClick={() => void refreshInstance()}
+          type="button"
+          variant="secondary"
+        >
+          {loading ? (
+            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="mr-2 h-4 w-4" />
+          )}
+          刷新
+        </Button>
+      </div>
+      <div className="mt-4">
+        <ComfyuiInstanceStatusBadge status={status} />
+      </div>
+      <dl className="mt-4 grid gap-3 text-sm">
+        <div>
+          <dt className="text-muted-foreground">实例 UUID</dt>
+          <dd className="mt-1 break-all font-mono text-xs font-medium">
+            {instance?.instanceUuid ?? '未设置默认云机'}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-muted-foreground">ComfyUI 地址</dt>
+          <dd className="mt-1 break-all font-mono text-xs font-medium">
+            {instance?.comfyuiUrl ?? '未配置'}
+          </dd>
+        </div>
+      </dl>
+      {error ? (
+        <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+    </div>
+  )
+}
+
+function GenerationFeedback({
+  error,
+  result,
+}: {
+  error: string | null
+  result: GenerationRunResult | null
+}) {
+  if (!error && !result) {
+    return null
+  }
+
+  return (
+    <div className="rounded-md border bg-background p-4">
+      {error ? (
+        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      ) : null}
+      {result ? (
+        <div className="rounded-md bg-muted px-3 py-2 text-sm">
+          完成：成功 {result.succeeded}，失败 {result.failed}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function capabilityCopy(capability: GenerationCapability, provider: GenerationProvider) {
   if (!isGenerationProviderAvailable(capability, provider)) {
     return {
@@ -325,6 +494,15 @@ function GrsaiPromptGenerationPanel({
   const [manualText, setManualText] = useState('')
   const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>([])
   const [sendReferenceToImageModel, setSendReferenceToImageModel] = useState(false)
+  const [txt2imgGenerationPath, setTxt2imgGenerationPath] = useState<Txt2imgGenerationPath>('grsai')
+  const [comfyuiTxt2imgWorkflows, setComfyuiTxt2imgWorkflows] = useState<ComfyuiWorkflowSummary[]>(
+    [],
+  )
+  const [comfyuiTxt2imgWorkflowKey, setComfyuiTxt2imgWorkflowKey] = useState('')
+  const [comfyuiTxt2imgWidth, setComfyuiTxt2imgWidth] = useState('1024')
+  const [comfyuiTxt2imgHeight, setComfyuiTxt2imgHeight] = useState('1024')
+  const [comfyuiTxt2imgConcurrency, setComfyuiTxt2imgConcurrency] = useState('1')
+  const [loadingComfyuiTxt2imgWorkflows, setLoadingComfyuiTxt2imgWorkflows] = useState(false)
   const [drafts, setDrafts] = useState<Txt2imgPromptDraft[]>([])
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
@@ -390,6 +568,10 @@ function GrsaiPromptGenerationPanel({
     [drafts],
   )
   const percent = progressPercent(progress)
+  const usesComfyuiTxt2img = capability === 'txt2img' && txt2imgGenerationPath === 'comfyui'
+  const selectedComfyuiTxt2imgWorkflow = comfyuiTxt2imgWorkflows.find(
+    (workflow) => workflowOptionKey(workflow) === comfyuiTxt2imgWorkflowKey,
+  )
 
   useEffect(() => {
     const firstModel = generationModels[0]
@@ -413,6 +595,31 @@ function GrsaiPromptGenerationPanel({
       setLlmModel(firstLlm.id)
     }
   }, [llmModel, llmModels, settings, usesPromptReference])
+
+  useEffect(() => {
+    if (capability !== 'txt2img') {
+      return
+    }
+    void loadComfyuiTxt2imgWorkflows()
+  }, [capability])
+
+  async function loadComfyuiTxt2imgWorkflows() {
+    setLoadingComfyuiTxt2imgWorkflows(true)
+    setError(null)
+    try {
+      const nextWorkflows = await window.api.generation.listComfyuiTxt2imgWorkflows()
+      setComfyuiTxt2imgWorkflows(nextWorkflows)
+      setComfyuiTxt2imgWorkflowKey((current) =>
+        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback('txt2img', nextWorkflows),
+      )
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 文生图工作流失败')
+    } finally {
+      setLoadingComfyuiTxt2imgWorkflows(false)
+    }
+  }
 
   function promptReferenceImages() {
     return referenceImages.map((image) => ({
@@ -503,6 +710,10 @@ function GrsaiPromptGenerationPanel({
       setError('请先准备至少一条提示词')
       return
     }
+    if (usesComfyuiTxt2img && !selectedComfyuiTxt2imgWorkflow) {
+      setError('请选择 ComfyUI 文生图工作流')
+      return
+    }
     if (sendsReferenceToImageModel && referenceImages.length === 0) {
       setError('请先添加至少一张参考图')
       return
@@ -511,18 +722,35 @@ function GrsaiPromptGenerationPanel({
     setResult(null)
     setRunning(true)
     try {
-      const taskId = await window.api.generation.runTxt2img({
-        capability,
-        prompts,
-        model: generationModel,
-        aspectRatio,
-        ...(sendsReferenceToImageModel
-          ? {
-              referenceImages: promptReferenceImages(),
-            }
-          : {}),
-        concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
-      })
+      let taskId: string
+      if (usesComfyuiTxt2img) {
+        if (!selectedComfyuiTxt2imgWorkflow) {
+          throw new Error('请选择 ComfyUI 文生图工作流')
+        }
+        taskId = await window.api.generation.runComfyuiTxt2img({
+          prompts,
+          workflowId: selectedComfyuiTxt2imgWorkflow.id,
+          ...(selectedComfyuiTxt2imgWorkflow.version
+            ? { workflowVersion: selectedComfyuiTxt2imgWorkflow.version }
+            : {}),
+          width: clampNumber(comfyuiTxt2imgWidth, 256, 4096, 1024),
+          height: clampNumber(comfyuiTxt2imgHeight, 256, 4096, 1024),
+          concurrency: clampNumber(comfyuiTxt2imgConcurrency, 1, 10, 1),
+        })
+      } else {
+        taskId = await window.api.generation.runTxt2img({
+          capability,
+          prompts,
+          model: generationModel,
+          aspectRatio,
+          ...(sendsReferenceToImageModel
+            ? {
+                referenceImages: promptReferenceImages(),
+              }
+            : {}),
+          concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
+        })
+      }
       setTaskId(taskId)
       setProgress({
         task_id: taskId,
@@ -563,7 +791,11 @@ function GrsaiPromptGenerationPanel({
   }
 
   return (
-    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+    <div
+      className={`grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] ${
+        capability === 'txt2img' ? '' : 'mt-5'
+      }`}
+    >
       <div className="space-y-5">
         <div className="rounded-md border bg-background p-4">
           <div className="flex gap-2">
@@ -780,47 +1012,143 @@ function GrsaiPromptGenerationPanel({
             </div>
           ) : null}
           <div className="mt-4 grid gap-3">
-            <label className="block space-y-2 text-sm font-medium">
-              <span>生图模型</span>
-              <select
-                className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                onChange={(event) => setGenerationModel(event.target.value)}
-                value={generationModel}
-              >
-                {generationModels.map((model) => (
-                  <option key={model.id} value={model.id}>
-                    {modelLabel(model)}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <div className="grid gap-3">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>尺寸</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setAspectRatio(event.target.value)}
-                  value={aspectRatio}
+            {capability === 'txt2img' ? (
+              <div className="grid grid-cols-2 gap-2 rounded-md bg-muted p-1">
+                <Button
+                  className="h-9"
+                  onClick={() => setTxt2imgGenerationPath('grsai')}
+                  type="button"
+                  variant={txt2imgGenerationPath === 'grsai' ? 'default' : 'secondary'}
                 >
-                  {sizeOptions.map((size) => (
-                    <option key={size} value={size}>
-                      {size}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label className="block space-y-2 text-sm font-medium">
-              <span>并发</span>
-              <input
-                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                max={maxConcurrency}
-                min={1}
-                onChange={(event) => setConcurrency(event.target.value)}
-                type="number"
-                value={concurrency}
-              />
-            </label>
+                  Grsai
+                </Button>
+                <Button
+                  className="h-9"
+                  onClick={() => setTxt2imgGenerationPath('comfyui')}
+                  type="button"
+                  variant={txt2imgGenerationPath === 'comfyui' ? 'default' : 'secondary'}
+                >
+                  ComfyUI 工作流
+                </Button>
+              </div>
+            ) : null}
+
+            {!usesComfyuiTxt2img ? (
+              <>
+                <label className="block space-y-2 text-sm font-medium">
+                  <span>生图模型</span>
+                  <select
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onChange={(event) => setGenerationModel(event.target.value)}
+                    value={generationModel}
+                  >
+                    {generationModels.map((model) => (
+                      <option key={model.id} value={model.id}>
+                        {modelLabel(model)}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="grid gap-3">
+                  <label className="block space-y-2 text-sm font-medium">
+                    <span>尺寸</span>
+                    <select
+                      className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      onChange={(event) => setAspectRatio(event.target.value)}
+                      value={aspectRatio}
+                    >
+                      {sizeOptions.map((size) => (
+                        <option key={size} value={size}>
+                          {size}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+                <label className="block space-y-2 text-sm font-medium">
+                  <span>并发</span>
+                  <input
+                    className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    max={maxConcurrency}
+                    min={1}
+                    onChange={(event) => setConcurrency(event.target.value)}
+                    type="number"
+                    value={concurrency}
+                  />
+                </label>
+              </>
+            ) : (
+              <>
+                <label className="block space-y-2 text-sm font-medium">
+                  <span>文生图工作流</span>
+                  <select
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onChange={(event) => {
+                      rememberWorkflowKey('txt2img', event.target.value)
+                      setComfyuiTxt2imgWorkflowKey(event.target.value)
+                    }}
+                    value={comfyuiTxt2imgWorkflowKey}
+                  >
+                    {!comfyuiTxt2imgWorkflows.length ? (
+                      <option value="">暂无可用工作流</option>
+                    ) : null}
+                    {comfyuiTxt2imgWorkflows.map((workflow) => (
+                      <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
+                        {workflow.name} · {workflow.version}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <Button
+                  disabled={loadingComfyuiTxt2imgWorkflows}
+                  onClick={() => void loadComfyuiTxt2imgWorkflows()}
+                  type="button"
+                  variant="secondary"
+                >
+                  {loadingComfyuiTxt2imgWorkflows ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                  )}
+                  刷新工作流
+                </Button>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="block space-y-2 text-sm font-medium">
+                    <span>宽度</span>
+                    <input
+                      className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      max={4096}
+                      min={256}
+                      onChange={(event) => setComfyuiTxt2imgWidth(event.target.value)}
+                      type="number"
+                      value={comfyuiTxt2imgWidth}
+                    />
+                  </label>
+                  <label className="block space-y-2 text-sm font-medium">
+                    <span>高度</span>
+                    <input
+                      className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      max={4096}
+                      min={256}
+                      onChange={(event) => setComfyuiTxt2imgHeight(event.target.value)}
+                      type="number"
+                      value={comfyuiTxt2imgHeight}
+                    />
+                  </label>
+                </div>
+                <label className="block space-y-2 text-sm font-medium">
+                  <span>并发</span>
+                  <input
+                    className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    max={10}
+                    min={1}
+                    onChange={(event) => setComfyuiTxt2imgConcurrency(event.target.value)}
+                    type="number"
+                    value={comfyuiTxt2imgConcurrency}
+                  />
+                </label>
+              </>
+            )}
             {capability === 'img2img' ? (
               <label className="inline-flex items-center gap-2 text-sm font-medium">
                 <input
@@ -855,312 +1183,52 @@ function GrsaiPromptGenerationPanel({
           </div>
         </div>
 
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold">进度</h4>
-            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-          </div>
-          <div className="mt-4 h-2 rounded-full bg-muted">
-            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">处理</dt>
-              <dd className="font-medium tabular-nums">
-                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">成功</dt>
-              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">失败</dt>
-              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">已选提示词</dt>
-              <dd className="font-medium tabular-nums">{selectedPrompts.length}</dd>
-            </div>
-          </dl>
-          {error ? (
-            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-          ) : null}
-          {result ? (
-            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-              完成：成功 {result.succeeded}，失败 {result.failed}
-            </div>
-          ) : null}
-        </div>
-      </aside>
-    </div>
-  )
-}
-
-function ComfyuiTxt2imgPanel() {
-  const workflowScope = 'txt2img'
-  const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [workflowKey, setWorkflowKey] = useState('')
-  const [manualText, setManualText] = useState('')
-  const [width, setWidth] = useState('1024')
-  const [height, setHeight] = useState('1024')
-  const [concurrency, setConcurrency] = useState('1')
-  const [taskId, setTaskId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<GenerationProgress | null>(null)
-  const [result, setResult] = useState<GenerationRunResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loadingWorkflows, setLoadingWorkflows] = useState(false)
-  const [running, setRunning] = useState(false)
-
-  useEffect(() => {
-    void loadWorkflows()
-  }, [])
-
-  useEffect(() => {
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.task_id !== taskId) {
-        return
-      }
-      setProgress(nextProgress)
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== taskId) {
-        return
-      }
-      if (!event.ok && event.taskId !== taskId) {
-        return
-      }
-      setRunning(false)
-      if (event.ok) {
-        setResult(event.result)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [taskId])
-
-  const percent = progressPercent(progress)
-  const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
-
-  async function loadWorkflows() {
-    setLoadingWorkflows(true)
-    setError(null)
-    try {
-      const nextWorkflows = await window.api.generation.listComfyuiTxt2imgWorkflows()
-      setWorkflows(nextWorkflows)
-      setWorkflowKey((current) =>
-        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(workflowScope, nextWorkflows),
-      )
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 文生图工作流失败')
-    } finally {
-      setLoadingWorkflows(false)
-    }
-  }
-
-  async function startTxt2img() {
-    setError(null)
-    const prompts = await window.api.generation.parseManualPrompts(manualText)
-    if (prompts.length === 0) {
-      setError('请先填写至少一条提示词')
-      return
-    }
-    if (!selectedWorkflow) {
-      setError('请选择 ComfyUI 文生图工作流')
-      return
-    }
-
-    setResult(null)
-    setRunning(true)
-    const taskId = await window.api.generation.runComfyuiTxt2img({
-      prompts,
-      workflowId: selectedWorkflow.id,
-      workflowVersion: selectedWorkflow.version,
-      width: clampNumber(width, 256, 4096, 1024),
-      height: clampNumber(height, 256, 4096, 1024),
-      concurrency: clampNumber(concurrency, 1, 10, 1),
-    })
-    setTaskId(taskId)
-    setProgress({
-      task_id: taskId,
-      capability: 'txt2img',
-      processed: 0,
-      total: prompts.length,
-      succeeded: 0,
-      failed: 0,
-    })
-  }
-
-  return (
-    <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-      <div className="space-y-5">
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h4 className="font-semibold">提示词</h4>
-              <p className="mt-1 text-sm text-muted-foreground">
-                文生图不接收源图，每行一条提示词。
-              </p>
-            </div>
-            <Button onClick={() => setManualText('')} type="button" variant="secondary">
-              清空
-            </Button>
-          </div>
-          <textarea
-            className="mt-4 min-h-56 w-full resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            onChange={(event) => setManualText(event.target.value)}
-            placeholder="例如：居中构图的复古花朵印花，白底，适合夏季 T 恤"
-            value={manualText}
-          />
-        </div>
-
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h4 className="font-semibold">ComfyUI 工作流</h4>
-              <p className="mt-1 text-sm text-muted-foreground">
-                工作流从设置页本地导入，这里只注入提示词和尺寸。
-              </p>
-            </div>
-            <Button onClick={() => void loadWorkflows()} type="button" variant="secondary">
-              {loadingWorkflows ? (
-                <Loader2 className="mr-2 h-4 w-4" />
-              ) : (
-                <CircleDashed className="mr-2 h-4 w-4" />
-              )}
-              刷新
-            </Button>
-          </div>
-          <label className="mt-4 block space-y-2 text-sm font-medium">
-            <span>工作流</span>
-            <select
-              className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-              onChange={(event) => {
-                rememberWorkflowKey(workflowScope, event.target.value)
-                setWorkflowKey(event.target.value)
-              }}
-              value={workflowKey}
-            >
-              {workflows.map((workflow) => (
-                <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
-                  {workflow.name} · {workflow.version}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-
-        {result ? (
+        {usesComfyuiTxt2img ? (
+          <>
+            <DefaultComfyuiInstanceStatusCard />
+            <GenerationFeedback error={error} result={result} />
+          </>
+        ) : (
           <div className="rounded-md border bg-background p-4">
-            <h4 className="font-semibold">本次生成的印花</h4>
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              {result.images.map((image) => (
-                <div className="rounded-md border bg-muted/30 p-2 text-sm" key={image.url}>
-                  <img
-                    alt={image.prompt}
-                    className="h-32 w-full rounded-sm object-cover"
-                    src={image.url}
-                  />
-                  <div className="mt-2 line-clamp-2 text-xs text-muted-foreground">
-                    {image.prompt}
-                  </div>
-                </div>
-              ))}
+            <div className="flex items-center justify-between">
+              <h4 className="font-semibold">进度</h4>
+              <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
             </div>
+            <div className="mt-4 h-2 rounded-full bg-muted">
+              <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
+            </div>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-muted-foreground">处理</dt>
+                <dd className="font-medium tabular-nums">
+                  {progress ? `${progress.processed}/${progress.total}` : '0/0'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">成功</dt>
+                <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">失败</dt>
+                <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">已选提示词</dt>
+                <dd className="font-medium tabular-nums">{selectedPrompts.length}</dd>
+              </div>
+            </dl>
+            {error ? (
+              <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+                {error}
+              </div>
+            ) : null}
+            {result ? (
+              <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
+                完成：成功 {result.succeeded}，失败 {result.failed}
+              </div>
+            ) : null}
           </div>
-        ) : null}
-      </div>
-
-      <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
-        <div className="rounded-md border bg-background p-4">
-          <h4 className="font-semibold">生成参数</h4>
-          <div className="mt-4 grid gap-3">
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>宽度</span>
-                <input
-                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  max={4096}
-                  min={256}
-                  onChange={(event) => setWidth(event.target.value)}
-                  type="number"
-                  value={width}
-                />
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>高度</span>
-                <input
-                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  max={4096}
-                  min={256}
-                  onChange={(event) => setHeight(event.target.value)}
-                  type="number"
-                  value={height}
-                />
-              </label>
-            </div>
-            <label className="block space-y-2 text-sm font-medium">
-              <span>并发</span>
-              <input
-                className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                max={10}
-                min={1}
-                onChange={(event) => setConcurrency(event.target.value)}
-                type="number"
-                value={concurrency}
-              />
-            </label>
-            <Button disabled={running} onClick={() => void startTxt2img()} type="button">
-              {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
-              开始生成
-            </Button>
-          </div>
-        </div>
-
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold">进度</h4>
-            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-          </div>
-          <div className="mt-4 h-2 rounded-full bg-muted">
-            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">处理</dt>
-              <dd className="font-medium tabular-nums">
-                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">成功</dt>
-              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">失败</dt>
-              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">工作流</dt>
-              <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
-            </div>
-          </dl>
-          {error ? (
-            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-          ) : null}
-          {result ? (
-            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-              完成：成功 {result.succeeded}，失败 {result.failed}
-            </div>
-          ) : null}
-        </div>
+        )}
       </aside>
     </div>
   )
@@ -1541,7 +1609,7 @@ function ComfyuiImg2imgPanel() {
   const [workflowKey, setWorkflowKey] = useState('')
   const [prompt, setPrompt] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
@@ -1581,7 +1649,6 @@ function ComfyuiImg2imgPanel() {
     }
   }, [taskId])
 
-  const percent = progressPercent(progress)
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
 
   async function loadSources() {
@@ -1783,39 +1850,8 @@ function ComfyuiImg2imgPanel() {
           </Button>
         </div>
 
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold">进度</h4>
-            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-          </div>
-          <div className="mt-4 h-2 rounded-full bg-muted">
-            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">处理</dt>
-              <dd className="font-medium tabular-nums">
-                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">成功</dt>
-              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">失败</dt>
-              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-            </div>
-          </dl>
-          {error ? (
-            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-          ) : null}
-          {result ? (
-            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-              完成：成功 {result.succeeded}，失败 {result.failed}
-            </div>
-          ) : null}
-        </div>
+        <DefaultComfyuiInstanceStatusCard />
+        <GenerationFeedback error={error} result={result} />
       </aside>
     </div>
   )
@@ -1830,7 +1866,7 @@ function ComfyuiExtractPanel() {
   const [workflowKey, setWorkflowKey] = useState('')
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
   const [taskId, setTaskId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
@@ -1880,7 +1916,6 @@ function ComfyuiExtractPanel() {
     }
   }, [taskId])
 
-  const percent = progressPercent(progress)
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
 
   async function loadSources() {
@@ -2084,39 +2119,8 @@ function ComfyuiExtractPanel() {
           </Button>
         </div>
 
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold">进度</h4>
-            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-          </div>
-          <div className="mt-4 h-2 rounded-full bg-muted">
-            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">处理</dt>
-              <dd className="font-medium tabular-nums">
-                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">成功</dt>
-              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">失败</dt>
-              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-            </div>
-          </dl>
-          {error ? (
-            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-          ) : null}
-          {result ? (
-            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-              完成：成功 {result.succeeded}，失败 {result.failed}
-            </div>
-          ) : null}
-        </div>
+        <DefaultComfyuiInstanceStatusCard />
+        <GenerationFeedback error={error} result={result} />
       </aside>
     </div>
   )
@@ -2135,7 +2139,7 @@ function ComfyuiMattingPanel() {
   const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [prompt, setPrompt] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
-  const [progress, setProgress] = useState<GenerationProgress | null>(null)
+  const [, setProgress] = useState<GenerationProgress | null>(null)
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
@@ -2174,7 +2178,6 @@ function ComfyuiMattingPanel() {
     }
   }, [taskId])
 
-  const percent = progressPercent(progress)
   const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows
   const activeWorkflowKey = mode === 'mixed' ? mixedWorkflowKey : workflowKey
   const selectedWorkflow = activeWorkflows.find(
@@ -2419,39 +2422,8 @@ function ComfyuiMattingPanel() {
           </Button>
         </div>
 
-        <div className="rounded-md border bg-background p-4">
-          <div className="flex items-center justify-between">
-            <h4 className="font-semibold">进度</h4>
-            <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-          </div>
-          <div className="mt-4 h-2 rounded-full bg-muted">
-            <div className="h-2 rounded-full bg-primary" style={{ width: `${percent}%` }} />
-          </div>
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
-            <div>
-              <dt className="text-muted-foreground">处理</dt>
-              <dd className="font-medium tabular-nums">
-                {progress ? `${progress.processed}/${progress.total}` : '0/0'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">成功</dt>
-              <dd className="font-medium tabular-nums">{progress?.succeeded ?? 0}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">失败</dt>
-              <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
-            </div>
-          </dl>
-          {error ? (
-            <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-          ) : null}
-          {result ? (
-            <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-              完成：成功 {result.succeeded}，失败 {result.failed}
-            </div>
-          ) : null}
-        </div>
+        <DefaultComfyuiInstanceStatusCard />
+        <GenerationFeedback error={error} result={result} />
       </aside>
     </div>
   )
@@ -2533,10 +2505,27 @@ export function GenerationWorkbench() {
   const tabs = useGenerationStore((state) => state.tabs)
   const setActiveCapability = useGenerationStore((state) => state.setActiveCapability)
   const setProvider = useGenerationStore((state) => state.setProvider)
+  const [debugLogs, setDebugLogs] = useState<GenerationDebugLogEntry[]>([])
+  const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
+  const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const activeProvider = tabs[activeCapability].provider
   const activeCapabilityMeta = generationCapabilities.find((item) => item.key === activeCapability)
   const activeCopy = capabilityCopy(activeCapability, activeProvider)
   const unavailable = !isGenerationProviderAvailable(activeCapability, activeProvider)
+  const debugLogCounts = useMemo(() => generationDebugLogLevelCounts(debugLogs), [debugLogs])
+  const debugIssueCount = debugLogCounts.warn + debugLogCounts.error
+
+  useEffect(() => {
+    return window.api.generation.onDebugLog((entry) => {
+      setDebugLogs((current) => [...current, entry].slice(-GENERATION_DEBUG_LOG_LIMIT))
+    })
+  }, [])
+
+  useEffect(() => {
+    if (isDebugLogOpen && debugLogs.length > 0) {
+      debugLogEndRef.current?.scrollIntoView({ block: 'end' })
+    }
+  }, [debugLogs.length, isDebugLogOpen])
 
   return (
     <div className="space-y-6">
@@ -2548,10 +2537,21 @@ export function GenerationWorkbench() {
               按能力选择 Grsai 或 ComfyUI 路径
             </h2>
           </div>
-          <div className="rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
-            <div>输出目录</div>
-            <div className="mt-1 font-medium text-foreground">
-              {activeCapabilityMeta?.outputDir ?? '02-生图'}
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => setIsDebugLogOpen(true)} type="button" variant="secondary">
+              <Terminal className="mr-2 h-4 w-4" />
+              日志 {debugLogs.length}
+              {debugIssueCount > 0 ? (
+                <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {debugIssueCount}
+                </span>
+              ) : null}
+            </Button>
+            <div className="rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
+              <div>输出目录</div>
+              <div className="mt-1 font-medium text-foreground">
+                {activeCapabilityMeta?.outputDir ?? '02-生图'}
+              </div>
             </div>
           </div>
         </div>
@@ -2579,64 +2579,105 @@ export function GenerationWorkbench() {
         </Tabs>
       </div>
 
-      <div className="rounded-md border bg-background p-5 shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold">实现方式</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{providerNotes[activeProvider]}</p>
-          </div>
-          <div className="flex gap-2">
-            {generationProviders.map((provider) => {
-              const available = isGenerationProviderAvailable(activeCapability, provider.key)
-              const selected = activeProvider === provider.key
-              return (
-                <Button
-                  className="h-10"
-                  disabled={!available}
-                  key={provider.key}
-                  onClick={() => setProvider(activeCapability, provider.key)}
-                  title={available ? provider.label : unavailableText[activeCapability]}
-                  type="button"
-                  variant={selected ? 'default' : 'secondary'}
-                >
-                  {provider.label}
-                </Button>
-              )
-            })}
-          </div>
+      {activeCapability === 'txt2img' ? (
+        <div className="rounded-md border bg-background p-5 shadow-sm">
+          <GrsaiPromptGenerationPanel capability="txt2img" />
         </div>
-
-        {activeCapability === 'txt2img' && activeProvider === 'comfyui-chenyu' ? (
-          <ComfyuiTxt2imgPanel />
-        ) : activeCapability === 'extract' && activeProvider === 'grsai' ? (
-          <GrsaiExtractPanel />
-        ) : activeCapability === 'extract' && activeProvider === 'comfyui-chenyu' ? (
-          <ComfyuiExtractPanel />
-        ) : activeCapability === 'matting' && activeProvider === 'comfyui-chenyu' ? (
-          <ComfyuiMattingPanel />
-        ) : activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu' ? (
-          <ComfyuiImg2imgPanel />
-        ) : (activeCapability === 'txt2img' || activeCapability === 'img2img') &&
-          activeProvider === 'grsai' ? (
-          <GrsaiPromptGenerationPanel capability={activeCapability} />
-        ) : (
-          <div
-            className={`mt-5 rounded-md border p-5 ${
-              unavailable ? 'border-amber-200 bg-amber-50 text-amber-900' : 'bg-muted/40'
-            }`}
-          >
-            <div className="flex items-start gap-3">
-              <CircleDashed className="mt-0.5 h-5 w-5 shrink-0" />
-              <div>
-                <h4 className="font-semibold">{activeCopy.title}</h4>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  {activeCopy.description}
-                </p>
-              </div>
+      ) : (
+        <div className="rounded-md border bg-background p-5 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold">实现方式</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{providerNotes[activeProvider]}</p>
+            </div>
+            <div className="flex gap-2">
+              {generationProviders.map((provider) => {
+                const available = isGenerationProviderAvailable(activeCapability, provider.key)
+                const selected = activeProvider === provider.key
+                return (
+                  <Button
+                    className="h-10"
+                    disabled={!available}
+                    key={provider.key}
+                    onClick={() => setProvider(activeCapability, provider.key)}
+                    title={available ? provider.label : unavailableText[activeCapability]}
+                    type="button"
+                    variant={selected ? 'default' : 'secondary'}
+                  >
+                    {provider.label}
+                  </Button>
+                )
+              })}
             </div>
           </div>
-        )}
-      </div>
+
+          {activeCapability === 'extract' && activeProvider === 'grsai' ? (
+            <GrsaiExtractPanel />
+          ) : activeCapability === 'extract' && activeProvider === 'comfyui-chenyu' ? (
+            <ComfyuiExtractPanel />
+          ) : activeCapability === 'matting' && activeProvider === 'comfyui-chenyu' ? (
+            <ComfyuiMattingPanel />
+          ) : activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu' ? (
+            <ComfyuiImg2imgPanel />
+          ) : activeCapability === 'img2img' && activeProvider === 'grsai' ? (
+            <GrsaiPromptGenerationPanel capability={activeCapability} />
+          ) : (
+            <div
+              className={`mt-5 rounded-md border p-5 ${
+                unavailable ? 'border-amber-200 bg-amber-50 text-amber-900' : 'bg-muted/40'
+              }`}
+            >
+              <div className="flex items-start gap-3">
+                <CircleDashed className="mt-0.5 h-5 w-5 shrink-0" />
+                <div>
+                  <h4 className="font-semibold">{activeCopy.title}</h4>
+                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                    {activeCopy.description}
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      <Dialog onOpenChange={setIsDebugLogOpen} open={isDebugLogOpen}>
+        <DialogContent className="max-w-5xl gap-0 p-0">
+          <DialogHeader className="border-b px-4 py-3 pr-12">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Terminal className="h-4 w-4 text-primary" />
+                生图日志
+              </DialogTitle>
+              <Button
+                className="h-8 px-3"
+                disabled={!debugLogs.length}
+                onClick={() => setDebugLogs([])}
+                type="button"
+                variant="secondary"
+              >
+                清空
+              </Button>
+            </div>
+          </DialogHeader>
+          <div className="p-4">
+            <ScrollArea className="h-[min(70vh,620px)] rounded-md border bg-zinc-950">
+              <div className="space-y-1 p-3 font-mono text-[12px] leading-5">
+                {debugLogs.length ? (
+                  debugLogs.map((entry) => (
+                    <div className={generationDebugLogLevelClassName(entry.level)} key={entry.id}>
+                      {formatGenerationDebugLogLine(entry)}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-zinc-500">暂无日志</div>
+                )}
+                <div ref={debugLogEndRef} />
+              </div>
+            </ScrollArea>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

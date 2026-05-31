@@ -89,6 +89,7 @@ import type {
   ComfyuiTxt2imgRunInput,
   ExtractRunInput,
   ExtractSourcesResult,
+  GenerationDebugLogEntry,
   GenerationProgress,
   GenerationPromptInput,
   GenerationTaskEvent,
@@ -167,6 +168,10 @@ const api = {
       ipcRenderer.invoke('chenyu:set-active-instance', input) as Promise<ComfyuiInstanceSummary>,
     getActiveInstance: () =>
       ipcRenderer.invoke('chenyu:get-active-instance') as Promise<ComfyuiInstanceSummary | null>,
+    refreshActiveInstance: () =>
+      ipcRenderer.invoke(
+        'chenyu:refresh-active-instance',
+      ) as Promise<ComfyuiInstanceSummary | null>,
   },
   browserProfileLock: {
     list: () => ipcRenderer.invoke('browser-profile-lock:list') as Promise<BrowserProfileHolder[]>,
@@ -399,6 +404,16 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('generation:completed', listener)
+      }
+    },
+    onDebugLog: (callback: (entry: GenerationDebugLogEntry) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, entry: GenerationDebugLogEntry) => {
+        callback(entry)
+      }
+      ipcRenderer.on('generation:debug-log', listener)
+
+      return () => {
+        ipcRenderer.removeListener('generation:debug-log', listener)
       }
     },
   },
