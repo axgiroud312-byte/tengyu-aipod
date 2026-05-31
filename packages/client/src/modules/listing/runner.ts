@@ -822,7 +822,11 @@ export function registerListingRunnerIpc() {
     return withListingTaskStore((store) => store.deleteTask(parsed.taskId))
   })
   ipcMain.handle('listing:choose-batch-dir', async () => {
+    const config = await readAppConfig()
     const result = await electronDialog().showOpenDialog({
+      ...(config.workbench_root
+        ? { defaultPath: join(config.workbench_root, WORKBENCH_DIRECTORIES.listing) }
+        : {}),
       properties: ['openDirectory'],
       title: '选择上架素材批次目录',
     })

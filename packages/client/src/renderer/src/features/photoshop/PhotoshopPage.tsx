@@ -10,6 +10,7 @@ import {
   Settings2,
 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import type { MattingCandidate } from '../../../../main/lib/detection-service'
 
 function statusLabel(status: PhotoshopStatus | null) {
   if (!status) {
@@ -68,6 +69,16 @@ function timestampSlug(value: number) {
   const date = new Date(value)
   const pad = (item: number) => String(item).padStart(2, '0')
   return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
+function joinLocalPath(root: string, ...parts: string[]) {
+  const separator = root.includes('\\') ? '\\' : '/'
+  return [root.replace(/[\\/]+$/, ''), ...parts].join(separator)
+}
+
+function parentFolder(path: string) {
+  const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return index > 0 ? path.slice(0, index) : path
 }
 
 const resultFilters = [
@@ -131,6 +142,8 @@ export function PhotoshopPage() {
   const [skipCompleted, setSkipCompleted] = useState(true)
   const [printFolder, setPrintFolder] = useState('02-印花工作区')
   const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
+  const [mattingCandidates, setMattingCandidates] = useState<MattingCandidate[]>([])
+  const [loadingCandidates, setLoadingCandidates] = useState(false)
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
   const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
   const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
@@ -154,6 +167,33 @@ export function PhotoshopPage() {
       setProgress(nextProgress)
     })
   }, [])
+
+  useEffect(() => {
+    window.api.workspace
+      .getState()
+      .then((workspace) => {
+        if (!workspace.root) {
+          return
+        }
+        setPrintFolder(joinLocalPath(workspace.root, '02-印花工作区'))
+        setOutputDir(
+          joinLocalPath(workspace.root, '04-上架工作区', `套版-${timestampSlug(Date.now())}`),
+        )
+      })
+      .catch(() => null)
+    void loadMattingCandidates()
+  }, [])
+
+  async function loadMattingCandidates() {
+    setLoadingCandidates(true)
+    try {
+      setMattingCandidates(await window.api.detection.listMattingCandidates())
+    } catch {
+      setMattingCandidates([])
+    } finally {
+      setLoadingCandidates(false)
+    }
+  }
 
   async function choosePrintFolder() {
     const result = await window.api.photoshop.choosePrintFolder()
@@ -265,6 +305,54 @@ export function PhotoshopPage() {
                 </Button>
               </div>
             </label>
+          </div>
+
+          <div className="rounded-md border bg-background p-5 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-muted-foreground">套版候选清单</p>
+                <h2 className="mt-1 text-lg font-semibold">检测通过印花</h2>
+              </div>
+              <Button
+                disabled={loadingCandidates}
+                onClick={() => void loadMattingCandidates()}
+                type="button"
+                variant="secondary"
+              >
+                <RefreshCw className="mr-2 h-4 w-4" />
+                刷新
+              </Button>
+            </div>
+            <div className="mt-4 grid gap-2">
+              {mattingCandidates.length ? (
+                mattingCandidates.slice(0, 6).map((candidate) => (
+                  <button
+                    className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 rounded-md border bg-muted/30 p-2 text-left text-sm hover:bg-muted"
+                    key={candidate.id}
+                    onClick={() => setPrintFolder(parentFolder(candidate.sourcePath))}
+                    type="button"
+                  >
+                    <img
+                      alt=""
+                      className="h-12 w-12 rounded border object-cover"
+                      src={candidate.thumbnailUrl}
+                    />
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium">
+                        {candidate.printId ?? candidate.artifactId}
+                      </span>
+                      <span className="mt-1 block truncate text-xs text-muted-foreground">
+                        {candidate.sourcePath}
+                      </span>
+                    </span>
+                  </button>
+                ))
+              ) : (
+                <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+                  暂无检测通过印花
+                </div>
+              )}
+            </div>
           </div>
 
           <div className="rounded-md border bg-background p-5 shadow-sm">

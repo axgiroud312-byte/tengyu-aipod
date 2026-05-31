@@ -2,7 +2,12 @@ import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
 import { access, readdir, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
-import { AppErrorClass, type Skill, type SkillSummary } from '@tengyu-aipod/shared'
+import {
+  AppErrorClass,
+  type Skill,
+  type SkillSummary,
+  WORKBENCH_DIRECTORIES,
+} from '@tengyu-aipod/shared'
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
@@ -961,7 +966,11 @@ export function registerTitleIpc() {
   ipcMain.handle('title:list-languages', () => titleService.listLanguages())
   ipcMain.handle('title:list-models', () => titleService.listModels())
   ipcMain.handle('title:choose-batch-dir', async () => {
+    const config = await readAppConfig()
     const result = await dialog.showOpenDialog({
+      ...(config.workbench_root
+        ? { defaultPath: join(config.workbench_root, WORKBENCH_DIRECTORIES.listing) }
+        : {}),
       properties: ['openDirectory'],
       title: '选择货号批次目录',
     })

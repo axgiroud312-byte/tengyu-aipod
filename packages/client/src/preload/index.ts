@@ -464,6 +464,10 @@ const api = {
       ipcRenderer.invoke('detection:retest', input) as Promise<string>,
     promoteToMatting: (input: { artifact_ids: string[]; mode?: 'copy' | 'move' }) =>
       ipcRenderer.invoke('detection:promote-to-matting', input) as Promise<number>,
+    listMattingCandidates: () =>
+      ipcRenderer.invoke('detection:list-matting-candidates') as Promise<
+        import('../main/lib/detection-service').MattingCandidate[]
+      >,
     deleteResult: (input: { artifact_id: string }) =>
       ipcRenderer.invoke('detection:delete-result', input) as Promise<number>,
     onProgress: (callback: (progress: DetectionProgress) => void) => {

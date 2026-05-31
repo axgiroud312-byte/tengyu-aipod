@@ -737,7 +737,7 @@ describe('listing runner', () => {
     expect(store.rows.get('/tmp/batch::SKU-3::temu-pop::profile-a')).toMatchObject({
       status: 'skipped',
       last_error_code: 'CONSECUTIVE_FAILURES',
-      last_error: '连续 2 次失败，工作区暂停',
+      last_error: '连续 2 次失败，店铺环境暂停',
     })
   })
 

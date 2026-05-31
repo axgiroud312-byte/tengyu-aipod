@@ -107,7 +107,6 @@ interface CollectionPageProps {
   onDeleteRecord: (recordId: string) => void
   onRefreshRecords: () => void
   onClearDebugLogs: () => void
-  onOutputDirBrowse: () => void
   onOpenSearchPage: (keyword: string) => void
   onScanImageIndex: (pageUrl?: string) => void
   onProbeImageIndexClick: (pageUrl?: string) => void
@@ -230,6 +229,7 @@ function debugLogLevelClassName(level: CollectionDebugLogEntry['level']) {
 }
 
 export function CollectionPage({
+  session,
   error,
   platforms,
   profiles,
@@ -251,7 +251,6 @@ export function CollectionPage({
   onStateChange,
   onRefreshProfiles,
   onClearDebugLogs,
-  onOutputDirBrowse,
   onOpenSearchPage,
   onScanImageIndex,
   onDownloadImageIndexItems,
@@ -466,21 +465,12 @@ export function CollectionPage({
                 value={state.profileId}
               />
             </label>
-            <label className="grid gap-2 text-sm font-medium" htmlFor="collection-output-dir">
-              <span>输出目录</span>
-              <div className="flex gap-2">
-                <Input
-                  className="min-w-0 flex-1"
-                  id="collection-output-dir"
-                  onChange={(event) => onStateChange('outputDir', event.target.value)}
-                  value={state.outputDir}
-                />
-                <Button onClick={onOutputDirBrowse} type="button" variant="secondary">
-                  <FolderOpen className="mr-2 h-4 w-4" />
-                  选择
-                </Button>
+            <div className="grid gap-2 text-sm font-medium">
+              <span>采集任务目录</span>
+              <div className="flex min-h-10 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
+                {session?.output_dir ?? '启动后自动创建：01-采集工作区 / 平台-时间'}
               </div>
-            </label>
+            </div>
           </div>
 
           <div className="flex flex-col gap-3 rounded-md border bg-muted/40 p-3 text-sm lg:flex-row lg:items-center lg:justify-between">
@@ -488,7 +478,7 @@ export function CollectionPage({
               <Badge variant="secondary">{platformLabel(state.platform, platforms)}</Badge>
               <Badge variant="secondary">{profileLabel(state.profileId, profiles)}</Badge>
               <span className="truncate text-muted-foreground">
-                {state.outputDir || '未设置输出目录'}
+                {session?.output_dir ?? '采集会话启动后自动创建任务目录'}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">

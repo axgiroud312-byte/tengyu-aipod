@@ -198,7 +198,7 @@ function collectionPageStateFromConfig(config: CollectionConfig): CollectionPage
     platform: config.platform,
     profileId: config.profile_id,
     mode: config.mode,
-    outputDir: config.output_dir,
+    outputDir: '',
     scrollKeywords: config.scroll_keywords,
     minWidth: config.size_filter.min_width,
     maxWidth: config.size_filter.max_width,
@@ -212,7 +212,7 @@ function collectionConfigFromPageState(state: CollectionPageState): CollectionCo
     platform: state.platform,
     profile_id: state.profileId,
     mode: state.mode,
-    output_dir: state.outputDir,
+    output_dir: '',
     scroll_keywords: state.scrollKeywords,
     size_filter: {
       min_width: nonNegativeInteger(state.minWidth),
@@ -915,18 +915,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     )
   }
 
-  async function chooseCollectionOutputDir() {
-    const result = await window.api.onboarding.chooseWorkbenchRoot()
-    if (result.ok) {
-      updateCollectionPageState('outputDir', result.data.path)
-      setCollectionError(null)
-      return
-    }
-    if (result.error.code !== 'CANCELLED') {
-      setCollectionError(result.error.message)
-    }
-  }
-
   async function refreshCollectionProfiles() {
     setIsRefreshingCollectionProfiles(true)
     try {
@@ -1001,7 +989,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     if (!profileId) {
       throw new Error('请先选择或填写比特浏览器环境编号')
     }
-    const outputDir = collectionSession?.output_dir ?? collectionPageState.outputDir.trim()
+    const outputDir = collectionSession?.output_dir
     return {
       platform: collectionPageState.platform,
       profile_id: profileId,
@@ -1228,9 +1216,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           min_height: nonNegativeInteger(collectionPageState.minHeight),
           max_height: nonNegativeInteger(collectionPageState.maxHeight),
         },
-        ...(collectionPageState.outputDir.trim()
-          ? { output_dir: collectionPageState.outputDir.trim() }
-          : {}),
       })
       setCollectionSession(session)
       await refreshCollectionRecords()
@@ -1365,7 +1350,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
                 onDownloadImageIndexItems={(items, pageUrl) =>
                   void downloadCollectionImageIndexItems(items, pageUrl)
                 }
-                onOutputDirBrowse={() => void chooseCollectionOutputDir()}
                 onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
                 onOpenSearchPage={(keyword) => void openCollectionSearchPage(keyword)}
                 onProbeImageIndexClick={(pageUrl) => void probeCollectionImageIndexClick(pageUrl)}

@@ -195,7 +195,7 @@ export class CollectionSessionManager {
       profile_id: config.profile_id,
       mode: config.mode,
       status: 'starting',
-      output_dir: config.output_dir ?? defaultOutputDir,
+      output_dir: defaultOutputDir,
       started_at: this.now(),
     }
     await mkdir(session.output_dir, { recursive: true })

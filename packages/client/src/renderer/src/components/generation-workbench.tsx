@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
@@ -22,7 +23,7 @@ import {
   Terminal,
   WandSparkles,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import type { ComfyuiWorkflowSummary } from '../../../main/lib/comfyui-workflow-cache'
 import type {
   GenerationDebugLogEntry,
@@ -605,6 +606,29 @@ function ImageFolderPickerPanel({
   )
 }
 
+function TaskNameField({
+  value,
+  onChange,
+  placeholder,
+}: {
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+}) {
+  const id = useId()
+  return (
+    <label className="block space-y-2 text-sm font-medium" htmlFor={id}>
+      <span>任务文件夹名</span>
+      <Input
+        id={id}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        value={value}
+      />
+    </label>
+  )
+}
+
 function capabilityCopy(capability: GenerationCapability, provider: GenerationProvider) {
   if (!isGenerationProviderAvailable(capability, provider)) {
     return {
@@ -674,6 +698,7 @@ function GrsaiPromptGenerationPanel({
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
+  const [taskName, setTaskName] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -903,6 +928,7 @@ function GrsaiPromptGenerationPanel({
         taskId = await window.api.generation.runComfyuiTxt2img({
           prompts,
           workflowId: selectedComfyuiTxt2imgWorkflow.id,
+          ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(selectedComfyuiTxt2imgWorkflow.version
             ? { workflowVersion: selectedComfyuiTxt2imgWorkflow.version }
             : {}),
@@ -916,6 +942,7 @@ function GrsaiPromptGenerationPanel({
           prompts,
           model: generationModel,
           aspectRatio,
+          ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(sendsReferenceToImageModel
             ? {
                 referenceImages: promptReferenceImages(),
@@ -1338,6 +1365,11 @@ function GrsaiPromptGenerationPanel({
                   生图时带参考图
                 </label>
               ) : null}
+              <TaskNameField
+                onChange={setTaskName}
+                placeholder={`默认：${capability === 'txt2img' ? '文生图' : '图生图'}-时间`}
+                value={taskName}
+              />
               <Button
                 disabled={running || generatingPrompts}
                 onClick={() => void oneClickRun()}
@@ -1426,6 +1458,7 @@ function GrsaiExtractPanel() {
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
+  const [taskName, setTaskName] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -1576,6 +1609,7 @@ function GrsaiExtractPanel() {
         model: generationModel,
         aspectRatio,
         concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
+        ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
       })
       setTaskId(taskId)
       setProgress({
@@ -1746,6 +1780,11 @@ function GrsaiExtractPanel() {
                   value={concurrency}
                 />
               </label>
+              <TaskNameField
+                onChange={setTaskName}
+                placeholder="默认：提取-时间"
+                value={taskName}
+              />
               <Button disabled={running} onClick={() => void startExtract()} type="button">
                 {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
                 开始提取
@@ -1807,6 +1846,7 @@ function ComfyuiImg2imgPanel() {
   const [workflowKey, setWorkflowKey] = useState('')
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
+  const [taskName, setTaskName] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -1916,6 +1956,7 @@ function ComfyuiImg2imgPanel() {
         sourceImagePaths: sourceImages.map((image) => image.path),
         workflowId: selectedWorkflow.id,
         workflowVersion: selectedWorkflow.version,
+        ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
       })
@@ -2008,6 +2049,13 @@ function ComfyuiImg2imgPanel() {
                 <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
               </div>
             </dl>
+            <div className="mt-4">
+              <TaskNameField
+                onChange={setTaskName}
+                placeholder="默认：图生图-时间"
+                value={taskName}
+              />
+            </div>
             <Button
               className="mt-4 w-full"
               disabled={running}
@@ -2041,6 +2089,7 @@ function ComfyuiExtractPanel() {
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
+  const [taskName, setTaskName] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -2167,6 +2216,7 @@ function ComfyuiExtractPanel() {
         workflowVersion: selectedWorkflow.version,
         skillId: selectedSkill.id,
         skillVersion: selectedSkill.version,
+        ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
       })
@@ -2271,6 +2321,13 @@ function ComfyuiExtractPanel() {
                 <dd className="truncate font-medium">{selectedSkill?.id ?? '未配置'}</dd>
               </div>
             </dl>
+            <div className="mt-4">
+              <TaskNameField
+                onChange={setTaskName}
+                placeholder="默认：提取-时间"
+                value={taskName}
+              />
+            </div>
             <Button
               className="mt-4 w-full"
               disabled={running}
@@ -2303,6 +2360,7 @@ function ComfyuiMattingPanel() {
   const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
+  const [taskName, setTaskName] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -2429,6 +2487,7 @@ function ComfyuiMattingPanel() {
         taskId = await window.api.generation.runMixedMatting({
           sourceImagePaths,
           workflowId: selectedWorkflow.id,
+          ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           width: widthValue,
           height: heightValue,
           ...(workflowVersion ? { workflowVersion } : {}),
@@ -2437,6 +2496,7 @@ function ComfyuiMattingPanel() {
         taskId = await window.api.generation.runComfyuiMatting({
           sourceImagePaths,
           workflowId: selectedWorkflow.id,
+          ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           width: widthValue,
           height: heightValue,
           ...(workflowVersion ? { workflowVersion } : {}),
@@ -2569,6 +2629,13 @@ function ComfyuiMattingPanel() {
                 </dd>
               </div>
             </dl>
+            <div className="mt-4">
+              <TaskNameField
+                onChange={setTaskName}
+                placeholder="默认：抠图-时间"
+                value={taskName}
+              />
+            </div>
             <Button
               className="mt-4 w-full"
               disabled={running}

@@ -952,15 +952,11 @@ function isAllowedDomain(url: string, allowedDomains: string[]) {
   })
 }
 
-async function resolveOutputDir(outputDir: string | undefined, platform: string) {
-  const trimmed = outputDir?.trim()
-  if (trimmed) {
-    return trimmed
-  }
+async function resolveOutputDir(_outputDir: string | undefined, platform: string) {
   const { readAppConfig } = await import('../onboarding')
   const config = await readAppConfig()
   if (!config.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区或填写采集输出目录', false, {
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false, {
       kind: 'validation',
     })
   }

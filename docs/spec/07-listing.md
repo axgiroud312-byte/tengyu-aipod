@@ -441,7 +441,7 @@ async function runWorkspace(
         await db.listing_status.upsert({ ...status, status: 'failed', last_error: e.message, ... })
         failStreak++
         if (failStreak >= config.failStreakLimit) {
-          throw new AppError({ code: 'CONSECUTIVE_FAILURES', message: `连续 ${failStreak} 次失败，工作区暂停` })
+          throw new AppError({ code: 'CONSECUTIVE_FAILURES', message: `连续 ${failStreak} 次失败，店铺环境暂停` })
         }
       }
     }

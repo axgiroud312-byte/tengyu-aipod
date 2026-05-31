@@ -91,7 +91,7 @@ sequenceDiagram
     桌面->>Grsai/ComfyUI: 给 pass 图生成印花
     Grsai/ComfyUI-->>桌面: 出图
     桌面->>Photoshop: 套版（Windows）
-    Photoshop-->>桌面: 05-货号成品/ 输出
+    Photoshop-->>桌面: 04-上架工作区/ 输出
     桌面->>百炼: 生成标题
     桌面->>店小秘: 自动填写 + 上传 + 一键 SKU + 一键视频
     店小秘-->>主理人: 草稿已就位
@@ -99,20 +99,19 @@ sequenceDiagram
 
 ---
 
-## 5 大类素材目录（最重要的业务约定）
+## 4 个业务工作区（最重要的业务约定）
 
-代码反复围着这 5 个目录转。**只放图片，不放 json/csv/jsx**（唯一例外：`titles.xlsx`）。
+代码反复围着这 4 个目录转。**只放业务图片，不放 json/csv/jsx**（唯一例外：上架批次里的 `titles.xlsx`）。
 
 ```
 ~/腾域aipod工作台/
-├─ 01-采集/           ← 比特浏览器采集回来，含散图池和商品页主图分组
-├─ 02-生图/           ← 文生图/图生图/提取/抠图，按任务子目录保存出图
-├─ 03-检测结果/        ← 百炼判定 pass 的进这里
-├─ 04-待套版印花/       ← 生产入口，PS 模块的输入
-└─ 05-货号成品/        ← PS 输出 + 上架输入（上架唯一来源）
+├─ 01-采集工作区/      ← 比特浏览器采集回来，按平台和时间分任务目录
+├─ 02-印花工作区/      ← 文生图/图生图/提取/抠图，按任务子目录保存出图
+├─ 03-检测工作区/      ← 百炼判定后按通过/复查/失败分类
+└─ 04-上架工作区/      ← PS 输出 + 标题 + 上架输入（上架唯一读取域）
 ```
 
-`02-生图` 下面固定四个能力目录：`01-文生图` / `02-图生图` / `03-提取` / `04-抠图`。每次运行会在能力目录下再建一个 `{taskId}` 文件夹，避免不同批次结果混在一起。
+`02-印花工作区` 下面固定四个能力目录：`文生图` / `图生图` / `提取` / `抠图`。每次运行会在能力目录下再建一个 `{任务名}` 文件夹，默认“能力-时间”，前端可自定义。
 
 ---
 
@@ -180,7 +179,7 @@ ComfyUI 路径页面只显示默认云机状态卡：状态、实例 UUID、Comf
 
 | 部分 | 文件 |
 |---|---|
-| **入口编排** | `packages/client/src/modules/listing/runner.ts` ← 任务驱动<br/>`evidence.ts` ← 截图存证<br/>`packages/client/src/main/lib/listing-batch-loader.ts` ← 扫 05-货号成品 |
+| **入口编排** | `packages/client/src/modules/listing/runner.ts` ← 任务驱动<br/>`evidence.ts` ← 截图存证<br/>`packages/client/src/main/lib/listing-batch-loader.ts` ← 扫 04-上架工作区 |
 | **Temu 平台**（四层严格分） | `modules/listing/platforms/dianxiaomi-temu-pop/`<br/>　├─ `selectors.ts` ← DOM 选择器（静态）<br/>　├─ `page-parser.ts` ← 读 DOM 返状态<br/>　├─ `action-executor.ts` ← 动作原语（5 项核心动作）<br/>　└─ `workflow.ts` ← 12 阶段业务流程 |
 | **Shein 平台**（同四层） | `modules/listing/platforms/dianxiaomi-shein/` 下同名 4 文件 |
 | **共享类型** | `packages/shared/src/listing-types.ts` |
@@ -228,22 +227,22 @@ ComfyUI 路径页面只显示默认云机状态卡：状态、实例 UUID、Comf
 
 ```mermaid
 flowchart LR
-    A[采集图片<br/>01-采集/] --> B[检测侵权<br/>百炼 vision LLM]
-    B -->|pass| C[生图<br/>Grsai 出印花]
-    C --> D[04-待套版印花/]
+    A[采集图片<br/>01-采集工作区/] --> B[提取印花<br/>ComfyUI / Grsai]
+    B --> C[检测侵权<br/>百炼 vision LLM]
+    C -->|通过| D[套版候选清单]
     D --> E[PS 套版<br/>Windows Photoshop COM]
-    E --> F[05-货号成品/GzG0023/]
+    E --> F[04-上架工作区/模板批次/GzG0023/]
     F --> G[标题生成<br/>百炼]
     G --> H[上架到 Temu<br/>店小秘<br/>2-1111 浏览器]
     H --> I[草稿就位<br/>+ 一键 SKU<br/>+ 一键视频]
 ```
 
 **5 个流转规则**（任意一条违反 = 出 bug）：
-1. 检测只看 `01-采集/` 和 `02-生图/`
-2. `04-待套版印花/` 是 PS 的入口（来自 03/02/手工放图三种路径）
-3. `05-货号成品/` 是上架的唯一来源
-4. 服务端从不接触图片 / API Key（ADR-0003 红线）
-5. 同一比特浏览器 profile 同时刻最多 1 个模块占用
+1. 采集输出只进 `01-采集工作区/{platform}-{timestamp}/`
+2. 生图输出只进 `02-印花工作区/{能力}/{任务名}/`
+3. 检测输出只进 `03-检测工作区/{任务名}/{通过|复查|失败}/`
+4. `04-上架工作区/` 是 PS 输出、标题写入和上架读取的唯一业务域
+5. 服务端从不接触图片 / API Key（ADR-0003 红线）；同一比特浏览器 profile 同时刻最多 1 个模块占用
 
 ---
 

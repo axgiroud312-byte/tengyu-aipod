@@ -14,8 +14,15 @@ import {
   downloadCollectionImageIndexItems,
 } from './collection-image-index-service'
 
+let mockWorkbenchRoot = ''
+
+vi.mock('../onboarding', () => ({
+  readAppConfig: async () => ({ workbench_root: mockWorkbenchRoot }),
+}))
+
 afterEach(() => {
   vi.unstubAllGlobals()
+  mockWorkbenchRoot = ''
 })
 
 const COLLECTION_TASK_DIR = '/tmp/output/temu-20260531-120000'
@@ -228,7 +235,8 @@ describe('collection current page chooser', () => {
 
 describe('collection image index download logs', () => {
   it('emits per-image success logs with bytes and duration', async () => {
-    const outputDir = await mkdtemp(join(tmpdir(), 'collection-debug-success-'))
+    const workbenchRoot = await mkdtemp(join(tmpdir(), 'collection-debug-success-'))
+    mockWorkbenchRoot = workbenchRoot
     const logs: Array<{
       message: string
       level: string
@@ -248,7 +256,6 @@ describe('collection image index download logs', () => {
       const result = await downloadCollectionImageIndexItems({
         platform: 'temu',
         profileId: 'profile-1',
-        outputDir,
         items: [downloadItem('item-1', 'https://img.kwcdn.com/product/a.jpg')],
         debug: (message, level, details) => {
           logs.push({
@@ -278,12 +285,13 @@ describe('collection image index download logs', () => {
         ),
       ).toBe(true)
     } finally {
-      await rm(outputDir, { recursive: true, force: true })
+      await rm(workbenchRoot, { recursive: true, force: true })
     }
   })
 
   it('emits per-image failure logs and keeps failed results', async () => {
-    const outputDir = await mkdtemp(join(tmpdir(), 'collection-debug-failed-'))
+    const workbenchRoot = await mkdtemp(join(tmpdir(), 'collection-debug-failed-'))
+    mockWorkbenchRoot = workbenchRoot
     const logs: Array<{
       message: string
       level: string
@@ -295,7 +303,6 @@ describe('collection image index download logs', () => {
       const result = await downloadCollectionImageIndexItems({
         platform: 'temu',
         profileId: 'profile-1',
-        outputDir,
         items: [downloadItem('item-1', 'https://img.kwcdn.com/product/a.jpg')],
         debug: (message, level, details) => {
           logs.push({
@@ -324,7 +331,7 @@ describe('collection image index download logs', () => {
         ),
       ).toBe(true)
     } finally {
-      await rm(outputDir, { recursive: true, force: true })
+      await rm(workbenchRoot, { recursive: true, force: true })
     }
   })
 })

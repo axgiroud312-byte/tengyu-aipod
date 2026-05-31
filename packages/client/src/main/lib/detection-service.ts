@@ -98,6 +98,16 @@ export type DetectionStoredResult = {
   createdAt: number
 }
 
+export type MattingCandidate = {
+  id: string
+  artifactId: string
+  taskId: string
+  printId: string | null
+  sourcePath: string
+  thumbnailUrl: string
+  createdAt: number
+}
+
 export type DetectionErrorCode = 'preprocess_failed' | 'llm_parse_failed' | 'llm_failed'
 
 export type DetectionImageResult =
@@ -980,6 +990,50 @@ export class DetectionService {
     }
   }
 
+  async listMattingCandidates(
+    dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
+  ): Promise<MattingCandidate[]> {
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    try {
+      ensureDetectionTables(db)
+      const rows = db
+        .prepare(
+          `
+            SELECT
+              id,
+              artifact_id AS artifactId,
+              task_id AS taskId,
+              print_id AS printId,
+              source_path AS sourcePath,
+              created_at AS createdAt
+            FROM matting_candidates
+            ORDER BY created_at DESC
+          `,
+        )
+        .all() as Array<{
+        id: string
+        artifactId: string
+        taskId: string
+        printId: string | null
+        sourcePath: string
+        createdAt: number
+      }>
+
+      return rows.map((row) => ({
+        id: row.id,
+        artifactId: row.artifactId,
+        taskId: row.taskId,
+        printId: row.printId,
+        sourcePath: row.sourcePath,
+        thumbnailUrl: fileUrl(row.sourcePath),
+        createdAt: row.createdAt,
+      }))
+    } finally {
+      db.close()
+    }
+  }
+
   async deleteResult(
     input: { artifact_id: string },
     dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
@@ -1339,6 +1393,9 @@ export function registerDetectionIpc() {
     'detection:promote-to-matting',
     (_event, input: { artifact_ids: string[]; mode?: 'copy' | 'move' }) =>
       detectionService.promoteToMatting(input),
+  )
+  ipcMain.handle('detection:list-matting-candidates', () =>
+    detectionService.listMattingCandidates(),
   )
   ipcMain.handle('detection:delete-result', (_event, input: { artifact_id: string }) =>
     detectionService.deleteResult(input),

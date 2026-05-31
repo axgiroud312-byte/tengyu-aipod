@@ -42,10 +42,10 @@
 
 ```
 02-印花工作区/
-├─ 文生图/{taskId}/{印花ID}.png
-├─ 图生图/{taskId}/{印花ID}_v1.png ({印花ID}_v2.png ...)
-├─ 提取/{taskId}/{印花ID}.png
-└─ 抠图/{taskId}/{印花ID}.png         ← 抠图后的最终透明底图
+├─ 文生图/{任务名}/{印花ID}.png
+├─ 图生图/{任务名}/{印花ID}_v1.png ({印花ID}_v2.png ...)
+├─ 提取/{任务名}/{印花ID}.png
+└─ 抠图/{任务名}/{印花ID}.png         ← 抠图后的最终透明底图
 ```
 
 能力目录下按任务建子文件夹，避免多次运行的图片混在一起。文件名带印花 ID + 版本号。**目录只放最终成品图，中间产物（如黑白遮罩）走 TempFileManager 临时区**。
@@ -447,7 +447,7 @@ GET /api/skills/{id}                                → PaidSkill (full)
     ↓
   用户勾选/编辑/添加 → 在右侧选择 Grsai 或 ComfyUI 工作流 → 点"开始生图"
     ↓
-  并发池调对应运行路径 → 落到 02-印花工作区/文生图/{taskId}/
+  并发池调对应运行路径 → 落到 02-印花工作区/文生图/{任务名}/
 
 [自己写模式]
   用户填提示词 → 解析到审稿列表 → 直接进入并发池 → 调当前生图路径
@@ -472,7 +472,7 @@ GET /api/skills/{id}                                → PaidSkill (full)
   skill_id: 'txt2img-local-print',
   skill_version: '1.0.0',
   source_artifact_ids: '[]',  // 文生图无来源
-  file_path: '02-印花工作区/文生图/{taskId}/pri_abc123def456.png',
+  file_path: '02-印花工作区/文生图/{任务名}/pri_abc123def456.png',
   prompt_snapshot: '...',     // 实际发给 grsai 的 prompt
   params_snapshot: '{...}',
 }
@@ -530,7 +530,7 @@ ComfyUI 图生图右侧显示：
   ↓
 工作流执行（一般 30-90 秒）→ 输出印花（带背景或不带，看工作流设计）
   ↓
-落到 02-印花工作区/提取/{taskId}/
+落到 02-印花工作区/提取/{任务名}/
 ```
 
 ComfyUI 提取工作流改为客户端本地导入（detail 见 [chenyu-cloud-api.md](../../references/generation-comfyui/chenyu-cloud-api.md)）。
@@ -544,7 +544,7 @@ ComfyUI 提取右侧显示默认云机状态卡；不显示原百分比、处理
 ```
 用户选采集图 → 用云端"提取 skill"提示词 → Grsai 图生图（带参考图）
   ↓
-落到 02-印花工作区/提取/{taskId}/
+落到 02-印花工作区/提取/{任务名}/
 ```
 
 提取 skill 提示词约束 LLM 写出"识别图中的印花元素，生成白底居中的印花"这种提示词。
@@ -560,7 +560,7 @@ ComfyUI 提取右侧显示默认云机状态卡；不显示原百分比、处理
 ```
 用户选图片文件夹 → 检索图片 → 选抠图工作流和尺寸 → ComfyUI 跑 → 输出透明底 PNG
   ↓
-落到 02-印花工作区/抠图/{taskId}/
+落到 02-印花工作区/抠图/{任务名}/
 ```
 
 工作流由客户端本地导入和保存，常用 BiRefNet、RMBG 等模型。
@@ -578,7 +578,7 @@ ComfyUI 抠图右侧显示默认云机状态卡；不显示原百分比、处理
   ↓
 ComfyUI 工作流"黑白图转 alpha + 与原图混合"
   ↓
-透明底图 → 02-印花工作区/抠图/{taskId}/
+透明底图 → 02-印花工作区/抠图/{任务名}/
   ↓
 临时 mask.png 自动清理
 ```
@@ -919,7 +919,7 @@ CREATE TABLE prints (
 --   skill_id, skill_version
 --   source_artifact_ids = JSON 数组（图生图/提取/抠图的来源）
 --   prompt_snapshot
---   file_path = 02-印花工作区/{能力目录}/{taskId}/{印花ID}.png
+--   file_path = 02-印花工作区/{能力目录}/{任务名}/{印花ID}.png
 
 CREATE TABLE comfyui_instances (
   id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- 默认云机记录，不是全部实例列表

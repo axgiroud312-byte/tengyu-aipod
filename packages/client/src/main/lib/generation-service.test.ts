@@ -911,7 +911,7 @@ describe('generation comfyui img2img service', () => {
       failed: 0,
     })
     expect(fakeDb.artifacts).toHaveLength(2)
-    expect(fakeDb.artifacts[0]?.[0]).toBe(fakeDb.artifacts[1]?.[0])
+    expect(fakeDb.artifacts[0]?.[0]).not.toBe(fakeDb.artifacts[1]?.[0])
     expect(generate).toHaveBeenCalledTimes(2)
   })
 

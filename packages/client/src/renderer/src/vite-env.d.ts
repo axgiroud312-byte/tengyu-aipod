@@ -342,6 +342,9 @@ declare global {
           artifact_ids: string[]
           mode?: 'copy' | 'move'
         }) => Promise<number>
+        listMattingCandidates: () => Promise<
+          import('../../main/lib/detection-service').MattingCandidate[]
+        >
         deleteResult: (input: { artifact_id: string }) => Promise<number>
         onProgress: (
           callback: (

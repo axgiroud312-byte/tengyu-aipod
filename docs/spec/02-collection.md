@@ -280,7 +280,7 @@ async function injectCollectionScript(page: Page, platformRule: PlatformRule) {
 ```
 ┌─ 图池采集 ──────────────────────────────────────┐
 │ 搜索关键词 [米老鼠________] [打开搜索页]        │
-│ 平台 [Temu]  浏览器环境 [1111]  输出目录 [...]  │
+│ 平台 [Temu]  浏览器环境 [1111]  任务目录 [自动创建] │
 │ 当前页：搜索结果页 / 商品详情页 / 等待页面       │
 │                                                │
 │ [日志 12] [扫描图池] [全选] [取消选择] [清空]   │
@@ -414,7 +414,7 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 'collection:list-profiles'            → BitBrowserProfile[]
 'collection:get-current-page'         → { platform, profile_id } → CurrentPage
 'collection:open-page'                → { platform, profile_id, page_url } → CurrentPage
-'collection:start-session'            → { platform, profile_id, mode, output_dir }
+'collection:start-session'            → { platform, profile_id, mode }
 'collection:stop-session'             → { session_id }
 'collection:get-active-session'       → CollectionSession | null
 'collection:export-manifest'          → { session_id, format: 'csv' | 'json' }
@@ -438,7 +438,7 @@ UI 上有"查看失败"按钮 → 列出本次会话失败的图片：
 | `PROFILE_LOCKED` | profile 被其他模块（上架）占用 | UI 提示用户先停掉冲突任务 |
 | `LOGIN_REQUIRED` | 平台需要登录 | UI 提示用户在比特浏览器手动登录 |
 | `PLATFORM_RULE_NOT_FOUND` | 平台规则缺失 | UI 提示检查本地规则版本或创建自定义 |
-| `OUTPUT_DIR_NOT_WRITABLE` | 输出目录权限问题 | UI 提示用户检查权限 |
+| `HTTP_4XX` | 未选择工作区，无法创建采集任务目录 | UI 提示用户先到设置页选择工作区 |
 
 ## 16. 测试
 

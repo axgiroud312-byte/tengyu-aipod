@@ -1,6 +1,12 @@
-import { AppErrorClass, type PhotoshopProgressInfo } from '@tengyu-aipod/shared'
+import { join } from 'node:path'
+import {
+  AppErrorClass,
+  type PhotoshopProgressInfo,
+  WORKBENCH_DIRECTORIES,
+} from '@tengyu-aipod/shared'
 import { type WebContents, dialog, ipcMain, shell } from 'electron'
 import { z } from 'zod'
+import { readAppConfig } from '../onboarding'
 import { psdScanner } from './psd-scanner'
 import { photoshopStatusChecker } from './status-checker'
 
@@ -18,7 +24,11 @@ export function sendPhotoshopProgress(
 export function registerPhotoshopIpc(): void {
   ipcMain.handle('photoshop:get-status', () => photoshopStatusChecker.check())
   ipcMain.handle('photoshop:choose-print-folder', async () => {
+    const config = await readAppConfig()
     const result = await dialog.showOpenDialog({
+      ...(config.workbench_root
+        ? { defaultPath: join(config.workbench_root, WORKBENCH_DIRECTORIES.generation) }
+        : {}),
       properties: ['openDirectory'],
       title: '选择印花文件夹',
     })
