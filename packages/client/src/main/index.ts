@@ -14,6 +14,10 @@ import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
 import { registerGenerationLocalConfigIpc } from './lib/generation-local-config'
 import { registerGenerationIpc } from './lib/generation-service'
+import {
+  registerLocalImageProtocolHandler,
+  registerLocalImageProtocolScheme,
+} from './lib/local-image-protocol'
 import { runNativeSmoke } from './lib/native-smoke'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
@@ -22,6 +26,8 @@ import { registerOnboardingIpc } from './onboarding'
 import { registerPhotoshopIpc } from './photoshop/ipc'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
+
+registerLocalImageProtocolScheme()
 
 if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.TENGYU_ELECTRON_USER_DATA_DIR)
@@ -69,6 +75,7 @@ app.whenReady().then(() => {
   registerChenyuInstanceIpc()
   registerBrowserProfileLockIpc()
   registerGenerationLocalConfigIpc()
+  registerLocalImageProtocolHandler()
   registerComfyuiWorkflowCacheIpc()
   registerSkillCacheIpc()
   registerTempFileIpc()

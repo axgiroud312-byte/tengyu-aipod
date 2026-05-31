@@ -1,8 +1,14 @@
-import { mkdtemp, rm, stat } from 'node:fs/promises'
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type ElectronApplication, _electron as electron, expect, test } from '@playwright/test'
+import {
+  type ElectronApplication,
+  type Page,
+  _electron as electron,
+  expect,
+  test,
+} from '@playwright/test'
 
 function sendJson(response: ServerResponse, body: unknown, status = 200) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -66,6 +72,25 @@ async function expectDirectory(path: string) {
   await expect(stat(path).then((info) => info.isDirectory())).resolves.toBe(true)
 }
 
+function localImageUrl(path: string) {
+  return `tengyu-local-image://image/${encodeURIComponent(path)}`
+}
+
+async function expectImageLoads(page: Page, path: string) {
+  const result = await page.evaluate(
+    (src) =>
+      new Promise<{ ok: boolean; width: number; height: number }>((resolve) => {
+        const image = new Image()
+        image.onload = () =>
+          resolve({ ok: true, width: image.naturalWidth, height: image.naturalHeight })
+        image.onerror = () => resolve({ ok: false, width: 0, height: 0 })
+        image.src = src
+      }),
+    localImageUrl(path),
+  )
+  expect(result).toEqual({ ok: true, width: 1, height: 1 })
+}
+
 test.describe('workspace settings', () => {
   let tempRoot = ''
   let app: ElectronApplication | null = null
@@ -92,6 +117,14 @@ test.describe('workspace settings', () => {
     closeMockServer = mockServer.close
     const userDataDir = join(tempRoot, 'user-data')
     const workspaceRoot = join(tempRoot, 'selected-workspace')
+    const previewImagePath = join(tempRoot, 'preview.png')
+    await writeFile(
+      previewImagePath,
+      Buffer.from(
+        'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+        'base64',
+      ),
+    )
 
     app = await electron.launch({
       args: ['out/main/index.js'],
@@ -117,6 +150,7 @@ test.describe('workspace settings', () => {
     await expect(page.getByText('Skill 缓存')).toBeVisible()
     await expect(page.getByText('1 条')).toBeVisible()
     await expect(page.getByText('尚未手动同步')).toHaveCount(0)
+    await expectImageLoads(page, previewImagePath)
 
     await page.getByRole('textbox', { name: /选择工作区/ }).fill(workspaceRoot)
     await page.getByRole('button', { name: '保存工作区' }).click()

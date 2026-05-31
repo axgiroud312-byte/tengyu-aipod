@@ -159,8 +159,21 @@ const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string
   },
 ]
 
-function fileUrl(path: string) {
-  return encodeURI(`file://${path.startsWith('/') ? '' : '/'}${path.replace(/\\/g, '/')}`)
+function localImageUrl(path: string) {
+  return `tengyu-local-image://image/${encodeURIComponent(path)}`
+}
+
+function fileUrlLocalPath(url: string) {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') {
+      return null
+    }
+    const path = decodeURIComponent(parsed.pathname)
+    return /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path
+  } catch {
+    return null
+  }
 }
 
 function clampNumber(value: string, min: number, max: number, fallback: number) {
@@ -436,7 +449,8 @@ function GenerationFeedback({
 }
 
 function imagePreviewSrc(image: GenerationRunImage) {
-  return image.localPath ? fileUrl(image.localPath) : image.url
+  const localPath = image.localPath ?? fileUrlLocalPath(image.url)
+  return localPath ? localImageUrl(localPath) : image.url
 }
 
 function CurrentTaskImagePreview({ images }: { images: GenerationRunImage[] }) {
@@ -588,7 +602,7 @@ function ImageFolderPickerPanel({
               <img
                 alt={source.name}
                 className="h-28 w-full rounded-sm object-cover"
-                src={source.thumbnailUrl}
+                src={localImageUrl(source.path)}
               />
               <span className="mt-2 block truncate font-medium">{source.name}</span>
               <span className="block truncate text-xs text-muted-foreground">
@@ -1673,7 +1687,7 @@ function GrsaiExtractPanel() {
                       <img
                         alt={source.name}
                         className="h-28 w-full rounded-sm object-cover"
-                        src={source.thumbnailUrl}
+                        src={localImageUrl(source.path)}
                       />
                       <span className="mt-2 block truncate font-medium">{source.name}</span>
                       <span className="block truncate text-xs text-muted-foreground">
