@@ -90,6 +90,7 @@ import type {
   ExtractRunInput,
   ExtractSourcesResult,
   GenerationDebugLogEntry,
+  GenerationImageSource,
   GenerationProgress,
   GenerationPromptInput,
   GenerationTaskEvent,
@@ -330,6 +331,13 @@ const api = {
   generation: {
     generatePrompts: (input: GenerationPromptInput) =>
       ipcRenderer.invoke('generation:generate-prompts', input) as Promise<Txt2imgPromptDraft[]>,
+    chooseImageFolder: () =>
+      ipcRenderer.invoke('generation:choose-image-folder') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    scanImageFolder: (input: { folder: string }) =>
+      ipcRenderer.invoke('generation:scan-image-folder', input) as Promise<GenerationImageSource[]>,
     listExtractSources: () =>
       ipcRenderer.invoke('generation:list-extract-sources') as Promise<ExtractSourcesResult>,
     listImg2imgSources: () =>

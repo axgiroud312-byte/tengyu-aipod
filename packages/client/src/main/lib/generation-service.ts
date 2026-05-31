@@ -8,7 +8,7 @@ import {
   type Skill,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
-import { BrowserWindow, ipcMain } from 'electron'
+import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 import { ChenyuCloudClient } from './chenyu-cloud-client'
 import {
@@ -85,6 +85,16 @@ export type GenerationProgress = {
   succeeded: number
   failed: number
   current_prompt?: string
+  images?: GenerationRunImage[]
+}
+
+export type GenerationRunImage = {
+  prompt: string
+  url: string
+  localPath?: string
+  sourcePath?: string
+  artifactId?: string
+  printId?: string
 }
 
 export type GenerationRunResult = {
@@ -92,14 +102,7 @@ export type GenerationRunResult = {
   total: number
   succeeded: number
   failed: number
-  images: Array<{
-    prompt: string
-    url: string
-    localPath?: string
-    sourcePath?: string
-    artifactId?: string
-    printId?: string
-  }>
+  images: GenerationRunImage[]
   failures: Array<{ prompt: string; error: string; sourcePath?: string }>
 }
 
@@ -145,6 +148,10 @@ export type Img2imgSourcesResult = {
   images: Img2imgPrintSource[]
 }
 
+export type ChooseGenerationImageFolderResult =
+  | { ok: true; data: { path: string } }
+  | { ok: false; error: { code: string; message: string } }
+
 export type ExtractRunInput = {
   sourceImagePaths: string[]
   skillId: string
@@ -160,10 +167,13 @@ export type ExtractRunInput = {
 }
 
 export type ComfyuiImg2imgRunInput = {
-  sourceArtifactIds: string[]
+  sourceArtifactIds?: string[]
+  sourceImagePaths?: string[]
   workflowId: string
   workflowVersion?: string
-  prompt: string
+  prompt?: string
+  width?: number
+  height?: number
   taskId?: string
 }
 
@@ -174,14 +184,19 @@ export type ComfyuiExtractRunInput = {
   skillId?: string
   skillVersion?: string
   prompt?: string
+  width?: number
+  height?: number
   taskId?: string
 }
 
 export type ComfyuiMattingRunInput = {
-  sourceArtifactIds: string[]
+  sourceArtifactIds?: string[]
+  sourceImagePaths?: string[]
   workflowId: string
   workflowVersion?: string
   prompt?: string
+  width?: number
+  height?: number
   taskId?: string
 }
 
@@ -270,6 +285,26 @@ function naturalCompare(left: string, right: string) {
 
 function normalizeModel(model: string) {
   return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? model : DEFAULT_GENERATION_MODEL
+}
+
+function requestedComfyuiSourceCount(input: {
+  sourceArtifactIds?: string[]
+  sourceImagePaths?: string[]
+}) {
+  const artifactCount = new Set(
+    (input.sourceArtifactIds ?? []).map((artifactId) => artifactId.trim()).filter(Boolean),
+  ).size
+  const imagePathCount = new Set(
+    (input.sourceImagePaths ?? []).map((imagePath) => imagePath.trim()).filter(Boolean),
+  ).size
+  return artifactCount + imagePathCount
+}
+
+function comfyuiSizePx(input: { width?: number; height?: number }) {
+  return {
+    width: clampInt(input.width ?? 1024, 256, 4096, 1024),
+    height: clampInt(input.height ?? 1024, 256, 4096, 1024),
+  }
 }
 
 function promptSkillCategory(
@@ -460,6 +495,31 @@ async function scanImageFolderRecursive(root: string): Promise<GenerationImageSo
   return images.sort((left, right) => naturalCompare(left.relativePath, right.relativePath))
 }
 
+export async function chooseGenerationImageFolder(): Promise<ChooseGenerationImageFolderResult> {
+  const result = await dialog.showOpenDialog({
+    properties: ['openDirectory'],
+    title: '选择图片文件夹',
+  })
+  if (result.canceled || !result.filePaths[0]) {
+    return { ok: false, error: { code: 'CANCELLED', message: '已取消选择' } }
+  }
+  return { ok: true, data: { path: result.filePaths[0] } }
+}
+
+export async function scanGenerationImageFolder(input: {
+  folder: string
+}): Promise<GenerationImageSource[]> {
+  const folder = input.folder.trim()
+  if (!folder || !isAbsolute(folder)) {
+    throw new AppErrorClass('HTTP_4XX', '请选择有效的图片文件夹', false, { folder })
+  }
+  const info = await stat(folder).catch(() => null)
+  if (!info?.isDirectory()) {
+    throw new AppErrorClass('HTTP_4XX', '选择的路径不是文件夹', false, { folder })
+  }
+  return scanImageFolderRecursive(folder)
+}
+
 function assertInsideFolder(path: string, folder: string) {
   if (!isAbsolute(path)) {
     throw new AppErrorClass('HTTP_4XX', '源图路径必须是绝对路径', false)
@@ -607,7 +667,6 @@ async function sourceFromArtifactRow(
 async function readReferenceForArtifact(
   db: Pick<SqliteDatabase, 'prepare'>,
   workbenchRoot: string,
-  collectionFolder: string,
   artifactId: string,
 ): Promise<Img2imgReference> {
   const row = db
@@ -626,7 +685,6 @@ async function readReferenceForArtifact(
       step,
     })
   }
-  assertNotInsideFolder(imagePath, collectionFolder)
   const rel = relative(workbenchRoot, imagePath)
   if (rel.startsWith('..') || isAbsolute(rel)) {
     // 外部导入允许不在工作台内，但路径必须来自 artifacts 表。
@@ -679,6 +737,51 @@ function registerSourceArtifact(
     input.identity.fileHash,
     input.createdAt,
   )
+}
+
+async function registerManualPrintSourceArtifacts(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    imagePaths?: string[] | undefined
+    taskId: string
+  },
+) {
+  const imagePaths = Array.from(
+    new Set((input.imagePaths ?? []).map((imagePath) => imagePath.trim()).filter(Boolean)),
+  )
+  const artifactIds: string[] = []
+  for (const imagePath of imagePaths) {
+    if (!isAbsolute(imagePath) || !IMAGE_EXTENSIONS.test(imagePath)) {
+      throw new AppErrorClass('HTTP_4XX', '请选择有效的图片文件', false, { imagePath })
+    }
+    const identity = await imageIdentity(imagePath)
+    registerSourceArtifact(db, {
+      identity,
+      imagePath,
+      taskId: input.taskId,
+      createdAt: Date.now(),
+    })
+    artifactIds.push(identity.artifactId)
+  }
+  return artifactIds
+}
+
+async function comfyuiSourceArtifactIds(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    sourceArtifactIds?: string[]
+    sourceImagePaths?: string[]
+    taskId: string
+  },
+) {
+  const existingArtifactIds = (input.sourceArtifactIds ?? [])
+    .map((artifactId) => artifactId.trim())
+    .filter(Boolean)
+  const importedArtifactIds = await registerManualPrintSourceArtifacts(db, {
+    imagePaths: input.sourceImagePaths,
+    taskId: input.taskId,
+  })
+  return [...Array.from(new Set(existingArtifactIds)), ...importedArtifactIds]
 }
 
 async function registerExtractArtifact(
@@ -1039,15 +1142,12 @@ export async function resolveImg2imgReferences(
   }
 
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
   try {
     ensureGenerationTables(db)
     return Promise.all(
-      artifactIds.map((artifactId) =>
-        readReferenceForArtifact(db, workbenchRoot, collectionFolder, artifactId),
-      ),
+      artifactIds.map((artifactId) => readReferenceForArtifact(db, workbenchRoot, artifactId)),
     )
   } finally {
     db.close()
@@ -1254,10 +1354,8 @@ export async function runComfyuiImg2img(
   input: ComfyuiImg2imgRunInput,
   dependencies: GenerationServiceDependencies = {},
 ) {
-  const sourceArtifactIds = Array.from(
-    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
-  )
-  if (sourceArtifactIds.length === 0) {
+  const sourceCount = requestedComfyuiSourceCount(input)
+  if (sourceCount === 0) {
     throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
   }
   if (!input.workflowId.trim()) {
@@ -1275,11 +1373,13 @@ export async function runComfyuiImg2img(
   createGenerationDebugLogger({}, { taskId, capability: 'img2img' })('任务已提交', 'info', {
     operation: 'submit',
     provider: 'comfyui-chenyu',
-    sourceCount: sourceArtifactIds.length,
+    sourceCount,
     workflowId: input.workflowId,
+    width: input.width ?? 1024,
+    height: input.height ?? 1024,
   })
   void runComfyuiImg2imgBatch(
-    { ...input, taskId, sourceArtifactIds },
+    { ...input, taskId },
     {
       ...dependencies,
       getSecret: async () => apiKey,
@@ -1366,6 +1466,8 @@ export async function runComfyuiExtract(
     provider: 'comfyui-chenyu',
     sourceCount: sourceImagePaths.length,
     workflowId: input.workflowId,
+    width: input.width ?? 1024,
+    height: input.height ?? 1024,
   })
   void runComfyuiExtractBatch(
     { ...input, taskId, sourceImagePaths },
@@ -1387,10 +1489,8 @@ export async function runComfyuiMatting(
   input: ComfyuiMattingRunInput,
   dependencies: GenerationServiceDependencies = {},
 ) {
-  const sourceArtifactIds = Array.from(
-    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
-  )
-  if (sourceArtifactIds.length === 0) {
+  const sourceCount = requestedComfyuiSourceCount(input)
+  if (sourceCount === 0) {
     throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
   }
   if (!input.workflowId.trim()) {
@@ -1408,11 +1508,13 @@ export async function runComfyuiMatting(
   createGenerationDebugLogger({}, { taskId, capability: 'matting' })('任务已提交', 'info', {
     operation: 'submit',
     provider: 'comfyui-chenyu',
-    sourceCount: sourceArtifactIds.length,
+    sourceCount,
     workflowId: input.workflowId,
+    width: input.width ?? 1024,
+    height: input.height ?? 1024,
   })
   void runComfyuiMattingBatch(
-    { ...input, taskId, sourceArtifactIds },
+    { ...input, taskId },
     {
       ...dependencies,
       getSecret: async () => apiKey,
@@ -1431,10 +1533,8 @@ export async function runMixedMatting(
   input: MixedMattingRunInput,
   dependencies: GenerationServiceDependencies = {},
 ) {
-  const sourceArtifactIds = Array.from(
-    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
-  )
-  if (sourceArtifactIds.length === 0) {
+  const sourceCount = requestedComfyuiSourceCount(input)
+  if (sourceCount === 0) {
     throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
   }
   if (!input.workflowId.trim()) {
@@ -1455,12 +1555,14 @@ export async function runMixedMatting(
   createGenerationDebugLogger({}, { taskId, capability: 'matting' })('任务已提交', 'info', {
     operation: 'submit',
     provider: 'grsai+comfyui',
-    sourceCount: sourceArtifactIds.length,
+    sourceCount,
     workflowId: input.workflowId,
     maskModel: input.maskModel ?? null,
+    width: input.width ?? 1024,
+    height: input.height ?? 1024,
   })
   void runMixedMattingBatch(
-    { ...input, taskId, sourceArtifactIds },
+    { ...input, taskId },
     {
       ...dependencies,
       getSecret: async (key: string) => {
@@ -1807,8 +1909,8 @@ export async function runComfyuiExtractBatch(
     skill?.systemPrompt.trim() ||
     input.prompt?.trim() ||
     'Extract the print from the source product image.'
+  const sizePx = comfyuiSizePx(input)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const sourceFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
   try {
@@ -1829,7 +1931,6 @@ export async function runComfyuiExtractBatch(
     for (const sourceImagePath of sourceImagePaths) {
       emitExtractProgress(result, sourceImagePaths.length, taskId, emit)
       try {
-        assertInsideFolder(sourceImagePath, sourceFolder)
         const sourceIdentity = await imageIdentity(sourceImagePath)
         registerSourceArtifact(db, {
           identity: sourceIdentity,
@@ -1842,10 +1943,12 @@ export async function runComfyuiExtractBatch(
           prompt,
           workflow_id: input.workflowId.trim(),
           reference_images: [await imageReference(sourceImagePath)],
-          output: { format: 'png' },
+          output: { format: 'png', size_px: sizePx },
           options: {
             taskId,
             sourceArtifactIds: [sourceIdentity.artifactId],
+            width: sizePx.width,
+            height: sizePx.height,
             ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
           },
         } satisfies GenerateRequest)
@@ -1885,10 +1988,7 @@ export async function runComfyuiMattingBatch(
   input: ComfyuiMattingRunInput,
   dependencies: GenerationServiceDependencies = {},
 ) {
-  const sourceArtifactIds = Array.from(
-    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
-  )
-  if (sourceArtifactIds.length === 0) {
+  if (requestedComfyuiSourceCount(input) === 0) {
     throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
   }
   if (!input.workflowId.trim()) {
@@ -1903,21 +2003,22 @@ export async function runComfyuiMattingBatch(
   }
 
   const taskId = input.taskId ?? `matting_comfy_${randomUUID()}`
-  const result: GenerationRunResult = {
-    taskId,
-    total: sourceArtifactIds.length,
-    succeeded: 0,
-    failed: 0,
-    images: [],
-    failures: [],
-  }
   const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
   try {
     ensureGenerationTables(db)
+    const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+    const result: GenerationRunResult = {
+      taskId,
+      total: sourceArtifactIds.length,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+    }
+    const sizePx = comfyuiSizePx(input)
     const adapter =
       dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
       new ComfyuiChenyuAdapter({
@@ -1934,22 +2035,19 @@ export async function runComfyuiMattingBatch(
     for (const artifactId of sourceArtifactIds) {
       emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
       try {
-        const source = await readReferenceForArtifact(
-          db,
-          workbenchRoot,
-          collectionFolder,
-          artifactId,
-        )
+        const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
         const response = await adapter.generate({
           capability: 'matting',
           prompt: input.prompt?.trim() || 'Remove the background and output transparent PNG.',
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference],
-          output: { format: 'png' },
+          output: { format: 'png', size_px: sizePx },
           options: {
             taskId,
             sourceArtifactIds: [artifactId],
             printId: source.printId,
+            width: sizePx.width,
+            height: sizePx.height,
             ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
           },
         } satisfies GenerateRequest)
@@ -1989,10 +2087,7 @@ export async function runMixedMattingBatch(
   input: MixedMattingRunInput,
   dependencies: GenerationServiceDependencies = {},
 ) {
-  const sourceArtifactIds = Array.from(
-    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
-  )
-  if (sourceArtifactIds.length === 0) {
+  if (requestedComfyuiSourceCount(input) === 0) {
     throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
   }
   if (!input.workflowId.trim()) {
@@ -2010,23 +2105,24 @@ export async function runMixedMattingBatch(
   }
 
   const taskId = input.taskId ?? `matting_mixed_${randomUUID()}`
-  const result: GenerationRunResult = {
-    taskId,
-    total: sourceArtifactIds.length,
-    succeeded: 0,
-    failed: 0,
-    images: [],
-    failures: [],
-  }
   const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
   const tempFiles = dependencies.tempFiles ?? tempFileManager
   let createdTempDir = false
 
   try {
     ensureGenerationTables(db)
+    const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+    const result: GenerationRunResult = {
+      taskId,
+      total: sourceArtifactIds.length,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+    }
+    const sizePx = comfyuiSizePx(input)
     await tempFiles.createTaskDir('matting', taskId)
     createdTempDir = true
     const skill = await resolveMixedMattingMaskSkill(
@@ -2055,12 +2151,7 @@ export async function runMixedMattingBatch(
       emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
       let maskPath: string | null = null
       try {
-        const source = await readReferenceForArtifact(
-          db,
-          workbenchRoot,
-          collectionFolder,
-          artifactId,
-        )
+        const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
         maskPath = join(await tempFiles.createTaskDir('matting', taskId), 'mask.png')
         const maskModel = normalizeModel(input.maskModel ?? DEFAULT_GENERATION_MODEL)
         const maskResponse = await grsai.generate({
@@ -2099,11 +2190,13 @@ export async function runMixedMattingBatch(
             'Convert the black and white mask to alpha and composite it with the original print.',
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference, await imageReference(maskPath)],
-          output: { format: 'png' },
+          output: { format: 'png', size_px: sizePx },
           options: {
             taskId,
             sourceArtifactIds: [artifactId],
             printId: source.printId,
+            width: sizePx.width,
+            height: sizePx.height,
             workflowCategory: 'matting-mixed',
             artifactProvider: 'grsai+comfyui-mask',
             maskSkillId: skill.id,
@@ -2261,10 +2354,7 @@ export async function runComfyuiImg2imgBatch(
   input: ComfyuiImg2imgRunInput,
   dependencies: GenerationServiceDependencies = {},
 ) {
-  const sourceArtifactIds = Array.from(
-    new Set(input.sourceArtifactIds.map((artifactId) => artifactId.trim()).filter(Boolean)),
-  )
-  if (sourceArtifactIds.length === 0) {
+  if (requestedComfyuiSourceCount(input) === 0) {
     throw new AppErrorClass('HTTP_4XX', '请先选择至少一个印花', false)
   }
   if (!input.workflowId.trim()) {
@@ -2279,21 +2369,22 @@ export async function runComfyuiImg2imgBatch(
   }
 
   const taskId = input.taskId ?? `img2img_${randomUUID()}`
-  const result: GenerationRunResult = {
-    taskId,
-    total: sourceArtifactIds.length,
-    succeeded: 0,
-    failed: 0,
-    images: [],
-    failures: [],
-  }
   const emit = createGenerationProgressEmitter(dependencies)
   const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const collectionFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
   try {
     ensureGenerationTables(db)
+    const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+    const result: GenerationRunResult = {
+      taskId,
+      total: sourceArtifactIds.length,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+    }
+    const sizePx = comfyuiSizePx(input)
     const adapter =
       dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
       new ComfyuiChenyuAdapter({
@@ -2310,22 +2401,19 @@ export async function runComfyuiImg2imgBatch(
     for (const artifactId of sourceArtifactIds) {
       emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
       try {
-        const source = await readReferenceForArtifact(
-          db,
-          workbenchRoot,
-          collectionFolder,
-          artifactId,
-        )
+        const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
         const response = await adapter.generate({
           capability: 'img2img',
-          prompt: input.prompt.trim() || 'Generate an image-to-image print variation.',
+          prompt: input.prompt?.trim() || 'Generate an image-to-image print variation.',
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference],
-          output: { format: 'png' },
+          output: { format: 'png', size_px: sizePx },
           options: {
             taskId,
             sourceArtifactIds: [artifactId],
             printId: source.printId,
+            width: sizePx.width,
+            height: sizePx.height,
             ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
           },
         } satisfies GenerateRequest)
@@ -2335,16 +2423,17 @@ export async function runComfyuiImg2imgBatch(
         result.succeeded += response.images.length
         result.images.push(
           ...response.images.map((image) => ({
-            prompt: input.prompt,
+            prompt: input.prompt ?? '',
             url: image.url,
             ...(image.local_path ? { localPath: image.local_path } : {}),
             artifactId,
+            printId: source.printId,
           })),
         )
       } catch (error) {
         result.failed += 1
         result.failures.push({
-          prompt: input.prompt,
+          prompt: input.prompt ?? '',
           error: appErrorMessage(error),
           sourcePath: artifactId,
         })
@@ -2508,6 +2597,7 @@ async function runChenyuWorkflowTask(
     total: 1,
     succeeded: result.succeeded,
     failed: result.failed,
+    images: result.images,
     ...(input.prompt ? { current_prompt: input.prompt } : {}),
   })
   return result
@@ -2545,6 +2635,7 @@ function emitImg2imgProgress(
     total,
     succeeded: result.succeeded,
     failed: result.failed,
+    images: result.images,
   })
 }
 
@@ -2562,6 +2653,7 @@ function emitTxt2imgProgress(
     total,
     succeeded: result.succeeded,
     failed: result.failed,
+    images: result.images,
     ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
   })
 }
@@ -2579,6 +2671,7 @@ function emitMattingProgress(
     total,
     succeeded: result.succeeded,
     failed: result.failed,
+    images: result.images,
   })
 }
 
@@ -2596,6 +2689,7 @@ function emitExtractProgress(
     total,
     succeeded: result.succeeded,
     failed: result.failed,
+    images: result.images,
     ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
   }
   emit(progress)
@@ -2608,6 +2702,10 @@ export function parseManualPrompts(text: string) {
 export function registerGenerationIpc() {
   ipcMain.handle('generation:generate-prompts', (_event, input: GenerationPromptInput) =>
     generateTxt2imgPrompts(input),
+  )
+  ipcMain.handle('generation:choose-image-folder', () => chooseGenerationImageFolder())
+  ipcMain.handle('generation:scan-image-folder', (_event, input: { folder: string }) =>
+    scanGenerationImageFolder(input),
   )
   ipcMain.handle('generation:list-extract-sources', () => listExtractSources())
   ipcMain.handle('generation:list-img2img-sources', () => listImg2imgSources())

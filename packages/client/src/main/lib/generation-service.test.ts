@@ -21,6 +21,7 @@ import {
   runExtractBatch,
   runMixedMattingBatch,
   runTxt2imgBatch,
+  scanGenerationImageFolder,
 } from './generation-service'
 import { promptGeneratorService } from './prompt-generator-service'
 import type { SqliteDatabase } from './sqlite'
@@ -33,6 +34,9 @@ let workbenchRoot = ''
 vi.mock('electron', () => ({
   BrowserWindow: {
     getAllWindows: () => [],
+  },
+  dialog: {
+    showOpenDialog: vi.fn(),
   },
   ipcMain: {
     handle: vi.fn(),
@@ -84,6 +88,23 @@ function createFakeDb() {
         return {
           run: (...values: unknown[]) => {
             artifacts.push(values)
+            const rows = rowsBySql.get('artifacts') ?? []
+            rowsBySql.set('artifacts', [
+              {
+                id: String(values[0]),
+                print_id: String(values[2]),
+                step: String(values[3]),
+                file_path: String(values[6]),
+              },
+              ...rows.filter((row) => {
+                return !(
+                  typeof row === 'object' &&
+                  row !== null &&
+                  'id' in row &&
+                  row.id === values[0]
+                )
+              }),
+            ])
           },
         }
       }
@@ -119,6 +140,23 @@ function createDbWithoutComfyuiInstance() {
       return {
         run: (...values: unknown[]) => {
           fakeDb.artifacts.push(values)
+          const rows = fakeDb.rowsBySql.get('artifacts') ?? []
+          fakeDb.rowsBySql.set('artifacts', [
+            {
+              id: String(values[0]),
+              print_id: String(values[2]),
+              step: String(values[3]),
+              file_path: String(values[6]),
+            },
+            ...rows.filter((row) => {
+              return !(
+                typeof row === 'object' &&
+                row !== null &&
+                'id' in row &&
+                row.id === values[0]
+              )
+            }),
+          ])
         },
       }
     }
@@ -295,6 +333,19 @@ describe('generation extract service', () => {
     expect(result.images[0]?.thumbnailUrl).toMatch(/^file:/)
   })
 
+  it('scans arbitrary image folders recursively with natural ordering', async () => {
+    const folder = join(tempRoot, 'external-images')
+    await createImage(join(folder, '10.png'), 'image-10')
+    await createImage(join(folder, '2.png'), 'image-2')
+    await createImage(join(folder, 'nested', '1.webp'), 'image-1')
+    await writeFile(join(folder, 'note.txt'), 'ignore')
+
+    const result = await scanGenerationImageFolder({ folder })
+
+    expect(result.map((image) => image.relativePath)).toEqual(['2.png', '10.png', 'nested/1.webp'])
+    expect(result.every((image) => image.thumbnailUrl.startsWith('file:'))).toBe(true)
+  })
+
   it('generates extract prompts with source image, calls Grsai extract, saves outputs, and stores artifacts', async () => {
     const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
@@ -445,6 +496,7 @@ describe('generation comfyui service', () => {
         task_id: 'txt2img-comfy-task',
         capability: 'txt2img',
         processed: 1,
+        images: [expect.objectContaining({ localPath: '/result.png' })],
       }),
     )
   })
@@ -574,32 +626,41 @@ describe('generation comfyui service', () => {
     )
   })
 
-  it('rejects ComfyUI extract sources outside collection folder', async () => {
-    const outsidePath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+  it('runs ComfyUI extract with arbitrary external source folders', async () => {
+    const outsidePath = join(tempRoot, 'external-source', 'print.png')
     await createImage(outsidePath, 'print-image')
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
 
     const result = await runComfyuiExtractBatch(
       {
         sourceImagePaths: [outsidePath],
         workflowId: 'extract-v1',
-        prompt: 'extract print',
+        width: 1200,
+        height: 1400,
         taskId: 'extract-comfy-task',
       },
       {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'cy-key',
         openDatabase: createFakeDb().openDatabase,
-        createComfyuiAdapter: () => ({ generate: vi.fn() }),
+        createComfyuiAdapter: () => ({ generate }),
       },
     )
 
     expect(result).toMatchObject({
       taskId: 'extract-comfy-task',
       total: 1,
-      succeeded: 0,
-      failed: 1,
+      succeeded: 1,
+      failed: 0,
     })
-    expect(result.failures[0]?.error).toBe('提取只能选择 01-采集 目录下的源图')
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        output: expect.objectContaining({ size_px: { width: 1200, height: 1400 } }),
+      }),
+    )
   })
 
   it('returns a setup error when no ComfyUI instance is registered for extract', async () => {
@@ -777,6 +838,83 @@ describe('generation comfyui img2img service', () => {
     )
   })
 
+  it('registers arbitrary folder images before running ComfyUI img2img', async () => {
+    const printPath = join(tempRoot, 'external-prints', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createFakeDb()
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiImg2imgBatch(
+      {
+        sourceImagePaths: [printPath],
+        workflowId: 'img2img-v1',
+        width: 1600,
+        height: 1200,
+        taskId: 'img2img-folder-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    const sourceArtifactId = String(fakeDb.artifacts[0]?.[0])
+    expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
+    expect(fakeDb.artifacts[0]?.[6]).toBe(printPath)
+    expect(result).toMatchObject({ taskId: 'img2img-folder-task', total: 1, succeeded: 1 })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        output: expect.objectContaining({ size_px: { width: 1600, height: 1200 } }),
+        options: expect.objectContaining({
+          sourceArtifactIds: [sourceArtifactId],
+          width: 1600,
+          height: 1200,
+        }),
+      }),
+    )
+  })
+
+  it('runs every scanned folder image even when duplicate files share the same hash', async () => {
+    const firstPath = join(tempRoot, 'external-duplicates', 'first.png')
+    const secondPath = join(tempRoot, 'external-duplicates', 'second.png')
+    await createImage(firstPath, 'same-image')
+    await createImage(secondPath, 'same-image')
+    const fakeDb = createFakeDb()
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiImg2imgBatch(
+      {
+        sourceImagePaths: [firstPath, secondPath],
+        workflowId: 'img2img-v1',
+        taskId: 'img2img-duplicate-folder-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'img2img-duplicate-folder-task',
+      total: 2,
+      succeeded: 2,
+      failed: 0,
+    })
+    expect(fakeDb.artifacts).toHaveLength(2)
+    expect(fakeDb.artifacts[0]?.[0]).toBe(fakeDb.artifacts[1]?.[0])
+    expect(generate).toHaveBeenCalledTimes(2)
+  })
+
   it('returns a setup error when no ComfyUI instance is registered', async () => {
     const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
     await createImage(printPath, 'print-image')
@@ -916,50 +1054,51 @@ describe('generation comfyui matting service', () => {
     )
   })
 
-  it('filters raw collection images out of matting sources through artifact validation', async () => {
-    const rawPath = join(workbenchRoot, '01-采集', 'sku-a', 'raw.png')
-    await createImage(rawPath, 'raw-image')
+  it('registers arbitrary folder images before running ComfyUI matting', async () => {
+    const printPath = join(tempRoot, 'external-matting', 'print.png')
+    await createImage(printPath, 'print-image')
     const fakeDb = createFakeDb()
-    fakeDb.rowsBySql.set('artifacts', [
-      {
-        id: 'raw-artifact',
-        print_id: 'pri_raw',
-        step: 'manual-import',
-        file_path: rawPath,
-      },
-    ])
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///matting.png', local_path: '/matting.png' }],
+    })
 
     const result = await runComfyuiMattingBatch(
       {
-        sourceArtifactIds: ['raw-artifact'],
+        sourceImagePaths: [printPath],
         workflowId: 'matting-v1',
-        prompt: 'remove background',
-        taskId: 'matting-task',
+        width: 1400,
+        height: 1400,
+        taskId: 'matting-folder-task',
       },
       {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
         getSecret: async () => 'cy-key',
         openDatabase: fakeDb.openDatabase,
-        createComfyuiAdapter: () => ({ generate: vi.fn() }),
+        createComfyuiAdapter: () => ({ generate }),
       },
     )
 
-    expect(result).toMatchObject({ taskId: 'matting-task', total: 1, succeeded: 0, failed: 1 })
-    expect(result.failures[0]?.error).toBe('图生图不能直接选择 01-采集 原图，请先提取成印花')
+    const sourceArtifactId = String(fakeDb.artifacts[0]?.[0])
+    expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
+    expect(fakeDb.artifacts[0]?.[6]).toBe(printPath)
+    expect(result).toMatchObject({ taskId: 'matting-folder-task', total: 1, succeeded: 1 })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        output: expect.objectContaining({ size_px: { width: 1400, height: 1400 } }),
+        options: expect.objectContaining({
+          sourceArtifactIds: [sourceArtifactId],
+          width: 1400,
+          height: 1400,
+        }),
+      }),
+    )
   })
 
   it('runs mixed matting through Grsai mask generation and ComfyUI compositing', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(tempRoot, 'external-mixed', 'print.png')
     await createImage(printPath, 'print-image')
     const fakeDb = createFakeDb()
-    fakeDb.rowsBySql.set('artifacts', [
-      {
-        id: 'print-artifact',
-        print_id: 'pri_print',
-        step: 'extract',
-        file_path: printPath,
-      },
-    ])
     const progress: unknown[] = []
     const generateMask = vi.fn().mockResolvedValue({
       status: 'succeeded',
@@ -1000,10 +1139,11 @@ describe('generation comfyui matting service', () => {
 
     const result = await runMixedMattingBatch(
       {
-        sourceArtifactIds: ['print-artifact'],
+        sourceImagePaths: [printPath],
         workflowId: 'matting-mixed-v1',
         workflowVersion: '1.0.0',
-        prompt: 'composite alpha',
+        width: 1500,
+        height: 1300,
         taskId: 'mixed-task',
       },
       {
@@ -1022,7 +1162,9 @@ describe('generation comfyui matting service', () => {
       },
     )
 
+    const sourceArtifactId = String(fakeDb.artifacts[0]?.[0])
     expect(result).toMatchObject({ taskId: 'mixed-task', total: 1, succeeded: 1, failed: 0 })
+    expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
     expect(listSkills).toHaveBeenCalledWith({ module: 'generation', category: 'matting-mask' })
     expect(getSkill).toHaveBeenCalledWith('matting-mask-v1', '1.0.0')
     expect(generateMask).toHaveBeenCalledWith(
@@ -1048,8 +1190,9 @@ describe('generation comfyui matting service', () => {
         ],
         options: expect.objectContaining({
           taskId: 'mixed-task',
-          sourceArtifactIds: ['print-artifact'],
-          printId: 'pri_print',
+          sourceArtifactIds: [sourceArtifactId],
+          width: 1500,
+          height: 1300,
           workflowCategory: 'matting-mixed',
           artifactProvider: 'grsai+comfyui-mask',
           maskSkillId: 'matting-mask-v1',

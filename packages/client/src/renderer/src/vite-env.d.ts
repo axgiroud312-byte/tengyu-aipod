@@ -221,6 +221,12 @@ declare global {
         generatePrompts: (
           input: import('../../main/lib/generation-service').GenerationPromptInput,
         ) => Promise<import('../../main/lib/generation-service').Txt2imgPromptDraft[]>
+        chooseImageFolder: () => Promise<
+          import('../../main/lib/generation-service').ChooseGenerationImageFolderResult
+        >
+        scanImageFolder: (input: { folder: string }) => Promise<
+          import('../../main/lib/generation-service').GenerationImageSource[]
+        >
         listExtractSources: () => Promise<
           import('../../main/lib/generation-service').ExtractSourcesResult
         >
