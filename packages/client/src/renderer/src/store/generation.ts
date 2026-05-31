@@ -19,10 +19,10 @@ export const generationCapabilities: Array<{
   label: string
   outputDir: string
 }> = [
-  { key: 'txt2img', label: '文生图', outputDir: '02-生图 / 01-文生图' },
-  { key: 'img2img', label: '图生图', outputDir: '02-生图 / 02-图生图' },
-  { key: 'extract', label: '提取', outputDir: '02-生图 / 03-提取' },
-  { key: 'matting', label: '抠图', outputDir: '02-生图 / 04-抠图' },
+  { key: 'txt2img', label: '文生图', outputDir: '02-印花工作区 / 文生图' },
+  { key: 'img2img', label: '图生图', outputDir: '02-印花工作区 / 图生图' },
+  { key: 'extract', label: '提取', outputDir: '02-印花工作区 / 提取' },
+  { key: 'matting', label: '抠图', outputDir: '02-印花工作区 / 抠图' },
 ]
 
 export const generationProviders: Array<{ key: GenerationProvider; label: string }> = [

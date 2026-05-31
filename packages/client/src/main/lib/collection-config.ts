@@ -191,7 +191,7 @@ export function registerCollectionConfigIpc() {
 async function readWorkbenchRoot() {
   const config = await readAppConfig()
   if (!config.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
   return config.workbench_root
 }

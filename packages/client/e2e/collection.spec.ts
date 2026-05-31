@@ -183,7 +183,7 @@ async function createRuntime(input: {
   locks?: BrowserProfileLockManager
 }) {
   const workbenchRoot = join(input.tempRoot, `workbench-${input.profileId ?? input.mode}`)
-  const outputDir = join(workbenchRoot, '01-采集')
+  const outputDir = join(workbenchRoot, '01-采集工作区', 'temu-20260531-120000')
   await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
   await mkdir(outputDir, { recursive: true })
 
@@ -212,6 +212,11 @@ async function createRuntime(input: {
     readConfig: async () => ({ workbench_root: workbenchRoot }) as never,
     cdp,
     locks: input.locks ?? new BrowserProfileLockManager(),
+    getPlatformRule: () => ({
+      ...platformRule('about:blank'),
+      allowed_domains: ['127.0.0.1'],
+      entry_url: 'about:blank',
+    }),
     randomId: () => `session-${input.profileId ?? input.mode}`,
     now: () => 1_779_610_000_000,
   })
@@ -350,17 +355,17 @@ test.describe('collection module E2E', () => {
     )
     expect(assigned.results[0]).toMatchObject({
       status: 'success',
-      savedPath: join(runtime.outputDir, 'SKU-CLICK', 'SKU-CLICK-001.png'),
+      savedPath: join(runtime.outputDir, '商品页', 'SKU-CLICK', 'SKU-CLICK-001.png'),
     })
     await expect(
-      readFile(join(runtime.outputDir, 'SKU-CLICK', 'SKU-CLICK-001.png')),
+      readFile(join(runtime.outputDir, '商品页', 'SKU-CLICK', 'SKU-CLICK-001.png')),
     ).resolves.toEqual(png)
 
     await productLink.click()
     await expect.poll(() => results.length).toBe(2)
     expect(results[1]?.result).toMatchObject({
       status: 'skipped',
-      savedPath: join(runtime.outputDir, 'SKU-CLICK', 'SKU-CLICK-001.png'),
+      savedPath: join(runtime.outputDir, '商品页', 'SKU-CLICK', 'SKU-CLICK-001.png'),
       reason: 'dedup',
     })
     expect(runtime.bitBrowserCalls.opened).toEqual(['profile-click'])
@@ -384,7 +389,7 @@ test.describe('collection module E2E', () => {
     await expect.poll(() => results.length).toBe(1)
     expect(results[0]?.result).toMatchObject({
       status: 'success',
-      savedPath: expect.stringContaining(join('01-采集', '散图池')),
+      savedPath: expect.stringContaining(runtime.outputDir),
     })
     const savedPath = results[0]?.result.status === 'success' ? results[0].result.savedPath : ''
     await expect(readFile(savedPath)).resolves.toEqual(png)
@@ -419,7 +424,7 @@ test.describe('collection module E2E', () => {
 
     await expect(runtime.service.retryRecord(failed[0]?.id ?? '')).resolves.toMatchObject({
       status: 'success',
-      savedPath: expect.stringContaining(join('01-采集', '散图池')),
+      savedPath: expect.stringContaining(runtime.outputDir),
     })
     expect(mockServer.imageHits.get('/images/flaky_original.png')).toBe(2)
   })
@@ -429,7 +434,7 @@ test.describe('collection module E2E', () => {
       throw new Error('mock server missing')
     }
     const workbenchRoot = join(tempRoot, 'workbench-real-wiring')
-    const outputDir = join(workbenchRoot, '01-采集')
+    const outputDir = join(workbenchRoot, '01-采集工作区', 'temu-20260531-120000')
     await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
     await mkdir(outputDir, { recursive: true })
 

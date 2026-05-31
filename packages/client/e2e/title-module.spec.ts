@@ -20,7 +20,7 @@ const titleSkill = {
   language: 'en',
   version: '1.0.0',
   enabled: true,
-  recommendedModel: 'qwen3-vl-plus',
+  recommendedModel: 'qwen3.6-flash',
   notes: null,
   systemPrompt: 'Write a marketplace title. Output only the title.',
   variables: [],
@@ -101,7 +101,7 @@ async function startMockServer(state: MockState) {
         id: `chatcmpl-e2e-${state.bailianCalls}`,
         object: 'chat.completion',
         created: Date.now(),
-        model: body?.model ?? 'qwen3-vl-plus',
+        model: body?.model ?? 'qwen3.6-flash',
         choices: [
           {
             index: 0,
@@ -172,7 +172,7 @@ async function createSku(batchDir: string, skuCode: string) {
 }
 
 async function setupBatch(root: string) {
-  const batchDir = join(root, '05-货号成品', 'title-e2e-batch')
+  const batchDir = join(root, '04-上架工作区', 'title-e2e-batch')
   await createSku(batchDir, 'SKU001')
   await createSku(batchDir, 'SKU002')
   await createSku(batchDir, 'SKU003')
@@ -239,7 +239,7 @@ test.describe('title module E2E', () => {
     await page.reload()
     await expect(page.getByText('标题生成模块')).toBeVisible()
 
-    await page.getByPlaceholder('选择货号成品中的一个批次目录').fill(batchDir)
+    await page.getByPlaceholder('选择上架工作区中的一个套版批次目录').fill(batchDir)
     await page.getByRole('button', { name: '高级参数' }).click()
     await page.getByRole('spinbutton', { name: '并发数' }).fill('1')
     await page.getByRole('button', { name: '扫描' }).click()
@@ -268,9 +268,9 @@ test.describe('title module E2E', () => {
     const rows = await readWorkbookRows(join(batchDir, 'titles.xlsx'))
     expect(rows).toEqual([
       ['货号', '标题'],
-      ['SKU001', 'Mock Title 2 qwen3-vl-plus'],
+      ['SKU001', 'Mock Title 2 qwen3.6-flash'],
       ['SKU002', 'Existing SKU002 Title'],
-      ['SKU003', 'Mock Title 3 qwen3-vl-plus'],
+      ['SKU003', 'Mock Title 3 qwen3.6-flash'],
     ])
   })
 
@@ -288,7 +288,7 @@ test.describe('title module E2E', () => {
     await expect(page.getByText('标题生成模块')).toBeVisible()
 
     await rm(join(batchDir, 'SKU003', '1.png'))
-    await page.getByPlaceholder('选择货号成品中的一个批次目录').fill(batchDir)
+    await page.getByPlaceholder('选择上架工作区中的一个套版批次目录').fill(batchDir)
     await page.getByRole('button', { name: '高级参数' }).click()
     await page.getByRole('spinbutton', { name: '并发数' }).fill('1')
     await page.getByRole('button', { name: '扫描' }).click()
@@ -307,9 +307,9 @@ test.describe('title module E2E', () => {
     const rows = await readWorkbookRows(join(batchDir, 'titles.xlsx'))
     expect(rows).toEqual([
       ['货号', '标题'],
-      ['SKU001', 'Mock Title 1 qwen3-vl-plus'],
+      ['SKU001', 'Mock Title 1 qwen3.6-flash'],
       ['SKU002', 'Existing SKU002 Title'],
-      ['SKU003', 'Mock Title 2 qwen3-vl-plus'],
+      ['SKU003', 'Mock Title 2 qwen3.6-flash'],
     ])
   })
 })

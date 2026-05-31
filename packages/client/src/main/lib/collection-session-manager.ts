@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { mkdir } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
@@ -182,15 +183,22 @@ export class CollectionSessionManager {
     })
     const workbenchRoot = await readWorkbenchRoot(this.readConfig)
     const platformRule = this.findPlatformRule(config.platform)
+    const sessionId = this.randomId()
+    const defaultOutputDir = join(
+      workbenchRoot,
+      WORKBENCH_DIRECTORIES.collection,
+      `${config.platform}-${timestampSlug(this.now())}`,
+    )
     const session: CollectionSession = {
-      id: this.randomId(),
+      id: sessionId,
       platform: config.platform,
       profile_id: config.profile_id,
       mode: config.mode,
       status: 'starting',
-      output_dir: config.output_dir ?? join(workbenchRoot, WORKBENCH_DIRECTORIES.collection),
+      output_dir: config.output_dir ?? defaultOutputDir,
       started_at: this.now(),
     }
+    await mkdir(session.output_dir, { recursive: true })
     const lock = this.locks.acquire(config.profile_id, 'collection', session.id)
     this.debug('已锁定比特浏览器环境', 'debug', {
       session_id: session.id,
@@ -598,9 +606,15 @@ function openWorkbenchDatabase(workbenchRoot: string) {
 async function readWorkbenchRoot(readConfig: ReadAppConfig) {
   const config = await readConfig()
   if (!config.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
   return config.workbench_root
+}
+
+function timestampSlug(value: number) {
+  const date = new Date(value)
+  const pad = (item: number) => String(item).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
 }
 
 async function readAppConfig() {

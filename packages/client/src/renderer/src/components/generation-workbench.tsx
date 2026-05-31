@@ -1558,7 +1558,7 @@ function GrsaiExtractPanel() {
       return
     }
     if (selectedPaths.length === 0) {
-      setError('请先选择 01-采集 下的源图')
+      setError('请先选择采集工作区下的源图')
       return
     }
 
@@ -1600,7 +1600,9 @@ function GrsaiExtractPanel() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h4 className="font-semibold">采集源图</h4>
-                <p className="mt-1 text-sm text-muted-foreground">{sourceFolder || '01-采集'}</p>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {sourceFolder || '01-采集工作区'}
+                </p>
               </div>
               <div className="flex gap-2">
                 <Button onClick={() => void loadSources()} type="button" variant="secondary">
@@ -2708,7 +2710,7 @@ export function GenerationWorkbench() {
             <div className="rounded-md border bg-muted px-3 py-2 text-xs text-muted-foreground">
               <div>输出目录</div>
               <div className="mt-1 font-medium text-foreground">
-                {activeCapabilityMeta?.outputDir ?? '02-生图'}
+                {activeCapabilityMeta?.outputDir ?? '02-印花工作区'}
               </div>
             </div>
           </div>

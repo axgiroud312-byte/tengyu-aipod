@@ -26,7 +26,7 @@ const detectionSkill: Skill = {
 type OpenDatabase = (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
 async function createInputImages(root: string) {
-  const inputDir = join(root, '02-生图', '03-提取', 'detection-e2e')
+  const inputDir = join(root, '02-印花工作区', '提取', 'detection-e2e')
   const images: string[] = []
   for (let index = 0; index < 10; index += 1) {
     const transparent = index % 2 === 0
@@ -208,9 +208,15 @@ test.describe('detection module E2E', () => {
         }),
       )
 
-      await expect(listFiles(join(workbenchRoot, '03-检测', 'pass'))).resolves.toHaveLength(4)
-      await expect(listFiles(join(workbenchRoot, '03-检测', 'review'))).resolves.toHaveLength(3)
-      await expect(listFiles(join(workbenchRoot, '03-检测', 'block'))).resolves.toHaveLength(3)
+      await expect(
+        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '通过')),
+      ).resolves.toHaveLength(4)
+      await expect(
+        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '复查')),
+      ).resolves.toHaveLength(3)
+      await expect(
+        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '失败')),
+      ).resolves.toHaveLength(3)
       await expect(
         stat(join(workbenchRoot, '.workbench', 'tmp', 'detection', 'detection-e2e-success')),
       ).rejects.toThrow()

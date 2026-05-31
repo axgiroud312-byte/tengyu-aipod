@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { extname, join } from 'node:path'
-import { AppErrorClass } from '@tengyu-aipod/shared'
+import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { Page } from 'playwright'
 import { z } from 'zod'
@@ -317,7 +317,7 @@ export class CollectionClickService {
       session,
       event,
       skuCode: null,
-      targetDir: join(session.output_dir, '散图池'),
+      targetDir: session.output_dir,
       fileBase: `${platformRule.key}-${timestampSlug(createdAt)}`,
       createdAt,
     })
@@ -685,14 +685,14 @@ function targetForClick(input: {
   if (input.isGoodsPage && input.skuCode) {
     return {
       skuCode: input.skuCode,
-      targetDir: join(input.session.output_dir, input.skuCode),
+      targetDir: join(input.session.output_dir, '商品页', input.skuCode),
       fileBase: input.skuCode,
     }
   }
 
   return {
     skuCode: null,
-    targetDir: join(input.session.output_dir, '散图池'),
+    targetDir: input.session.output_dir,
     fileBase: `${input.platformRule.key}-${timestampSlug(input.createdAt)}`,
     reason: input.isGoodsPage ? 'sku_required' : 'not_goods_page',
   }
@@ -705,12 +705,12 @@ function targetForStoredRecord(
 ) {
   if (record.skuCode) {
     return {
-      targetDir: join(session.output_dir, record.skuCode),
+      targetDir: join(session.output_dir, '商品页', record.skuCode),
       fileBase: record.skuCode,
     }
   }
   return {
-    targetDir: join(session.output_dir, '散图池'),
+    targetDir: session.output_dir,
     fileBase: `${session.platform}-${timestampSlug(createdAt)}`,
   }
 }
@@ -936,9 +936,14 @@ function compactLogDetails(details: Record<string, string | number | boolean | n
 }
 
 function workbenchRootFromOutput(outputDir: string) {
-  return outputDir.endsWith('/01-采集') || outputDir.endsWith('\\01-采集')
-    ? outputDir.slice(0, -'01-采集'.length - 1)
-    : outputDir
+  const normalized = outputDir.replace(/\\/g, '/')
+  const marker = `/${WORKBENCH_DIRECTORIES.collection}`
+  const index = normalized.indexOf(marker)
+  const next = normalized[index + marker.length]
+  if (index >= 0 && (next === undefined || next === '/')) {
+    return index === 0 ? '/' : outputDir.slice(0, index)
+  }
+  return outputDir
 }
 
 export const collectionClickService = new CollectionClickService({

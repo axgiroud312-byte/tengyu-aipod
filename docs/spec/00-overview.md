@@ -157,7 +157,7 @@
 
 ### 主进程负责
 
-- 文件系统操作（读写素材总目录）
+- 文件系统操作（读写本地工作区）
 - SQLite 数据库
 - 所有 HTTP 调用（晨羽 / Grsai / 百炼 / 腾域服务器）
 - Playwright（采集 + 上架）
@@ -265,7 +265,7 @@ CREATE TABLE skus (
 -- 上架状态（断点续传用）
 CREATE TABLE listing_status (
   id              TEXT PRIMARY KEY,
-  batch_path      TEXT NOT NULL,                     -- 05-货号成品/{batch}/
+  batch_path      TEXT NOT NULL,                     -- 04-上架工作区/{batch}/
   sku_code        TEXT NOT NULL,
   platform        TEXT NOT NULL,
   workspace_id    TEXT NOT NULL,                     -- bit-browser profile id
@@ -445,9 +445,9 @@ export interface AppError {
 
 以下事实任何代码都不能违反：
 
-1. **5 大类目录下只放图片**（含子目录），元数据全在 SQLite
-2. **05-货号成品 是上架域**，禁止其他模块写
-3. **04-待套版印花 是生产入口**，可三种入图方式
+1. **4 个业务工作区目录下只放业务图片**（含子目录，`titles.xlsx` 只允许在上架批次目录），元数据全在 SQLite
+2. **04-上架工作区 是上架域**，只有 PS 套版和标题模块写，上架模块读
+3. **套版候选清单在 SQLite**，侵权检测通过图加入清单时不复制、不移动源文件
 4. **同一货号同时刻最多 1 个进行中任务**
 5. **同一比特浏览器 profile 同时刻最多 1 个模块占用**
 6. **服务端不接触图片/API Key/任务数据**

@@ -41,6 +41,7 @@ type ChenyuGpu = Awaited<ReturnType<typeof window.api.chenyu.listGpus>>[number]
 type ChenyuInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type GenerationConfig = GenerationSettingsSnapshot['config']
+type WorkspaceState = Awaited<ReturnType<typeof window.api.workspace.getState>>
 type SkillSyncResult = Awaited<ReturnType<typeof window.api.skill.refresh>>
 type LocalWorkflowSummary = Awaited<ReturnType<typeof window.api.workflow.listLocal>>[number]
 type ConnectionStatus = 'unchecked' | 'checking' | 'connected' | 'failed'
@@ -122,7 +123,14 @@ const connectionClassName: Record<ConnectionStatus, string> = {
   failed: 'border-red-200 bg-red-50 text-red-700',
 }
 
-export function SettingsPage() {
+export function SettingsPage({
+  onWorkspaceSaved,
+}: {
+  onWorkspaceSaved?: (root: string) => void
+}) {
+  const [workspace, setWorkspace] = useState<WorkspaceState | null>(null)
+  const [workspaceDraft, setWorkspaceDraft] = useState('')
+  const [savingWorkspace, setSavingWorkspace] = useState(false)
   const [config, setConfig] = useState<ChenyuConfig>(emptyConfig)
   const [apiKey, setApiKey] = useState('')
   const [apiKeyConfigured, setApiKeyConfigured] = useState(false)
@@ -175,7 +183,18 @@ export function SettingsPage() {
 
   useEffect(() => {
     void load()
+    void loadWorkspaceSettings()
   }, [])
+
+  async function loadWorkspaceSettings() {
+    try {
+      const state = await window.api.workspace.getState()
+      setWorkspace(state)
+      setWorkspaceDraft(state.root ?? '')
+    } catch (nextError) {
+      setError(errorMessage(nextError, '读取工作区失败'))
+    }
+  }
 
   async function load() {
     setLoading(true)
@@ -339,6 +358,44 @@ export function SettingsPage() {
       return
     }
     setWorkflowDirectoryPath(result.data.path)
+  }
+
+  async function chooseWorkspaceRoot() {
+    setError(null)
+    setMessage(null)
+    const result = await window.api.workspace.chooseRoot()
+    if (!result.ok) {
+      if (result.error.code !== 'CANCELLED') {
+        setError(result.error.message)
+      }
+      return
+    }
+    setWorkspaceDraft(result.data.path)
+  }
+
+  async function saveWorkspaceRoot() {
+    setSavingWorkspace(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await window.api.workspace.saveRoot(workspaceDraft)
+      if (!result.ok) {
+        setError(result.error.message)
+        return
+      }
+      const nextState = {
+        root: result.data.path,
+        directories: result.data.directories,
+      }
+      setWorkspace(nextState)
+      setWorkspaceDraft(result.data.path)
+      onWorkspaceSaved?.(result.data.path)
+      setMessage('工作区已保存，目录已自动创建')
+    } catch (nextError) {
+      setError(errorMessage(nextError, '保存工作区失败'))
+    } finally {
+      setSavingWorkspace(false)
+    }
   }
 
   async function importWorkflowDirectory() {
@@ -578,6 +635,50 @@ export function SettingsPage() {
 
   return (
     <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>工作区</CardTitle>
+          <CardDescription>选择后会在本地自动创建采集、印花、检测和上架工作区。</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <label className="grid gap-2 text-sm font-medium" htmlFor="workspace-root">
+            <span>选择工作区</span>
+            <div className="flex gap-2">
+              <Input
+                className="min-w-0 flex-1"
+                id="workspace-root"
+                onChange={(event) => setWorkspaceDraft(event.target.value)}
+                placeholder="例如 /Users/you/Documents/腾域aipod工作区"
+                value={workspaceDraft}
+              />
+              <Button onClick={() => void chooseWorkspaceRoot()} type="button" variant="secondary">
+                <FolderOpen className="mr-2 h-4 w-4" />
+                浏览
+              </Button>
+              <Button
+                disabled={savingWorkspace || !workspaceDraft.trim()}
+                onClick={() => void saveWorkspaceRoot()}
+                type="button"
+              >
+                {savingWorkspace ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                )}
+                保存工作区
+              </Button>
+            </div>
+          </label>
+          <div className="grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-3">
+            {(workspace?.directories ?? []).map((directory) => (
+              <div className="rounded-md border bg-muted/40 px-3 py-2" key={directory}>
+                {directory}
+              </div>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-semibold tracking-normal">晨羽智云设置</h2>

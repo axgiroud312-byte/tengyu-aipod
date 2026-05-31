@@ -111,6 +111,7 @@ const api = {
       ipcRenderer.invoke('onboarding:get-state') as Promise<{
         needs_onboarding: boolean
         default_workbench_root: string
+        workbench_root: string | null
       }>,
     chooseWorkbenchRoot: () =>
       ipcRenderer.invoke('onboarding:choose-workbench-root') as Promise<
@@ -125,6 +126,23 @@ const api = {
     saveApiKeys: (apiKeys: Record<string, string>) =>
       ipcRenderer.invoke('onboarding:save-api-keys', apiKeys) as Promise<{ ok: true }>,
     complete: () => ipcRenderer.invoke('onboarding:complete') as Promise<{ ok: true }>,
+  },
+  workspace: {
+    getState: () =>
+      ipcRenderer.invoke('workspace:get-state') as Promise<{
+        root: string | null
+        directories: string[]
+      }>,
+    chooseRoot: () =>
+      ipcRenderer.invoke('workspace:choose-root') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    saveRoot: (path: string) =>
+      ipcRenderer.invoke('workspace:save-root', path) as Promise<
+        | { ok: true; data: { path: string; directories: string[] } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
   },
   keychain: {
     has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,

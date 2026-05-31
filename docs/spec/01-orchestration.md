@@ -391,9 +391,9 @@ interface FullTaskConfig {
   ↓
 检测 step → 风险通过
   ↓
-套版 step → 输出到 05-货号成品/{batch}/{sku}/
+套版 step → 输出到 04-上架工作区/{batch}/{sku}/
   ↓
-标题 step → 写入 05-货号成品/{batch}/titles.xlsx
+标题 step → 写入 04-上架工作区/{batch}/titles.xlsx
   ↓
 上架 step → listing_status 表记录
 ```

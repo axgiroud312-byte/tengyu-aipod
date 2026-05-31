@@ -167,7 +167,7 @@ function nonNegativeInteger(value: number) {
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
   const parsed = Number(value)
-  return parsed === 1 || parsed === 2 || parsed === 3 || parsed === 4 ? parsed : 1
+  return parsed === 1 || parsed === 2 || parsed === 3 ? parsed : 1
 }
 
 function collectionPlatformOption(rule: CollectionPlatformRule): CollectionPlatformOption {
@@ -379,10 +379,33 @@ function ActivationBadge({
   )
 }
 
+function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
+  return (
+    <div className="mt-20 max-w-xl space-y-5 rounded-md border bg-background p-6 shadow-sm">
+      <div className="flex items-start gap-3">
+        <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-600" />
+        <div className="space-y-2">
+          <h1 className="text-2xl font-semibold tracking-normal">请先选择工作区</h1>
+          <p className="text-sm leading-6 text-muted-foreground">
+            采集、生图、检测、PS
+            套版、标题和上架都会把文件写入工作区。选择后会自动创建采集工作区、印花工作区、检测工作区和上架工作区。
+          </p>
+        </div>
+      </div>
+      <Button onClick={onOpenSettings} type="button">
+        去设置页选择工作区
+      </Button>
+    </div>
+  )
+}
+
 function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
   const status = useActivationStore((state) => state.status)
   const location = useLocation()
+  const navigate = useNavigate()
   const activeModule = moduleFromPath(location.pathname) ?? 'title'
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
+  const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(false)
   const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
   const [languages, setLanguages] = useState<Array<{ key: string; label: string }>>([])
   const [models, setModels] = useState<Array<{ key: string; label: string }>>([])
@@ -459,7 +482,32 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
 
   useEffect(() => {
     let mounted = true
+    async function loadWorkspace() {
+      try {
+        const state = await window.api.workspace.getState()
+        if (mounted) {
+          setWorkspaceRoot(state.root)
+        }
+      } finally {
+        if (mounted) {
+          setIsWorkspaceLoaded(true)
+        }
+      }
+    }
+    void loadWorkspace()
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  useEffect(() => {
+    let mounted = true
     async function loadCollectionConfig() {
+      if (!workspaceRoot) {
+        setIsCollectionConfigLoaded(true)
+        return
+      }
+      setIsCollectionConfigLoaded(false)
       try {
         const config = await window.api.collection.getConfig()
         if (!mounted) {
@@ -480,10 +528,10 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     return () => {
       mounted = false
     }
-  }, [])
+  }, [workspaceRoot])
 
   useEffect(() => {
-    if (!isCollectionConfigLoaded) {
+    if (!isCollectionConfigLoaded || !workspaceRoot) {
       return
     }
     let cancelled = false
@@ -500,7 +548,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [collectionPageState, isCollectionConfigLoaded])
+  }, [collectionPageState, isCollectionConfigLoaded, workspaceRoot])
 
   useEffect(() => {
     let mounted = true
@@ -953,12 +1001,11 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     if (!profileId) {
       throw new Error('请先选择或填写比特浏览器环境编号')
     }
+    const outputDir = collectionSession?.output_dir ?? collectionPageState.outputDir.trim()
     return {
       platform: collectionPageState.platform,
       profile_id: profileId,
-      ...(collectionPageState.outputDir.trim()
-        ? { output_dir: collectionPageState.outputDir.trim() }
-        : {}),
+      ...(outputDir ? { output_dir: outputDir } : {}),
       ...(pageUrl?.trim() ? { page_url: pageUrl.trim() } : {}),
       ...(limit !== undefined ? { limit } : {}),
     }
@@ -1289,6 +1336,10 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
               输入新激活码
             </Button>
           </div>
+        ) : !isWorkspaceLoaded ? (
+          <div className="mt-20 text-sm text-muted-foreground">正在读取工作区...</div>
+        ) : activeModule !== 'settings' && !workspaceRoot ? (
+          <WorkspaceRequired onOpenSettings={() => navigate('/settings')} />
         ) : (
           <div className="space-y-6">
             {activeModule === 'collection' ? (
@@ -1366,7 +1417,7 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
             ) : activeModule === 'ps' ? (
               <PhotoshopPage />
             ) : activeModule === 'settings' ? (
-              <SettingsPage />
+              <SettingsPage onWorkspaceSaved={setWorkspaceRoot} />
             ) : (
               <DetectionPage />
             )}
@@ -1430,7 +1481,6 @@ function Onboarding() {
   const [deviceName, setDeviceName] = useState(defaultDeviceName)
   const [activationMessage, setActivationMessage] = useState<string | null>(null)
   const [isActivating, setIsActivating] = useState(false)
-  const [workbenchRoot, setWorkbenchRoot] = useState('')
   const [apiKeys, setApiKeys] = useState<OnboardingApiKeys>({
     chenyu: '',
     grsai: '',
@@ -1448,7 +1498,6 @@ function Onboarding() {
   useEffect(() => {
     async function loadState() {
       const state = await window.api.onboarding.getState()
-      setWorkbenchRoot(state.default_workbench_root)
       if (!state.needs_onboarding && !forceOnboarding) {
         setReady(true)
         navigate(getStoredWorkbenchRoute(), { replace: true })
@@ -1490,19 +1539,7 @@ function Onboarding() {
     navigate(onboardingPath(2))
   }
 
-  async function chooseWorkbenchRoot() {
-    const result = await window.api.onboarding.chooseWorkbenchRoot()
-    if (result.ok) {
-      setWorkbenchRoot(result.data.path)
-    }
-  }
-
-  async function saveWorkbenchRoot() {
-    await window.api.onboarding.saveWorkbenchRoot(workbenchRoot)
-    navigate(onboardingPath(3))
-  }
-
-  async function saveApiKeys(nextStep: OnboardingStep = 4) {
+  async function saveApiKeys(nextStep: OnboardingStep = 3) {
     const cleaned: OnboardingApiKeys = {
       chenyu: apiKeys.chenyu.trim(),
       grsai: apiKeys.grsai.trim(),
@@ -1547,15 +1584,11 @@ function Onboarding() {
       onActivate={() => void activate()}
       onActivationCodeChange={(value) => setActivationCode(normalizeActivationCode(value))}
       onApiKeyChange={updateApiKey}
-      onChooseWorkbenchRoot={() => void chooseWorkbenchRoot()}
       onComplete={() => void complete()}
       onDeviceNameChange={setDeviceName}
       onNavigateStep={(nextStep) => navigate(onboardingPath(nextStep))}
       onSaveApiKeys={() => void saveApiKeys()}
-      onSaveWorkbenchRoot={() => void saveWorkbenchRoot()}
-      onWorkbenchRootChange={setWorkbenchRoot}
       step={step}
-      workbenchRoot={workbenchRoot}
     />
   )
 }

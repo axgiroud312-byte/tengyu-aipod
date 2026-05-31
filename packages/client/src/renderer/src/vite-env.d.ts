@@ -14,6 +14,7 @@ declare global {
         getState: () => Promise<{
           needs_onboarding: boolean
           default_workbench_root: string
+          workbench_root: string | null
         }>
         chooseWorkbenchRoot: () => Promise<
           | { ok: true; data: { path: string } }
@@ -22,6 +23,22 @@ declare global {
         saveWorkbenchRoot: (path: string) => Promise<{ ok: true; data: { path: string } }>
         saveApiKeys: (apiKeys: Record<string, string>) => Promise<{ ok: true }>
         complete: () => Promise<{ ok: true }>
+      }
+      workspace: {
+        getState: () => Promise<{
+          root: string | null
+          directories: string[]
+        }>
+        chooseRoot: () => Promise<
+          | { ok: true; data: { path: string } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+        saveRoot: (
+          path: string,
+        ) => Promise<
+          | { ok: true; data: { path: string; directories: string[] } }
+          | { ok: false; error: { code: string; message: string } }
+        >
       }
       keychain: {
         has: (key: string) => Promise<boolean>

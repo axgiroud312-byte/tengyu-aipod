@@ -260,7 +260,7 @@ class BrowserProfileLock {
 }
 ```
 
-## 5. 输入：从 05-货号成品 转 ListingItem[]
+## 5. 输入：从 04-上架工作区 转 ListingItem[]
 
 ```ts
 async function loadBatchAsListingItems(
@@ -316,7 +316,7 @@ async function loadBatchAsListingItems(
 │                                                    │
 │ ① 货号批次目录                                       │
 │    [选择...]                                        │
-│    /Users/.../05-货号成品/模板1_白T正面/             │
+│    /Users/.../04-上架工作区/模板1_白T正面/           │
 │    扫描结果：30 个货号                               │
 │    ✅ titles.xlsx 中 28 个有标题                     │
 │    ⚠️ 2 个货号无标题 [去标题模块补全]                │
@@ -324,7 +324,7 @@ async function loadBatchAsListingItems(
 │ ② 平台                                              │
 │    [Temu PopTemu ▼] (v1: Temu/Shein)               │
 │                                                    │
-│ ③ 比特浏览器工作区（多店铺）                          │
+│ ③ 店铺环境（多店铺）                                  │
 │    ☑ profile-001 (店铺A - Temu主店) ● 已登录         │
 │    ☑ profile-002 (店铺B - Temu备店) ● 已登录         │
 │    ☐ profile-003 (Shein 店) ⚠️ 平台不匹配             │
@@ -523,9 +523,9 @@ CREATE TABLE listing_status (
 - 重试 `status='failed'` 的（重置 retry_count）
 - 处理 `status='pending'` 或 `status='uploading'`（中断的）
 
-## 9.1 工作区 × 任务编排
+## 9.1 店铺环境 × 任务编排
 
-v1 UI 在 `listing_status` 之外新增两张本地 SQLite 表，用来保存"哪个比特浏览器工作区有哪些上架任务"。它们只存在客户端 `.workbench/workbench.db`，服务端不接触店铺、批次目录或任务数据。
+v1 UI 在 `listing_status` 之外新增两张本地 SQLite 表，用来保存"哪个店铺环境有哪些上架任务"。它们只存在客户端 `.workbench/workbench.db`，服务端不接触店铺、批次目录或任务数据。
 
 ```sql
 CREATE TABLE listing_workspaces (
@@ -571,7 +571,7 @@ CREATE TABLE listing_tasks (
 - `listing:update-task-status`
 - `listing:delete-task`
 
-Runner 契约：`ListingRunConfig.workspaces[]` 可以携带 `workspace_id` 和 `task_id`。工作区开始时 runner 标记对应 `listing_tasks.status='running'`、`listing_workspaces.status='running'`；工作区完成后按货号结果回写 `completed` 或 `failed`，并清空 `current_task_id`。跨工作区仍并行，同工作区仍串行；DOM 操作仍只在平台目录的 `selectors / page-parser / action-executor / workflow` 四层内发生。
+Runner 契约：`ListingRunConfig.workspaces[]` 可以携带 `workspace_id` 和 `task_id`。店铺环境开始时 runner 标记对应 `listing_tasks.status='running'`、`listing_workspaces.status='running'`；店铺环境完成后按货号结果回写 `completed` 或 `failed`，并清空 `current_task_id`。跨店铺环境仍并行，同店铺环境仍串行；DOM 操作仍只在平台目录的 `selectors / page-parser / action-executor / workflow` 四层内发生。
 
 ## 10. 证据保存
 

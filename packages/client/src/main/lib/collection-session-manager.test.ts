@@ -10,6 +10,12 @@ import {
 
 type InsertedSession = CollectionSession & { task_id: string | null }
 
+function localTimestampSlug(value: number) {
+  const date = new Date(value)
+  const pad = (item: number) => String(item).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
 class FakePage {
   bindings = new Map<string, (_source: unknown, data: unknown) => Promise<unknown>>()
   scripts: string[] = []
@@ -227,7 +233,7 @@ describe('CollectionSessionManager', () => {
       profile_id: 'profile-1',
       mode: 'click',
       status: 'active',
-      output_dir: '/tmp/wb/01-采集',
+      output_dir: `/tmp/wb/01-采集工作区/temu-${localTimestampSlug(1000)}`,
       started_at: 1000,
     })
 

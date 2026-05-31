@@ -6,24 +6,24 @@
 
 ### 1.1 输入域
 
-- 02-生图 任一目录下的印花（带背景或透明底）
+- `02-印花工作区` 任一能力目录下的印花（带背景或透明底）
 - 用户外部拖入的图
 
-❌ 01-采集 的产品图不能直接检测（必须先提取成印花）
+❌ `01-采集工作区` 的产品图不能直接检测（必须先提取成印花）
 
 ### 1.2 输出
 
-- 物理：图复制到 `03-检测/{level}/` 的对应子目录
+- 物理：图复制到 `03-检测工作区/{taskId}/{通过|复查|失败}/` 的对应子目录
 - 数据库：每张图一条 `detection_results` 记录，含风险值、依据、模型版本、skill 版本
 - UI：列表展示每张图的判决结果
 
 ```
-03-检测/
-├─ pass/                          ← 风险值 0-39
+03-检测工作区/{taskId}/
+├─ 通过/                           ← 风险值 0-39，risk_level = pass
 │   └─ {印花ID}.jpg
-├─ review/                        ← 风险值 40-69（需人工复核）
+├─ 复查/                           ← 风险值 40-69（需人工复核），risk_level = review
 │   └─ {印花ID}.jpg
-└─ block/                         ← 风险值 70-100（高风险拦截）
+└─ 失败/                           ← 风险值 70-100（高风险拦截），risk_level = block
     └─ {印花ID}.jpg
 ```
 
@@ -311,8 +311,8 @@ class AliyunBailianAdapter {
 ┌─ 侵权检测 ────────────────────────────────────────────┐
 │                                                       │
 │ ① 选择待检测印花                                       │
-│    ● 全选 02-生图/03-提取/ (30 张)                     │
-│    ● 全选 02-生图/04-抠图/ (12 张)                     │
+│    ● 全选 02-印花工作区/提取/ (30 张)                    │
+│    ● 全选 02-印花工作区/抠图/ (12 张)                    │
 │    ○ 手动勾选（缩略图网格多选）                         │
 │    ○ 从外部拖入                                        │
 │                                                       │
@@ -358,28 +358,25 @@ class AliyunBailianAdapter {
 │ ...                                              │
 └──────────────────────────────────────────────────┘
 
-[一键加入待套版] 把 pass/ 的图复制到 04-待套版印花/
+[加入套版清单] 把通过图登记到本地套版候选清单
 [导出报告 CSV]
 ```
 
-## 7. 一键加入待套版
+## 7. 加入套版清单
 
 ```
-用户点 [一键加入待套版]
+用户点 [加入套版清单]
   ↓
 弹窗：
-  发现 28 张 pass 印花，将复制到 04-待套版印花/
-  ● 复制（推荐，保留 03-检测/pass 副本）
-  ○ 移动（不保留副本）
+  发现 28 张通过印花，将写入本地套版候选清单。
   [确认]
   ↓
 执行：
-  for img in pass/*.jpg:
-    copy to 04-待套版印花/{印花ID}.png
-    artifact record: step='matting' or 'extract' 关联到 04-待套版印花
+  for row in detection_results where risk_level = 'pass':
+    insert/update matting_candidates(artifact_id, task_id, print_id, source_path)
 ```
 
-**注意**：04-待套版印花 是"生产入口"，所以这里实际是数据流的"承诺"——把这些图送进套版生产线。
+**注意**：加入套版清单不复制、不移动文件；源图仍保留在 `03-检测工作区/{taskId}/通过/`。PS 套版模块从候选清单读取可套版印花。
 
 ## 8. 重复检测策略
 
@@ -442,7 +439,7 @@ CREATE TABLE detection_results (
   skill_id        TEXT NOT NULL,
   skill_version   TEXT NOT NULL,
   threshold_snapshot TEXT NOT NULL,                -- JSON: { pass_max, review_max }
-  output_path     TEXT NOT NULL,                   -- 03-检测/{level}/{...}
+  output_path     TEXT NOT NULL,                   -- 03-检测工作区/{taskId}/{通过|复查|失败}/{...}
   created_at      INTEGER NOT NULL
 );
 

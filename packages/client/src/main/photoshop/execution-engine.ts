@@ -160,14 +160,14 @@ export async function shouldSkipJob(
   }
 
   const placeholders = job.output_paths.map(() => '?').join(',')
-    const artifactRows = db
-      .prepare(
-        `SELECT file_path, file_hash
+  const artifactRows = db
+    .prepare(
+      `SELECT file_path, file_hash
        FROM artifacts
        WHERE provider = 'photoshop'
          AND file_path IN (${placeholders})`,
-      )
-      .all(...job.output_paths) as unknown as ArtifactRow[]
+    )
+    .all(...job.output_paths) as unknown as ArtifactRow[]
   const expectedHashes = new Map(artifactRows.map((row) => [row.file_path, row.file_hash]))
   if (!job.output_paths.every((outputPath) => expectedHashes.has(outputPath))) {
     return false
@@ -295,13 +295,19 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
         created_at = excluded.created_at`,
     )
     for (const output of outputs) {
+      const fileHash = outputHashes[output]
+      if (!fileHash) {
+        throw new AppErrorClass('HTTP_5XX', 'Photoshop 输出 hash 缺失', true, {
+          file_path: output,
+        })
+      }
       artifactStatement.run({
         id: `artifact:${createHash('sha1').update(output).digest('hex')}`,
         task_id: job.task_id,
         step_id: this.stepId(job),
         provider: 'photoshop',
         file_path: output,
-        file_hash: outputHashes[output]!,
+        file_hash: fileHash,
         created_at: Date.now(),
       })
     }

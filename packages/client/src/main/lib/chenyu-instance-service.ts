@@ -221,6 +221,12 @@ export async function getActiveChenyuInstance() {
   return readCurrentInstanceSafely()
 }
 
+export async function refreshActiveChenyuInstance() {
+  const client = await requireChenyuClient()
+  const manager = new ComfyuiInstanceManager({ chenyu: client })
+  return manager.refreshCurrentInstance()
+}
+
 export function registerChenyuInstanceIpc() {
   ipcMain.handle('chenyu:get-settings', () => readChenyuSettings())
   ipcMain.handle('chenyu:save-settings', (_event, input: ChenyuSaveSettingsInput) =>
@@ -259,6 +265,7 @@ export function registerChenyuInstanceIpc() {
       ),
   )
   ipcMain.handle('chenyu:get-active-instance', () => getActiveChenyuInstance())
+  ipcMain.handle('chenyu:refresh-active-instance', () => refreshActiveChenyuInstance())
 }
 
 async function requireChenyuClient() {

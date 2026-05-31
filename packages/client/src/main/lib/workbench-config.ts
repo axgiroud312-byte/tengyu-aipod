@@ -1,16 +1,20 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 
-const MATERIAL_DIR_NAME = '腾域aipod素材'
+const MATERIAL_DIR_NAME = '腾域aipod工作区'
 const CONFIG_FILE_NAME = 'app-config.json'
 
 export const workbenchSubdirectories = [
-  '01-采集',
-  '02-生图',
-  '03-检测',
-  '04-待套版印花',
-  '05-货号成品',
-  '.workbench',
+  WORKBENCH_DIRECTORIES.collection,
+  WORKBENCH_DIRECTORIES.generation,
+  `${WORKBENCH_DIRECTORIES.generation}/文生图`,
+  `${WORKBENCH_DIRECTORIES.generation}/图生图`,
+  `${WORKBENCH_DIRECTORIES.generation}/提取`,
+  `${WORKBENCH_DIRECTORIES.generation}/抠图`,
+  WORKBENCH_DIRECTORIES.detection,
+  WORKBENCH_DIRECTORIES.listing,
+  WORKBENCH_DIRECTORIES.metadata,
 ] as const
 
 export interface AppConfig {
@@ -70,7 +74,15 @@ export async function writeAppConfig(config: AppConfig) {
 
 export async function getWorkbenchRoot() {
   const config = await readAppConfig()
-  return config.workbench_root ?? (await defaultWorkbenchRoot())
+  if (!config.workbench_root) {
+    throw new Error('请先在设置里选择工作区')
+  }
+  return config.workbench_root
+}
+
+export async function getConfiguredWorkbenchRoot() {
+  const config = await readAppConfig()
+  return config.workbench_root ?? null
 }
 
 export async function ensureWorkbenchDirectories(root: string) {

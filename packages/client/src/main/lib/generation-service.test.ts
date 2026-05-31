@@ -186,7 +186,7 @@ beforeEach(async () => {
   const { mkdtemp } = await import('node:fs/promises')
   tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-generation-service-'))
   workbenchRoot = join(tempRoot, 'workbench')
-  await mkdir(join(workbenchRoot, '01-采集'), { recursive: true })
+  await mkdir(join(workbenchRoot, '01-采集工作区'), { recursive: true })
 })
 
 afterEach(async () => {
@@ -248,7 +248,7 @@ describe('generation Grsai paid image service', () => {
     )
 
     expect(result).toMatchObject({ taskId: 'txt-task', total: 1, succeeded: 1, failed: 0 })
-    expect(result.images[0]?.localPath).toContain(join('02-生图', '01-文生图', 'txt-task'))
+    expect(result.images[0]?.localPath).toContain(join('02-印花工作区', '文生图', 'txt-task'))
     expect(result.images[0]?.url).toMatch(/^file:/)
     await expect(stat(result.images[0]?.localPath ?? '')).resolves.toBeTruthy()
     expect(downloadImage).toHaveBeenCalledWith('https://example.test/txt-result.png')
@@ -302,7 +302,7 @@ describe('generation Grsai paid image service', () => {
     )
 
     expect(result).toMatchObject({ taskId: 'img-task', total: 1, succeeded: 1, failed: 0 })
-    expect(result.images[0]?.localPath).toContain(join('02-生图', '02-图生图', 'img-task'))
+    expect(result.images[0]?.localPath).toContain(join('02-印花工作区', '图生图', 'img-task'))
     await expect(stat(result.images[0]?.localPath ?? '')).resolves.toBeTruthy()
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -317,15 +317,15 @@ describe('generation Grsai paid image service', () => {
 
 describe('generation extract service', () => {
   it('lists collection images recursively for extract sources', async () => {
-    await createImage(join(workbenchRoot, '01-采集', 'sku-a', 'a.png'), 'image-a')
-    await createImage(join(workbenchRoot, '01-采集', 'sku-b', 'b.webp'), 'image-b')
-    await writeFile(join(workbenchRoot, '01-采集', 'note.txt'), 'ignore')
+    await createImage(join(workbenchRoot, '01-采集工作区', 'sku-a', 'a.png'), 'image-a')
+    await createImage(join(workbenchRoot, '01-采集工作区', 'sku-b', 'b.webp'), 'image-b')
+    await writeFile(join(workbenchRoot, '01-采集工作区', 'note.txt'), 'ignore')
 
     const result = await listExtractSources({
       readConfig: async () => ({ workbench_root: workbenchRoot }),
     })
 
-    expect(result.folder).toBe(join(workbenchRoot, '01-采集'))
+    expect(result.folder).toBe(join(workbenchRoot, '01-采集工作区'))
     expect(result.images.map((image) => image.relativePath)).toEqual([
       'sku-a/a.png',
       'sku-b/b.webp',
@@ -347,7 +347,7 @@ describe('generation extract service', () => {
   })
 
   it('generates extract prompts with source image, calls Grsai extract, saves outputs, and stores artifacts', async () => {
-    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
     const fakeDb = createFakeDb()
     const progress: unknown[] = []
@@ -389,7 +389,7 @@ describe('generation extract service', () => {
     )
 
     expect(result).toMatchObject({ taskId: 'extract-task', total: 1, succeeded: 1, failed: 0 })
-    expect(result.images[0]?.localPath).toContain(join('02-生图', '03-提取', 'extract-task'))
+    expect(result.images[0]?.localPath).toContain(join('02-印花工作区', '提取', 'extract-task'))
     await expect(stat(result.images[0]?.localPath ?? '')).resolves.toBeTruthy()
     expect(generatePrompts).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -527,7 +527,7 @@ describe('generation comfyui service', () => {
   })
 
   it('runs ComfyUI extract with collection source lineage', async () => {
-    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
     const fakeDb = createFakeDb()
     const progress: unknown[] = []
@@ -586,7 +586,7 @@ describe('generation comfyui service', () => {
   })
 
   it('uses the ComfyUI extract skill prompt when a skill is provided', async () => {
-    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
@@ -664,7 +664,7 @@ describe('generation comfyui service', () => {
   })
 
   it('returns a setup error when no ComfyUI instance is registered for extract', async () => {
-    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
 
     await expect(
@@ -690,8 +690,8 @@ describe('generation comfyui service', () => {
 
 describe('generation comfyui img2img service', () => {
   it('lists only registered print artifacts and filters raw collection paths', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
-    const rawPath = join(workbenchRoot, '01-采集', 'sku-a', 'raw.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
+    const rawPath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'raw.png')
     await createImage(printPath, 'print-image')
     await createImage(rawPath, 'raw-image')
     const fakeDb = createFakeDb()
@@ -716,11 +716,11 @@ describe('generation comfyui img2img service', () => {
     })
 
     expect(result.images.map((image) => image.artifactId)).toEqual(['print-artifact'])
-    expect(result.folders).toContain(join(workbenchRoot, '02-生图', '03-提取'))
+    expect(result.folders).toContain(join(workbenchRoot, '02-印花工作区', '提取'))
   })
 
   it('resolves img2img references for selected print artifacts', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const fakeDb = createFakeDb()
     fakeDb.rowsBySql.set('artifacts', [
@@ -752,7 +752,7 @@ describe('generation comfyui img2img service', () => {
   })
 
   it('registers eligible generation folder images as img2img sources', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '01-文生图', 'folder-print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '文生图', 'folder-print.png')
     await createImage(printPath, 'folder-print-image')
     const fakeDb = createFakeDb()
 
@@ -792,7 +792,7 @@ describe('generation comfyui img2img service', () => {
   })
 
   it('runs ComfyUI img2img with selected print artifact lineage', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const fakeDb = createFakeDb()
     fakeDb.rowsBySql.set('artifacts', [
@@ -916,7 +916,7 @@ describe('generation comfyui img2img service', () => {
   })
 
   it('returns a setup error when no ComfyUI instance is registered', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const fakeDb = createDbWithoutComfyuiInstance()
     fakeDb.rowsBySql.set('artifacts', [
@@ -1001,7 +1001,7 @@ describe('generation comfyui matting service', () => {
   })
 
   it('runs ComfyUI matting with selected print source lineage', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const fakeDb = createFakeDb()
     fakeDb.rowsBySql.set('artifacts', [

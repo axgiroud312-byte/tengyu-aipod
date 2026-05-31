@@ -67,7 +67,7 @@ function buildVariableState(variables: Skill['variables'], existing?: Record<str
 }
 
 function displayThreshold(threshold: DetectionThresholdConfig) {
-  return `通过：0-${threshold.passMax} | 复核：${threshold.passMax + 1}-${threshold.reviewMax} | 拦截：${threshold.reviewMax + 1}-100`
+  return `通过：0-${threshold.passMax} | 复查：${threshold.passMax + 1}-${threshold.reviewMax} | 拦截：${threshold.reviewMax + 1}-100`
 }
 
 export function DetectionSettingsPanel({
@@ -379,7 +379,7 @@ export function DetectionSettingsPanel({
 
             <label className="block space-y-2 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <span>复核上限</span>
+                <span>复查上限</span>
                 <span className="font-mono text-xs text-muted-foreground">
                   {threshold.reviewMax}
                 </span>

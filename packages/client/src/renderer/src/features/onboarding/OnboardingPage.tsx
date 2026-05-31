@@ -8,8 +8,6 @@ import { cn } from '@/lib/utils'
 import {
   CheckCircle2,
   CircleDot,
-  Database,
-  FolderOpen,
   KeyRound,
   LockKeyhole,
   MonitorCheck,
@@ -19,7 +17,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType, ReactNode, SVGProps } from 'react'
 
-export type OnboardingStep = 1 | 2 | 3 | 4
+export type OnboardingStep = 1 | 2 | 3
 export type OnboardingApiKey = 'chenyu' | 'grsai' | 'bailian' | 'bit_browser_url'
 export type OnboardingApiKeys = Record<OnboardingApiKey, string>
 
@@ -31,15 +29,11 @@ interface OnboardingPageProps {
   activationMessage: string | null
   isActivating: boolean
   canActivate: boolean
-  workbenchRoot: string
   apiKeys: OnboardingApiKeys
   onActivationCodeChange: (value: string) => void
   onDeviceNameChange: (value: string) => void
-  onWorkbenchRootChange: (value: string) => void
   onApiKeyChange: (key: OnboardingApiKey, value: string) => void
   onActivate: () => void
-  onChooseWorkbenchRoot: () => void
-  onSaveWorkbenchRoot: () => void
   onSaveApiKeys: () => void
   onComplete: () => void
   onNavigateStep: (step: OnboardingStep) => void
@@ -63,20 +57,13 @@ const stepMetas: StepMeta[] = [
   },
   {
     number: 2,
-    label: '素材目录',
-    title: '设置素材总目录',
-    detail: '创建采集、生图、检测、套版和成品目录',
-    icon: FolderOpen,
-  },
-  {
-    number: 3,
     label: '接口密钥',
     title: '保存本机密钥',
     detail: '密钥只进入系统加密存储',
     icon: KeyRound,
   },
   {
-    number: 4,
+    number: 3,
     label: '完成',
     title: '进入工作台',
     detail: '开始使用 6 个生产模块',
@@ -109,21 +96,12 @@ const apiKeyFields: Array<{
   { key: 'bit_browser_url', label: '比特浏览器地址', placeholder: '127.0.0.1:54345', type: 'text' },
 ]
 
-const workbenchFolders = [
-  '01-采集',
-  '02-生图',
-  '03-检测',
-  '04-待套版印花',
-  '05-货号成品',
-  '.workbench',
-]
-
 function currentStepMeta(step: OnboardingStep) {
   return stepMetas.find((item) => item.number === step) ?? defaultStepMeta
 }
 
 function stepProgress(step: OnboardingStep) {
-  return step * 25
+  return Math.round((step / 3) * 100)
 }
 
 function StepRail({ step }: { step: OnboardingStep }) {
@@ -159,7 +137,7 @@ function StepRail({ step }: { step: OnboardingStep }) {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold">
-                第 {item.number} 步 共 4 步 · {item.label}
+                第 {item.number} 步 共 3 步 · {item.label}
               </p>
               <p className="mt-0.5 text-xs leading-4 opacity-80">{item.detail}</p>
             </div>
@@ -190,15 +168,11 @@ export function OnboardingPage({
   activationMessage,
   isActivating,
   canActivate,
-  workbenchRoot,
   apiKeys,
   onActivationCodeChange,
   onDeviceNameChange,
-  onWorkbenchRootChange,
   onApiKeyChange,
   onActivate,
-  onChooseWorkbenchRoot,
-  onSaveWorkbenchRoot,
   onSaveApiKeys,
   onComplete,
   onNavigateStep,
@@ -231,7 +205,7 @@ export function OnboardingPage({
                   把本机接入腾域工作台
                 </h1>
                 <p className="text-sm leading-6 text-muted-foreground">
-                  只需完成激活、素材目录和密钥保存。图片、任务数据和密钥都留在本机。
+                  只需完成激活和密钥保存。工作区可稍后在设置页选择，图片、任务数据和密钥都留在本机。
                 </p>
               </div>
             </div>
@@ -264,7 +238,7 @@ export function OnboardingPage({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 space-y-1">
                 <p className="text-sm font-medium text-primary">
-                  第 {step} 步 共 4 步 · {meta.label}
+                  第 {step} 步 共 3 步 · {meta.label}
                 </p>
                 <CardTitle className="text-2xl leading-8">{meta.title}</CardTitle>
                 <p className="text-sm text-muted-foreground">{meta.detail}</p>
@@ -326,57 +300,6 @@ export function OnboardingPage({
 
             {step === 2 ? (
               <div className="grid gap-5">
-                <label className="space-y-2 text-sm font-medium" htmlFor="workbench-root">
-                  <span>素材总目录</span>
-                  <div className="flex gap-2">
-                    <Input
-                      className="h-11 min-w-0 flex-1 text-base"
-                      id="workbench-root"
-                      onChange={(event) => onWorkbenchRootChange(event.target.value)}
-                      value={workbenchRoot}
-                    />
-                    <Button
-                      className="h-11"
-                      onClick={onChooseWorkbenchRoot}
-                      type="button"
-                      variant="secondary"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      浏览
-                    </Button>
-                  </div>
-                </label>
-
-                <div className="rounded-md border bg-muted/50 p-4">
-                  <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                    <Database className="h-4 w-4 text-primary" />
-                    将使用以下本地结构
-                  </div>
-                  <div className="grid grid-cols-2 gap-2 md:grid-cols-3">
-                    {workbenchFolders.map((folder) => (
-                      <div
-                        className="rounded-sm border bg-background px-3 py-2 text-sm"
-                        key={folder}
-                      >
-                        {folder}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between gap-3 pt-1">
-                  <Button onClick={() => onNavigateStep(1)} type="button" variant="secondary">
-                    上一步
-                  </Button>
-                  <Button onClick={onSaveWorkbenchRoot} type="button">
-                    保存目录并继续
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            {step === 3 ? (
-              <div className="grid gap-5">
                 <div className="grid gap-3">
                   {apiKeyFields.map((field) => (
                     <label
@@ -415,7 +338,7 @@ export function OnboardingPage({
                 </div>
 
                 <div className="flex items-center justify-between gap-3 pt-1">
-                  <Button onClick={() => onNavigateStep(2)} type="button" variant="secondary">
+                  <Button onClick={() => onNavigateStep(1)} type="button" variant="secondary">
                     上一步
                   </Button>
                   <div className="flex gap-2">
@@ -430,7 +353,7 @@ export function OnboardingPage({
               </div>
             ) : null}
 
-            {step === 4 ? (
+            {step === 3 ? (
               <div className="grid gap-6 text-center">
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-lg bg-primary/10 text-primary">
                   <CheckCircle2 className="h-8 w-8" />
@@ -447,8 +370,8 @@ export function OnboardingPage({
                     授权已绑定
                   </div>
                   <div className="flex items-center gap-2">
-                    <FolderOpen className="h-4 w-4 text-primary" />
-                    目录已设置
+                    <KeyRound className="h-4 w-4 text-primary" />
+                    密钥可补充
                   </div>
                   <div className="flex items-center gap-2">
                     <Sparkles className="h-4 w-4 text-primary" />

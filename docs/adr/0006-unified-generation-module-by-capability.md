@@ -74,11 +74,11 @@
 ### 输出域统一
 
 ```
-02-生图/
-├─ 01-文生图/{taskId}/{印花ID}.png       ← provider 信息在数据库，不分目录
-├─ 02-图生图/{taskId}/{印花ID}_v1.png
-├─ 03-提取/{taskId}/{印花ID}.png
-└─ 04-抠图/{taskId}/{印花ID}.png         ← 最终透明底
+02-印花工作区/
+├─ 文生图/{taskId}/{印花ID}.png       ← provider 信息在数据库，不分目录
+├─ 图生图/{taskId}/{印花ID}_v1.png
+├─ 提取/{taskId}/{印花ID}.png
+└─ 抠图/{taskId}/{印花ID}.png         ← 最终透明底
 ```
 
 **目录不再按 provider 分**。能力目录下按任务建子文件夹，provider 来源在数据库 `artifacts.provider` 字段。

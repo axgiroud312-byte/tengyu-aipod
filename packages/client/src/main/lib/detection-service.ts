@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { copyFile, mkdir, readFile, readdir, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { basename, extname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -194,16 +194,21 @@ type CachedDetectionRow = {
 const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+const RISK_OUTPUT_FOLDERS: Record<RiskLevel, string> = {
+  pass: '通过',
+  review: '复查',
+  block: '失败',
+}
 const DETECTION_INPUT_SOURCE_DEFS = [
   {
     key: 'generation-extract',
-    label: '02-生图 / 03-提取',
-    parts: [WORKBENCH_DIRECTORIES.generation, '03-提取'],
+    label: '02-印花工作区 / 提取',
+    parts: [WORKBENCH_DIRECTORIES.generation, '提取'],
   },
   {
     key: 'generation-matting',
-    label: '02-生图 / 04-抠图',
-    parts: [WORKBENCH_DIRECTORIES.generation, '04-抠图'],
+    label: '02-印花工作区 / 抠图',
+    parts: [WORKBENCH_DIRECTORIES.generation, '抠图'],
   },
 ] as const
 
@@ -338,12 +343,33 @@ async function imageIdentity(imagePath: string): Promise<ImageIdentity> {
 
 function detectionOutputPath(
   workbenchRoot: string,
+  taskId: string,
   riskLevel: RiskLevel,
   printId: string,
   imagePath: string,
 ) {
   const ext = extname(imagePath).toLowerCase() || '.jpg'
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.detection, riskLevel, `${printId}${ext}`)
+  return join(
+    workbenchRoot,
+    WORKBENCH_DIRECTORIES.detection,
+    safePathSegment(taskId),
+    RISK_OUTPUT_FOLDERS[riskLevel],
+    `${printId}${ext}`,
+  )
+}
+
+function detectionTaskId(value = Date.now()) {
+  return `检测-${timestampSlug(value)}`
+}
+
+function timestampSlug(value: number) {
+  const date = new Date(value)
+  const pad = (item: number) => String(item).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
+function safePathSegment(value: string) {
+  return (value || 'task').replace(/[\\/:*?"<>|]/g, '_')
 }
 
 function appErrorMessage(error: unknown) {
@@ -446,13 +472,23 @@ function ensureDetectionTables(db: Pick<SqliteDatabase, 'exec'>) {
 
     CREATE INDEX IF NOT EXISTS idx_detection_artifact ON detection_results(artifact_id);
     CREATE INDEX IF NOT EXISTS idx_detection_level ON detection_results(risk_level);
+
+    CREATE TABLE IF NOT EXISTS matting_candidates (
+      id TEXT PRIMARY KEY,
+      artifact_id TEXT NOT NULL,
+      task_id TEXT NOT NULL,
+      print_id TEXT,
+      source_path TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE(artifact_id)
+    );
   `)
 }
 
 async function readWorkbenchRoot(readConfig: ReadAppConfig = readAppConfig) {
   const workbenchConfig = await readConfig()
   if (!workbenchConfig.workbench_root) {
-    throw new Error('workbench_root is required before detection can run')
+    throw new Error('请先在设置里选择工作区')
   }
   return workbenchConfig.workbench_root
 }
@@ -610,57 +646,32 @@ function registerDetectionResult(
   )
 }
 
-async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
-  const safeBaseName = (baseName || 'print').replace(/[\\/:*?"<>|]/g, '_')
-  let index = 0
-  while (true) {
-    const suffix = index === 0 ? '' : `_${index + 1}`
-    const candidate = join(folder, `${safeBaseName}${suffix}${ext}`)
-    try {
-      await stat(candidate)
-      index += 1
-    } catch {
-      return candidate
-    }
-  }
-}
-
-async function registerPromotedArtifact(
-  db: Pick<SqliteDatabase, 'prepare'>,
+function registerMattingCandidate(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
-    targetPath: string
     taskId: string
-    sourceArtifactId: string
+    artifactId: string
     printId: string
+    sourcePath: string
   },
 ) {
-  const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
+  ensureDetectionTables(db)
   db.prepare(`
-    INSERT INTO artifacts (
+    INSERT INTO matting_candidates (
       id,
+      artifact_id,
       task_id,
       print_id,
-      step,
-      provider,
-      source_artifact_ids,
-      file_path,
-      file_size,
-      file_hash,
+      source_path,
       created_at
     )
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    randomUUID(),
-    input.taskId,
-    input.printId,
-    'matting',
-    'detection-promote',
-    JSON.stringify([input.sourceArtifactId]),
-    input.targetPath,
-    info.size,
-    fileHash,
-    Date.now(),
-  )
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(artifact_id) DO UPDATE SET
+      task_id = excluded.task_id,
+      print_id = excluded.print_id,
+      source_path = excluded.source_path,
+      created_at = excluded.created_at
+  `).run(randomUUID(), input.artifactId, input.taskId, input.printId, input.sourcePath, Date.now())
 }
 
 function buildDetectionUserPrompt(variables?: Record<string, unknown>) {
@@ -949,29 +960,17 @@ export class DetectionService {
 
       const seen = new Set<string>()
       let promoted = 0
-      await mkdir(join(workbenchRoot, WORKBENCH_DIRECTORIES.mattingInput), { recursive: true })
       for (const row of rows) {
         if (seen.has(row.artifactId)) {
           continue
         }
         seen.add(row.artifactId)
 
-        const sourcePath = row.outputPath
-        const targetPath = await uniqueTargetPath(
-          join(workbenchRoot, WORKBENCH_DIRECTORIES.mattingInput),
-          row.printId ?? basename(sourcePath, extname(sourcePath)),
-          extname(sourcePath) || '.png',
-        )
-        if (input.mode === 'move') {
-          await rename(sourcePath, targetPath)
-        } else {
-          await copyFile(sourcePath, targetPath)
-        }
-        await registerPromotedArtifact(db, {
-          targetPath,
+        registerMattingCandidate(db, {
+          sourcePath: row.outputPath,
           taskId: row.taskId,
-          sourceArtifactId: row.artifactId,
-          printId: row.printId ?? basename(targetPath, extname(targetPath)),
+          artifactId: row.artifactId,
+          printId: row.printId ?? basename(row.outputPath, extname(row.outputPath)),
         })
         promoted += 1
       }
@@ -1008,7 +1007,7 @@ export class DetectionService {
     config: DetectionBatchConfig,
     dependencies: DetectionServiceDependencies = {},
   ): Promise<DetectionBatchResult> {
-    const taskId = config.taskId ?? randomUUID()
+    const taskId = config.taskId ?? detectionTaskId()
     const ownsPool = !dependencies.preprocessPool
     let tempDirCreated = false
     let keepFailedTemp = false
@@ -1025,7 +1024,7 @@ export class DetectionService {
     try {
       const workbenchConfig = await resolved.readConfig()
       if (!workbenchConfig.workbench_root) {
-        throw new Error('workbench_root is required before detection can run')
+        throw new Error('请先在设置里选择工作区')
       }
       const workbenchRoot = workbenchConfig.workbench_root
 
@@ -1129,7 +1128,7 @@ export class DetectionService {
     emitProgress?: (progress: DetectionProgress) => void,
     emitCompleted?: (event: DetectionTaskEvent) => void,
   ) {
-    const taskId = config.taskId ?? randomUUID()
+    const taskId = config.taskId ?? detectionTaskId()
     const dependencies = emitProgress ? { emitProgress } : {}
     void this.runDetectionBatch({ ...config, taskId }, dependencies)
       .then((result) => {
@@ -1245,13 +1244,20 @@ export class DetectionService {
       const riskLevel = classifyRisk(parsed.score, input.threshold)
       const outputPath = detectionOutputPath(
         input.workbenchRoot,
+        input.taskId,
         riskLevel,
         identity.printId,
         input.item.imagePath,
       )
-      await mkdir(join(input.workbenchRoot, WORKBENCH_DIRECTORIES.detection, riskLevel), {
-        recursive: true,
-      })
+      await mkdir(
+        join(
+          input.workbenchRoot,
+          WORKBENCH_DIRECTORIES.detection,
+          safePathSegment(input.taskId),
+          RISK_OUTPUT_FOLDERS[riskLevel],
+        ),
+        { recursive: true },
+      )
       await copyFile(input.item.imagePath, outputPath)
       registerDetectionResult(db, {
         taskId: input.taskId,

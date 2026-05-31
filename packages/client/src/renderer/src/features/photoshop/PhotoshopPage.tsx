@@ -64,6 +64,12 @@ function progressPercent(progress: PhotoshopProgressInfo | null) {
   return Math.round(((progress.completed + progress.skipped) / progress.total_groups) * 100)
 }
 
+function timestampSlug(value: number) {
+  const date = new Date(value)
+  const pad = (item: number) => String(item).padStart(2, '0')
+  return `${date.getFullYear()}${pad(date.getMonth() + 1)}${pad(date.getDate())}-${pad(date.getHours())}${pad(date.getMinutes())}${pad(date.getSeconds())}`
+}
+
 const resultFilters = [
   { key: 'all', label: '全部' },
   { key: 'done', label: '完成' },
@@ -123,8 +129,8 @@ function PhotoshopStatusBar() {
 
 export function PhotoshopPage() {
   const [skipCompleted, setSkipCompleted] = useState(true)
-  const [printFolder, setPrintFolder] = useState('04-待套版印花')
-  const [outputDir, setOutputDir] = useState('05-货号成品')
+  const [printFolder, setPrintFolder] = useState('02-印花工作区')
+  const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
   const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
   const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
@@ -237,7 +243,7 @@ export function PhotoshopPage() {
         <div className="grid gap-6 lg:grid-cols-2">
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <p className="text-sm font-medium text-muted-foreground">印花文件夹</p>
-            <h2 className="mt-1 text-lg font-semibold">待套版印花</h2>
+            <h2 className="mt-1 text-lg font-semibold">套版输入图片</h2>
             <label className="mt-4 block space-y-2 text-sm font-medium">
               <span className="flex items-center gap-2">
                 <ImageIcon className="h-4 w-4" />
@@ -340,7 +346,7 @@ export function PhotoshopPage() {
 
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <p className="text-sm font-medium text-muted-foreground">输出目录</p>
-            <h2 className="mt-1 text-lg font-semibold">货号成品保存位置</h2>
+            <h2 className="mt-1 text-lg font-semibold">上架工作区保存位置</h2>
             <div className="mt-4 flex gap-2">
               <input
                 className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"

@@ -265,10 +265,10 @@ type GenerationServiceDependencies = {
 const DEFAULT_GENERATION_MODEL: GrsaiModel = 'gpt-image-2'
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const GENERATION_CAPABILITY_FOLDERS = {
-  txt2img: '01-文生图',
-  img2img: '02-图生图',
-  extract: '03-提取',
-  matting: '04-抠图',
+  txt2img: '文生图',
+  img2img: '图生图',
+  extract: '提取',
+  matting: '抠图',
 } satisfies Record<GenerationCapability, string>
 let generationDebugLogSequence = 0
 
@@ -384,7 +384,7 @@ function ensureGenerationTables(db: Pick<SqliteDatabase, 'exec'>) {
 async function readWorkbenchRoot(readConfig: typeof readAppConfig = readAppConfig) {
   const workbenchConfig = await readConfig()
   if (!workbenchConfig.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
   return workbenchConfig.workbench_root
 }
@@ -526,7 +526,7 @@ function assertInsideFolder(path: string, folder: string) {
   }
   const rel = relative(folder, path)
   if (rel.startsWith('..') || isAbsolute(rel)) {
-    throw new AppErrorClass('HTTP_4XX', '提取只能选择 01-采集 目录下的源图', false, {
+    throw new AppErrorClass('HTTP_4XX', '提取只能选择采集工作区下的源图', false, {
       path,
     })
   }
@@ -538,7 +538,7 @@ function assertNotInsideFolder(path: string, folder: string) {
   }
   const rel = relative(folder, path)
   if (!rel.startsWith('..') && !isAbsolute(rel)) {
-    throw new AppErrorClass('HTTP_4XX', '图生图不能直接选择 01-采集 原图，请先提取成印花', false, {
+    throw new AppErrorClass('HTTP_4XX', '图生图不能直接选择采集原图，请先提取成印花', false, {
       path,
     })
   }
@@ -1595,7 +1595,7 @@ async function runTxt2imgTask(
   const capability = input.capability ?? 'txt2img'
   const workbenchConfig = await (dependencies.readConfig ?? readAppConfig)()
   if (!workbenchConfig.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
   const workbenchRoot = workbenchConfig.workbench_root
   const settings = normalizeGenerationLocalConfig(workbenchConfig.generation)
@@ -2520,7 +2520,7 @@ export async function runChenyuWorkflow(
   }
   const config = await (dependencies.readConfig ?? readAppConfig)()
   if (!config.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {

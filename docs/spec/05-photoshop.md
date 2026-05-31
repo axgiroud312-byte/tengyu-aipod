@@ -324,7 +324,7 @@ function sortAlphaNum(a: string, b: string): number {
 ### 6.1 输入
 
 ```
-用户选印花文件夹（如 04-待套版印花/）
+用户选印花文件夹（如 02-印花工作区/）
   + 选 N 个 PSD 模板（多选）
   + 配置（适配/裁切/格式/重试）
   + 点开始
@@ -333,7 +333,7 @@ function sortAlphaNum(a: string, b: string): number {
 ### 6.2 输出
 
 ```
-05-货号成品/
+04-上架工作区/
 ├─ {模板1名}/                       ← 每个模板一个一级目录（"模板批次"）
 │   ├─ {印花1名}/                   ← 货号文件夹
 │   │   ├─ 01.jpg
@@ -681,7 +681,7 @@ CREATE TABLE psd_templates (
                                           clip_mode: 'none' | 'auto' | 'guides',
                                           skip_completed: boolean,
                                           max_retries: number,
-                                          output_root: string,                  // 默认 05-货号成品
+                                          output_root: string,                  // 默认 04-上架工作区
                                         } → TaskId
 
 'photoshop:get-progress'              → { task_id } → ProgressInfo

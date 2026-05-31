@@ -81,7 +81,7 @@ function riskLabel(riskLevel: RiskLevel | 'failed') {
     case 'pass':
       return '通过'
     case 'review':
-      return '复核'
+      return '复查'
     case 'block':
       return '拦截'
     default:
@@ -92,7 +92,7 @@ function riskLabel(riskLevel: RiskLevel | 'failed') {
 const resultFilterLabels: Record<ResultFilter, string> = {
   all: '全部',
   pass: '通过',
-  review: '复核',
+  review: '复查',
   block: '拦截',
   failed: '失败',
 }
@@ -550,7 +550,7 @@ export function DetectionWorkbench() {
 
   function openPromoteDialog() {
     if (!passPromotionIds.length) {
-      setError('没有可加入待套版的通过图')
+      setError('没有可加入套版清单的通过图')
       return
     }
     setPromoteMode('copy')
@@ -559,7 +559,7 @@ export function DetectionWorkbench() {
 
   async function promotePassImages() {
     if (!passPromotionIds.length) {
-      setError('没有可加入待套版的通过图')
+      setError('没有可加入套版清单的通过图')
       setIsPromoteDialogOpen(false)
       return
     }
@@ -571,14 +571,10 @@ export function DetectionWorkbench() {
         artifact_ids: passPromotionIds,
         mode: promoteMode,
       })
-      setMessage(
-        promoteMode === 'move'
-          ? `已移动 ${count} 张通过图到待套版`
-          : `已复制 ${count} 张通过图到待套版`,
-      )
+      setMessage(`已加入 ${count} 张通过图到套版清单`)
       setIsPromoteDialogOpen(false)
     } catch (promoteError) {
-      setError(promoteError instanceof Error ? promoteError.message : '加入待套版失败')
+      setError(promoteError instanceof Error ? promoteError.message : '加入套版清单失败')
     } finally {
       setIsPromoting(false)
     }
@@ -620,7 +616,7 @@ export function DetectionWorkbench() {
       artifact_ids: [result.artifactId],
       mode: 'move',
     })
-    setMessage(`已移动 ${count} 张到待套版`)
+    setMessage(`已加入 ${count} 张到套版清单`)
   }
 
   function clearSelection() {
@@ -637,9 +633,9 @@ export function DetectionWorkbench() {
       <div className="flex items-start justify-between gap-6">
         <div className="space-y-1">
           <p className="text-sm font-medium text-primary">侵权检测</p>
-          <h1 className="text-2xl font-semibold text-balance">选择印花，判断风险，流转到待套版</h1>
+          <h1 className="text-2xl font-semibold text-balance">选择印花，判断风险，加入套版清单</h1>
           <p className="text-sm text-muted-foreground">
-            检测输入来自 02-生图，也支持外部图片拖入。
+            检测输入来自 02-印花工作区，也支持外部图片拖入。
           </p>
         </div>
         <div className="grid grid-cols-3 overflow-hidden rounded-md border bg-card text-sm shadow-sm">
@@ -679,7 +675,7 @@ export function DetectionWorkbench() {
             <div className="flex items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">输入选择</p>
-                <h2 className="mt-1 text-lg font-semibold">02-生图 / 03-提取 / 04-抠图</h2>
+                <h2 className="mt-1 text-lg font-semibold">02-印花工作区 / 提取 / 抠图</h2>
               </div>
               <div className="text-sm text-muted-foreground">拖入外部图片也可以</div>
             </div>
@@ -824,7 +820,7 @@ export function DetectionWorkbench() {
                   variant="secondary"
                 >
                   <Copy className="mr-2 h-4 w-4" />
-                  一键加入待套版
+                  加入套版清单
                 </Button>
                 <Button
                   disabled={!resultsSorted.length}
@@ -844,7 +840,7 @@ export function DetectionWorkbench() {
                 <div className="mt-1 font-semibold text-emerald-700">{stats.pass}</div>
               </div>
               <div className="rounded-md bg-muted p-3">
-                <div className="text-muted-foreground">复核</div>
+                <div className="text-muted-foreground">复查</div>
                 <div className="mt-1 font-semibold text-amber-700">{stats.review}</div>
               </div>
               <div className="rounded-md bg-muted p-3">
@@ -1022,7 +1018,7 @@ export function DetectionWorkbench() {
                 <dd>0-{config?.threshold.passMax ?? 39}</dd>
               </div>
               <div className="flex items-center justify-between rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-900">
-                <dt>复核</dt>
+                <dt>复查</dt>
                 <dd>
                   {(config?.threshold.passMax ?? 39) + 1}-{config?.threshold.reviewMax ?? 69}
                 </dd>
@@ -1095,50 +1091,15 @@ export function DetectionWorkbench() {
                 <AlertTriangle className="h-4 w-4" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold">一键加入待套版</h2>
+                <h2 className="text-lg font-semibold">加入套版清单</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  发现 {passPromotionIds.length} 张通过印花，将流转到 04-待套版印花。
+                  发现 {passPromotionIds.length} 张通过印花，将写入本地套版候选清单。
                 </p>
               </div>
             </div>
 
-            <div className="mt-5 space-y-3">
-              <label
-                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
-                  promoteMode === 'copy' ? 'border-primary bg-primary/5' : 'bg-background'
-                }`}
-              >
-                <input
-                  checked={promoteMode === 'copy'}
-                  className="mt-1"
-                  onChange={() => setPromoteMode('copy')}
-                  type="radio"
-                />
-                <span>
-                  <span className="block font-medium">复制（推荐）</span>
-                  <span className="mt-1 block text-muted-foreground">
-                    保留 03-检测/通过 副本，同时复制到 04-待套版印花。
-                  </span>
-                </span>
-              </label>
-              <label
-                className={`flex cursor-pointer items-start gap-3 rounded-md border p-3 text-sm ${
-                  promoteMode === 'move' ? 'border-primary bg-primary/5' : 'bg-background'
-                }`}
-              >
-                <input
-                  checked={promoteMode === 'move'}
-                  className="mt-1"
-                  onChange={() => setPromoteMode('move')}
-                  type="radio"
-                />
-                <span>
-                  <span className="block font-medium">移动</span>
-                  <span className="mt-1 block text-muted-foreground">
-                    将通过图移入 04-待套版印花，不保留 03-检测/通过 副本。
-                  </span>
-                </span>
-              </label>
+            <div className="mt-5 rounded-md border bg-muted/40 p-3 text-sm text-muted-foreground">
+              只记录原图路径和印花信息，不复制、不移动检测结果文件。
             </div>
 
             <div className="mt-5 flex justify-end gap-2">
@@ -1210,7 +1171,7 @@ export function DetectionWorkbench() {
                 onClick={() => void moveRow(activeResult)}
                 type="button"
               >
-                移动到待套版
+                加入套版清单
               </Button>
             </DialogFooter>
           </DialogContent>

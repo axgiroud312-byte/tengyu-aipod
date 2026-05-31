@@ -27,9 +27,14 @@ const platformRule: CollectionPlatformRule = {
 }
 
 const COLLECTION_TEST_NOW = 1_779_610_000_000
+const COLLECTION_TASK_DIR = '/tmp/wb/01-采集工作区/temu-20260531-120000'
 
 function looseImagePath(ext: '.jpg' | '.png' | '.webp') {
-  return `/tmp/wb/01-采集/散图池/temu-${localTimestampSlug(COLLECTION_TEST_NOW)}-001${ext}`
+  return `${COLLECTION_TASK_DIR}/temu-${localTimestampSlug(COLLECTION_TEST_NOW)}-001${ext}`
+}
+
+function skuImagePath(fileName = 'SKU-001-001.jpg') {
+  return `${COLLECTION_TASK_DIR}/商品页/SKU-001/${fileName}`
 }
 
 function localTimestampSlug(value: number) {
@@ -45,7 +50,7 @@ function activeSession(overrides: Partial<CollectionSession> = {}): CollectionSe
     profile_id: 'profile-1',
     mode: 'click',
     status: 'active',
-    output_dir: '/tmp/wb/01-采集',
+    output_dir: COLLECTION_TASK_DIR,
     started_at: 1000,
     ...overrides,
   }
@@ -284,13 +289,10 @@ describe('CollectionClickService', () => {
       ),
     ).resolves.toMatchObject({
       status: 'success',
-      savedPath: '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg',
+      savedPath: skuImagePath(),
     })
 
-    expect(fs.writeFile).toHaveBeenCalledWith(
-      '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg',
-      Buffer.from('image-bytes'),
-    )
+    expect(fs.writeFile).toHaveBeenCalledWith(skuImagePath(), Buffer.from('image-bytes'))
     expect(db.records[0]?.slice(0, 8)).toEqual([
       'record-1',
       'session-1',
@@ -298,7 +300,7 @@ describe('CollectionClickService', () => {
       'https://img.temu.com/a.jpg',
       'https://www.temu.com/goods/1',
       'https://www.temu.com/goods/1',
-      '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg',
+      skuImagePath(),
       'success',
     ])
     expect(events).toContainEqual({
@@ -333,14 +335,11 @@ describe('CollectionClickService', () => {
       results: [
         {
           status: 'success',
-          savedPath: '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg',
+          savedPath: skuImagePath(),
         },
       ],
     })
-    expect(fs.writeFile).toHaveBeenCalledWith(
-      '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg',
-      Buffer.from('image-bytes'),
-    )
+    expect(fs.writeFile).toHaveBeenCalledWith(skuImagePath(), Buffer.from('image-bytes'))
     expect(db.records[0]?.[2]).toBe('SKU-001')
   })
 
@@ -366,7 +365,7 @@ describe('CollectionClickService', () => {
   it('deduplicates matching image hashes inside the target folder', async () => {
     const image = Buffer.from('same-image')
     const { service, fs, db } = createService({ sku: 'SKU-001', image })
-    const existingPath = '/tmp/wb/01-采集/SKU-001/existing.jpg'
+    const existingPath = skuImagePath('existing.jpg')
     fs.files.set(existingPath, image)
 
     await expect(
@@ -628,7 +627,7 @@ describe('CollectionClickService', () => {
       session: activeSession({ mode: 'scroll' }),
       image,
     })
-    const existingPath = '/tmp/wb/01-采集/散图池/existing.jpg'
+    const existingPath = `${COLLECTION_TASK_DIR}/existing.jpg`
     fs.files.set(existingPath, image)
 
     await expect(
@@ -723,7 +722,7 @@ describe('CollectionClickService', () => {
   it('deletes records and removes saved files when present', async () => {
     const db = new FakeDb()
     const { service, fs } = createService({ db })
-    const savedPath = '/tmp/wb/01-采集/SKU-001/SKU-001-001.jpg'
+    const savedPath = skuImagePath()
     fs.files.set(savedPath, Buffer.from('image-bytes'))
     db.records.push([
       'record-1',
@@ -751,7 +750,7 @@ describe('CollectionClickService', () => {
 describe('collection manifest export', () => {
   it('writes collection_records to a CSV manifest', async () => {
     const workbenchRoot = join(tmpdir(), `collection-manifest-${Date.now()}`)
-    const outputDir = join(workbenchRoot, '01-采集')
+    const outputDir = join(workbenchRoot, '01-采集工作区', 'temu-20260531-120000')
     await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
     await mkdir(outputDir, { recursive: true })
     const db = openCollectionDatabase(workbenchRoot)
@@ -763,7 +762,7 @@ describe('collection manifest export', () => {
         sourceUrl: 'https://img.temu.com/a.jpg',
         goodsLink: 'https://www.temu.com/goods/1',
         pageUrl: 'https://www.temu.com/goods/1',
-        savedPath: join(outputDir, 'SKU-001/SKU-001-001.jpg'),
+        savedPath: join(outputDir, '商品页/SKU-001/SKU-001-001.jpg'),
         status: 'success',
         reason: null,
         fileSize: 123,

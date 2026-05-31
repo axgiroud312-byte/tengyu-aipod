@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { openSqliteDatabase, type SqliteDatabase } from '../../main/lib/sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from '../../main/lib/sqlite'
 import { SqliteListingTaskStore } from './task-store'
 
 let tempDir: string
@@ -59,7 +59,7 @@ describe('SqliteListingTaskStore', () => {
       template_key: 'temu-clothing',
       draft_template_id: '128935194843933515',
       shop_name: '店铺 A',
-      batch_dir: '/tmp/05-货号成品/模板A',
+      batch_dir: '/tmp/04-上架工作区/模板A',
       sku_mode: 'one-click-generate',
       submit_mode: 'save-draft',
       max_attempts: 2,
@@ -75,7 +75,7 @@ describe('SqliteListingTaskStore', () => {
         template_key: 'temu-clothing',
         draft_template_id: '128935194843933515',
         shop_name: '店铺 A',
-        batch_dir: '/tmp/05-货号成品/模板A',
+        batch_dir: '/tmp/04-上架工作区/模板A',
         resume: true,
         status: 'queued',
       },

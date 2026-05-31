@@ -357,7 +357,7 @@ beforeEach(async () => {
   historyNodeId = '9'
   historyFilename = 'result.png'
   useComfyHandlers()
-  await mkdir(join(workbenchRoot, '01-采集'), { recursive: true })
+  await mkdir(join(workbenchRoot, '01-采集工作区'), { recursive: true })
 })
 
 afterEach(async () => {
@@ -371,7 +371,7 @@ afterAll(() => {
 
 describe('generation ComfyUI mocked E2E', () => {
   it('runs extract through Chenyu and ComfyUI, injects inputs, parses output filename, and writes the extract artifact', async () => {
-    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
     const db = new FakeDb()
     const workflow = createWorkflow({
@@ -412,7 +412,7 @@ describe('generation ComfyUI mocked E2E', () => {
       '90': { inputs: {} },
     })
     expect(viewedFilenames).toEqual(['extract-result.webp'])
-    expect(result.images[0]?.localPath).toContain(join('02-生图', '03-提取'))
+    expect(result.images[0]?.localPath).toContain(join('02-印花工作区', '提取'))
     expect(result.images[0]?.localPath).toMatch(/\.webp$/)
     await expect(readFile(result.images[0]?.localPath ?? '', 'utf8')).resolves.toBe(
       'image:extract-result.webp',
@@ -424,7 +424,7 @@ describe('generation ComfyUI mocked E2E', () => {
   })
 
   it('runs img2img through Chenyu and ComfyUI, injects inputs, and writes a versioned print output', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const db = new FakeDb()
     seedPrintArtifact(db, printPath)
@@ -456,7 +456,13 @@ describe('generation ComfyUI mocked E2E', () => {
       },
     )
 
-    const expectedPath = join(workbenchRoot, '02-生图', '02-图生图', 'pri_print_v1.png')
+    const expectedPath = join(
+      workbenchRoot,
+      '02-印花工作区',
+      '图生图',
+      'img2img-e2e-task',
+      'pri_print_v1.png',
+    )
     expect(result.failures).toEqual([])
     expect(result).toMatchObject({ taskId: 'img2img-e2e-task', succeeded: 1, failed: 0 })
     expect(queuedPrompts[0]).toEqual({
@@ -474,7 +480,7 @@ describe('generation ComfyUI mocked E2E', () => {
   })
 
   it('runs direct matting through Chenyu and ComfyUI, injects inputs, and writes the transparent PNG output', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const db = new FakeDb()
     seedPrintArtifact(db, printPath)
@@ -506,7 +512,13 @@ describe('generation ComfyUI mocked E2E', () => {
       },
     )
 
-    const expectedPath = join(workbenchRoot, '02-生图', '04-抠图', 'pri_print.png')
+    const expectedPath = join(
+      workbenchRoot,
+      '02-印花工作区',
+      '抠图',
+      'matting-e2e-task',
+      'pri_print.png',
+    )
     expect(result.failures).toEqual([])
     expect(result).toMatchObject({ taskId: 'matting-e2e-task', succeeded: 1, failed: 0 })
     expect(queuedPrompts[0]).toEqual({
@@ -524,7 +536,7 @@ describe('generation ComfyUI mocked E2E', () => {
   })
 
   it('runs mixed matting with a Grsai mask, injects source and mask slots separately, writes the mixed artifact, and cleans temp files', async () => {
-    const printPath = join(workbenchRoot, '02-生图', '03-提取', 'print.png')
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')
     const db = new FakeDb()
     seedPrintArtifact(db, printPath)
@@ -577,7 +589,13 @@ describe('generation ComfyUI mocked E2E', () => {
       },
     )
 
-    const expectedPath = join(workbenchRoot, '02-生图', '04-抠图', 'pri_print.png')
+    const expectedPath = join(
+      workbenchRoot,
+      '02-印花工作区',
+      '抠图',
+      'mixed-e2e-task',
+      'pri_print.png',
+    )
     expect(result.failures).toEqual([])
     expect(result).toMatchObject({ taskId: 'mixed-e2e-task', succeeded: 1, failed: 0 })
     expect(generateMask).toHaveBeenCalledWith(

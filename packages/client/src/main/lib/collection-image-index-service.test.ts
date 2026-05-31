@@ -18,6 +18,8 @@ afterEach(() => {
   vi.unstubAllGlobals()
 })
 
+const COLLECTION_TASK_DIR = '/tmp/output/temu-20260531-120000'
+
 describe('collection image index product folders', () => {
   it('detects Temu regional goods detail URLs from -g-id slugs', () => {
     const folderName = collectionImageIndexProductFolderName(
@@ -29,9 +31,9 @@ describe('collection image index product folders', () => {
     expect(folderName).toBe('temu-g-601101959736135')
   })
 
-  it('keeps Temu search page goods images in the loose image folder', () => {
+  it('keeps Temu search page goods images in the task folder', () => {
     const targetDir = collectionImageIndexItemTargetDir(
-      '/tmp/output/图池采集',
+      COLLECTION_TASK_DIR,
       'temu',
       'https://www.temu.com/search_result.html?search_key=six%20seven',
       {
@@ -39,12 +41,12 @@ describe('collection image index product folders', () => {
       },
     )
 
-    expect(targetDir).toBe('/tmp/output/图池采集/散图池')
+    expect(targetDir).toBe(COLLECTION_TASK_DIR)
   })
 
   it('uses the item source detail page for product folders', () => {
     const targetDir = collectionImageIndexItemTargetDir(
-      '/tmp/output/图池采集',
+      COLLECTION_TASK_DIR,
       'temu',
       'https://www.temu.com/search_result.html?search_key=six%20seven',
       {
@@ -53,12 +55,12 @@ describe('collection image index product folders', () => {
       },
     )
 
-    expect(targetDir).toBe('/tmp/output/图池采集/商品页/temu-g-601099697798918')
+    expect(targetDir).toBe(`${COLLECTION_TASK_DIR}/商品页/temu-g-601099697798918`)
   })
 
   it('uses an explicit product group key for product folders', () => {
     const targetDir = collectionImageIndexItemTargetDir(
-      '/tmp/output/图池采集',
+      COLLECTION_TASK_DIR,
       'temu',
       'https://www.temu.com/search_result.html?search_key=six%20seven',
       {
@@ -68,18 +70,18 @@ describe('collection image index product folders', () => {
       },
     )
 
-    expect(targetDir).toBe('/tmp/output/图池采集/商品页/temu-g-606267330393299')
+    expect(targetDir).toBe(`${COLLECTION_TASK_DIR}/商品页/temu-g-606267330393299`)
   })
 
-  it('keeps non-product Temu images in the loose image folder', () => {
+  it('keeps non-product Temu images in the task folder', () => {
     const targetDir = collectionImageIndexItemTargetDir(
-      '/tmp/output/图池采集',
+      COLLECTION_TASK_DIR,
       'temu',
       'https://www.temu.com/search_result.html?search_key=six%20seven',
       { goodsLink: null },
     )
 
-    expect(targetDir).toBe('/tmp/output/图池采集/散图池')
+    expect(targetDir).toBe(COLLECTION_TASK_DIR)
   })
 
   it('does not apply Temu folder rules to other platforms', () => {

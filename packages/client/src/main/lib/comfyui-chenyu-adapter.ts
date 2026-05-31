@@ -50,10 +50,10 @@ type ComfyOutputNode = {
 }
 
 const CAPABILITY_FOLDERS: Record<GenerateRequest['capability'], string> = {
-  txt2img: '01-文生图',
-  img2img: '02-图生图',
-  extract: '03-提取',
-  matting: '04-抠图',
+  txt2img: '文生图',
+  img2img: '图生图',
+  extract: '提取',
+  matting: '抠图',
 }
 
 export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
@@ -140,10 +140,12 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     promptId: string
     comfyHttp: Pick<ComfyHttpClient, 'viewImage'>
   }) {
+    const taskId = taskIdFromRequest(input.req)
     const outputFolder = join(
       this.options.workbenchRoot,
       WORKBENCH_DIRECTORIES.generation,
       CAPABILITY_FOLDERS[input.req.capability],
+      safePathSegment(taskId),
     )
     await mkdir(outputFolder, { recursive: true })
     const db = this.options.openDatabase(this.options.workbenchRoot)
@@ -170,7 +172,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
               )
         await writeFile(targetPath, buffer)
         const artifactId = await registerComfyuiArtifact(db, {
-          taskId: taskIdFromRequest(input.req),
+          taskId,
           printId,
           targetPath,
           capability: input.req.capability,
@@ -383,6 +385,10 @@ function sourceArtifactIdsFromRequest(req: GenerateRequest) {
 
 function taskIdFromRequest(req: GenerateRequest) {
   return typeof req.options?.taskId === 'string' ? req.options.taskId : `comfy_${randomUUID()}`
+}
+
+function safePathSegment(value: string) {
+  return (value || 'task').replace(/[\\/:*?"<>|]/g, '_')
 }
 
 function printIdFromRequest(req: GenerateRequest) {

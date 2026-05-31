@@ -30,15 +30,11 @@ type FakeDetectionRow = {
   createdAt: number
 }
 
-type MattingArtifactRow = {
+type MattingCandidateRow = {
   task_id: string
+  artifact_id: string
   print_id: string
-  step: string
-  provider: string
-  source_artifact_ids: string
-  file_path: string
-  file_size: number
-  file_hash: string
+  source_path: string
 }
 
 let workbenchRoot = ''
@@ -242,7 +238,7 @@ function seedDetectionResult(
   )
 }
 
-function readMattingArtifacts(
+function readMattingCandidates(
   openDatabase: ReturnType<typeof createSqliteDependencies>['openDatabase'],
 ) {
   const db = openDatabase(workbenchRoot)
@@ -252,18 +248,13 @@ function readMattingArtifacts(
         `
           SELECT
             task_id,
+            artifact_id,
             print_id,
-            step,
-            provider,
-            source_artifact_ids,
-            file_path,
-            file_size,
-            file_hash
-          FROM artifacts
-          WHERE step = ?
+            source_path
+          FROM matting_candidates
         `,
       )
-      .all('matting') as MattingArtifactRow[]
+      .all() as MattingCandidateRow[]
   } finally {
     db.close()
   }
@@ -393,9 +384,15 @@ describe('DetectionService', () => {
     )
     expect(preprocess).toHaveBeenCalledTimes(3)
     expect(fakeDb.detectionRows).toHaveLength(3)
-    await expect(stat(join(workbenchRoot, '03-检测', 'pass'))).resolves.toBeTruthy()
-    await expect(stat(join(workbenchRoot, '03-检测', 'review'))).resolves.toBeTruthy()
-    await expect(stat(join(workbenchRoot, '03-检测', 'block'))).resolves.toBeTruthy()
+    await expect(
+      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '通过')),
+    ).resolves.toBeTruthy()
+    await expect(
+      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '复查')),
+    ).resolves.toBeTruthy()
+    await expect(
+      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '失败')),
+    ).resolves.toBeTruthy()
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'task-detection', processed: 3, succeeded: 3 }),
     )
@@ -618,11 +615,11 @@ describe('DetectionService', () => {
       errorCode: 'llm_parse_failed',
     })
     expect(fakeDb.detectionRows).toHaveLength(0)
-    await expect(stat(join(workbenchRoot, '03-检测'))).rejects.toThrow()
+    await expect(stat(join(workbenchRoot, '03-检测工作区'))).rejects.toThrow()
   })
 
-  it('copies detected pass images to matting and records artifact rows in sqlite', async () => {
-    const sourcePath = join(workbenchRoot, '03-检测', 'pass', 'pri-pass.png')
+  it('adds detected pass images to the matting candidate list without copying files', async () => {
+    const sourcePath = join(workbenchRoot, '03-检测工作区', 'task-pass', '通过', 'pri-pass.png')
     await createImage(sourcePath, 'pass-image')
     const service = new DetectionService()
     const dependencies = createSqliteDependencies()
@@ -646,12 +643,10 @@ describe('DetectionService', () => {
       dependencies,
     )
 
-    const targetPath = join(workbenchRoot, '04-待套版印花', 'pri-pass.png')
     expect(promoted).toBe(1)
     await expect(stat(sourcePath)).resolves.toBeTruthy()
-    await expect(stat(targetPath)).resolves.toBeTruthy()
 
-    const mattingRows = readMattingArtifacts(dependencies.openDatabase)
+    const mattingRows = readMattingCandidates(dependencies.openDatabase)
     expect(mattingRows).toHaveLength(1)
     const mattingRow = mattingRows[0]
     if (!mattingRow) {
@@ -659,14 +654,10 @@ describe('DetectionService', () => {
     }
     expect(mattingRow).toMatchObject({
       task_id: 'task-pass',
+      artifact_id: 'art-pass',
       print_id: 'pri-pass',
-      step: 'matting',
-      provider: 'detection-promote',
-      file_path: targetPath,
-      file_size: 10,
+      source_path: sourcePath,
     })
-    expect(JSON.parse(mattingRow.source_artifact_ids)).toEqual(['art-pass'])
-    expect(mattingRow.file_hash).toMatch(/^[a-f0-9]{64}$/)
 
     const verifyDb = dependencies.openDatabase(workbenchRoot)
     try {
@@ -685,8 +676,8 @@ describe('DetectionService', () => {
     }
   })
 
-  it('moves detected pass images to matting when requested', async () => {
-    const sourcePath = join(workbenchRoot, '03-检测', 'pass', 'pri-move.png')
+  it('keeps source files when adding pass images to the matting candidate list', async () => {
+    const sourcePath = join(workbenchRoot, '03-检测工作区', 'task-move', '通过', 'pri-move.png')
     await createImage(sourcePath, 'pass-image')
     const service = new DetectionService()
     const dependencies = createSqliteDependencies()
@@ -710,21 +701,16 @@ describe('DetectionService', () => {
       dependencies,
     )
 
-    const targetPath = join(workbenchRoot, '04-待套版印花', 'pri-move.png')
     expect(promoted).toBe(1)
-    await expect(stat(sourcePath)).rejects.toThrow()
-    await expect(stat(targetPath)).resolves.toBeTruthy()
+    await expect(stat(sourcePath)).resolves.toBeTruthy()
 
-    const mattingRows = readMattingArtifacts(dependencies.openDatabase)
+    const mattingRows = readMattingCandidates(dependencies.openDatabase)
     expect(mattingRows).toHaveLength(1)
     expect(mattingRows[0]).toMatchObject({
       task_id: 'task-move',
+      artifact_id: 'art-move',
       print_id: 'pri-move',
-      step: 'matting',
-      provider: 'detection-promote',
-      file_path: targetPath,
-      file_size: 10,
+      source_path: sourcePath,
     })
-    expect(JSON.parse(mattingRows[0]?.source_artifact_ids ?? '[]')).toEqual(['art-move'])
   })
 })

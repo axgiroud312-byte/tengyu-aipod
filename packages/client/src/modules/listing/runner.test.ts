@@ -28,10 +28,16 @@ class FakeStatusStore implements ListingStatusStore {
   }
 
   find(input: Parameters<ListingStatusStore['find']>[0]) {
+    if (this.closed) {
+      throw new Error('status store is closed')
+    }
     return this.rows.get(this.key(input)) ?? null
   }
 
   upsert(record: Parameters<ListingStatusStore['upsert']>[0]) {
+    if (this.closed) {
+      throw new Error('status store is closed')
+    }
     const existing = this.rows.get(this.key(record))
     this.rows.set(this.key(record), {
       id: existing?.id ?? this.key(record),
@@ -286,6 +292,58 @@ describe('listing runner', () => {
 
     expect(result.successCount).toBe(4)
     expect(cdp.connectToProfile).toHaveBeenCalledTimes(2)
+    expect(locks.list()).toEqual([])
+  })
+
+  it('keeps shared stores open until all workspace promises settle', async () => {
+    const store = new FakeStatusStore()
+    const locks = new BrowserProfileLockManager()
+    const releaseSku = new Map<string, () => void>()
+    const workflow = {
+      runListingItem: vi.fn(
+        (page: unknown, item: ListingItem, config: ListingConfig) =>
+          new Promise<ReturnType<typeof successResult>>((resolve) => {
+            releaseSku.set(item.sku, () => resolve(successResult(item, config)))
+          }),
+      ),
+    }
+    const runtime = createBrowserRuntime()
+    const cdp = {
+      ...runtime.cdp,
+      connectToProfile: vi.fn(async (profileId: string) => {
+        if (profileId === 'profile-a') {
+          throw new Error('connect failed')
+        }
+        return runtime.cdp.connectToProfile(profileId)
+      }),
+    } as unknown as Pick<CDPClient, 'connectToProfile' | 'disconnect'>
+    let settled = false
+
+    const runPromise = runLocalListingBatch(
+      createConfig(),
+      [createItem('SKU-1'), createItem('SKU-2')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        cdp,
+        locks,
+        workflows: { 'temu-pop': workflow },
+        sleep: vi.fn().mockResolvedValue(undefined),
+        now: () => 1000,
+      },
+    ).finally(() => {
+      settled = true
+    })
+
+    await vi.waitFor(() => {
+      expect(releaseSku.has('SKU-2')).toBe(true)
+    })
+    expect(settled).toBe(false)
+    expect(store.closed).toBe(false)
+
+    releaseSku.get('SKU-2')?.()
+    await expect(runPromise).rejects.toThrow('connect failed')
+    expect(store.closed).toBe(true)
     expect(locks.list()).toEqual([])
   })
 

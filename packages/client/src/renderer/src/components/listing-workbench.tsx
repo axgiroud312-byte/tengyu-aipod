@@ -610,9 +610,9 @@ export function ListingWorkbench() {
       <section className="rounded-md border bg-background p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <h2 className="text-lg font-semibold text-balance">上架工作区</h2>
+            <h2 className="text-lg font-semibold text-balance">店铺环境</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              一个工作区绑定一个比特浏览器档案，跨工作区并行，工作区内任务串行。
+              一个店铺环境绑定一个比特浏览器档案，跨店铺并行，单店铺内任务串行。
             </p>
           </div>
           <Button
@@ -643,7 +643,7 @@ export function ListingWorkbench() {
             ))
           ) : (
             <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-              还没有保存的工作区。选择浏览器档案并开始上架后会自动保存。
+              还没有保存的店铺环境。选择浏览器档案并开始上架后会自动保存。
             </div>
           )}
         </div>
@@ -680,7 +680,7 @@ export function ListingWorkbench() {
                       setScanResult(null)
                       setStatusRows([])
                     }}
-                    placeholder="/Users/.../05-货号成品/批次"
+                    placeholder="/Users/.../04-上架工作区/套版-20260531-120000"
                     value={batchDir}
                   />
                   <Button onClick={() => void chooseBatchDir()} type="button" variant="secondary">
@@ -873,7 +873,7 @@ export function ListingWorkbench() {
                 <p className="mt-1 text-sm text-muted-foreground">
                   {activeWorkspace
                     ? `${activeWorkspace.profile_name} 的任务队列`
-                    : '选择上方工作区后查看任务队列'}
+                    : '选择上方店铺环境后查看任务队列'}
                 </p>
               </div>
               <span className="rounded-full border px-2 py-1 text-xs text-muted-foreground">
@@ -948,7 +948,7 @@ export function ListingWorkbench() {
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-balance">比特浏览器工作区</h2>
+                <h2 className="text-lg font-semibold text-balance">比特浏览器环境</h2>
                 <p className="mt-1 text-sm text-muted-foreground text-pretty">
                   默认优先选择名称、备注或编号包含 {PROFILE_TARGET} 的浏览器档案。
                 </p>
@@ -1002,7 +1002,7 @@ export function ListingWorkbench() {
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex items-center justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-balance">执行中工作区</h2>
+                <h2 className="text-lg font-semibold text-balance">执行中店铺环境</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {runningTaskId ? `任务 ${runningTaskId}` : '尚未开始'}
                 </p>
@@ -1048,7 +1048,7 @@ export function ListingWorkbench() {
                 })
               ) : (
                 <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  选择浏览器档案后显示每个工作区进度。
+                  选择浏览器档案后显示每个店铺环境进度。
                 </div>
               )}
             </div>

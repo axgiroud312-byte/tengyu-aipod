@@ -155,7 +155,7 @@ describe('collection-config', () => {
       platform: 'temu',
       profile_id: 'profile-1',
       mode: 'scroll',
-      output_dir: '/tmp/workbench/01-采集',
+      output_dir: '/tmp/workbench/01-采集工作区/temu-20260531-120000',
       scroll_keywords: 'dress,summer',
       size_filter: {
         min_width: 800,

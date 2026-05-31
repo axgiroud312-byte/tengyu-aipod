@@ -69,7 +69,7 @@ export class SqliteListingTaskStore {
 
     const workspace = this.findWorkspaceByProfile(input.profile_id, input.platform)
     if (!workspace) {
-      throw new Error('保存上架工作区失败')
+      throw new Error('保存店铺环境失败')
     }
     return workspace
   }

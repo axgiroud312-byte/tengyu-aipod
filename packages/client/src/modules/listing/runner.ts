@@ -33,7 +33,7 @@ import {
 } from '../../main/lib/browser-profile-lock'
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
 import { loadBatchAsListingItems } from '../../main/lib/listing-batch-loader'
-import { openSqliteDatabase, type SqliteDatabase } from '../../main/lib/sqlite'
+import { type SqliteDatabase, openSqliteDatabase } from '../../main/lib/sqlite'
 import { sheinWorkflow } from './platforms/dianxiaomi-shein/workflow'
 import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
 import { type ListingTaskListInput, SqliteListingTaskStore } from './task-store'
@@ -366,7 +366,7 @@ export class ListingRunner {
     const workbenchRoot = await readWorkbenchRoot(this.readConfig)
     const resolved = await this.resolveRunConfig(config, workbenchRoot)
     if (resolved.workspaces.length === 0) {
-      throw new AppErrorClass('HTTP_4XX', '请先选择至少一个比特浏览器工作区', false, {
+      throw new AppErrorClass('HTTP_4XX', '请先选择至少一个比特浏览器环境', false, {
         kind: 'validation',
       })
     }
@@ -380,11 +380,18 @@ export class ListingRunner {
 
     try {
       this.emitBatchProgress(resolved, progress, 'pending')
-      const workspaceResults = await Promise.all(
+      const settledWorkspaceResults = await Promise.allSettled(
         Array.from(queues.entries()).map(([profileId, queue]) =>
           this.runWorkspaceQueue(profileId, queue, resolved, store, progress, taskStore),
         ),
       )
+      const workspaceResults: WorkspaceResult[] = []
+      for (const result of settledWorkspaceResults) {
+        if (result.status === 'rejected') {
+          throw result.reason
+        }
+        workspaceResults.push(result.value)
+      }
       const results = workspaceResults.flatMap((workspace) => workspace.results)
       return {
         taskId: resolved.task_id,
@@ -578,7 +585,7 @@ export class ListingRunner {
         if (failStreak >= config.fail_streak_limit) {
           const pausedFailure = createListingFailure({
             code: 'CONSECUTIVE_FAILURES',
-            message: `连续 ${failStreak} 次失败，工作区暂停`,
+            message: `连续 ${failStreak} 次失败，店铺环境暂停`,
             stage: 'verify_result',
           })
           progress.lastError = pausedFailure
@@ -1208,7 +1215,7 @@ async function readWorkbenchRoot(
 ) {
   const config = await readConfig()
   if (!config.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录', false)
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
   return config.workbench_root
 }
@@ -1402,7 +1409,7 @@ function parseListingStatusListInput(input: unknown): ListingStatusListInput {
 function parseListingWorkspaceInput(input: unknown): ListingWorkspaceInput {
   const parsed = listingWorkspaceInputSchema.safeParse(input)
   if (!parsed.success) {
-    throw new AppErrorClass('HTTP_4XX', '保存上架工作区参数不正确', false, {
+    throw new AppErrorClass('HTTP_4XX', '保存店铺环境参数不正确', false, {
       kind: 'validation',
       issues: parsed.error.issues,
     })
@@ -1417,7 +1424,7 @@ function parseListingWorkspaceStatusInput(input: unknown): {
 } {
   const parsed = listingWorkspaceStatusInputSchema.safeParse(input)
   if (!parsed.success) {
-    throw new AppErrorClass('HTTP_4XX', '更新上架工作区状态参数不正确', false, {
+    throw new AppErrorClass('HTTP_4XX', '更新店铺环境状态参数不正确', false, {
       kind: 'validation',
       issues: parsed.error.issues,
     })

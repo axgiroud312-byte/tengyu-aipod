@@ -50,10 +50,10 @@ export type ChenyuRunImageWorkflowResult = {
 }
 
 const CAPABILITY_FOLDERS: Record<GenerationCapability, string> = {
-  txt2img: '01-文生图',
-  img2img: '02-图生图',
-  extract: '03-提取',
-  matting: '04-抠图',
+  txt2img: '文生图',
+  img2img: '图生图',
+  extract: '提取',
+  matting: '抠图',
 }
 
 const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'canceled', 'cancelled'])
@@ -143,10 +143,12 @@ export class ChenyuWorkflowRunner {
     submit: ChenyuWorkflowRunSubmitResult
     execution: ChenyuWorkflowExecution
   }) {
+    const taskId = input.input.taskId ?? input.submit.run_order_id
     const outputFolder = join(
       this.options.workbenchRoot,
       WORKBENCH_DIRECTORIES.generation,
       CAPABILITY_FOLDERS[input.input.capability],
+      safePathSegment(taskId),
     )
     await mkdir(outputFolder, { recursive: true })
     const db = this.options.openDatabase(this.options.workbenchRoot)
@@ -158,7 +160,7 @@ export class ChenyuWorkflowRunner {
         const targetPath = await uniqueTargetPath(outputFolder, targetName(url, index))
         await writeFile(targetPath, buffer)
         const artifactId = await registerWorkflowArtifact(db, {
-          taskId: input.input.taskId ?? input.submit.run_order_id,
+          taskId,
           printId: `pri_${randomUUID().replaceAll('-', '').slice(0, 16)}`,
           targetPath,
           capability: input.input.capability,
@@ -245,6 +247,10 @@ function targetName(url: string, index: number) {
   const name = basename(new URL(url).pathname) || `workflow-output-${index + 1}.png`
   const ext = extname(name)
   return ext ? name : `${name}.png`
+}
+
+function safePathSegment(value: string) {
+  return (value || 'task').replace(/[\\/:*?"<>|]/g, '_')
 }
 
 async function uniqueTargetPath(folder: string, filename: string) {

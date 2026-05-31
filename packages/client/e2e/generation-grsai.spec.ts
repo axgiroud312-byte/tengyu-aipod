@@ -16,6 +16,8 @@ type MockState = {
   bailianCalls: number
   bailianBodies: unknown[]
   grsaiCalls: Array<{ node: 'cn' | 'global'; body: GrsaiRequestBody }>
+  skillIndexCalls: number
+  skillDetailIds: string[]
   activeGrsaiRequests: number
   maxActiveGrsaiRequests: number
   failFirstCnWith429: boolean
@@ -41,44 +43,45 @@ type ArtifactRow = {
 }
 
 const txt2imgSkill = {
-  id: 'txt2img-print-prompt-v3',
+  id: 'txt2img-local-print',
   module: 'generation',
-  category: 'txt2img',
+  category: 'txt2img-local-print',
   platform: null,
   language: null,
-  version: '3.0.1',
+  version: '1.0.0',
   enabled: true,
-  recommendedModel: 'qwen3-vl-plus',
+  recommendedModel: null,
   notes: null,
-  systemPrompt: 'Return JSON prompts for text to image.',
+  systemPrompt: 'E2E_TXT2IMG_SKILL Return JSON prompts for text to image.',
   variables: [],
 }
 
 const img2imgSkill = {
-  id: 'img2img-print-prompt-v3',
+  id: 'img2img-local-reference',
   module: 'generation',
-  category: 'img2img',
+  category: 'img2img-local-reference',
   platform: null,
   language: null,
-  version: '3.0.1',
+  version: '1.0.0',
   enabled: true,
-  recommendedModel: 'qwen3-vl-plus',
+  recommendedModel: null,
   notes: null,
-  systemPrompt: 'Return JSON prompts for image to image.',
+  systemPrompt: 'E2E_IMG2IMG_SKILL Return JSON prompts for image to image.',
   variables: [],
 }
 
 const extractSkill = {
-  id: 'extract-prompt-v3',
+  id: 'extract-paid-model',
   module: 'generation',
-  category: 'extract',
+  category: 'extract-paid-model',
   platform: null,
   language: null,
-  version: '3.0.1',
+  version: '1.0.0',
   enabled: true,
   recommendedModel: 'qwen3-vl-plus',
   notes: null,
-  systemPrompt: 'Return JSON prompts for extracting a print from the source image.',
+  systemPrompt:
+    'E2E_EXTRACT_SKILL Return JSON prompts for extracting a print from the source image.',
   variables: [
     {
       key: 'printAreaPreference',
@@ -179,6 +182,7 @@ async function startMockServer(state: MockState) {
     }
 
     if (url.pathname === '/api/skills') {
+      state.skillIndexCalls += 1
       const category = url.searchParams.get('category')
       const skills = [txt2imgSkill, img2imgSkill, extractSkill].filter(
         (skill) => !category || skill.category === category,
@@ -191,6 +195,7 @@ async function startMockServer(state: MockState) {
       (item) => url.pathname === `/api/skills/${item.id}`,
     )
     if (skill) {
+      state.skillDetailIds.push(skill.id)
       sendJson(response, { ok: true, data: skill })
       return
     }
@@ -446,6 +451,8 @@ test.describe('generation Grsai E2E', () => {
       bailianCalls: 0,
       bailianBodies: [],
       grsaiCalls: [],
+      skillIndexCalls: 0,
+      skillDetailIds: [],
       activeGrsaiRequests: 0,
       maxActiveGrsaiRequests: 0,
       failFirstCnWith429: true,
@@ -455,7 +462,14 @@ test.describe('generation Grsai E2E', () => {
     closeMockServer = mockServer.close
 
     const workbenchRoot = join(tempRoot, 'workbench')
-    const sourcePath = join(workbenchRoot, '01-采集', 'sku-a', 'source.png')
+    const sourcePath = join(
+      workbenchRoot,
+      '01-采集工作区',
+      'temu-20260531-120000',
+      '商品页',
+      'sku-a',
+      'source.png',
+    )
     const referencePath = join(tempRoot, 'reference-style.png')
     await createImage(sourcePath, { r: 220, g: 80, b: 60 })
     await createImage(referencePath, { r: 40, g: 180, b: 120 })
@@ -465,10 +479,28 @@ test.describe('generation Grsai E2E', () => {
     const page = await app.firstWindow()
     await prepareApp(page, workbenchRoot)
 
+    const skillProbe = await page.evaluate(async () => {
+      const refresh = await window.api.skill.refresh()
+      const generationSkills = await window.api.skill.list({ module: 'generation' })
+      const detail = await window.api.skill.get({ id: 'txt2img-local-print', version: '1.0.0' })
+      return {
+        refresh,
+        ids: generationSkills.map((skill) => skill.id),
+        detailPrompt: detail.systemPrompt,
+      }
+    })
+    expect(skillProbe.refresh).toEqual({ ok: true, count: 3 })
+    expect(skillProbe.ids).toEqual([
+      'txt2img-local-print',
+      'img2img-local-reference',
+      'extract-paid-model',
+    ])
+    expect(skillProbe.detailPrompt).toContain('E2E_TXT2IMG_SKILL')
+
     const txtDrafts = await page.evaluate(() =>
       window.api.generation.generatePrompts({
         capability: 'txt2img',
-        skillId: 'txt2img-print-prompt-v3',
+        printMode: 'local',
         requirement: 'christmas teddy bear print',
         count: 5,
         model: 'qwen3-vl-plus',
@@ -494,7 +526,7 @@ test.describe('generation Grsai E2E', () => {
       (referenceImage) =>
         window.api.generation.generatePrompts({
           capability: 'img2img',
-          skillId: 'img2img-print-prompt-v3',
+          printMode: 'local',
           requirement: 'new floral print in reference style',
           count: 3,
           model: 'qwen3-vl-plus',
@@ -517,11 +549,22 @@ test.describe('generation Grsai E2E', () => {
     })
     expect(imgResult).toMatchObject({ total: 3, succeeded: 3, failed: 0 })
 
+    const imgWithReferenceResult = await runTxt2imgThroughIpc(page, {
+      capability: 'img2img',
+      prompts: [`${imgDrafts[0]?.text ?? 'img2img style prompt 1'} with image reference`],
+      model: 'gpt-image-2',
+      aspectRatio: '1024x1024',
+      referenceImages: [{ base64: referenceBase64, mime_type: 'image/png' }],
+      concurrency: 1,
+    })
+    expect(imgWithReferenceResult).toMatchObject({ total: 1, succeeded: 1, failed: 0 })
+
     const sources = await page.evaluate(() => window.api.generation.listExtractSources())
     expect(sources.images.map((source) => source.path)).toContain(sourcePath)
     const extractResult = await runExtractThroughIpc(page, {
       sourceImagePaths: [sourcePath],
-      skillId: 'extract-prompt-v3',
+      skillId: 'extract-paid-model',
+      skillVersion: '1.0.0',
       variables: { printAreaPreference: 'auto', allowMultiplePrints: true },
       promptCount: 1,
       llmModel: 'qwen3-vl-plus',
@@ -531,16 +574,37 @@ test.describe('generation Grsai E2E', () => {
     })
     expect(extractResult).toMatchObject({ total: 1, succeeded: 1, failed: 0 })
 
+    expect(state.skillIndexCalls).toBeGreaterThanOrEqual(1)
+    expect(state.skillDetailIds).toEqual(
+      expect.arrayContaining([
+        'txt2img-local-print',
+        'img2img-local-reference',
+        'extract-paid-model',
+      ]),
+    )
     expect(state.bailianCalls).toBe(3)
+    expect(JSON.stringify(state.bailianBodies[0])).toContain('E2E_TXT2IMG_SKILL')
+    expect(JSON.stringify(state.bailianBodies[1])).toContain('E2E_IMG2IMG_SKILL')
+    expect(JSON.stringify(state.bailianBodies[2])).toContain('E2E_EXTRACT_SKILL')
     expect(JSON.stringify(state.bailianBodies[1])).toContain('image_url')
-    expect(state.grsaiCalls).toHaveLength(10)
+    expect(state.grsaiCalls).toHaveLength(11)
     expect(state.cn429Count).toBe(1)
     expect(state.grsaiCalls[0]?.node).toBe('cn')
     expect(state.grsaiCalls.some((call) => call.node === 'global')).toBe(true)
     expect(state.maxActiveGrsaiRequests).toBeLessThanOrEqual(3)
-    expect(
-      state.grsaiCalls.filter((call) => call.body.images?.length).length,
-    ).toBeGreaterThanOrEqual(1)
+    const img2imgGenerateCalls = state.grsaiCalls.filter((call) =>
+      call.body.prompt?.startsWith('img2img style prompt'),
+    )
+    const img2imgDefaultCalls = img2imgGenerateCalls.filter(
+      (call) => !call.body.prompt?.includes('with image reference'),
+    )
+    const img2imgWithReferenceCalls = img2imgGenerateCalls.filter((call) =>
+      call.body.prompt?.includes('with image reference'),
+    )
+    expect(img2imgDefaultCalls).toHaveLength(3)
+    expect(img2imgDefaultCalls.every((call) => !call.body.images?.length)).toBe(true)
+    expect(img2imgWithReferenceCalls).toHaveLength(1)
+    expect(img2imgWithReferenceCalls[0]?.body.images).toHaveLength(1)
 
     const rows = readArtifactRows(workbenchRoot)
     const sourceArtifact = rows.find((row) => row.step === 'manual-import')
@@ -552,6 +616,6 @@ test.describe('generation Grsai E2E', () => {
       prompt_snapshot: 'extract centered print prompt',
     })
     expect(JSON.parse(extractArtifact?.source_artifact_ids ?? '[]')).toEqual([sourceArtifact?.id])
-    expect(extractArtifact?.file_path).toContain(join('02-生图', '03-提取'))
+    expect(extractArtifact?.file_path).toContain(join('02-印花工作区', '提取'))
   })
 })

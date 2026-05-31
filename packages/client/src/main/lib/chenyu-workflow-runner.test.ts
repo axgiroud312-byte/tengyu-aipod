@@ -120,6 +120,7 @@ describe('ChenyuWorkflowRunner', () => {
     if (!firstImage) {
       throw new Error('missing image')
     }
+    expect(firstImage.local_path).toContain('/02-印花工作区/文生图/task-local/')
     await expect(readFile(firstImage.local_path, 'utf8')).resolves.toBe('image-bytes')
     expect(db.artifacts).toHaveLength(1)
     expect(db.artifacts[0]).toEqual(

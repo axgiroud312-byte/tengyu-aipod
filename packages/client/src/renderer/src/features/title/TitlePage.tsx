@@ -164,7 +164,7 @@ export function TitlePage({
                 <div>
                   <CardTitle className="text-lg">批次目录</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    选择 05-货号成品 下的单个批次，扫描后开始估算。
+                    选择 04-上架工作区 下的单个套版批次，扫描后开始估算。
                   </p>
                 </div>
                 <Badge variant="secondary">{state.scanResult ? '已扫描' : '待扫描'}</Badge>
@@ -175,7 +175,7 @@ export function TitlePage({
                 <Input
                   className="min-w-0 flex-1"
                   onChange={(event) => onStateChange('batchDir', event.target.value)}
-                  placeholder="选择货号成品中的一个批次目录"
+                  placeholder="选择上架工作区中的一个套版批次目录"
                   value={state.batchDir}
                 />
                 <Button onClick={onChooseBatchDir} type="button" variant="secondary">

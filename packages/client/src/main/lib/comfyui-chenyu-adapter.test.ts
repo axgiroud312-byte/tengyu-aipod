@@ -112,7 +112,7 @@ describe('ComfyuiChenyuAdapter', () => {
     })
     expect(getHistory).toHaveBeenCalledWith('prompt-1')
     expect(viewImage).toHaveBeenCalledWith('result.png')
-    expect(response.images[0]?.local_path).toContain('/workbench/02-生图/03-提取/')
+    expect(response.images[0]?.local_path).toContain('/workbench/02-印花工作区/提取/task-1/')
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([
         'task-1',
@@ -218,7 +218,9 @@ describe('ComfyuiChenyuAdapter', () => {
       },
     })
 
-    expect(response.images[0]?.local_path).toBe('/workbench/02-生图/02-图生图/pri_print_v1.png')
+    expect(response.images[0]?.local_path).toBe(
+      '/workbench/02-印花工作区/图生图/img2img-task/pri_print_v1.png',
+    )
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([
         'img2img-task',
@@ -286,7 +288,9 @@ describe('ComfyuiChenyuAdapter', () => {
       '3': { inputs: { width: 1024, height: 1024 } },
       '9': { inputs: {} },
     })
-    expect(response.images[0]?.local_path).toContain('/workbench/02-生图/01-文生图/')
+    expect(response.images[0]?.local_path).toContain(
+      '/workbench/02-印花工作区/文生图/txt2img-task/',
+    )
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([
         'txt2img-task',
@@ -343,7 +347,9 @@ describe('ComfyuiChenyuAdapter', () => {
       },
     })
 
-    expect(response.images[0]?.local_path).toBe('/workbench/02-生图/04-抠图/pri_print.png')
+    expect(response.images[0]?.local_path).toBe(
+      '/workbench/02-印花工作区/抠图/matting-task/pri_print.png',
+    )
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([
         'matting-task',

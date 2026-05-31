@@ -379,8 +379,7 @@ export async function downloadCollectionImageIndexItems(input: DownloadInput) {
         ...input,
         limit: input.limit ?? DEFAULT_DOWNLOAD_LIMIT,
       })
-  const outputDir = await resolveOutputDir(input.outputDir)
-  const targetDir = join(outputDir, '图池采集')
+  const targetDir = await resolveOutputDir(input.outputDir, input.platform)
   await mkdir(targetDir, { recursive: true })
   const saved: CollectionImageIndexDownloadResult['saved'] = []
   const failed: CollectionImageIndexDownloadResult['failed'] = []
@@ -476,7 +475,7 @@ export function collectionImageIndexItemTargetDir(
   const sourcePageUrl = item.sourcePageUrl ?? pageUrl
   const bucket = collectionImageIndexItemBucket(platform, sourcePageUrl, item)
   if (bucket === 'loose') {
-    return join(rootDir, '散图池')
+    return rootDir
   }
   const folderName = collectionImageIndexProductFolderName(platform, sourcePageUrl, item)
   return join(rootDir, '商品页', folderName ?? '未识别商品')
@@ -953,7 +952,7 @@ function isAllowedDomain(url: string, allowedDomains: string[]) {
   })
 }
 
-async function resolveOutputDir(outputDir: string | undefined) {
+async function resolveOutputDir(outputDir: string | undefined, platform: string) {
   const trimmed = outputDir?.trim()
   if (trimmed) {
     return trimmed
@@ -961,11 +960,15 @@ async function resolveOutputDir(outputDir: string | undefined) {
   const { readAppConfig } = await import('../onboarding')
   const config = await readAppConfig()
   if (!config.workbench_root) {
-    throw new AppErrorClass('HTTP_4XX', '请先设置素材总目录或填写采集输出目录', false, {
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区或填写采集输出目录', false, {
       kind: 'validation',
     })
   }
-  return join(config.workbench_root, WORKBENCH_DIRECTORIES.collection)
+  return join(
+    config.workbench_root,
+    WORKBENCH_DIRECTORIES.collection,
+    `${platform}-${timestampSlug(Date.now())}`,
+  )
 }
 
 async function downloadImage(url: string): Promise<DownloadedImage> {

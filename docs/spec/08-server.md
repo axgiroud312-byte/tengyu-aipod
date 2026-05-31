@@ -625,7 +625,7 @@ Admin JWT 用单独密钥签名。
 模块：[全部 ▼] / generation / detection / title
 
 | ID | 模块 | 分类 | 平台/语言 | 当前版本 | 推荐模型 | 启用 | 操作 |
-| extract-paid-model | generation | extract-paid-model | - | 1.0.0 | qwen3-vl-plus | ✅ | [编辑] |
+| extract-paid-model | generation | extract-paid-model | - | 1.0.0 | qwen3.6-flash | ✅ | [编辑] |
 | extract-comfyui-workflow | generation | extract-comfyui-workflow | - | 1.0.0 | - | ✅ | [编辑] |
 | infringement-detection | detection | infringement | - | 1.0.0 | qwen3-vl-flash | ✅ | [编辑] |
 | title-temu-en-v3 | title | - | temu_pop / en | 3.0 | qwen3-vl-plus | ✅ | [编辑] |
@@ -637,11 +637,11 @@ ID：[extract-paid-model]（不可改）
 模块：[generation ▼]
 分类：[extract ▼]
 版本：[3.0.2]（自动 +0.0.1，可改）
-推荐模型：[qwen3.6-plus]
+推荐模型：[qwen3.6-flash]
 
 System Prompt（支持 markdown 预览）：
 [textarea，大字段]
-You are an expert at... output JSON array...
+You are an expert at... output {"prompts":[{"index":1,"prompt":"..."}]}...
 
 变量定义（JSON）：
 [textarea]
