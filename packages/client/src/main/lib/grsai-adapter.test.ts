@@ -97,6 +97,10 @@ describe('GrsaiAdapter', () => {
     expect(seenModels).toEqual([...GRSAI_SUPPORTED_MODELS])
   })
 
+  it('caps configured retry count at ten', () => {
+    expect(new GrsaiAdapter('sk-test', 'cn', { retries: 99 })).toHaveProperty('retries', 10)
+  })
+
   it('falls back to the other node for retryable node failures', async () => {
     const calls: string[] = []
     server.use(

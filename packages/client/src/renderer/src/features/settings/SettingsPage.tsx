@@ -914,6 +914,33 @@ function GenerationLocalSettingsCard({
   onGrsaiApiKeyChange: (value: string) => void
   onSave: () => void
 }) {
+  const [concurrencyDraft, setConcurrencyDraft] = useState(String(config.grsai_concurrency))
+  const [retriesDraft, setRetriesDraft] = useState(String(config.grsai_retries))
+
+  useEffect(() => {
+    setConcurrencyDraft(String(config.grsai_concurrency))
+  }, [config.grsai_concurrency])
+
+  useEffect(() => {
+    setRetriesDraft(String(config.grsai_retries))
+  }, [config.grsai_retries])
+
+  function updateNumberDraft(
+    value: string,
+    min: number,
+    max: number,
+    onValue: (value: number) => void,
+  ) {
+    if (!value.trim()) {
+      return
+    }
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) {
+      return
+    }
+    onValue(Math.max(min, Math.min(max, Math.floor(parsed))))
+  }
+
   return (
     <Card>
       <CardHeader>
@@ -978,22 +1005,34 @@ function GenerationLocalSettingsCard({
               id="grsai-concurrency"
               max={20}
               min={1}
-              onChange={(event) =>
-                onConfigChange({ grsai_concurrency: Number(event.target.value) })
-              }
+              onBlur={() => setConcurrencyDraft(String(config.grsai_concurrency))}
+              onChange={(event) => {
+                const value = event.target.value
+                setConcurrencyDraft(value)
+                updateNumberDraft(value, 1, 20, (nextValue) =>
+                  onConfigChange({ grsai_concurrency: nextValue }),
+                )
+              }}
               type="number"
-              value={config.grsai_concurrency}
+              value={concurrencyDraft}
             />
           </label>
           <label className="block space-y-2 text-sm font-medium" htmlFor="grsai-retries">
             <span>自动重试次数</span>
             <Input
               id="grsai-retries"
-              max={5}
+              max={10}
               min={0}
-              onChange={(event) => onConfigChange({ grsai_retries: Number(event.target.value) })}
+              onBlur={() => setRetriesDraft(String(config.grsai_retries))}
+              onChange={(event) => {
+                const value = event.target.value
+                setRetriesDraft(value)
+                updateNumberDraft(value, 0, 10, (nextValue) =>
+                  onConfigChange({ grsai_retries: nextValue }),
+                )
+              }}
               type="number"
-              value={config.grsai_retries}
+              value={retriesDraft}
             />
           </label>
           <label className="block space-y-2 text-sm font-medium" htmlFor="bailian-text-model">

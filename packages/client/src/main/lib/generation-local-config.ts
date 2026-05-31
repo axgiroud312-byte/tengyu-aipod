@@ -146,7 +146,7 @@ export function normalizeGenerationLocalConfig(
     bailian_vision_model: visionModel ?? DEFAULT_GENERATION_LOCAL_CONFIG.bailian_vision_model,
     grsai_node: config.grsai_node === 'global' ? 'global' : 'cn',
     grsai_concurrency: clampGenerationInt(config.grsai_concurrency, 1, 20, 3),
-    grsai_retries: clampGenerationInt(config.grsai_retries, 0, 5, 2),
+    grsai_retries: clampGenerationInt(config.grsai_retries, 0, 10, 2),
   }
 }
 

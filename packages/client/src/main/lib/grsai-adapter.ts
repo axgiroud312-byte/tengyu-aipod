@@ -90,7 +90,9 @@ export function stripDataUrlPrefix(value: string) {
 }
 
 export function normalizeGrsaiModel(model?: string): GrsaiModel {
-  return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? (model as GrsaiModel) : DEFAULT_MODEL
+  return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel)
+    ? (model as GrsaiModel)
+    : DEFAULT_MODEL
 }
 
 export function validateGrsaiSize(model: string, size: string) {
@@ -142,7 +144,7 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     this.pollTimeoutMs = options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS
-    this.retries = clampInt(options.retries ?? 2, 0, 5, 2)
+    this.retries = clampInt(options.retries ?? 2, 0, 10, 2)
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
@@ -291,7 +293,10 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
   }
 }
 
-function buildGeneratePayload(req: GenerateRequest, replyType: GrsaiReplyType): GrsaiGeneratePayload {
+function buildGeneratePayload(
+  req: GenerateRequest,
+  replyType: GrsaiReplyType,
+): GrsaiGeneratePayload {
   const model = normalizeGrsaiModel(req.model)
   const aspectRatio = req.output.aspect_ratio ?? '1024x1024'
   if (!validateGrsaiSize(model, aspectRatio)) {

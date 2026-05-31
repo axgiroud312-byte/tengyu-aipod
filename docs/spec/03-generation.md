@@ -596,7 +596,7 @@ UI 上让用户选哪种路径：
 ```ts
 // services/generation/concurrency.ts
 class GenerationConcurrencyController {
-  private workers: number               // 用户配置，默认 3，范围 1-10
+  private workers: number               // 用户配置，默认 3；Grsai 1-20，ComfyUI 1-10
   private active: Set<TaskId> = new Set()
   private semaphore: Semaphore
 
@@ -644,7 +644,7 @@ interface WorkUnit {
   prompt: string
   reference_images?: ImageRef[]
   attempt: number
-  max_retries: number                  // v1 默认 0；v1.5 可配 2
+  max_retries: number                  // Grsai 本地设置默认 2，范围 0-10
   failure_reason?: 'network' | 'timeout' | 'violation' | 'server' | 'unknown'
 }
 
@@ -669,6 +669,8 @@ async function runWithRetry(unit: WorkUnit, adapter: ImageGenerationAdapter) {
   }
 }
 ```
+
+Grsai 自动重试次数在设置页“本地生图设置”里配置，范围 `0-10`，默认 `2`。它只对可重试错误生效，例如网络错误、`429`、`5xx`；`GRSAI_VIOLATION` 这类内容违规不重试。
 
 ### 8.3 生图运行期日志
 
@@ -1019,7 +1021,7 @@ CREATE TABLE comfyui_instances (
 | `HTTP_4XX` | API Key 缺失、POD/GPU/版本配置缺失、手填 ComfyUI 地址不合法 | 在设置页显示短错误 |
 | `HTTP_5XX` | 晨羽实例已运行但无法解析 ComfyUI 地址 | 提示刷新实例；仍失败时允许手动填写地址 |
 | `GRSAI_VIOLATION` | Grsai 内容违规 | 不重试，提示用户改 prompt |
-| `GRSAI_FAILED` | Grsai 通用失败 | 重试 N 次后报错 |
+| `GRSAI_FAILED` | Grsai 通用失败 | 按本地自动重试次数重试，范围 0-10；仍失败后报错 |
 | `BAILIAN_API_KEY_INVALID` | 阿里云百炼 401 | 提示用户重填 API Key |
 | `PROMPT_PARSE_FAILED` | 通用解析器无法提取 | 重试 1 次后让用户手动编辑 |
 
