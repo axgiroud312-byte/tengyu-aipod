@@ -27,7 +27,22 @@ async function startMockServer() {
       return
     }
     if (url.pathname === '/api/skills') {
-      sendJson(response, { ok: true, data: [] })
+      sendJson(response, {
+        ok: true,
+        data: [
+          {
+            id: 'txt2img-local-print',
+            module: 'generation',
+            category: 'txt2img',
+            platform: null,
+            language: null,
+            version: '1.0.0',
+            enabled: true,
+            recommendedModel: null,
+            notes: null,
+          },
+        ],
+      })
       return
     }
     sendJson(response, { ok: false, error: { code: 'NOT_FOUND' } }, 404)
@@ -99,6 +114,9 @@ test.describe('workspace settings', () => {
       page.getByText('选择后会在本地自动创建采集、印花、检测和上架工作区。'),
     ).toBeVisible()
     await expect(page.getByText('素材总目录')).toHaveCount(0)
+    await expect(page.getByText('Skill 缓存')).toBeVisible()
+    await expect(page.getByText('1 条')).toBeVisible()
+    await expect(page.getByText('尚未手动同步')).toHaveCount(0)
 
     await page.getByRole('textbox', { name: /选择工作区/ }).fill(workspaceRoot)
     await page.getByRole('button', { name: '保存工作区' }).click()

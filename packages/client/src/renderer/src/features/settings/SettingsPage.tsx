@@ -184,6 +184,7 @@ export function SettingsPage({
   useEffect(() => {
     void load()
     void loadWorkspaceSettings()
+    void loadSkillCacheStatus()
   }, [])
 
   async function loadWorkspaceSettings() {
@@ -226,6 +227,19 @@ export function SettingsPage({
     setGrsaiApiKey('')
     setBailianApiKey('')
     setWorkflows(nextWorkflows)
+  }
+
+  async function loadSkillCacheStatus() {
+    try {
+      const skills = await window.api.skill.list()
+      setSyncResult({ ok: true, count: skills.length })
+    } catch (nextError) {
+      setSyncResult({
+        ok: false,
+        count: 0,
+        error: errorMessage(nextError, '读取 Skill 缓存失败'),
+      })
+    }
   }
 
   function applySettings(settings: ChenyuSettingsSnapshot) {
@@ -391,6 +405,7 @@ export function SettingsPage({
       setWorkspaceDraft(result.data.path)
       onWorkspaceSaved?.(result.data.path)
       setMessage('工作区已保存，目录已自动创建')
+      await loadSkillCacheStatus()
     } catch (nextError) {
       setError(errorMessage(nextError, '保存工作区失败'))
     } finally {
@@ -1209,7 +1224,7 @@ function SkillSyncCard({
               value={result.ok ? `${result.count} 条` : result.error}
             />
           ) : (
-            <SyncStatusRow label="Skill 缓存" value="尚未手动同步" />
+            <SyncStatusRow label="Skill 缓存" value="正在读取缓存" />
           )}
         </div>
         <Button
