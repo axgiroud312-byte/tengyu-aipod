@@ -19,6 +19,8 @@ import type {
   DetectionTaskEvent,
 } from '../../../main/lib/detection-service'
 import { detectionImageSrc } from './detection-image-url'
+import { type DetectionPreviewResult, detectionPreviewResults } from './detection-preview'
+import { ImageLightbox, type ImageLightboxItem } from './image-lightbox'
 
 const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_DETECTION_SKILL_ID = 'infringement-detection'
@@ -36,6 +38,35 @@ const riskLabels: Record<RiskLevel, string> = {
 
 function fileName(path: string) {
   return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path
+}
+
+function detectionPreviewItem(result: DetectionPreviewResult): ImageLightboxItem {
+  const riskLabel = riskLabels[result.riskLevel]
+  return {
+    alt: fileName(result.imagePath),
+    eyebrow: `${riskLabel} · 风险值 ${result.riskScore}`,
+    note: (
+      <div>
+        <p className="text-xs font-medium text-muted-foreground">判断原因</p>
+        <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">
+          {result.reason || '暂无判断原因'}
+        </p>
+      </div>
+    ),
+    src: detectionImageSrc({
+      path: result.imagePath,
+      thumbnailUrl: result.thumbnailUrl,
+    }),
+    title: fileName(result.imagePath),
+    details: [
+      { label: '风险等级', value: riskLabel },
+      { label: '风险值', value: result.riskScore },
+      { label: '印花 ID', value: result.printId, mono: true },
+      { label: 'Artifact ID', value: result.artifactId, mono: true },
+      { label: '缓存结果', value: result.cached ? '是' : '否' },
+      { label: '图片路径', value: result.imagePath, mono: true },
+    ],
+  }
 }
 
 function progressPercent(progress: DetectionProgress | null) {
@@ -287,9 +318,11 @@ function RunPanel({
 function RiskResults({
   level,
   results,
+  onOpenPreview,
 }: {
   level: RiskLevel
   results: Array<Extract<DetectionImageResult, { status: 'success' | 'skipped' }>>
+  onOpenPreview: (result: DetectionPreviewResult) => void
 }) {
   const tone = riskTone(level)
   const Icon = tone.icon
@@ -305,9 +338,11 @@ function RiskResults({
       <div className="mt-4 grid max-h-[520px] gap-3 overflow-auto pr-1 md:grid-cols-2 xl:grid-cols-1 2xl:grid-cols-2">
         {results.length ? (
           results.map((result) => (
-            <div
-              className={`rounded-md border ${tone.border} ${tone.surface} p-2 text-sm`}
+            <button
+              className={`rounded-md border ${tone.border} ${tone.surface} p-2 text-left text-sm transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2`}
               key={result.artifactId}
+              onClick={() => onOpenPreview(result)}
+              type="button"
             >
               <img
                 alt={fileName(result.imagePath)}
@@ -317,17 +352,19 @@ function RiskResults({
                   thumbnailUrl: result.thumbnailUrl,
                 })}
               />
-              <div className="mt-2 flex items-center justify-between gap-2">
+              <span className="mt-2 flex items-center justify-between gap-2">
                 <span className="truncate font-medium">{fileName(result.imagePath)}</span>
                 <span className="text-xs tabular-nums">{result.riskScore}</span>
-              </div>
-              <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{result.reason}</p>
+              </span>
+              <span className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                {result.reason}
+              </span>
               {result.cached ? (
                 <span className="mt-2 inline-flex rounded-md border bg-background/80 px-1.5 py-0.5 text-xs text-muted-foreground">
                   缓存
                 </span>
               ) : null}
-            </div>
+            </button>
           ))
         ) : (
           <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground md:col-span-2 xl:col-span-1 2xl:col-span-2">
@@ -388,6 +425,9 @@ export function DetectionWorkbench() {
   const [running, setRunning] = useState(false)
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null)
   const [results, setResults] = useState<DetectionImageResult[]>([])
+  const [activeDetectionPreviewIndex, setActiveDetectionPreviewIndex] = useState<number | null>(
+    null,
+  )
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const runningTaskIdRef = useRef<string | null>(null)
@@ -488,6 +528,26 @@ export function DetectionWorkbench() {
     [detectedResults],
   )
   const failedResults = useMemo(() => results.filter(isFailedResult), [results])
+  const previewResults = useMemo(() => detectionPreviewResults(results), [results])
+  const previewItems = useMemo(
+    () => previewResults.map((result) => detectionPreviewItem(result)),
+    [previewResults],
+  )
+
+  useEffect(() => {
+    setActiveDetectionPreviewIndex((current) =>
+      current !== null && current >= previewItems.length ? null : current,
+    )
+  }, [previewItems.length])
+
+  function openDetectionPreview(result: DetectionPreviewResult) {
+    const index = previewResults.findIndex(
+      (item) => item.artifactId === result.artifactId && item.imagePath === result.imagePath,
+    )
+    if (index >= 0) {
+      setActiveDetectionPreviewIndex(index)
+    }
+  }
 
   async function chooseSourceFolder() {
     setError(null)
@@ -635,12 +695,23 @@ export function DetectionWorkbench() {
         </div>
         <div className="mt-4 grid gap-4 xl:grid-cols-3">
           {RISK_LEVELS.map((level) => (
-            <RiskResults key={level} level={level} results={resultsByRisk[level]} />
+            <RiskResults
+              key={level}
+              level={level}
+              results={resultsByRisk[level]}
+              onOpenPreview={openDetectionPreview}
+            />
           ))}
         </div>
       </section>
 
       <FailedResults results={failedResults} />
+      <ImageLightbox
+        activeIndex={activeDetectionPreviewIndex}
+        items={previewItems}
+        title="侵权检测预览"
+        onActiveIndexChange={setActiveDetectionPreviewIndex}
+      />
     </div>
   )
 }

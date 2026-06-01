@@ -10,8 +10,6 @@ import {
 import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   ChevronDown,
-  ChevronLeft,
-  ChevronRight,
   ChevronUp,
   CircleDashed,
   FolderOpen,
@@ -45,6 +43,7 @@ import {
   isGenerationProviderAvailable,
   useGenerationStore,
 } from '../store/generation'
+import { ImageLightbox, type ImageLightboxDetail, type ImageLightboxItem } from './image-lightbox'
 
 type Txt2imgMode = 'ai' | 'manual'
 type Img2imgMode = 'layout' | 'style' | 'layout-style' | 'manual'
@@ -946,21 +945,68 @@ function imagePreviewSrc(image: GenerationRunImage) {
   return localPath ? localImageUrl(localPath) : image.url
 }
 
+function presentDetail(
+  label: string,
+  value: string | undefined,
+  options?: Pick<ImageLightboxDetail, 'mono' | 'preserve'>,
+): ImageLightboxDetail | null {
+  const displayValue = value?.trim()
+  if (!displayValue) {
+    return null
+  }
+
+  const detail: ImageLightboxDetail = { label, value: displayValue }
+  if (options?.mono) {
+    detail.mono = true
+  }
+  if (options?.preserve) {
+    detail.preserve = true
+  }
+  return detail
+}
+
+function generationPreviewItem(image: GenerationRunImage, index: number): ImageLightboxItem {
+  const savedPath = image.localPath ?? fileUrlLocalPath(image.url) ?? ''
+  const details = [
+    presentDetail('印花 ID', image.printId, { mono: true }),
+    presentDetail('Artifact ID', image.artifactId, { mono: true }),
+    presentDetail('源图路径', image.sourcePath, { mono: true }),
+    presentDetail('保存路径', savedPath, { mono: true }),
+    presentDetail('图片 URL', savedPath ? '' : image.url, { mono: true }),
+  ].filter((detail): detail is ImageLightboxDetail => detail !== null)
+
+  return {
+    alt: `结果图 ${index + 1}`,
+    eyebrow: `结果 ${index + 1}`,
+    note: (
+      <div>
+        <p className="text-xs font-medium text-muted-foreground">提示词</p>
+        <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">
+          {image.prompt.trim() || '暂无提示词'}
+        </p>
+      </div>
+    ),
+    src: imagePreviewSrc(image),
+    title: image.printId ?? image.artifactId ?? `结果 ${index + 1}`,
+    details,
+  }
+}
+
 function CurrentTaskImagePreview({ images }: { images: GenerationRunImage[] }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
-  const activeImage = activeIndex === null ? null : images[activeIndex]
+  const previewItems = useMemo(
+    () => images.map((image, index) => generationPreviewItem(image, index)),
+    [images],
+  )
+
+  useEffect(() => {
+    setActiveIndex((current) =>
+      current !== null && current >= previewItems.length ? null : current,
+    )
+  }, [previewItems.length])
 
   function openImage(index: number) {
     setActiveIndex(index)
-  }
-
-  function moveActiveImage(delta: number) {
-    setActiveIndex((current) => {
-      if (current === null || images.length === 0) {
-        return current
-      }
-      return (current + delta + images.length) % images.length
-    })
   }
 
   return (
@@ -995,49 +1041,12 @@ function CurrentTaskImagePreview({ images }: { images: GenerationRunImage[] }) {
         </div>
       )}
 
-      <Dialog
-        onOpenChange={(open) => (!open ? setActiveIndex(null) : null)}
-        open={activeIndex !== null}
-      >
-        <DialogContent className="max-w-5xl">
-          <DialogHeader>
-            <DialogTitle>
-              图片预览 {activeIndex === null ? '' : `${activeIndex + 1}/${images.length}`}
-            </DialogTitle>
-          </DialogHeader>
-          {activeImage ? (
-            <div className="grid gap-3">
-              <div className="relative flex min-h-[320px] items-center justify-center rounded-md bg-muted">
-                <img
-                  alt="结果图预览"
-                  className="max-h-[72vh] max-w-full object-contain"
-                  src={imagePreviewSrc(activeImage)}
-                />
-                {images.length > 1 ? (
-                  <>
-                    <Button
-                      className="absolute left-3 top-1/2 h-10 w-10 -translate-y-1/2 p-0"
-                      onClick={() => moveActiveImage(-1)}
-                      type="button"
-                      variant="secondary"
-                    >
-                      <ChevronLeft className="h-5 w-5" />
-                    </Button>
-                    <Button
-                      className="absolute right-3 top-1/2 h-10 w-10 -translate-y-1/2 p-0"
-                      onClick={() => moveActiveImage(1)}
-                      type="button"
-                      variant="secondary"
-                    >
-                      <ChevronRight className="h-5 w-5" />
-                    </Button>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-        </DialogContent>
-      </Dialog>
+      <ImageLightbox
+        activeIndex={activeIndex}
+        items={previewItems}
+        title="图片预览"
+        onActiveIndexChange={setActiveIndex}
+      />
     </div>
   )
 }
