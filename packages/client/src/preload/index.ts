@@ -68,6 +68,7 @@ import type {
 } from '../main/lib/comfyui-workflow-cache'
 import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
+  ChooseDetectionInputFolderResult,
   DetectionBatchConfig,
   DetectionImageInfo,
   DetectionInputSources,
@@ -449,6 +450,10 @@ const api = {
     getConfig: () => ipcRenderer.invoke('detection:get-config') as Promise<DetectionConfig | null>,
     saveConfig: (input: DetectionConfig) =>
       ipcRenderer.invoke('detection:save-config', input) as Promise<DetectionConfig>,
+    chooseInputFolder: () =>
+      ipcRenderer.invoke(
+        'detection:choose-input-folder',
+      ) as Promise<ChooseDetectionInputFolderResult>,
     listInputSources: () =>
       ipcRenderer.invoke('detection:list-input-sources') as Promise<DetectionInputSources>,
     scanFolder: (input: { folder: string }) =>

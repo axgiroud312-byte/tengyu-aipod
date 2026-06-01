@@ -323,6 +323,9 @@ declare global {
         saveConfig: (
           input: import('../../main/lib/detection-config').DetectionConfig,
         ) => Promise<import('../../main/lib/detection-config').DetectionConfig>
+        chooseInputFolder: () => Promise<
+          import('../../main/lib/detection-service').ChooseDetectionInputFolderResult
+        >
         listInputSources: () => Promise<
           import('../../main/lib/detection-service').DetectionInputSources
         >

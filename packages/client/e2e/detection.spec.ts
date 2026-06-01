@@ -209,13 +209,13 @@ test.describe('detection module E2E', () => {
       )
 
       await expect(
-        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '通过')),
+        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '无风险')),
       ).resolves.toHaveLength(4)
       await expect(
-        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '复查')),
+        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '疑似')),
       ).resolves.toHaveLength(3)
       await expect(
-        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '失败')),
+        listFiles(join(workbenchRoot, '03-检测工作区', 'detection-e2e-success', '高风险')),
       ).resolves.toHaveLength(3)
       await expect(
         stat(join(workbenchRoot, '.workbench', 'tmp', 'detection', 'detection-e2e-success')),

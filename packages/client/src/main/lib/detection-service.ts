@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { basename, extname, join } from 'node:path'
+import { basename, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
@@ -76,6 +76,7 @@ export type DetectionImageInfo = {
   id: string
   path: string
   name: string
+  relativePath: string
   sizeBytes: number
   modifiedAt: number
   thumbnailUrl: string
@@ -158,6 +159,10 @@ export type DetectionTaskEvent =
   | { ok: true; result: DetectionBatchResult }
   | { ok: false; taskId: string; error: string }
 
+export type ChooseDetectionInputFolderResult =
+  | { ok: true; data: { path: string } }
+  | { ok: false; error: { code: string; message: string } }
+
 type DetectionServiceDependencies = {
   skillCache?: { getSkill: (id: string, version?: string) => Promise<Skill> }
   createBailianAdapter?: (apiKey: string) => Pick<AliyunBailianAdapter, 'visionCompletion'>
@@ -205,9 +210,9 @@ const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const RISK_OUTPUT_FOLDERS: Record<RiskLevel, string> = {
-  pass: '通过',
-  review: '复查',
-  block: '失败',
+  pass: '无风险',
+  review: '疑似',
+  block: '高风险',
 }
 const DETECTION_INPUT_SOURCE_DEFS = [
   {
@@ -279,7 +284,37 @@ export function classifyRisk(score: number, threshold?: DetectionThreshold): Ris
   return 'block'
 }
 
-export function parseDetectionResponse(text: string): { score: number; reason: string } | null {
+type ParsedDetectionResponse = {
+  score: number
+  reason: string
+  riskLevel?: RiskLevel
+}
+
+const RISK_LABEL_RESULTS: Record<string, { score: number; riskLevel: RiskLevel }> = {
+  无侵权风险: { score: 0, riskLevel: 'pass' },
+  无风险: { score: 0, riskLevel: 'pass' },
+  pass: { score: 0, riskLevel: 'pass' },
+  通过: { score: 0, riskLevel: 'pass' },
+  侵权风险低: { score: 50, riskLevel: 'review' },
+  疑似: { score: 50, riskLevel: 'review' },
+  review: { score: 50, riskLevel: 'review' },
+  复查: { score: 50, riskLevel: 'review' },
+  侵权风险高: { score: 100, riskLevel: 'block' },
+  高风险: { score: 100, riskLevel: 'block' },
+  block: { score: 100, riskLevel: 'block' },
+  拦截: { score: 100, riskLevel: 'block' },
+  失败: { score: 100, riskLevel: 'block' },
+}
+
+function parseRiskLabel(value: unknown) {
+  if (typeof value !== 'string') {
+    return null
+  }
+  const normalized = value.trim()
+  return RISK_LABEL_RESULTS[normalized] ?? RISK_LABEL_RESULTS[normalized.toLowerCase()] ?? null
+}
+
+export function parseDetectionResponse(text: string): ParsedDetectionResponse | null {
   const direct = parseDetectionJson(text)
   if (direct) {
     return direct
@@ -294,15 +329,27 @@ export function parseDetectionResponse(text: string): { score: number; reason: s
   }
 
   const scoreMatch = text.match(/(?:risk[_\s-]?score|风险值|score)\s*[:：]\s*(\d{1,3})/i)
-  if (!scoreMatch?.[1]) {
-    return null
+  if (scoreMatch?.[1]) {
+    const reasonMatch = text.match(/(?:reason|依据|理由)\s*[:：]\s*([^\n\r]+)/i)
+    return {
+      score: clampScore(Number.parseInt(scoreMatch[1], 10)),
+      reason: reasonMatch?.[1]?.trim() ?? '',
+    }
   }
 
-  const reasonMatch = text.match(/(?:reason|依据|理由)\s*[:：]\s*([^\n\r]+)/i)
-  return {
-    score: clampScore(Number.parseInt(scoreMatch[1], 10)),
-    reason: reasonMatch?.[1]?.trim() ?? '',
+  const riskMatch = text.match(
+    /(?:risk|risk[_\s-]?level|风险|风险等级)\s*[:：]\s*(无侵权风险|无风险|侵权风险低|疑似|侵权风险高|高风险|pass|review|block)/i,
+  )
+  const risk = parseRiskLabel(riskMatch?.[1])
+  if (risk) {
+    const reasonMatch = text.match(/(?:reason|依据|理由)\s*[:：]\s*([^\n\r]+)/i)
+    return {
+      ...risk,
+      reason: reasonMatch?.[1]?.trim() ?? '',
+    }
   }
+
+  return null
 }
 
 function parseDetectionJson(text: string) {
@@ -319,13 +366,16 @@ function parseDetectionJson(text: string) {
         : typeof rawScore === 'string'
           ? Number.parseFloat(rawScore)
           : Number.NaN
-    if (!Number.isFinite(score)) {
-      return null
+    const reason = typeof record.reason === 'string' ? record.reason.trim() : ''
+    if (Number.isFinite(score)) {
+      return {
+        score: clampScore(score),
+        reason,
+      }
     }
-    return {
-      score: clampScore(score),
-      reason: typeof record.reason === 'string' ? record.reason.trim() : '',
-    }
+
+    const risk = parseRiskLabel(record.risk ?? record.risk_level ?? record.riskLevel)
+    return risk ? { ...risk, reason } : null
   } catch {
     return null
   }
@@ -503,29 +553,51 @@ async function readWorkbenchRoot(readConfig: ReadAppConfig = readAppConfig) {
   return workbenchConfig.workbench_root
 }
 
-async function scanImageFolder(folder: string): Promise<DetectionImageInfo[]> {
-  const entries = await readdir(folder, { withFileTypes: true }).catch(() => [])
-  const files = entries
-    .filter((entry) => entry.isFile() && IMAGE_EXTENSIONS.test(entry.name))
-    .map((entry) => entry.name)
-    .sort(naturalCompare)
+async function scanImageFolder(
+  folder: string,
+  options: { allowMissing?: boolean } = {},
+): Promise<DetectionImageInfo[]> {
+  const root = folder.trim()
+  if (!root || !isAbsolute(root)) {
+    throw new AppErrorClass('HTTP_4XX', '请选择有效的图片文件夹', false, { folder })
+  }
+  const rootInfo = await stat(root).catch(() => null)
+  if (!rootInfo?.isDirectory()) {
+    if (options.allowMissing) {
+      return []
+    }
+    throw new AppErrorClass('HTTP_4XX', '选择的路径不是文件夹', false, { folder })
+  }
 
-  const images = await Promise.all(
-    files.map(async (name) => {
-      const imagePath = join(folder, name)
-      const info = await stat(imagePath)
-      const id = createHash('sha256').update(imagePath).digest('hex').slice(0, 16)
-      return {
-        id,
-        path: imagePath,
-        name,
+  const images: DetectionImageInfo[] = []
+
+  async function visit(currentFolder: string) {
+    const entries = await readdir(currentFolder, { withFileTypes: true }).catch(() => [])
+    for (const entry of entries.sort((left, right) => naturalCompare(left.name, right.name))) {
+      const entryPath = join(currentFolder, entry.name)
+      if (entry.isDirectory()) {
+        await visit(entryPath)
+        continue
+      }
+      if (!entry.isFile() || !IMAGE_EXTENSIONS.test(entry.name)) {
+        continue
+      }
+      const info = await stat(entryPath)
+      const relativePath = relative(root, entryPath)
+      images.push({
+        id: createHash('sha256').update(entryPath).digest('hex').slice(0, 16),
+        path: entryPath,
+        name: entry.name,
+        relativePath,
         sizeBytes: info.size,
         modifiedAt: info.mtimeMs,
-        thumbnailUrl: fileUrl(imagePath),
-      } satisfies DetectionImageInfo
-    }),
-  )
-  return images
+        thumbnailUrl: fileUrl(entryPath),
+      })
+    }
+  }
+
+  await visit(root)
+  return images.sort((left, right) => naturalCompare(left.relativePath, right.relativePath))
 }
 
 function registerSourceArtifact(
@@ -801,6 +873,17 @@ function resultSelectSql(whereSql: string) {
   `
 }
 
+export async function chooseDetectionInputFolder(): Promise<ChooseDetectionInputFolderResult> {
+  const result = await electronDialog().showOpenDialog({
+    properties: ['openDirectory'],
+    title: '选择侵权检测输入文件夹',
+  })
+  if (result.canceled || !result.filePaths[0]) {
+    return { ok: false, error: { code: 'CANCELLED', message: '已取消选择' } }
+  }
+  return { ok: true, data: { path: result.filePaths[0] } }
+}
+
 export class DetectionService {
   async listModels() {
     return (await listBailianProviderModels('detection', true)).map((model) => model.id)
@@ -813,7 +896,7 @@ export class DetectionService {
     const sources = await Promise.all(
       DETECTION_INPUT_SOURCE_DEFS.map(async (source) => {
         const folder = join(workbenchRoot, ...source.parts)
-        const count = (await scanImageFolder(folder)).length
+        const count = (await scanImageFolder(folder, { allowMissing: true })).length
         return {
           key: source.key,
           label: source.label,
@@ -1295,7 +1378,7 @@ export class DetectionService {
         return parsed
       })
 
-      const riskLevel = classifyRisk(parsed.score, input.threshold)
+      const riskLevel = parsed.riskLevel ?? classifyRisk(parsed.score, input.threshold)
       const outputPath = detectionOutputPath(
         input.workbenchRoot,
         input.taskId,
@@ -1370,6 +1453,7 @@ function emitDetectionCompleted(event: DetectionTaskEvent) {
 
 export function registerDetectionIpc() {
   const ipcMain = electronIpcMain()
+  ipcMain.handle('detection:choose-input-folder', () => chooseDetectionInputFolder())
   ipcMain.handle('detection:list-input-sources', () => detectionService.listInputSources())
   ipcMain.handle('detection:scan-folder', (_event, input: { folder: string }) =>
     detectionService.scanFolder(input),
@@ -1432,4 +1516,8 @@ function electronIpcMain(): typeof ipcMain {
 
 function electronBrowserWindow(): typeof BrowserWindow {
   return (nodeRequire('electron') as typeof import('electron')).BrowserWindow
+}
+
+function electronDialog(): typeof import('electron').dialog {
+  return (nodeRequire('electron') as typeof import('electron')).dialog
 }

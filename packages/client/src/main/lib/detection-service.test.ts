@@ -291,6 +291,21 @@ describe('detection service utilities', () => {
       score: 100,
       reason: '包含商标',
     })
+    expect(parseDetectionResponse('{"risk": "无侵权风险", "reason": "原创花朵"}')).toEqual({
+      score: 0,
+      riskLevel: 'pass',
+      reason: '原创花朵',
+    })
+    expect(parseDetectionResponse('{"risk": "侵权风险低", "reason": "泛动漫风格"}')).toEqual({
+      score: 50,
+      riskLevel: 'review',
+      reason: '泛动漫风格',
+    })
+    expect(parseDetectionResponse('{"risk": "侵权风险高", "reason": "接近皮卡丘"}')).toEqual({
+      score: 100,
+      riskLevel: 'block',
+      reason: '接近皮卡丘',
+    })
     expect(parseDetectionResponse('无法判断')).toBeNull()
   })
 
@@ -309,6 +324,24 @@ describe('DetectionService', () => {
 
     await expect(service.listModels()).resolves.toEqual(
       BAILIAN_VISION_MODELS.map((model) => model.id),
+    )
+  })
+
+  it('recursively scans images in the selected folder', async () => {
+    const inputDir = join(workbenchRoot, 'inputs')
+    const nestedDir = join(inputDir, 'nested')
+    await createImage(join(inputDir, 'print-a.png'), 'image-a')
+    await createImage(join(nestedDir, 'print-b.webp'), 'image-b')
+    await createImage(join(nestedDir, 'ignore.txt'), 'not-image')
+    const service = new DetectionService()
+
+    const images = await service.scanFolder({ folder: inputDir })
+    expect(images).toHaveLength(2)
+    expect(images).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'print-a.png', relativePath: 'print-a.png' }),
+        expect.objectContaining({ name: 'print-b.webp', relativePath: 'nested/print-b.webp' }),
+      ]),
     )
   })
 
@@ -385,13 +418,13 @@ describe('DetectionService', () => {
     expect(preprocess).toHaveBeenCalledTimes(3)
     expect(fakeDb.detectionRows).toHaveLength(3)
     await expect(
-      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '通过')),
+      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '无风险')),
     ).resolves.toBeTruthy()
     await expect(
-      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '复查')),
+      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '疑似')),
     ).resolves.toBeTruthy()
     await expect(
-      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '失败')),
+      stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '高风险')),
     ).resolves.toBeTruthy()
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'task-detection', processed: 3, succeeded: 3 }),
@@ -619,7 +652,7 @@ describe('DetectionService', () => {
   })
 
   it('adds detected pass images to the matting candidate list without copying files', async () => {
-    const sourcePath = join(workbenchRoot, '03-检测工作区', 'task-pass', '通过', 'pri-pass.png')
+    const sourcePath = join(workbenchRoot, '03-检测工作区', 'task-pass', '无风险', 'pri-pass.png')
     await createImage(sourcePath, 'pass-image')
     const service = new DetectionService()
     const dependencies = createSqliteDependencies()
@@ -677,7 +710,7 @@ describe('DetectionService', () => {
   })
 
   it('keeps source files when adding pass images to the matting candidate list', async () => {
-    const sourcePath = join(workbenchRoot, '03-检测工作区', 'task-move', '通过', 'pri-move.png')
+    const sourcePath = join(workbenchRoot, '03-检测工作区', 'task-move', '无风险', 'pri-move.png')
     await createImage(sourcePath, 'pass-image')
     const service = new DetectionService()
     const dependencies = createSqliteDependencies()
