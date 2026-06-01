@@ -82,6 +82,18 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   if (typeof details.model === 'string') {
     parts.push(`model=${details.model}`)
   }
+  if (typeof details.responseModel === 'string') {
+    parts.push(`返回模型=${details.responseModel}`)
+  }
+  if (typeof details.skillId === 'string') {
+    parts.push(`skill=${details.skillId}`)
+  }
+  if (typeof details.skillCategory === 'string') {
+    parts.push(`skill=${details.skillCategory}`)
+  }
+  if (typeof details.skillVersion === 'string') {
+    parts.push(`skillVersion=${details.skillVersion}`)
+  }
   if (typeof details.workflowName === 'string') {
     parts.push(`workflow=${details.workflowName}`)
   }
@@ -111,6 +123,9 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   if (typeof details.sourceImage === 'string') {
     parts.push(`源图=${details.sourceImage}`)
   }
+  if (typeof details.promptIndex === 'number') {
+    parts.push(`第 ${details.promptIndex} 条`)
+  }
   if (typeof details.succeeded === 'number') {
     parts.push(`成功 ${details.succeeded}`)
   }
@@ -129,6 +144,9 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   if (typeof details.aspectRatio === 'string') {
     parts.push(details.aspectRatio)
   }
+  if (typeof details.requirement === 'string') {
+    parts.push(`需求=${details.requirement}`)
+  }
   if (typeof details.prompt === 'string') {
     parts.push(details.prompt)
   }
@@ -137,6 +155,15 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   }
   if (typeof details.error === 'string') {
     parts.push(details.error)
+  }
+  if (typeof details.expected === 'number' || typeof details.actual === 'number') {
+    parts.push(`期望 ${details.expected ?? '-'} / 实际 ${details.actual ?? '-'}`)
+  }
+  if (typeof details.finishReason === 'string') {
+    parts.push(`finish=${details.finishReason}`)
+  }
+  if (typeof details.rawResponsePreview === 'string') {
+    parts.push(`原始返回=${details.rawResponsePreview}`)
   }
   return parts.join(' · ')
 }

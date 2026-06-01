@@ -95,6 +95,9 @@ export class PromptGeneratorService {
               kind: 'llm_parse_failed',
               expected: chunkCount,
               actual: prompts.length,
+              rawResponsePreview: rawResponsePreview(response.text),
+              responseModel: response.model,
+              finishReason: response.finishReason ?? null,
             })
           }
           return prompts
@@ -196,6 +199,14 @@ function envInt(name: string, min: number, max: number, fallback: number) {
     return fallback
   }
   return Math.max(min, Math.min(max, Math.floor(parsed)))
+}
+
+function rawResponsePreview(text: string, maxLength = 800) {
+  const normalized = text.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength)}...`
 }
 
 export function parsePromptJsonStrict(text: string, count: number): string[] {

@@ -59,6 +59,35 @@ describe('generation debug log formatter', () => {
     expect(line).toContain('提取产品表面清晰可见的印花')
   })
 
+  it('formats prompt generation skill and raw response details', () => {
+    const entry: GenerationDebugLogEntry = {
+      id: '3',
+      timestamp: new Date('2026-05-31T08:09:10.011Z').getTime(),
+      level: 'error',
+      message: '提示词生成失败',
+      capability: 'img2img',
+      details: {
+        operation: 'prompt',
+        model: 'qwen3.6-flash',
+        skillId: 'img2img-local-reference',
+        skillVersion: '1.0.0',
+        expected: 2,
+        actual: 0,
+        rawResponsePreview: '{"prompt":"missing array"}',
+        error: '模型返回 JSON 缺少 prompts 字符串数组',
+      },
+    }
+
+    const line = formatGenerationDebugLogLine(entry)
+
+    expect(line).toContain('[ERROR] [图生图] 提示词生成失败')
+    expect(line).toContain('model=qwen3.6-flash')
+    expect(line).toContain('skill=img2img-local-reference')
+    expect(line).toContain('skillVersion=1.0.0')
+    expect(line).toContain('期望 2 / 实际 0')
+    expect(line).toContain('原始返回={"prompt":"missing array"}')
+  })
+
   it('counts warning and error logs', () => {
     expect(
       generationDebugLogLevelCounts([

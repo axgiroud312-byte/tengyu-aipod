@@ -383,7 +383,7 @@ describe('PromptGeneratorService', () => {
     ).rejects.toMatchObject({
       code: 'HTTP_5XX',
       retryable: true,
-      details: { kind: 'llm_parse_failed' },
+      details: { kind: 'llm_parse_failed', rawResponsePreview: '' },
     })
     expect(chatCompletion).toHaveBeenCalledTimes(3)
   })
@@ -406,7 +406,12 @@ describe('PromptGeneratorService', () => {
     ).rejects.toMatchObject({
       code: 'HTTP_5XX',
       retryable: true,
-      details: { kind: 'llm_parse_failed', expected: 3, actual: 1 },
+      details: {
+        kind: 'llm_parse_failed',
+        expected: 3,
+        actual: 1,
+        rawResponsePreview: '{"prompts":["Only one"]}',
+      },
     })
   })
 
@@ -428,7 +433,12 @@ describe('PromptGeneratorService', () => {
     ).rejects.toMatchObject({
       code: 'HTTP_5XX',
       retryable: true,
-      details: { kind: 'llm_parse_failed', expected: 1, actual: 0 },
+      details: {
+        kind: 'llm_parse_failed',
+        expected: 1,
+        actual: 0,
+        rawResponsePreview: '{"prompts":[123]}',
+      },
     })
   })
 })

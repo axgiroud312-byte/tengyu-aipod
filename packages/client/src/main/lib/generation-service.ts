@@ -1113,6 +1113,24 @@ function appErrorMessage(error: unknown) {
   return String(error)
 }
 
+function promptGenerationErrorDetails(error: unknown): GenerationDebugLogDetails {
+  if (!(error instanceof AppErrorClass) || !error.details) {
+    return {}
+  }
+  const details = error.details
+  return {
+    rawResponsePreview:
+      typeof details.rawResponsePreview === 'string' ? details.rawResponsePreview : undefined,
+    responseModel: typeof details.responseModel === 'string' ? details.responseModel : undefined,
+    finishReason:
+      typeof details.finishReason === 'string' || details.finishReason === null
+        ? details.finishReason
+        : undefined,
+    expected: typeof details.expected === 'number' ? details.expected : undefined,
+    actual: typeof details.actual === 'number' ? details.actual : undefined,
+  }
+}
+
 function emitProgress(progress: GenerationProgress) {
   for (const window of BrowserWindow.getAllWindows()) {
     window.webContents.send('generation:progress', progress)
@@ -1426,22 +1444,29 @@ export async function listComfyuiMixedMattingWorkflows(
 export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
   const count = clampInt(input.count, 1, 1000, 5)
   const capability = input.capability ?? 'txt2img'
+  const promptCategory = promptSkillCategory(capability, input.printMode)
+  const selectedSkillId = input.skillId?.trim()
+  const selectedSkillVersion = input.skillVersion?.trim()
   const debug = createGenerationDebugLogger({}, { capability })
   debug('开始生成提示词', 'info', {
     operation: 'prompt',
     count,
     model: input.model ?? null,
+    skillId: selectedSkillId || undefined,
+    skillVersion: selectedSkillVersion || undefined,
+    skillCategory: selectedSkillId ? undefined : promptCategory,
     referenceImageCount: input.referenceImages?.length ?? 0,
     printMode: input.printMode ?? 'local',
+    requirement: input.requirement ? promptPreview(input.requirement, 240) : undefined,
   })
   try {
     const prompts = await promptGeneratorService.generatePrompts({
-      ...(input.skillId
+      ...(selectedSkillId
         ? {
-            skillId: input.skillId,
-            ...(input.skillVersion ? { skillVersion: input.skillVersion } : {}),
+            skillId: selectedSkillId,
+            ...(selectedSkillVersion ? { skillVersion: selectedSkillVersion } : {}),
           }
-        : { category: promptSkillCategory(capability, input.printMode) }),
+        : { category: promptCategory }),
       variables: {
         printMode: input.printMode === 'full' ? '满印' : '局部',
         requirement: input.requirement,
@@ -1461,6 +1486,14 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
       operation: 'prompt',
       count: prompts.length,
     })
+    prompts.forEach((prompt, index) => {
+      debug('百炼返回提示词', 'debug', {
+        operation: 'prompt',
+        promptIndex: index + 1,
+        total: prompts.length,
+        prompt: promptPreview(prompt, 300),
+      })
+    })
     return prompts.map((text) => ({
       id: randomUUID(),
       text,
@@ -1470,6 +1503,7 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
     debug('提示词生成失败', 'error', {
       operation: 'prompt',
       error: appErrorMessage(error),
+      ...promptGenerationErrorDetails(error),
     })
     throw error
   }
