@@ -39,6 +39,16 @@ describe('TempFileManager', () => {
     expect(info.isDirectory()).toBe(true)
   })
 
+  it('allows localized task names while keeping them inside the module root', async () => {
+    const manager = new TempFileManager({ rootDir: tempDir })
+    const taskId = '检测-20260601-182806'
+
+    await expect(manager.createTaskDir('detection', taskId)).resolves.toBe(
+      join(tempDir, 'detection', taskId),
+    )
+    await expect(stat(join(tempDir, 'detection', taskId))).resolves.toBeTruthy()
+  })
+
   it('creates and resolves task directories under .workbench/tmp', async () => {
     const manager = new TempFileManager({
       workbenchRootProvider: () => tempDir,
@@ -54,6 +64,12 @@ describe('TempFileManager', () => {
     const manager = new TempFileManager({ rootDir: tempDir })
 
     await expect(manager.createTaskDir('photoshop', '../bad')).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    })
+    await expect(manager.createTaskDir('photoshop', 'bad/name')).rejects.toMatchObject({
+      code: 'INVALID_INPUT',
+    })
+    await expect(manager.createTaskDir('photoshop', '..')).rejects.toMatchObject({
       code: 'INVALID_INPUT',
     })
   })

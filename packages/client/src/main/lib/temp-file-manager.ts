@@ -30,13 +30,29 @@ interface CleanupTaskOptions {
 
 const DEFAULT_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000
 const DEFAULT_FAILED_TTL_MS = 60 * 60 * 1000
-const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9_-]{1,120}$/
+const MAX_SAFE_SEGMENT_LENGTH = 120
+const RESERVED_PATH_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+
+function hasUnsafePathChar(value: string) {
+  return Array.from(value).some((char) => RESERVED_PATH_CHARS.has(char) || char.charCodeAt(0) < 32)
+}
 
 function assertSafeSegment(value: string, label: string): void {
-  if (!SAFE_SEGMENT_PATTERN.test(value)) {
-    throw new AppErrorClass('INVALID_INPUT', `${label} 只能包含字母、数字、下划线或短横线`, false, {
-      [label]: value,
-    })
+  if (
+    !value ||
+    value.length > MAX_SAFE_SEGMENT_LENGTH ||
+    value === '.' ||
+    value === '..' ||
+    hasUnsafePathChar(value)
+  ) {
+    throw new AppErrorClass(
+      'INVALID_INPUT',
+      `${label} 不能为空，且不能包含路径分隔符、控制字符或系统保留字符`,
+      false,
+      {
+        [label]: value,
+      },
+    )
   }
 }
 

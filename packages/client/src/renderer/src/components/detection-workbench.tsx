@@ -18,6 +18,7 @@ import type {
   DetectionProgress,
   DetectionTaskEvent,
 } from '../../../main/lib/detection-service'
+import { detectionImageSrc } from './detection-image-url'
 
 const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_DETECTION_SKILL_ID = 'infringement-detection'
@@ -31,10 +32,6 @@ const riskLabels: Record<RiskLevel, string> = {
   pass: '无风险',
   review: '疑似',
   block: '高风险',
-}
-
-function fileUrl(path: string) {
-  return encodeURI(`file://${path.startsWith('/') ? '' : '/'}${path.replace(/\\/g, '/')}`)
 }
 
 function fileName(path: string) {
@@ -167,7 +164,7 @@ function ImageFolderPanel({
               <img
                 alt={image.name}
                 className="h-28 w-full rounded-sm bg-muted object-cover"
-                src={image.thumbnailUrl || fileUrl(image.path)}
+                src={detectionImageSrc({ path: image.path, thumbnailUrl: image.thumbnailUrl })}
               />
               <span className="mt-2 block truncate font-medium">{image.name}</span>
               <span className="block truncate text-xs text-muted-foreground">
@@ -315,7 +312,10 @@ function RiskResults({
               <img
                 alt={fileName(result.imagePath)}
                 className="h-28 w-full rounded-sm bg-muted object-cover"
-                src={result.thumbnailUrl || fileUrl(result.imagePath)}
+                src={detectionImageSrc({
+                  path: result.imagePath,
+                  thumbnailUrl: result.thumbnailUrl,
+                })}
               />
               <div className="mt-2 flex items-center justify-between gap-2">
                 <span className="truncate font-medium">{fileName(result.imagePath)}</span>
@@ -363,7 +363,10 @@ function FailedResults({
             <img
               alt={fileName(result.imagePath)}
               className="h-28 w-full rounded-sm bg-muted object-cover"
-              src={result.thumbnailUrl || fileUrl(result.imagePath)}
+              src={detectionImageSrc({
+                path: result.imagePath,
+                thumbnailUrl: result.thumbnailUrl,
+              })}
             />
             <span className="mt-2 block truncate font-medium">{fileName(result.imagePath)}</span>
             <p className="mt-1 line-clamp-2 text-xs text-red-800">{result.error}</p>

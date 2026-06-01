@@ -434,6 +434,23 @@ describe('DetectionService', () => {
     ).rejects.toThrow()
   })
 
+  it('keeps the localized default task id', async () => {
+    const service = new DetectionService()
+
+    const result = await service.runDetectionBatch(
+      {
+        imagePaths: [],
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+      },
+    )
+
+    expect(result.taskId).toMatch(/^检测-\d{8}-\d{6}$/)
+  })
+
   it('skips cached detections for the same image, model, skill, and version', async () => {
     const imagePath = join(tempRoot, 'inputs', 'cached.png')
     await createImage(imagePath, 'same-image')
