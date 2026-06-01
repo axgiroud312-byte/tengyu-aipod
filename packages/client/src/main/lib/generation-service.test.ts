@@ -224,6 +224,7 @@ describe('generation prompt service entrypoint', () => {
     const result = await generateTxt2imgPrompts({
       capability: 'txt2img',
       skillId: 'txt2img-local-print',
+      skillVersion: '2.1.0',
       requirement: 'christmas teddy bear print',
       count: 1000,
       model: 'qwen3.6-flash',
@@ -232,9 +233,32 @@ describe('generation prompt service entrypoint', () => {
     expect(result).toHaveLength(1000)
     expect(generatePrompts).toHaveBeenCalledWith(
       expect.objectContaining({
+        skillId: 'txt2img-local-print',
+        skillVersion: '2.1.0',
         count: 1000,
         variables: expect.objectContaining({ count: 1000 }),
         userMessage: expect.stringContaining('1000'),
+      }),
+    )
+  })
+
+  it('falls back to the current combination category when no skill id is selected', async () => {
+    const generatePrompts = vi
+      .spyOn(promptGeneratorService, 'generatePrompts')
+      .mockResolvedValue(['Prompt 1'])
+
+    await generateTxt2imgPrompts({
+      capability: 'img2img',
+      printMode: 'full',
+      requirement: 'floral repeat pattern',
+      count: 1,
+      model: 'qwen3.6-flash',
+    })
+
+    expect(generatePrompts).toHaveBeenCalledWith(
+      expect.objectContaining({
+        category: 'img2img-full-reference',
+        count: 1,
       }),
     )
   })
@@ -951,9 +975,12 @@ describe('generation comfyui img2img service', () => {
     )
 
     expect(result).toMatchObject({ taskId: 'img2img-task', total: 1, succeeded: 1, failed: 0 })
+    const request = generate.mock.calls[0]?.[0] as { options?: Record<string, unknown> } | undefined
+    expect(request?.options?.preserveWorkflowPrompt).toBeUndefined()
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         capability: 'img2img',
+        prompt: 'make a new floral print',
         workflow_id: 'img2img-v1',
         reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
         options: expect.objectContaining({
@@ -996,8 +1023,10 @@ describe('generation comfyui img2img service', () => {
     expect(result).toMatchObject({ taskId: 'img2img-folder-task', total: 1, succeeded: 1 })
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
+        prompt: '',
         output: expect.objectContaining({ size_px: { width: 1600, height: 1200 } }),
         options: expect.objectContaining({
+          preserveWorkflowPrompt: true,
           sourceArtifactIds: [sourceArtifactId],
           width: 1600,
           height: 1200,

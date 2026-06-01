@@ -276,6 +276,10 @@ function valueForSlot(
     return req.output.size_px?.height
   }
 
+  if (req.options?.preserveWorkflowPrompt === true && isPromptSlot(slot)) {
+    return undefined
+  }
+
   if (normalizedName.includes('image')) {
     const filename = context.uploadedImages[imageIndexForSlot(slot, req)]
     if (!filename) {
@@ -288,6 +292,10 @@ function valueForSlot(
   }
 
   return req.prompt
+}
+
+function isPromptSlot(slot: ComfyuiWorkflowSlot) {
+  return /prompt|text|文本|提示词/i.test(`${slot.name} ${slot.field}`)
 }
 
 function imageIndexForSlot(slot: ComfyuiWorkflowSlot, req: GenerateRequest) {

@@ -545,6 +545,37 @@ describe('ComfyuiChenyuAdapter', () => {
     expect(injected).toEqual({ '1': { inputs: { strength: 0.7 } } })
   })
 
+  it('preserves workflow prompt slots when requested while still injecting other inputs', () => {
+    const injected = injectComfyuiInputs(
+      {
+        '1': { inputs: { text: 'workflow default prompt' } },
+        '2': { inputs: { width: 0 } },
+        '3': { inputs: { image: '' } },
+      },
+      [
+        { name: 'prompt', nodeId: '1', field: 'text' },
+        { name: 'width', nodeId: '2', field: 'width' },
+        { name: 'sourceImage', nodeId: '3', field: 'image' },
+      ],
+      {
+        capability: 'img2img',
+        prompt: '',
+        reference_images: [
+          { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+        ],
+        output: { size_px: { width: 1600, height: 1200 } },
+        options: { preserveWorkflowPrompt: true },
+      },
+      { uploadedImages: ['source.png'] },
+    )
+
+    expect(injected).toEqual({
+      '1': { inputs: { text: 'workflow default prompt' } },
+      '2': { inputs: { width: 1600 } },
+      '3': { inputs: { image: 'source.png' } },
+    })
+  })
+
   it('requires output images from configured output slots', () => {
     expect(() =>
       outputsFromHistory({ outputs: { '9': { text: ['not image'] } } }, [

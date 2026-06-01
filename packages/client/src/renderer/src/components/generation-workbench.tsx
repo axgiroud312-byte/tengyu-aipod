@@ -47,6 +47,7 @@ import {
 
 type Txt2imgMode = 'ai' | 'manual'
 type Img2imgMode = 'layout' | 'style' | 'layout-style' | 'manual'
+type ComfyuiImg2imgPromptMode = 'workflow' | 'custom'
 type MattingMode = 'comfyui' | 'mixed'
 type Txt2imgGenerationPath = 'grsai' | 'comfyui'
 type ReferenceImageDraft = {
@@ -2158,6 +2159,8 @@ function ComfyuiImg2imgPanel() {
   const [workflowKey, setWorkflowKey] = useState('')
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
+  const [promptMode, setPromptMode] = useState<ComfyuiImg2imgPromptMode>('workflow')
+  const [prompt, setPrompt] = useState('')
   const [taskName, setTaskName] = useState('')
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -2238,6 +2241,11 @@ function ComfyuiImg2imgPanel() {
       setError('请选择运行中的云机')
       return
     }
+    const customPrompt = prompt.trim()
+    if (promptMode === 'custom' && !customPrompt) {
+      setError('请填写图生图提示词，或切回使用工作流默认提示词')
+      return
+    }
 
     setResult(null)
     setPreviewImages([])
@@ -2250,6 +2258,7 @@ function ComfyuiImg2imgPanel() {
         workflowName: selectedWorkflow.name,
         workflowVersion: selectedWorkflow.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+        ...(promptMode === 'custom' ? { prompt: customPrompt } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
         ...comfyuiInstanceSelection.runTarget,
@@ -2328,6 +2337,38 @@ function ComfyuiImg2imgPanel() {
                   value={height}
                 />
               </label>
+              <fieldset className="rounded-md border p-3 md:col-span-2">
+                <legend className="px-1 text-sm font-medium">提示词来源</legend>
+                <div className="mt-2 flex flex-wrap gap-4 text-sm">
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      checked={promptMode === 'workflow'}
+                      onChange={() => setPromptMode('workflow')}
+                      type="radio"
+                    />
+                    工作流默认
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
+                      checked={promptMode === 'custom'}
+                      onChange={() => setPromptMode('custom')}
+                      type="radio"
+                    />
+                    填入提示词
+                  </label>
+                </div>
+                {promptMode === 'custom' ? (
+                  <label className="mt-3 block space-y-2 text-sm font-medium">
+                    <span>图生图提示词</span>
+                    <textarea
+                      className="min-h-28 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      onChange={(event) => setPrompt(event.target.value)}
+                      placeholder="例如：保留主体轮廓，改成复古花卉徽章，干净白底，适合印花"
+                      value={prompt}
+                    />
+                  </label>
+                ) : null}
+              </fieldset>
             </div>
           </div>
         </div>
@@ -2343,6 +2384,12 @@ function ComfyuiImg2imgPanel() {
               <div>
                 <dt className="text-muted-foreground">工作流</dt>
                 <dd className="truncate font-medium">{selectedWorkflow?.name ?? '未选择'}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">提示词</dt>
+                <dd className="font-medium">
+                  {promptMode === 'workflow' ? '工作流默认' : '自定义'}
+                </dd>
               </div>
             </dl>
             <div className="mt-4">

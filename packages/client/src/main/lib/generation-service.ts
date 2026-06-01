@@ -1437,7 +1437,10 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
   try {
     const prompts = await promptGeneratorService.generatePrompts({
       ...(input.skillId
-        ? { skillId: input.skillId }
+        ? {
+            skillId: input.skillId,
+            ...(input.skillVersion ? { skillVersion: input.skillVersion } : {}),
+          }
         : { category: promptSkillCategory(capability, input.printMode) }),
       variables: {
         printMode: input.printMode === 'full' ? '满印' : '局部',
@@ -2854,7 +2857,8 @@ export async function runComfyuiImg2imgBatch(
         emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
         try {
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
-          const prompt = input.prompt?.trim() || 'Generate an image-to-image print variation.'
+          const prompt = input.prompt?.trim() ?? ''
+          const preserveWorkflowPrompt = prompt.length === 0
           emitComfyuiRequestLog(debug, {
             ...input,
             prompt,
@@ -2876,6 +2880,7 @@ export async function runComfyuiImg2imgBatch(
               printId: source.printId,
               width: sizePx.width,
               height: sizePx.height,
+              ...(preserveWorkflowPrompt ? { preserveWorkflowPrompt: true } : {}),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
           } satisfies GenerateRequest)
