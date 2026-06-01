@@ -410,6 +410,27 @@ describe('generation extract service', () => {
     expect(fakeDb.artifacts[1]?.[3]).toBe('extract')
     expect(fakeDb.artifacts[1]?.[4]).toBe('grsai')
     expect(fakeDb.artifacts[1]?.[12]).toBe('centered white background print')
+    expect(debugLogs).toContainEqual(
+      expect.objectContaining({
+        level: 'debug',
+        message: '发送 ComfyUI 请求',
+        capability: 'extract',
+        taskId: 'extract-comfy-task',
+        details: expect.objectContaining({
+          operation: 'request',
+          provider: 'comfyui-chenyu',
+          workflowId: 'extract-v1',
+          workflowName: 'Extract Workflow',
+          workflowVersion: '1.0.0',
+          prompt: 'extract print',
+          sourceImage: 'source.png',
+          sourceIndex: 1,
+          total: 1,
+          width: 1024,
+          height: 1024,
+        }),
+      }),
+    )
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'extract-task', capability: 'extract', processed: 1 }),
     )
@@ -445,6 +466,7 @@ describe('generation comfyui service', () => {
   it('runs ComfyUI txt2img with workflow dimensions', async () => {
     const fakeDb = createFakeDb()
     const progress: unknown[] = []
+    const debugLogs: GenerationDebugLogEntry[] = []
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
       images: [{ url: 'file:///result.png', local_path: '/result.png' }],
@@ -466,6 +488,7 @@ describe('generation comfyui service', () => {
         openDatabase: fakeDb.openDatabase,
         createComfyuiAdapter: () => ({ generate }),
         emitProgress: (item) => progress.push(item),
+        emitDebugLog: (entry) => debugLogs.push(entry),
       },
     )
 
@@ -540,6 +563,7 @@ describe('generation comfyui service', () => {
       {
         sourceImagePaths: [sourcePath],
         workflowId: 'extract-v1',
+        workflowName: 'Extract Workflow',
         workflowVersion: '1.0.0',
         prompt: 'extract print',
         taskId: 'extract-comfy-task',

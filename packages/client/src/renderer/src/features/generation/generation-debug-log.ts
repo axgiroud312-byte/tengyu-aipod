@@ -56,6 +56,8 @@ function generationDebugOperationLabel(entry: GenerationDebugLogEntry) {
       return '提示词'
     case 'submit':
       return '提交'
+    case 'request':
+      return '请求'
     case 'progress':
       return '进度'
     case 'completed':
@@ -83,8 +85,18 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   if (typeof details.llmModel === 'string') {
     parts.push(`llm=${details.llmModel}`)
   }
+  if (typeof details.workflowName === 'string') {
+    parts.push(`workflow=${details.workflowName}`)
+  }
+  if (typeof details.workflowVersion === 'string') {
+    parts.push(`version=${details.workflowVersion}`)
+  }
   if (typeof details.workflowId === 'string') {
-    parts.push(`workflow=${details.workflowId}`)
+    parts.push(
+      typeof details.workflowName === 'string'
+        ? `workflowId=${details.workflowId}`
+        : `workflow=${details.workflowId}`,
+    )
   }
   if (typeof details.count === 'number') {
     parts.push(`数量 ${details.count}`)
@@ -95,6 +107,12 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   }
   if (typeof details.sourceCount === 'number') {
     parts.push(`源图 ${details.sourceCount}`)
+  }
+  if (typeof details.sourceIndex === 'number') {
+    parts.push(`第 ${details.sourceIndex} 项`)
+  }
+  if (typeof details.sourceImage === 'string') {
+    parts.push(`源图=${details.sourceImage}`)
   }
   if (typeof details.promptCount === 'number') {
     parts.push(`每图提示词 ${details.promptCount}`)

@@ -942,6 +942,7 @@ function GrsaiPromptGenerationPanel({
         taskId = await window.api.generation.runComfyuiTxt2img({
           prompts,
           workflowId: selectedComfyuiTxt2imgWorkflow.id,
+          workflowName: selectedComfyuiTxt2imgWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(selectedComfyuiTxt2imgWorkflow.version
             ? { workflowVersion: selectedComfyuiTxt2imgWorkflow.version }
@@ -1969,6 +1970,7 @@ function ComfyuiImg2imgPanel() {
       const taskId = await window.api.generation.runComfyuiImg2img({
         sourceImagePaths: sourceImages.map((image) => image.path),
         workflowId: selectedWorkflow.id,
+        workflowName: selectedWorkflow.name,
         workflowVersion: selectedWorkflow.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         width: clampNumber(width, 256, 4096, 1024),
@@ -2227,6 +2229,7 @@ function ComfyuiExtractPanel() {
       const taskId = await window.api.generation.runComfyuiExtract({
         sourceImagePaths: sources.map((source) => source.path),
         workflowId: selectedWorkflow.id,
+        workflowName: selectedWorkflow.name,
         workflowVersion: selectedWorkflow.version,
         skillId: selectedSkill.id,
         skillVersion: selectedSkill.version,
@@ -2497,6 +2500,7 @@ function ComfyuiMattingPanel() {
         taskId = await window.api.generation.runMixedMatting({
           sourceImagePaths,
           workflowId: selectedWorkflow.id,
+          workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
         })
@@ -2504,6 +2508,7 @@ function ComfyuiMattingPanel() {
         taskId = await window.api.generation.runComfyuiMatting({
           sourceImagePaths,
           workflowId: selectedWorkflow.id,
+          workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
         })

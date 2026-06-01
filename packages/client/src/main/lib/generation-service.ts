@@ -70,6 +70,7 @@ export type Txt2imgRunInput = {
 export type ComfyuiTxt2imgRunInput = {
   prompts: string[]
   workflowId: string
+  workflowName?: string
   workflowVersion?: string
   width?: number
   height?: number
@@ -170,6 +171,7 @@ export type ComfyuiImg2imgRunInput = {
   sourceArtifactIds?: string[]
   sourceImagePaths?: string[]
   workflowId: string
+  workflowName?: string
   workflowVersion?: string
   prompt?: string
   width?: number
@@ -180,6 +182,7 @@ export type ComfyuiImg2imgRunInput = {
 export type ComfyuiExtractRunInput = {
   sourceImagePaths: string[]
   workflowId: string
+  workflowName?: string
   workflowVersion?: string
   skillId?: string
   skillVersion?: string
@@ -193,6 +196,7 @@ export type ComfyuiMattingRunInput = {
   sourceArtifactIds?: string[]
   sourceImagePaths?: string[]
   workflowId: string
+  workflowName?: string
   workflowVersion?: string
   prompt?: string
   width?: number
@@ -1084,6 +1088,45 @@ function promptPreview(prompt: string, maxLength = 120) {
   return `${normalized.slice(0, maxLength)}...`
 }
 
+function workflowLogDetails(input: {
+  workflowId: string
+  workflowName?: string | undefined
+  workflowVersion?: string | undefined
+}) {
+  return {
+    workflowId: input.workflowId,
+    ...(input.workflowName?.trim() ? { workflowName: input.workflowName.trim() } : {}),
+    ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+  }
+}
+
+function emitComfyuiRequestLog(
+  debug: ReturnType<typeof createGenerationDebugLogger>,
+  input: {
+    workflowId: string
+    workflowName?: string | undefined
+    workflowVersion?: string | undefined
+    prompt: string
+    sourceImage?: string | undefined
+    sourceIndex?: number | undefined
+    total?: number | undefined
+    width?: number | undefined
+    height?: number | undefined
+  },
+) {
+  debug('发送 ComfyUI 请求', 'debug', {
+    operation: 'request',
+    provider: 'comfyui-chenyu',
+    ...workflowLogDetails(input),
+    prompt: promptPreview(input.prompt, 240),
+    sourceImage: input.sourceImage,
+    sourceIndex: input.sourceIndex,
+    total: input.total,
+    width: input.width,
+    height: input.height,
+  })
+}
+
 export async function listExtractSources(
   dependencies: Pick<GenerationServiceDependencies, 'readConfig'> = {},
 ): Promise<ExtractSourcesResult> {
@@ -1410,7 +1453,7 @@ export async function runComfyuiImg2img(
     operation: 'submit',
     provider: 'comfyui-chenyu',
     sourceCount,
-    workflowId: input.workflowId,
+    ...workflowLogDetails(input),
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
@@ -1454,7 +1497,7 @@ export async function runComfyuiTxt2img(
     operation: 'submit',
     provider: 'comfyui-chenyu',
     total: prompts.length,
-    workflowId: input.workflowId,
+    ...workflowLogDetails(input),
     width: input.width ?? 1024,
     height: input.height ?? 1024,
     concurrency: input.concurrency ?? 1,
@@ -1501,7 +1544,7 @@ export async function runComfyuiExtract(
     operation: 'submit',
     provider: 'comfyui-chenyu',
     sourceCount: sourceImagePaths.length,
-    workflowId: input.workflowId,
+    ...workflowLogDetails(input),
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
@@ -1545,7 +1588,7 @@ export async function runComfyuiMatting(
     operation: 'submit',
     provider: 'comfyui-chenyu',
     sourceCount,
-    workflowId: input.workflowId,
+    ...workflowLogDetails(input),
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
@@ -1592,7 +1635,7 @@ export async function runMixedMatting(
     operation: 'submit',
     provider: 'grsai+comfyui',
     sourceCount,
-    workflowId: input.workflowId,
+    ...workflowLogDetails(input),
     maskModel: input.maskModel ?? null,
     width: input.width ?? 1024,
     height: input.height ?? 1024,
@@ -1963,9 +2006,10 @@ export async function runComfyuiExtractBatch(
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
       })
+    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
 
-    for (const sourceImagePath of sourceImagePaths) {
-      emitExtractProgress(result, sourceImagePaths.length, taskId, emit)
+    for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
+      emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
       try {
         const sourceIdentity = await imageIdentity(sourceImagePath)
         registerSourceArtifact(db, {
@@ -1973,6 +2017,15 @@ export async function runComfyuiExtractBatch(
           imagePath: sourceImagePath,
           taskId,
           createdAt: Date.now(),
+        })
+        emitComfyuiRequestLog(debug, {
+          ...input,
+          prompt,
+          sourceImage: basename(sourceImagePath),
+          sourceIndex: index + 1,
+          total: sourceImagePaths.length,
+          width: sizePx.width,
+          height: sizePx.height,
         })
         const response = await adapter.generate({
           capability: 'extract',
@@ -2010,7 +2063,7 @@ export async function runComfyuiExtractBatch(
           error: appErrorMessage(error),
         })
       } finally {
-        emitExtractProgress(result, sourceImagePaths.length, taskId, emit)
+        emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
       }
     }
 
@@ -2067,14 +2120,24 @@ export async function runComfyuiMattingBatch(
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
       })
+    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
-    for (const artifactId of sourceArtifactIds) {
+    for (const [index, artifactId] of sourceArtifactIds.entries()) {
       emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
       try {
         const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
+        const prompt = input.prompt?.trim() || 'Remove the background and output transparent PNG.'
+        emitComfyuiRequestLog(debug, {
+          ...input,
+          prompt,
+          sourceImage: basename(source.imagePath),
+          sourceIndex: index + 1,
+          total: sourceArtifactIds.length,
+          ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+        })
         const response = await adapter.generate({
           capability: 'matting',
-          prompt: input.prompt?.trim() || 'Remove the background and output transparent PNG.',
+          prompt,
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference],
           output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
@@ -2092,7 +2155,7 @@ export async function runComfyuiMattingBatch(
         result.succeeded += response.images.length
         result.images.push(
           ...response.images.map((image) => ({
-            prompt: input.prompt ?? '',
+            prompt,
             url: image.url,
             ...(image.local_path ? { localPath: image.local_path } : {}),
             sourcePath: source.imagePath,
@@ -2181,8 +2244,9 @@ export async function runMixedMattingBatch(
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
       })
+    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
-    for (const artifactId of sourceArtifactIds) {
+    for (const [index, artifactId] of sourceArtifactIds.entries()) {
       emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
       let maskPath: string | null = null
       try {
@@ -2218,11 +2282,20 @@ export async function runMixedMattingBatch(
           : await downloadImage(maskImage.url)
         await writeFile(maskPath, maskBuffer)
 
+        const prompt =
+          input.prompt?.trim() ||
+          'Convert the black and white mask to alpha and composite it with the original print.'
+        emitComfyuiRequestLog(debug, {
+          ...input,
+          prompt,
+          sourceImage: basename(source.imagePath),
+          sourceIndex: index + 1,
+          total: sourceArtifactIds.length,
+          ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+        })
         const response = await comfyui.generate({
           capability: 'matting',
-          prompt:
-            input.prompt?.trim() ||
-            'Convert the black and white mask to alpha and composite it with the original print.',
+          prompt,
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference, await imageReference(maskPath)],
           output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
@@ -2253,7 +2326,7 @@ export async function runMixedMattingBatch(
         result.succeeded += response.images.length
         result.images.push(
           ...response.images.map((image) => ({
-            prompt: input.prompt ?? '',
+            prompt,
             url: image.url,
             ...(image.local_path ? { localPath: image.local_path } : {}),
             sourcePath: source.imagePath,
@@ -2333,27 +2406,35 @@ export async function runComfyuiTxt2imgBatch(
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
       })
+    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
+    const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
+    const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
 
     await Promise.all(
       prompts.map((prompt, index) =>
         controller.run(`${taskId}-${index}`, async () => {
           emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
           try {
+            emitComfyuiRequestLog(debug, {
+              ...input,
+              prompt,
+              sourceIndex: index + 1,
+              total: prompts.length,
+              width,
+              height,
+            })
             const response = await adapter.generate({
               capability: 'txt2img',
               prompt,
               workflow_id: input.workflowId.trim(),
               output: {
                 format: 'png',
-                size_px: {
-                  width: clampInt(input.width ?? 1024, 256, 4096, 1024),
-                  height: clampInt(input.height ?? 1024, 256, 4096, 1024),
-                },
+                size_px: { width, height },
               },
               options: {
                 taskId,
-                width: clampInt(input.width ?? 1024, 256, 4096, 1024),
-                height: clampInt(input.height ?? 1024, 256, 4096, 1024),
+                width,
+                height,
                 ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
               },
             } satisfies GenerateRequest)
@@ -2431,14 +2512,25 @@ export async function runComfyuiImg2imgBatch(
         workbenchRoot,
         openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
       })
+    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
 
-    for (const artifactId of sourceArtifactIds) {
+    for (const [index, artifactId] of sourceArtifactIds.entries()) {
       emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
       try {
         const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
+        const prompt = input.prompt?.trim() || 'Generate an image-to-image print variation.'
+        emitComfyuiRequestLog(debug, {
+          ...input,
+          prompt,
+          sourceImage: basename(source.imagePath),
+          sourceIndex: index + 1,
+          total: sourceArtifactIds.length,
+          width: sizePx.width,
+          height: sizePx.height,
+        })
         const response = await adapter.generate({
           capability: 'img2img',
-          prompt: input.prompt?.trim() || 'Generate an image-to-image print variation.',
+          prompt,
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference],
           output: { format: 'png', size_px: sizePx },
@@ -2457,7 +2549,7 @@ export async function runComfyuiImg2imgBatch(
         result.succeeded += response.images.length
         result.images.push(
           ...response.images.map((image) => ({
-            prompt: input.prompt ?? '',
+            prompt,
             url: image.url,
             ...(image.local_path ? { localPath: image.local_path } : {}),
             artifactId,

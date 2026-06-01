@@ -27,6 +27,38 @@ describe('generation debug log formatter', () => {
     expect(formatGenerationDebugLogLine(entry)).toContain('centered y2k print')
   })
 
+  it('formats ComfyUI request details with workflow and prompt context', () => {
+    const entry: GenerationDebugLogEntry = {
+      id: '2',
+      timestamp: new Date('2026-05-31T08:09:10.011Z').getTime(),
+      level: 'debug',
+      message: '发送 ComfyUI 请求',
+      taskId: 'extract_1',
+      capability: 'extract',
+      details: {
+        operation: 'request',
+        provider: 'comfyui-chenyu',
+        workflowName: '单张提取api1111',
+        workflowVersion: '1.0.0',
+        workflowId: 'extract-abc',
+        sourceIndex: 3,
+        total: 12,
+        sourceImage: 'source.png',
+        prompt: '提取产品表面清晰可见的印花',
+      },
+    }
+
+    const line = formatGenerationDebugLogLine(entry)
+
+    expect(line).toContain('[DEBUG] [提取] 发送 ComfyUI 请求')
+    expect(line).toContain('workflow=单张提取api1111')
+    expect(line).toContain('version=1.0.0')
+    expect(line).toContain('workflowId=extract-abc')
+    expect(line).toContain('第 3 项')
+    expect(line).toContain('源图=source.png')
+    expect(line).toContain('提取产品表面清晰可见的印花')
+  })
+
   it('counts warning and error logs', () => {
     expect(
       generationDebugLogLevelCounts([
