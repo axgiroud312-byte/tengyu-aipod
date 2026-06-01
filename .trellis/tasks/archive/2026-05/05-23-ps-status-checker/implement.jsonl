@@ -1,4 +1,0 @@
-{"file":"docs/spec/05-photoshop.md","reason":"Photoshop status checker contract, IPC name, Windows-only behavior, and COM status semantics."}
-{"file":"docs/adr/0007-photoshop-windows-only-v1.md","reason":"Windows-only guard requirement and non-Windows disabled behavior."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend/main-process guideline index for service and IPC work."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index for renderer status refresh UI."}

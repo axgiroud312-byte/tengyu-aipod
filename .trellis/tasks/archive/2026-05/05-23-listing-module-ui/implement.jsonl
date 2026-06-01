@@ -1,3 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Listing UI must expose batch, platform, profile, retry, resume, and progress controls from the module spec."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Keep UI wired to rewritten listing framework; do not port source-project DOM code."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for historical UI/workflow expectations; do not port DOM code."}

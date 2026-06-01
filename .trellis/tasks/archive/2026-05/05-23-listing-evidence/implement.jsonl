@@ -1,4 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Evidence storage must follow listing stage, runner, and four-layer automation contracts."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Use direct-port framework only; do not port source-project DOM code while touching workflows."}
-{"file": "docs/adr/0008-temp-file-manager-and-cleanup.md", "reason": "Stage evidence must live under .workbench/tmp/listing/{taskId} and rely on 24h cleanup."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for historical evidence expectations; do not port DOM code."}

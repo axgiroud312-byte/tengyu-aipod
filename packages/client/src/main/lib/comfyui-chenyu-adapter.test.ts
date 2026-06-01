@@ -126,6 +126,63 @@ describe('ComfyuiChenyuAdapter', () => {
     expect(db.db.close).toHaveBeenCalledTimes(1)
   })
 
+  it('can persist temporary outputs without registering artifacts and only keep the first output', async () => {
+    const db = createDb()
+    const viewImage = vi.fn().mockResolvedValue(Buffer.from('result-bytes'))
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage: vi.fn().mockResolvedValue('uploaded.png'),
+        queuePrompt: vi.fn().mockResolvedValue('prompt-1'),
+        getHistory: vi.fn().mockResolvedValue({
+          status: { completed: true },
+          outputs: {
+            '9': {
+              images: [{ filename: 'first.png' }, { filename: 'second.png' }],
+            },
+          },
+        }),
+        viewImage,
+      },
+      workflowCache: { get: vi.fn().mockResolvedValue(workflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+      now: () => 1_700_000_000_000,
+    })
+
+    const response = await adapter.generate({
+      capability: 'extract',
+      prompt: 'temporary extract',
+      workflow_id: 'extract-v3',
+      reference_images: [
+        { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+      ],
+      output: { format: 'png' },
+      options: {
+        taskId: 'extract-temp-task',
+        printId: 'pri_temp',
+        outputFolderOverride: '/workbench/.workbench/tmp/matting/extract-temp-task/extract-1',
+        registerArtifact: false,
+        maxOutputs: 1,
+      },
+    })
+
+    expect(response.images).toHaveLength(1)
+    expect(response.images[0]?.local_path).toBe(
+      '/workbench/.workbench/tmp/matting/extract-temp-task/extract-1/pri_temp.png',
+    )
+    expect(viewImage).toHaveBeenCalledTimes(1)
+    expect(viewImage).toHaveBeenCalledWith({ filename: 'first.png' })
+    expect(db.rows).toHaveLength(0)
+    expect(db.db.close).toHaveBeenCalledTimes(1)
+  })
+
   it('uses the refreshed instance URL when creating the ComfyUI client', async () => {
     const db = createDb()
     const txtWorkflow: ComfyuiWorkflow = {

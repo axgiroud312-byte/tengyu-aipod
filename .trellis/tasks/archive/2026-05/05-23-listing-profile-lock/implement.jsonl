@@ -1,5 +1,0 @@
-{"file":"docs/spec/01-orchestration.md","reason":"定义同一比特浏览器 profile 只能被采集或上架一个模块占用的互斥契约。"}
-{"file":"docs/spec/07-listing.md","reason":"定义上架 runner 获取 profile 锁、PROFILE_LOCKED 错误和切片 8 上架边界。"}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"确认上架模块只 port 框架，DOM 自动化后续按四层结构重写。"}
-{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"后续上架自动化必须遵守的四层方法论；本 task 提供其共享 profile 锁前置能力。"}
-{"file":".trellis/tasks/05-23-listing-profile-lock/research/profile-lock-context.md","reason":"记录现有 BrowserProfileLockManager、采集接入、缺口和真实测试基线。"}

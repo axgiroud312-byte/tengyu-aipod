@@ -1,4 +1,0 @@
-{"file":"docs/spec/05-photoshop.md","reason":"Verify multi-template batch output layout and execution flow."}
-{"file":"references/photoshop/open-source-references.md","reason":"Verify path A behavior remains compatible with Photoshop batch execution."}
-{"file":".trellis/spec/backend/index.md","reason":"Verify main-process batch code follows backend conventions."}
-{"file":".trellis/spec/guides/index.md","reason":"Verify reuse and cross-layer decisions."}

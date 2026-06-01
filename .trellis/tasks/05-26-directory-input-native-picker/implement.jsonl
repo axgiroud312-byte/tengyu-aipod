@@ -1,6 +1,0 @@
-{"file": "docs/spec/00-overview.md", "reason": "IPC 命名规范 module:action / preload 暴露格式 / zod 校验入参 — 新增 dialog:choose-directory 必须遵循此约定"}
-{"file": "docs/spec/09-cross-cutting.md", "reason": "跨平台 / 并发 / 打包相关约束，dialog 跨 macOS / Windows 行为差异处的兜底"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "renderer 组件 / Electron preload / IPC 边界约束 — DirectoryPicker 组件与 window.api.dialog 暴露需符合"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "TS strict / 禁 any / IPC 类型化 — 新 IPC 通道两端类型与 zod 校验"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量门要求，commit 前需通过 typecheck/lint"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "主进程 IPC 返回 { ok, data | error } 结构与 AppError 风格 — dialog:choose-directory 返回结构需对齐"}

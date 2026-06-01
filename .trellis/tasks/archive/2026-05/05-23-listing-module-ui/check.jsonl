@@ -1,3 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Check UI controls, data flow, and progress state against listing module requirements."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Check UI does not introduce source-project DOM porting or bypass the listing runner."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for comparison; not a source for copied DOM implementation."}

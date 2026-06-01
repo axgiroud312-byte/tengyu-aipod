@@ -1,4 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Check evidence, runner, and platform workflow behavior against listing contracts."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Check source-project DOM code was not ported into platform layers."}
-{"file": "docs/adr/0008-temp-file-manager-and-cleanup.md", "reason": "Check evidence files remain under TempFileManager-owned .workbench/tmp/listing task directories."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for comparison; not a source for copied DOM implementation."}

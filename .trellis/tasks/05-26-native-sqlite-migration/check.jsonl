@@ -1,8 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": "CLAUDE.md", "reason": "确认项目级红线未破（特别是 native 包白名单、TS strict）"}
-{"file": "docs/spec/00-overview.md", "reason": "10 大 invariants 不破，TS strict 通过"}
-{"file": "docs/spec/09-cross-cutting.md", "reason": "确认 Native 兼容矩阵小节已写入"}
-{"file": ".trellis/spec/backend/index.md", "reason": "Quality Check 入口"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量门：lint / type-check / 测试覆盖 / 错误处理风格"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "DB 代码 review 标准（连接管理 / 资源释放）"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证中央类型替换在所有 13 个文件都正确传播，无残留 better-sqlite3 字面量"}

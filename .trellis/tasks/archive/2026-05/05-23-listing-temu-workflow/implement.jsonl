@@ -1,7 +1,0 @@
-{"file":"docs/spec/07-listing.md","reason":"Listing module architecture, four-layer boundaries, workflow responsibilities, and runner contract."}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Decision record requiring framework port but Dianxiaomi DOM rewrite via listing-automation-builder."}
-{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Required automation discipline: selectors/parser/executor/workflow separation and state-transition verification."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend package guideline index for package-level conventions."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Local listing action executor contract and type-safety conventions learned in prior task."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index for reuse and cross-layer checks."}
-{"file":".trellis/tasks/05-23-listing-temu-workflow/research/temu-workflow-contract.md","reason":"Task-specific workflow contract, real testing baseline, and source-project reuse boundaries."}

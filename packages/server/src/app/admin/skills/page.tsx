@@ -16,6 +16,9 @@ type SkillSlot = {
   returnHint: string
 }
 
+const EXTRACT_SKILL_CATEGORY = 'extract-paid-model'
+const LEGACY_COMFYUI_EXTRACT_CATEGORY = 'extract-comfyui-workflow'
+
 type SkillListResponse = {
   ok: true
   data: { items: SkillSummary[] }
@@ -26,7 +29,7 @@ type SkillDetailResponse = {
   data: Skill
 }
 
-const skillSlots: SkillSlot[] = [
+const fixedSkillSlots: [SkillSlot, ...SkillSlot[]] = [
   {
     id: 'txt2img-local-print',
     module: 'generation',
@@ -64,24 +67,6 @@ const skillSlots: SkillSlot[] = [
     returnHint: '要求返回 JSON：{ "prompts": ["..."] }。',
   },
   {
-    id: 'extract-paid-model',
-    module: 'generation',
-    category: 'extract-paid-model',
-    title: '付费模型提取提示词',
-    description: '用于 Grsai 路径：把采集源图交给百炼视觉模型，生成提取印花的提示词。',
-    recommendedModel: 'qwen3-vl-plus',
-    returnHint: '要求返回 JSON：{ "prompts": ["..."] }，客户端会逐条交给 Grsai 生图。',
-  },
-  {
-    id: 'extract-comfyui-workflow',
-    module: 'generation',
-    category: 'extract-comfyui-workflow',
-    title: 'ComfyUI 提取提示词',
-    description: '用于 ComfyUI 路径：作为提取工作流的 prompt 直接发送到默认云机。',
-    recommendedModel: null,
-    returnHint: '不要求 JSON，这段 system prompt 会作为 ComfyUI 工作流 prompt 使用。',
-  },
-  {
     id: 'infringement-detection',
     module: 'detection',
     category: 'infringement',
@@ -91,7 +76,50 @@ const skillSlots: SkillSlot[] = [
     returnHint: '要求返回 JSON：{ "risk_score": 0-100, "reason": "..." }。',
   },
 ]
-const defaultSkillSlot = skillSlots[0]!
+const defaultSkillSlot = fixedSkillSlots[0]
+
+function isExtractSkillSummary(skill: SkillSummary) {
+  return (
+    skill.module === 'generation' &&
+    (skill.category === EXTRACT_SKILL_CATEGORY ||
+      skill.category === LEGACY_COMFYUI_EXTRACT_CATEGORY)
+  )
+}
+
+function isExtractSlot(slot: SkillSlot) {
+  return (
+    slot.module === 'generation' &&
+    (slot.category === EXTRACT_SKILL_CATEGORY || slot.category === LEGACY_COMFYUI_EXTRACT_CATEGORY)
+  )
+}
+
+function newExtractSlot(id: string, title = '提取提示词'): SkillSlot {
+  return {
+    id,
+    module: 'generation',
+    category: EXTRACT_SKILL_CATEGORY,
+    title,
+    description:
+      '用于提取能力：付费模型和 ComfyUI 都把这段 system prompt 作为每张源图的提取提示词。',
+    recommendedModel: null,
+    returnHint: '不要求 JSON，一张源图对应一次提取运行；区别只在用户选择的生图渠道。',
+  }
+}
+
+function extractSkillTitle(skill: SkillSummary) {
+  const noteTitle = skill.notes?.split('：')[0]?.trim()
+  if (!noteTitle || noteTitle.startsWith('用于')) {
+    return '提取提示词'
+  }
+  if (noteTitle.includes('付费模型提取') || noteTitle.includes('ComfyUI 提取')) {
+    return '提取提示词'
+  }
+  return noteTitle
+}
+
+function extractSlotFromSkill(skill: SkillSummary) {
+  return newExtractSlot(skill.id, extractSkillTitle(skill))
+}
 
 function slotNotes(slot: SkillSlot) {
   return `${slot.title}：${slot.description}`
@@ -125,18 +153,34 @@ export default function AdminSkillsPage() {
   const [skills, setSkills] = useState<Record<string, SkillSummary>>({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [titles, setTitles] = useState<Record<string, string>>({})
+  const [customExtractSlots, setCustomExtractSlots] = useState<SkillSlot[]>([])
   const [selectedSlotId, setSelectedSlotId] = useState(defaultSkillSlot.id)
   const [message, setMessage] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [savingSlotId, setSavingSlotId] = useState<string | null>(null)
 
+  const extractSlots = useMemo(
+    () =>
+      Object.values(skills)
+        .filter(isExtractSkillSummary)
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(extractSlotFromSkill),
+    [skills],
+  )
+  const allSlots = useMemo(
+    () => [...fixedSkillSlots, ...extractSlots, ...customExtractSlots],
+    [customExtractSlots, extractSlots],
+  )
   const selectedSlot = useMemo(
-    () => skillSlots.find((slot) => slot.id === selectedSlotId) ?? defaultSkillSlot,
-    [selectedSlotId],
+    () => allSlots.find((slot) => slot.id === selectedSlotId) ?? defaultSkillSlot,
+    [allSlots, selectedSlotId],
   )
   const selectedSkill = skills[selectedSlot.id]
   const selectedPrompt = drafts[selectedSlot.id] ?? ''
   const selectedEnabled = enabled[selectedSlot.id] ?? true
+  const selectedTitle = titles[selectedSlot.id] ?? selectedSlot.title
+  const selectedIsExtractSlot = isExtractSlot(selectedSlot)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -152,17 +196,28 @@ export default function AdminSkillsPage() {
     const nextSkills: Record<string, SkillSummary> = {}
     const nextDrafts: Record<string, string> = {}
     const nextEnabled: Record<string, boolean> = {}
+    const nextTitles: Record<string, string> = {}
+    const loadedSlots = [
+      ...fixedSkillSlots,
+      ...result.data.items.filter(isExtractSkillSummary).map(extractSlotFromSkill),
+    ]
 
-    for (const slot of skillSlots) {
-      const summary = result.data.items.find((item) => item.id === slot.id)
+    for (const summary of result.data.items) {
+      nextSkills[summary.id] = summary
+    }
+
+    for (const slot of loadedSlots) {
+      const summary = nextSkills[slot.id]
       if (!summary) {
         nextDrafts[slot.id] = ''
         nextEnabled[slot.id] = true
+        nextTitles[slot.id] = slot.title
         continue
       }
 
       nextSkills[slot.id] = summary
       nextEnabled[slot.id] = summary.enabled
+      nextTitles[slot.id] = slot.title
       const detailResponse = await fetch(
         `/admin/api/skills/${encodeURIComponent(summary.id)}?version=${encodeURIComponent(
           summary.version,
@@ -175,6 +230,8 @@ export default function AdminSkillsPage() {
     setSkills(nextSkills)
     setDrafts(nextDrafts)
     setEnabled(nextEnabled)
+    setTitles(nextTitles)
+    setCustomExtractSlots([])
     setIsLoading(false)
   }, [])
 
@@ -192,7 +249,8 @@ export default function AdminSkillsPage() {
     setSavingSlotId(slot.id)
     setMessage(null)
     const existing = skills[slot.id]
-    const payload = skillPayload(slot, systemPrompt, enabled[slot.id] ?? true)
+    const slotWithTitle = { ...slot, title: (titles[slot.id] ?? slot.title).trim() || slot.title }
+    const payload = skillPayload(slotWithTitle, systemPrompt, enabled[slot.id] ?? true)
     const result = existing
       ? await submitJson(`/admin/api/skills/${encodeURIComponent(slot.id)}`, {
           method: 'PATCH',
@@ -209,13 +267,50 @@ export default function AdminSkillsPage() {
       return
     }
 
-    setMessage(`${slot.title} 已保存`)
+    setMessage(`${slotWithTitle.title} 已保存`)
     await loadSkills()
+  }
+
+  function addExtractSlot() {
+    const id = `extract-paid-model-${Date.now()}`
+    const slot = newExtractSlot(id, '新的提取提示词')
+    setCustomExtractSlots((current) => [...current, slot])
+    setDrafts((current) => ({ ...current, [id]: '' }))
+    setEnabled((current) => ({ ...current, [id]: true }))
+    setTitles((current) => ({ ...current, [id]: slot.title }))
+    setSelectedSlotId(id)
+    setMessage(null)
+  }
+
+  function renderSlotButton(slot: SkillSlot) {
+    const active = selectedSlot.id === slot.id
+    const configured = Boolean(skills[slot.id])
+    return (
+      <button
+        className={[
+          'w-full rounded-md border px-3 py-3 text-left text-sm transition-colors',
+          active ? 'border-primary bg-primary/5 text-foreground' : 'bg-card hover:bg-accent',
+        ].join(' ')}
+        key={slot.id}
+        onClick={() => setSelectedSlotId(slot.id)}
+        type="button"
+      >
+        <span className="flex items-center justify-between gap-3">
+          <span className="font-medium">{titles[slot.id] ?? slot.title}</span>
+          <span className={configured ? 'text-xs text-green-700' : 'text-xs text-muted-foreground'}>
+            {configured ? '已配置' : '未配置'}
+          </span>
+        </span>
+        <span className="mt-1 block text-xs leading-5 text-muted-foreground">
+          {slot.description}
+        </span>
+      </button>
+    )
   }
 
   return (
     <AdminShell
-      description="这里只配置固定业务 Skill 的系统提示词；模型、密钥和 Workflow 都在客户端本地设置。"
+      description="这里只配置业务 Skill 的系统提示词；模型、密钥和 Workflow 都在客户端本地设置。"
       title="Skill 管理"
     >
       <section className="grid gap-4 lg:grid-cols-[320px_minmax(0,1fr)]">
@@ -224,37 +319,35 @@ export default function AdminSkillsPage() {
             <CardTitle>Skill 槽位</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {skillSlots.map((slot) => {
-              const active = selectedSlot.id === slot.id
-              const configured = Boolean(skills[slot.id])
-              return (
-                <button
-                  className={[
-                    'w-full rounded-md border px-3 py-3 text-left text-sm transition-colors',
-                    active
-                      ? 'border-primary bg-primary/5 text-foreground'
-                      : 'bg-card hover:bg-accent',
-                  ].join(' ')}
-                  key={slot.id}
-                  onClick={() => setSelectedSlotId(slot.id)}
+            {fixedSkillSlots.map(renderSlotButton)}
+            <div className="border-t pt-3">
+              <div className="mb-3 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium">提取提示词</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    付费模型和 ComfyUI 共用，可配置多条给客户端选择。
+                  </p>
+                </div>
+                <Button
+                  className="h-8 px-3"
+                  disabled={isLoading}
+                  onClick={addExtractSlot}
                   type="button"
+                  variant="outline"
                 >
-                  <span className="flex items-center justify-between gap-3">
-                    <span className="font-medium">{slot.title}</span>
-                    <span
-                      className={
-                        configured ? 'text-xs text-green-700' : 'text-xs text-muted-foreground'
-                      }
-                    >
-                      {configured ? '已配置' : '未配置'}
-                    </span>
-                  </span>
-                  <span className="mt-1 block text-xs leading-5 text-muted-foreground">
-                    {slot.description}
-                  </span>
-                </button>
-              )
-            })}
+                  + 新增
+                </Button>
+              </div>
+              <div className="space-y-3">
+                {[...extractSlots, ...customExtractSlots].length ? (
+                  [...extractSlots, ...customExtractSlots].map(renderSlotButton)
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                    暂无提取 Skill
+                  </div>
+                )}
+              </div>
+            </div>
           </CardContent>
         </Card>
 
@@ -262,7 +355,7 @@ export default function AdminSkillsPage() {
           <CardHeader>
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <CardTitle>{selectedSlot.title}</CardTitle>
+                <CardTitle>{selectedTitle}</CardTitle>
                 <p className="mt-2 text-sm text-muted-foreground">{selectedSlot.description}</p>
               </div>
               <label className="flex items-center gap-2 text-sm">
@@ -287,6 +380,23 @@ export default function AdminSkillsPage() {
                 <p>{selectedSlot.returnHint}</p>
                 <p>后台只保存 system prompt，不保存用户 API Key、模型密钥或图片。</p>
               </div>
+              {selectedIsExtractSlot ? (
+                <label className="block space-y-2 text-sm font-medium">
+                  <span>显示名称</span>
+                  <input
+                    className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus:border-primary"
+                    disabled={isLoading}
+                    onChange={(event) =>
+                      setTitles((current) => ({
+                        ...current,
+                        [selectedSlot.id]: event.target.value,
+                      }))
+                    }
+                    placeholder="例如：常规提取 / 文字 Logo 提取 / 只提主图案"
+                    value={selectedTitle}
+                  />
+                </label>
+              ) : null}
               <textarea
                 className="min-h-[420px] w-full resize-y rounded-md border bg-background p-3 font-mono text-sm leading-6 outline-none focus:border-primary"
                 disabled={isLoading}

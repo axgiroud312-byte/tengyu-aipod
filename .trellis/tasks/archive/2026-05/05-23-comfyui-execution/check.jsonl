@@ -1,7 +1,0 @@
-{"file":"docs/spec/03-generation.md","reason":"Verify execution flow, slots, output folders, and artifact lineage against the spec."}
-{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Verify no Chenyu workflow/run APIs are used."}
-{"file":".trellis/tasks/05-23-comfyui-execution/research/comfyui-execution.md","reason":"Check task-specific execution boundaries and persistence behavior."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for review."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Verify AppError behavior and instance readiness failure."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Verify lint, type-check, and unit-test expectations."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Verify reuse of ComfyHttpClient, ComfyuiInstanceManager, and generation artifact patterns."}

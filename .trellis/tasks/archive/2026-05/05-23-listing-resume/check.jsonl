@@ -1,3 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": "docs/spec/07-listing.md", "reason": "Check listing_status schema, resume skip behavior, failed-only retry behavior, and evidence_dir persistence."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Check changes stay in runner/preload framework and do not port DOM code."}

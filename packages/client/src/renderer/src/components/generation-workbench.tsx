@@ -7,7 +7,7 @@ import {
   formatGenerationDebugLogLine,
   generationDebugLogLevelCounts,
 } from '@/features/generation/generation-debug-log'
-import type { GenerationCapability, Skill, SkillVariable } from '@tengyu-aipod/shared'
+import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   ChevronDown,
   ChevronLeft,
@@ -38,6 +38,7 @@ import type {
 } from '../../../main/lib/generation-service'
 import {
   type GenerationProvider,
+  type GenerationUiCapability,
   generationCapabilities,
   generationProviders,
   isGenerationProviderAvailable,
@@ -57,16 +58,19 @@ type ReferenceImageDraft = {
 }
 type SkillVariablesState = Record<string, string | boolean>
 type ActiveComfyuiInstance = Awaited<ReturnType<typeof window.api.chenyu.getActiveInstance>>
+type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
+type ComfyuiRunTarget = { instanceUuid: string }
 type ComfyuiInstanceStatus = NonNullable<ActiveComfyuiInstance>['status'] | 'none'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
 type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
 
-const capabilityIcons: Record<GenerationCapability, typeof WandSparkles> = {
+const capabilityIcons: Record<GenerationUiCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
   img2img: ImagePlus,
   extract: Layers3,
   matting: Scissors,
+  'extract-matting': Scissors,
 }
 
 const providerNotes: Record<GenerationProvider, string> = {
@@ -74,11 +78,12 @@ const providerNotes: Record<GenerationProvider, string> = {
   'comfyui-chenyu': '云端 ComfyUI 工作流路径，适合图生图、提取和抠图。',
 }
 
-const unavailableText: Record<GenerationCapability, string> = {
+const unavailableText: Record<GenerationUiCapability, string> = {
   txt2img: '当前组合不可用，请切换实现方式。',
   img2img: '当前组合不可用，请切换实现方式。',
   extract: '当前组合不可用，请切换实现方式。',
   matting: 'Grsai 不内置透明底抠图，请使用 ComfyUI 或后续混合路径。',
+  'extract-matting': '提取后抠图只支持 ComfyUI 工作流路径。',
 }
 
 const comfyuiInstanceStatusText: Record<ComfyuiInstanceStatus, string> = {
@@ -132,9 +137,10 @@ const fallbackBailianTextModels: LocalModelOption[] = [
 const fallbackBailianVisionModels: LocalModelOption[] = [
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'vision' },
 ]
-const GRSAI_EXTRACT_SKILL_ID = 'extract-paid-model'
-const COMFYUI_EXTRACT_SKILL_ID = 'extract-comfyui-workflow'
+const EXTRACT_SKILL_CATEGORY = 'extract-paid-model'
+const LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY = 'extract-comfyui-workflow'
 const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
+const COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-instance:'
 const GENERATION_DEBUG_LOG_LIMIT = 1000
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
@@ -178,6 +184,38 @@ function fileUrlLocalPath(url: string) {
   }
 }
 
+function skillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
+  return `${skill.id}@${skill.version}`
+}
+
+function skillOptionLabel(skill: SkillSummary) {
+  const noteTitle = skill.notes?.split('：')[0]?.trim()
+  let title = noteTitle && !noteTitle.startsWith('用于') ? noteTitle : skill.id
+  if (title.includes('付费模型提取') || title.includes('ComfyUI 提取')) {
+    title = '提取提示词'
+  }
+  return `${title} · ${skill.version}`
+}
+
+function skillOptionNotes(skill: SkillSummary) {
+  if (
+    skill.notes?.includes('付费模型提取') ||
+    skill.notes?.includes('ComfyUI 提取') ||
+    skill.notes?.includes('Grsai 路径')
+  ) {
+    return null
+  }
+  return skill.notes
+}
+
+function isExtractSkillSummary(skill: SkillSummary) {
+  return (
+    skill.module === 'generation' &&
+    (skill.category === EXTRACT_SKILL_CATEGORY ||
+      skill.category === LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY)
+  )
+}
+
 function clampNumber(value: string, min: number, max: number, fallback: number) {
   const parsed = Number(value)
   if (!Number.isFinite(parsed)) {
@@ -191,6 +229,138 @@ function progressPercent(progress: GenerationProgress | null) {
     return 0
   }
   return Math.round((progress.processed / progress.total) * 100)
+}
+
+function useExtractSkillOptions(setError: (error: string | null) => void) {
+  const [extractSkills, setExtractSkills] = useState<SkillSummary[]>([])
+  const [selectedSkillKey, setSelectedSkillKey] = useState('')
+  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
+  const selectedSkillSummary = useMemo(
+    () => extractSkills.find((skill) => skillOptionKey(skill) === selectedSkillKey) ?? null,
+    [extractSkills, selectedSkillKey],
+  )
+
+  useEffect(() => {
+    let mounted = true
+    window.api.skill
+      .list({ module: 'generation' })
+      .then((skills) => {
+        if (!mounted) {
+          return
+        }
+        const nextSkills = skills.filter(isExtractSkillSummary)
+        setExtractSkills(nextSkills)
+        setSelectedSkillKey((current) =>
+          current && nextSkills.some((skill) => skillOptionKey(skill) === current)
+            ? current
+            : nextSkills[0]
+              ? skillOptionKey(nextSkills[0])
+              : '',
+        )
+      })
+      .catch((nextError) => {
+        if (!mounted) {
+          return
+        }
+        setExtractSkills([])
+        setSelectedSkillKey('')
+        setSelectedSkill(null)
+        setError(
+          nextError instanceof Error ? nextError.message : '读取提取 Skill 失败，请先在后台配置',
+        )
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [setError])
+
+  useEffect(() => {
+    let mounted = true
+    const skillSummary = selectedSkillSummary
+    if (!skillSummary) {
+      setSelectedSkill(null)
+      return () => {
+        mounted = false
+      }
+    }
+
+    window.api.skill
+      .get({ id: skillSummary.id, version: skillSummary.version })
+      .then((skill) => {
+        if (!mounted) {
+          return
+        }
+        setSelectedSkill(skill)
+      })
+      .catch((nextError) => {
+        if (!mounted) {
+          return
+        }
+        setSelectedSkill(null)
+        setError(
+          nextError instanceof Error ? nextError.message : '读取提取 Skill 失败，请先在后台配置',
+        )
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [selectedSkillSummary, setError])
+
+  return { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey }
+}
+
+function ExtractSkillPicker({
+  extractSkills,
+  selectedSkill,
+  selectedSkillKey,
+  onChange,
+}: {
+  extractSkills: SkillSummary[]
+  selectedSkill: Skill | null
+  selectedSkillKey: string
+  onChange: (key: string) => void
+}) {
+  const selectedNotes = selectedSkill ? skillOptionNotes(selectedSkill) : null
+
+  return (
+    <div className="space-y-3">
+      {extractSkills.length ? (
+        <label className="block space-y-2 text-sm font-medium">
+          <span>提取提示词</span>
+          <select
+            className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            onChange={(event) => onChange(event.target.value)}
+            value={selectedSkillKey}
+          >
+            {extractSkills.map((skill) => (
+              <option key={skillOptionKey(skill)} value={skillOptionKey(skill)}>
+                {skillOptionLabel(skill)}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : (
+        <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+          请先在后台配置提取 Skill
+        </div>
+      )}
+      <div className="rounded-md border p-3">
+        <p className="text-sm font-medium">
+          {selectedSkill ? skillOptionLabel(selectedSkill) : '未选择提取 Skill'}
+        </p>
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">
+          {selectedSkill
+            ? `${selectedSkill.id} · ${selectedSkill.version}`
+            : '后台配置后会出现在这里'}
+        </p>
+        {selectedNotes ? (
+          <p className="mt-2 text-xs leading-5 text-muted-foreground">{selectedNotes}</p>
+        ) : null}
+      </div>
+    </div>
+  )
 }
 
 function useGenerationTaskEvents({
@@ -389,7 +559,7 @@ function grsaiSizes(model: GrsaiImageModelOption | null) {
   return model?.sizes.length ? model.sizes : fallbackGrsaiSizes
 }
 
-function isGenerationCapabilityKey(value: string): value is GenerationCapability {
+function isGenerationCapabilityKey(value: string): value is GenerationUiCapability {
   return generationCapabilities.some((capability) => capability.key === value)
 }
 
@@ -428,62 +598,119 @@ function ComfyuiInstanceStatusBadge({ status }: { status: ComfyuiInstanceStatus 
   )
 }
 
-function DefaultComfyuiInstanceStatusCard() {
-  const [instance, setInstance] = useState<ActiveComfyuiInstance>(null)
+function instanceComfyuiUrl(instance: ChenyuManagedInstance) {
+  return instance.comfyuiUrl ?? instance.serverUrls[0] ?? ''
+}
+
+function useComfyuiInstanceSelection(scope: string, enabled = true) {
+  const storageKey = `${COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX}${scope}`
+  const [instances, setInstances] = useState<ChenyuManagedInstance[]>([])
+  const [selectedInstanceUuid, setSelectedInstanceUuid] = useState(() => {
+    try {
+      return window.localStorage.getItem(storageKey) ?? ''
+    } catch {
+      return ''
+    }
+  })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    let cancelled = false
-    window.api.chenyu
-      .getActiveInstance()
-      .then((nextInstance) => {
-        if (!cancelled) {
-          setInstance(nextInstance)
-          setError(null)
-        }
-      })
-      .catch((nextError) => {
-        if (!cancelled) {
-          setError(nextError instanceof Error ? nextError.message : '读取默认云机失败')
-        }
-      })
-
-    return () => {
-      cancelled = true
+    if (!enabled) {
+      return
     }
-  }, [])
+    void refreshInstances()
+  }, [enabled])
 
-  async function refreshInstance() {
+  const runningInstances = useMemo(
+    () =>
+      instances.filter(
+        (instance) => instance.statusName === 'running' && Boolean(instanceComfyuiUrl(instance)),
+      ),
+    [instances],
+  )
+  const selectedInstance =
+    runningInstances.find((instance) => instance.instanceUuid === selectedInstanceUuid) ?? null
+  const runTarget = selectedInstance
+    ? {
+        instanceUuid: selectedInstance.instanceUuid,
+      }
+    : null
+
+  useEffect(() => {
+    if (runningInstances.length === 0) {
+      if (selectedInstanceUuid) {
+        setSelectedInstanceUuid('')
+      }
+      return
+    }
+    if (runningInstances.some((instance) => instance.instanceUuid === selectedInstanceUuid)) {
+      return
+    }
+    const fallback = runningInstances.find((instance) => instance.isCurrent) ?? runningInstances[0]
+    setSelectedInstanceUuid(fallback?.instanceUuid ?? '')
+  }, [runningInstances, selectedInstanceUuid])
+
+  useEffect(() => {
+    try {
+      if (selectedInstanceUuid) {
+        window.localStorage.setItem(storageKey, selectedInstanceUuid)
+      } else {
+        window.localStorage.removeItem(storageKey)
+      }
+    } catch {}
+  }, [selectedInstanceUuid, storageKey])
+
+  async function refreshInstances() {
     setLoading(true)
     setError(null)
     try {
-      const nextInstance = await window.api.chenyu.refreshActiveInstance()
-      setInstance(nextInstance)
+      const nextInstances = await window.api.chenyu.listInstances()
+      setInstances(nextInstances)
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '刷新默认云机失败')
+      setError(nextError instanceof Error ? nextError.message : '刷新云机列表失败')
     } finally {
       setLoading(false)
     }
   }
 
-  const status = instance?.status ?? 'none'
+  function selectInstance(instanceUuid: string) {
+    setSelectedInstanceUuid(instanceUuid)
+  }
 
+  return {
+    error,
+    loading,
+    refreshInstances,
+    runTarget,
+    runningInstances,
+    selectedInstance,
+    selectedInstanceUuid,
+    selectInstance,
+  }
+}
+
+function ComfyuiInstanceSelectorCard({
+  selection,
+}: {
+  selection: ReturnType<typeof useComfyuiInstanceSelection>
+}) {
+  const status = selection.selectedInstance ? 'running' : 'none'
   return (
     <div className="rounded-md border bg-background p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h4 className="font-semibold">默认云机</h4>
-          <p className="mt-1 text-sm text-muted-foreground">晨羽智云 ComfyUI 实例状态</p>
+          <h4 className="font-semibold">运行云机</h4>
+          <p className="mt-1 text-sm text-muted-foreground">选择本次任务使用的 ComfyUI 实例</p>
         </div>
         <Button
           className="h-9 px-3"
-          disabled={loading}
-          onClick={() => void refreshInstance()}
+          disabled={selection.loading}
+          onClick={() => void selection.refreshInstances()}
           type="button"
           variant="secondary"
         >
-          {loading ? (
+          {selection.loading ? (
             <Loader2 className="mr-2 h-4 w-4 animate-spin" />
           ) : (
             <RefreshCw className="mr-2 h-4 w-4" />
@@ -494,22 +721,47 @@ function DefaultComfyuiInstanceStatusCard() {
       <div className="mt-4">
         <ComfyuiInstanceStatusBadge status={status} />
       </div>
+      <label className="mt-4 block space-y-2 text-sm font-medium">
+        <span>云机</span>
+        <select
+          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          disabled={selection.runningInstances.length === 0}
+          onChange={(event) => selection.selectInstance(event.target.value)}
+          value={selection.selectedInstanceUuid}
+        >
+          {selection.runningInstances.length === 0 ? (
+            <option value="">暂无运行中云机</option>
+          ) : null}
+          {selection.runningInstances.map((instance) => (
+            <option key={instance.instanceUuid} value={instance.instanceUuid}>
+              {instance.title || instance.instanceUuid} {instance.isCurrent ? '· 默认' : ''}
+            </option>
+          ))}
+        </select>
+      </label>
       <dl className="mt-4 grid gap-3 text-sm">
         <div>
           <dt className="text-muted-foreground">实例 UUID</dt>
           <dd className="mt-1 break-all font-mono text-xs font-medium">
-            {instance?.instanceUuid ?? '未设置默认云机'}
+            {selection.selectedInstance?.instanceUuid ?? '未选择运行中云机'}
           </dd>
         </div>
         <div>
           <dt className="text-muted-foreground">ComfyUI 地址</dt>
           <dd className="mt-1 break-all font-mono text-xs font-medium">
-            {instance?.comfyuiUrl ?? '未配置'}
+            {selection.selectedInstance ? instanceComfyuiUrl(selection.selectedInstance) : '未配置'}
           </dd>
         </div>
       </dl>
-      {error ? (
-        <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
+      {selection.runningInstances.length === 0 ? (
+        <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
+          无运行中云机，请到设置页开机。
+        </div>
+      ) : null}
+      {selection.error ? (
+        <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
+          {selection.error}
+        </div>
       ) : null}
     </div>
   )
@@ -735,7 +987,7 @@ function TaskNameField({
   )
 }
 
-function capabilityCopy(capability: GenerationCapability, provider: GenerationProvider) {
+function capabilityCopy(capability: GenerationUiCapability, provider: GenerationProvider) {
   if (!isGenerationProviderAvailable(capability, provider)) {
     return {
       title: '不可用',
@@ -848,6 +1100,7 @@ function GrsaiPromptGenerationPanel({
   )
   const percent = progressPercent(progress)
   const usesComfyuiTxt2img = capability === 'txt2img' && txt2imgGenerationPath === 'comfyui'
+  const comfyuiInstanceSelection = useComfyuiInstanceSelection('txt2img', usesComfyuiTxt2img)
   const selectedComfyuiTxt2imgWorkflow = comfyuiTxt2imgWorkflows.find(
     (workflow) => workflowOptionKey(workflow) === comfyuiTxt2imgWorkflowKey,
   )
@@ -996,6 +1249,10 @@ function GrsaiPromptGenerationPanel({
       setError('请选择 ComfyUI 文生图工作流')
       return
     }
+    if (usesComfyuiTxt2img && !comfyuiInstanceSelection.runTarget) {
+      setError('请选择运行中的云机')
+      return
+    }
     if (sendsReferenceToImageModel && referenceImages.length === 0) {
       setError('请先添加至少一张参考图')
       return
@@ -1022,6 +1279,7 @@ function GrsaiPromptGenerationPanel({
           width: clampNumber(comfyuiTxt2imgWidth, 256, 4096, 1024),
           height: clampNumber(comfyuiTxt2imgHeight, 256, 4096, 1024),
           concurrency: clampNumber(comfyuiTxt2imgConcurrency, 1, 10, 1),
+          ...(comfyuiInstanceSelection.runTarget ?? {}),
         })
       } else {
         taskId = await window.api.generation.runTxt2img({
@@ -1491,7 +1749,11 @@ function GrsaiPromptGenerationPanel({
                 value={taskName}
               />
               <Button
-                disabled={running || generatingPrompts}
+                disabled={
+                  running ||
+                  generatingPrompts ||
+                  (usesComfyuiTxt2img && !comfyuiInstanceSelection.runTarget)
+                }
                 onClick={() => void oneClickRun()}
                 type="button"
               >
@@ -1503,7 +1765,11 @@ function GrsaiPromptGenerationPanel({
                 一键运行
               </Button>
               <Button
-                disabled={running || generatingPrompts}
+                disabled={
+                  running ||
+                  generatingPrompts ||
+                  (usesComfyuiTxt2img && !comfyuiInstanceSelection.runTarget)
+                }
                 onClick={() => void startGeneration()}
                 type="button"
                 variant="secondary"
@@ -1516,7 +1782,7 @@ function GrsaiPromptGenerationPanel({
 
           {usesComfyuiTxt2img ? (
             <>
-              <DefaultComfyuiInstanceStatusCard />
+              <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
               <GenerationFeedback error={error} result={result} />
             </>
           ) : (
@@ -1572,7 +1838,6 @@ function GrsaiExtractPanel() {
   const [sources, setSources] = useState<GenerationImageSource[]>([])
   const [sourceFolder, setSourceFolder] = useState('')
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
@@ -1583,6 +1848,8 @@ function GrsaiExtractPanel() {
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [running, setRunning] = useState(false)
+  const { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey } =
+    useExtractSkillOptions(setError)
   const taskEvents = useGenerationTaskEvents({
     expectedCapability: 'extract',
     setProgress,
@@ -1594,22 +1861,6 @@ function GrsaiExtractPanel() {
 
   useEffect(() => {
     void loadSources()
-  }, [])
-
-  useEffect(() => {
-    window.api.skill
-      .get({ id: GRSAI_EXTRACT_SKILL_ID })
-      .then((skill) => {
-        setSelectedSkill(skill)
-      })
-      .catch((nextError) => {
-        setSelectedSkill(null)
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : '读取付费模型提取 Skill 失败，请先在后台配置',
-        )
-      })
   }, [])
 
   const selectedCount = selectedPaths.length
@@ -1670,7 +1921,7 @@ function GrsaiExtractPanel() {
   async function startExtract() {
     setError(null)
     if (!selectedSkill) {
-      setError('请先在后台配置付费模型提取 Skill')
+      setError('请先在后台配置提取 Skill')
       return
     }
     if (selectedPaths.length === 0) {
@@ -1706,7 +1957,7 @@ function GrsaiExtractPanel() {
     } catch (nextError) {
       taskEvents.clearTaskStart()
       setRunning(false)
-      setError(nextError instanceof Error ? nextError.message : '启动付费模型提取失败')
+      setError(nextError instanceof Error ? nextError.message : '启动 Grsai 提取失败')
     }
   }
 
@@ -1777,14 +2028,15 @@ function GrsaiExtractPanel() {
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">提取 Skill</h4>
             <div className="mt-4">
-              <div className="rounded-md border p-3">
-                <p className="text-sm font-medium">付费模型提取提示词</p>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  {selectedSkill
-                    ? `${selectedSkill.id} · ${selectedSkill.version}`
-                    : '未读取到固定提取 Skill'}
-                </p>
-              </div>
+              <ExtractSkillPicker
+                extractSkills={extractSkills}
+                onChange={(key) => {
+                  setSelectedSkillKey(key)
+                  setError(null)
+                }}
+                selectedSkill={selectedSkill}
+                selectedSkillKey={selectedSkillKey}
+              />
             </div>
           </div>
         </div>
@@ -1899,6 +2151,7 @@ function GrsaiExtractPanel() {
 
 function ComfyuiImg2imgPanel() {
   const workflowScope = 'img2img'
+  const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
   const [sourceFolder, setSourceFolder] = useState('')
   const [sourceImages, setSourceImages] = useState<GenerationImageSource[]>([])
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
@@ -1981,6 +2234,10 @@ function ComfyuiImg2imgPanel() {
       setError('请选择 ComfyUI 图生图工作流')
       return
     }
+    if (!comfyuiInstanceSelection.runTarget) {
+      setError('请选择运行中的云机')
+      return
+    }
 
     setResult(null)
     setPreviewImages([])
@@ -1995,6 +2252,7 @@ function ComfyuiImg2imgPanel() {
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
+        ...comfyuiInstanceSelection.runTarget,
       })
       if (!taskEvents.activateTask(taskId)) {
         setProgress({
@@ -2096,7 +2354,7 @@ function ComfyuiImg2imgPanel() {
             </div>
             <Button
               className="mt-4 w-full"
-              disabled={running}
+              disabled={running || !comfyuiInstanceSelection.runTarget}
               onClick={() => void startImg2img()}
               type="button"
             >
@@ -2109,7 +2367,7 @@ function ComfyuiImg2imgPanel() {
             </Button>
           </div>
 
-          <DefaultComfyuiInstanceStatusCard />
+          <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
           <GenerationFeedback error={error} result={result} />
         </aside>
       </div>
@@ -2120,11 +2378,11 @@ function ComfyuiImg2imgPanel() {
 
 function ComfyuiExtractPanel() {
   const workflowScope = 'extract'
+  const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
   const [sources, setSources] = useState<GenerationImageSource[]>([])
   const [sourceFolder, setSourceFolder] = useState('')
   const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [workflowKey, setWorkflowKey] = useState('')
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
@@ -2134,6 +2392,8 @@ function ComfyuiExtractPanel() {
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [running, setRunning] = useState(false)
+  const { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey } =
+    useExtractSkillOptions(setError)
   const taskEvents = useGenerationTaskEvents({
     expectedCapability: 'extract',
     setProgress,
@@ -2145,17 +2405,6 @@ function ComfyuiExtractPanel() {
 
   useEffect(() => {
     void loadWorkflows()
-    window.api.skill
-      .get({ id: COMFYUI_EXTRACT_SKILL_ID })
-      .then((skill) => setSelectedSkill(skill))
-      .catch((nextError) => {
-        setSelectedSkill(null)
-        setError(
-          nextError instanceof Error
-            ? nextError.message
-            : '读取 ComfyUI 提取 Skill 失败，请先在后台配置',
-        )
-      })
   }, [])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
@@ -2215,7 +2464,11 @@ function ComfyuiExtractPanel() {
       return
     }
     if (!selectedSkill) {
-      setError('请先在后台配置 ComfyUI 提取 Skill')
+      setError('请先在后台配置提取 Skill')
+      return
+    }
+    if (!comfyuiInstanceSelection.runTarget) {
+      setError('请选择运行中的云机')
       return
     }
 
@@ -2234,6 +2487,7 @@ function ComfyuiExtractPanel() {
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
+        ...comfyuiInstanceSelection.runTarget,
       })
       if (!taskEvents.activateTask(taskId)) {
         setProgress({
@@ -2287,13 +2541,16 @@ function ComfyuiExtractPanel() {
                   ))}
                 </select>
               </label>
-              <div className="rounded-md border p-3 text-sm">
-                <p className="font-medium">ComfyUI 提取 Skill</p>
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  {selectedSkill
-                    ? `${selectedSkill.id} · ${selectedSkill.version}`
-                    : '未读取到固定提取 Skill'}
-                </p>
+              <div className="md:col-span-2">
+                <ExtractSkillPicker
+                  extractSkills={extractSkills}
+                  onChange={(key) => {
+                    setSelectedSkillKey(key)
+                    setError(null)
+                  }}
+                  selectedSkill={selectedSkill}
+                  selectedSkillKey={selectedSkillKey}
+                />
               </div>
               <label className="block space-y-2 text-sm font-medium">
                 <span>宽度</span>
@@ -2347,7 +2604,7 @@ function ComfyuiExtractPanel() {
             </div>
             <Button
               className="mt-4 w-full"
-              disabled={running}
+              disabled={running || !comfyuiInstanceSelection.runTarget}
               onClick={() => void startExtract()}
               type="button"
             >
@@ -2356,7 +2613,306 @@ function ComfyuiExtractPanel() {
             </Button>
           </div>
 
-          <DefaultComfyuiInstanceStatusCard />
+          <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
+          <GenerationFeedback error={error} result={result} />
+        </aside>
+      </div>
+      <CurrentTaskImagePreview images={previewImages} />
+    </>
+  )
+}
+
+function ComfyuiExtractMattingPanel() {
+  const extractWorkflowScope = 'extract-matting:extract'
+  const mattingWorkflowScope = 'extract-matting:matting'
+  const comfyuiInstanceSelection = useComfyuiInstanceSelection('extract-matting')
+  const [sources, setSources] = useState<GenerationImageSource[]>([])
+  const [sourceFolder, setSourceFolder] = useState('')
+  const [extractWorkflows, setExtractWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
+  const [extractWorkflowKey, setExtractWorkflowKey] = useState('')
+  const [mattingWorkflows, setMattingWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
+  const [mattingWorkflowKey, setMattingWorkflowKey] = useState('')
+  const [width, setWidth] = useState('1024')
+  const [height, setHeight] = useState('1024')
+  const [taskName, setTaskName] = useState('')
+  const [, setProgress] = useState<GenerationProgress | null>(null)
+  const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
+  const [result, setResult] = useState<GenerationRunResult | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [loadingSources, setLoadingSources] = useState(false)
+  const [running, setRunning] = useState(false)
+  const { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey } =
+    useExtractSkillOptions(setError)
+  const taskEvents = useGenerationTaskEvents({
+    expectedCapability: 'matting',
+    setProgress,
+    setPreviewImages,
+    setResult,
+    setError,
+    setRunning,
+  })
+
+  useEffect(() => {
+    void loadWorkflows()
+  }, [])
+
+  const selectedExtractWorkflow = extractWorkflows.find(
+    (workflow) => workflowOptionKey(workflow) === extractWorkflowKey,
+  )
+  const selectedMattingWorkflow = mattingWorkflows.find(
+    (workflow) => workflowOptionKey(workflow) === mattingWorkflowKey,
+  )
+
+  async function chooseSourceFolder() {
+    setError(null)
+    const result = await window.api.generation.chooseImageFolder()
+    if (!result.ok) {
+      if (result.error.code !== 'CANCELLED') {
+        setError(result.error.message)
+      }
+      return
+    }
+    setSourceFolder(result.data.path)
+    setSources([])
+  }
+
+  async function loadWorkflows() {
+    try {
+      const [nextExtractWorkflows, nextMattingWorkflows] = await Promise.all([
+        window.api.generation.listComfyuiExtractWorkflows(),
+        window.api.generation.listComfyuiMattingWorkflows(),
+      ])
+      setExtractWorkflows(nextExtractWorkflows)
+      setMattingWorkflows(nextMattingWorkflows)
+      setExtractWorkflowKey((current) =>
+        current && nextExtractWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(extractWorkflowScope, nextExtractWorkflows),
+      )
+      setMattingWorkflowKey((current) =>
+        current && nextMattingWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
+          ? current
+          : workflowKeyOrFallback(mattingWorkflowScope, nextMattingWorkflows),
+      )
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 工作流失败')
+    }
+  }
+
+  async function scanSourceFolder() {
+    if (!sourceFolder) {
+      setError('请先选择图片文件夹')
+      return
+    }
+    setLoadingSources(true)
+    setError(null)
+    try {
+      const images = await window.api.generation.scanImageFolder({ folder: sourceFolder })
+      setSources(images)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
+    } finally {
+      setLoadingSources(false)
+    }
+  }
+
+  async function startExtractMatting() {
+    setError(null)
+    if (sources.length === 0) {
+      setError('请先检索图片文件夹')
+      return
+    }
+    if (!selectedExtractWorkflow) {
+      setError('请选择 ComfyUI 提取工作流')
+      return
+    }
+    if (!selectedMattingWorkflow) {
+      setError('请选择 ComfyUI 抠图工作流')
+      return
+    }
+    if (!selectedSkill) {
+      setError('请先在后台配置提取 Skill')
+      return
+    }
+    if (!comfyuiInstanceSelection.runTarget) {
+      setError('请选择运行中的云机')
+      return
+    }
+
+    setResult(null)
+    setPreviewImages([])
+    setRunning(true)
+    taskEvents.beginTask()
+    try {
+      const taskId = await window.api.generation.runComfyuiExtractMatting({
+        sourceImagePaths: sources.map((source) => source.path),
+        extractWorkflowId: selectedExtractWorkflow.id,
+        extractWorkflowName: selectedExtractWorkflow.name,
+        extractWorkflowVersion: selectedExtractWorkflow.version,
+        mattingWorkflowId: selectedMattingWorkflow.id,
+        mattingWorkflowName: selectedMattingWorkflow.name,
+        mattingWorkflowVersion: selectedMattingWorkflow.version,
+        skillId: selectedSkill.id,
+        skillVersion: selectedSkill.version,
+        ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+        width: clampNumber(width, 256, 4096, 1024),
+        height: clampNumber(height, 256, 4096, 1024),
+        ...comfyuiInstanceSelection.runTarget,
+      })
+      if (!taskEvents.activateTask(taskId)) {
+        setProgress({
+          task_id: taskId,
+          capability: 'matting',
+          processed: 0,
+          total: sources.length,
+          succeeded: 0,
+          failed: 0,
+          images: [],
+        })
+      }
+    } catch (nextError) {
+      taskEvents.clearTaskStart()
+      setRunning(false)
+      setError(nextError instanceof Error ? nextError.message : '启动提取后抠图失败')
+    }
+  }
+
+  return (
+    <>
+      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="space-y-5">
+          <ImageFolderPickerPanel
+            emptyText="暂无可用于提取后抠图的图片"
+            folderPath={sourceFolder}
+            images={sources}
+            loading={loadingSources}
+            onChoose={() => void chooseSourceFolder()}
+            onScan={() => void scanSourceFolder()}
+            title="提取后抠图图片文件夹"
+          />
+
+          <div className="rounded-md border bg-background p-4">
+            <h4 className="font-semibold">工作流设置</h4>
+            <div className="mt-4 grid gap-4 md:grid-cols-2">
+              <label className="block space-y-2 text-sm font-medium">
+                <span>提取工作流</span>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  onChange={(event) => {
+                    rememberWorkflowKey(extractWorkflowScope, event.target.value)
+                    setExtractWorkflowKey(event.target.value)
+                  }}
+                  value={extractWorkflowKey}
+                >
+                  {extractWorkflows.map((workflow) => (
+                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
+                      {workflow.name} · {workflow.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-2 text-sm font-medium">
+                <span>抠图工作流</span>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  onChange={(event) => {
+                    rememberWorkflowKey(mattingWorkflowScope, event.target.value)
+                    setMattingWorkflowKey(event.target.value)
+                  }}
+                  value={mattingWorkflowKey}
+                >
+                  {mattingWorkflows.map((workflow) => (
+                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
+                      {workflow.name} · {workflow.version}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="block space-y-2 text-sm font-medium">
+                <span>宽度</span>
+                <input
+                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  max={4096}
+                  min={256}
+                  onChange={(event) => setWidth(event.target.value)}
+                  type="number"
+                  value={width}
+                />
+              </label>
+              <label className="block space-y-2 text-sm font-medium">
+                <span>高度</span>
+                <input
+                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  max={4096}
+                  min={256}
+                  onChange={(event) => setHeight(event.target.value)}
+                  type="number"
+                  value={height}
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="rounded-md border bg-background p-4">
+            <h4 className="font-semibold">提取 Skill</h4>
+            <div className="mt-4">
+              <ExtractSkillPicker
+                extractSkills={extractSkills}
+                onChange={(key) => {
+                  setSelectedSkillKey(key)
+                  setError(null)
+                }}
+                selectedSkill={selectedSkill}
+                selectedSkillKey={selectedSkillKey}
+              />
+            </div>
+          </div>
+        </div>
+
+        <aside className="space-y-5">
+          <div className="rounded-md border bg-background p-4">
+            <h4 className="font-semibold">执行</h4>
+            <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">
+              <div>
+                <dt className="text-muted-foreground">检索图片</dt>
+                <dd className="font-medium tabular-nums">{sources.length}</dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">提取</dt>
+                <dd className="truncate font-medium">
+                  {selectedExtractWorkflow?.name ?? '未选择'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">抠图</dt>
+                <dd className="truncate font-medium">
+                  {selectedMattingWorkflow?.name ?? '未选择'}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">输出</dt>
+                <dd className="truncate font-medium">只保留最终图</dd>
+              </div>
+            </dl>
+            <div className="mt-4">
+              <TaskNameField
+                onChange={setTaskName}
+                placeholder="默认：提取后抠图-时间"
+                value={taskName}
+              />
+            </div>
+            <Button
+              className="mt-4 w-full"
+              disabled={running || !comfyuiInstanceSelection.runTarget}
+              onClick={() => void startExtractMatting()}
+              type="button"
+            >
+              {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
+              开始提取后抠图
+            </Button>
+          </div>
+
+          <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
           <GenerationFeedback error={error} result={result} />
         </aside>
       </div>
@@ -2368,6 +2924,7 @@ function ComfyuiExtractPanel() {
 function ComfyuiMattingPanel() {
   const workflowScope = 'matting'
   const mixedWorkflowScope = 'matting-mixed'
+  const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
   const [mode, setMode] = useState<MattingMode>('comfyui')
   const [sourceFolder, setSourceFolder] = useState('')
   const [sources, setSources] = useState<GenerationImageSource[]>([])
@@ -2464,6 +3021,10 @@ function ComfyuiMattingPanel() {
       setError(mode === 'mixed' ? '请选择 ComfyUI 混合抠图工作流' : '请选择 ComfyUI 抠图工作流')
       return
     }
+    if (!comfyuiInstanceSelection.runTarget) {
+      setError('请选择运行中的云机')
+      return
+    }
     setResult(null)
     setPreviewImages([])
     setRunning(true)
@@ -2479,6 +3040,7 @@ function ComfyuiMattingPanel() {
           workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
+          ...comfyuiInstanceSelection.runTarget,
         })
       } else {
         taskId = await window.api.generation.runComfyuiMatting({
@@ -2487,6 +3049,7 @@ function ComfyuiMattingPanel() {
           workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
+          ...comfyuiInstanceSelection.runTarget,
         })
       }
     } catch (nextError) {
@@ -2605,7 +3168,7 @@ function ComfyuiMattingPanel() {
             </div>
             <Button
               className="mt-4 w-full"
-              disabled={running}
+              disabled={running || !comfyuiInstanceSelection.runTarget}
               onClick={() => void startMatting()}
               type="button"
             >
@@ -2614,7 +3177,7 @@ function ComfyuiMattingPanel() {
             </Button>
           </div>
 
-          <DefaultComfyuiInstanceStatusCard />
+          <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
           <GenerationFeedback error={error} result={result} />
         </aside>
       </div>
@@ -2759,7 +3322,7 @@ export function GenerationWorkbench() {
           }}
           value={activeCapability}
         >
-          <TabsList className="grid h-auto w-full grid-cols-4 p-1">
+          <TabsList className="grid h-auto w-full grid-cols-5 p-1">
             {generationCapabilities.map((item) => {
               const Icon = capabilityIcons[item.key]
               return (
@@ -2819,6 +3382,11 @@ export function GenerationWorkbench() {
         <div hidden={!(activeCapability === 'matting' && activeProvider === 'comfyui-chenyu')}>
           <ComfyuiMattingPanel />
         </div>
+        <div
+          hidden={!(activeCapability === 'extract-matting' && activeProvider === 'comfyui-chenyu')}
+        >
+          <ComfyuiExtractMattingPanel />
+        </div>
         <div hidden={!(activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu')}>
           <ComfyuiImg2imgPanel />
         </div>
@@ -2833,6 +3401,7 @@ export function GenerationWorkbench() {
             (activeCapability === 'extract' &&
               (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu')) ||
             (activeCapability === 'matting' && activeProvider === 'comfyui-chenyu') ||
+            (activeCapability === 'extract-matting' && activeProvider === 'comfyui-chenyu') ||
             (activeCapability === 'img2img' &&
               (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu'))
           }

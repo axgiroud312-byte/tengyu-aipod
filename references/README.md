@@ -20,7 +20,7 @@
 - _待编写_ — skill 提示词设计原则、各模型对比
 
 ### 视觉/LLM 横切 provider（vision-llm-providers/）
-- [aliyun-bailian-api.md](./vision-llm-providers/aliyun-bailian-api.md) — 阿里云百炼，qwen3.5-plus / qwen3.5-flash / qwen3.6-plus 文本与视觉模型、qwen3-vl-*、qwen-vl-*，OpenAI 兼容接入
+- [aliyun-bailian-api.md](./vision-llm-providers/aliyun-bailian-api.md) — 阿里云百炼，生图提示词当前默认 `qwen3.6-flash`，并覆盖侵权检测/标题生成所需视觉与文本模型，OpenAI 兼容接入
 
 ### 侵权检测（detection/）业务规则
 - _待编写_ — 侵权判定阈值、风险分级、skill 提示词设计

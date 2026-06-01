@@ -1,3 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Check retry_failed_only, listing_status, evidence path, and UI retry controls."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Check retry path does not bypass the runner or port DOM code."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for comparison; not a source for copied DOM implementation."}

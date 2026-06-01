@@ -1,8 +1,0 @@
-{"file": "docs/spec/02-collection.md", "reason": "验收对照基线——逐条核对 §13 IPC 清单、§4/§5 采集流程、§9 DB schema 是否被实施"}
-{"file": "docs/spec/00-overview.md", "reason": "检查 TS strict / IPC 命名 / zod 校验 / AppError 是否合规"}
-{"file": "docs/spec/09-cross-cutting.md", "reason": "检查 profile 锁竞争、暂停场景至少覆盖 browser.disconnected"}
-{"file": "docs/adr/0003-skill-and-provider-cloud-dispatch.md", "reason": "确认未越界接入云端 platform-rules"}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "确认 profile 锁集成正确"}
-{"file": "docs/adr/0008-temp-file-manager-and-cleanup.md", "reason": "delete-record 文件清理合规性"}
-{"file": ".trellis/spec/frontend/index.md", "reason": "前端规范合规性检查"}
-{"file": ".trellis/spec/backend/index.md", "reason": "主进程规范合规性检查：IPC handler / zod / 日志 / 错误抛出"}

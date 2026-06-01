@@ -48,3 +48,8 @@ jobs:
 
       - name: Electron E2E
         run: xvfb-run --auto-servernum pnpm -F @tengyu-aipod/client e2e
+        env:
+          TENGYU_LIVE_ACTIVATION_CODE: ${{ secrets.TENGYU_LIVE_ACTIVATION_CODE }}
+          TENGYU_LIVE_BAILIAN_API_KEY: ${{ secrets.TENGYU_LIVE_BAILIAN_API_KEY }}
+          TENGYU_LIVE_GRSAI_API_KEY: ${{ secrets.TENGYU_LIVE_GRSAI_API_KEY }}
+          TENGYU_LIVE_WORKBENCH_ROOT: ${{ secrets.TENGYU_LIVE_WORKBENCH_ROOT }}

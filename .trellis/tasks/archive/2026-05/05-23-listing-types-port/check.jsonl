@@ -1,4 +1,0 @@
-{"file":"docs/spec/07-listing.md","reason":"核对 shared listing 类型是否覆盖 v1 runner/batch/workflow 的契约。"}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"确认没有 port 源项目 DOM 或 workflow 业务逻辑。"}
-{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"核对类型契约能支持后续四层自动化任务。"}
-{"file":".trellis/tasks/05-23-listing-types-port/research/listing-types-source-map.md","reason":"核对 PRD/jsonl 是否覆盖真实基线、源文件和排除项。"}

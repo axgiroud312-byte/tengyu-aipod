@@ -80,8 +80,7 @@ const extractSkill = {
   enabled: true,
   recommendedModel: 'qwen3-vl-plus',
   notes: null,
-  systemPrompt:
-    'E2E_EXTRACT_SKILL Return JSON prompts for extracting a print from the source image.',
+  systemPrompt: 'E2E_EXTRACT_SKILL Extract the print from the source image.',
   variables: [
     {
       key: 'printAreaPreference',
@@ -130,7 +129,7 @@ function promptsForCall(call: number) {
   if (call === 2) {
     return ['img2img style prompt 1', 'img2img style prompt 2', 'img2img style prompt 3']
   }
-  return ['extract centered print prompt']
+  return ['unused extract prompt']
 }
 
 async function startMockServer(state: MockState) {
@@ -529,8 +528,6 @@ test.describe('generation Grsai E2E', () => {
       skillId: 'extract-paid-model',
       skillVersion: '1.0.0',
       variables: { printAreaPreference: 'auto', allowMultiplePrints: true },
-      promptCount: 1,
-      llmModel: 'qwen3-vl-plus',
       model: 'gpt-image-2',
       aspectRatio: '1024x1024',
       concurrency: 3,
@@ -545,11 +542,11 @@ test.describe('generation Grsai E2E', () => {
         'extract-paid-model',
       ]),
     )
-    expect(state.bailianCalls).toBe(3)
+    expect(state.bailianCalls).toBe(2)
     expect(JSON.stringify(state.bailianBodies[0])).toContain('E2E_TXT2IMG_SKILL')
     expect(JSON.stringify(state.bailianBodies[1])).toContain('E2E_IMG2IMG_SKILL')
-    expect(JSON.stringify(state.bailianBodies[2])).toContain('E2E_EXTRACT_SKILL')
     expect(JSON.stringify(state.bailianBodies[1])).toContain('image_url')
+    expect(JSON.stringify(state.grsaiCalls)).toContain('E2E_EXTRACT_SKILL')
     expect(state.grsaiCalls).toHaveLength(11)
     expect(state.cn429Count).toBe(1)
     expect(state.grsaiCalls[0]?.node).toBe('cn')
@@ -576,7 +573,7 @@ test.describe('generation Grsai E2E', () => {
     expect(extractArtifact).toMatchObject({
       step: 'extract',
       provider: 'grsai',
-      prompt_snapshot: 'extract centered print prompt',
+      prompt_snapshot: 'E2E_EXTRACT_SKILL Extract the print from the source image.',
     })
     expect(JSON.parse(extractArtifact?.source_artifact_ids ?? '[]')).toEqual([sourceArtifact?.id])
     expect(extractArtifact?.file_path).toContain(join('02-印花工作区', '提取'))

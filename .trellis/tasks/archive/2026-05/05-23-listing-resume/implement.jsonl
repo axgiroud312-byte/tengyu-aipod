@@ -1,4 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": "docs/spec/07-listing.md", "reason": "Resume must persist listing_status rows, skip success rows, retry failed rows only when requested, and keep evidence_dir in status rows."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Listing resume belongs to runner framework; do not touch platform DOM layers."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for runner resume behavior; do not port DOM code."}

@@ -1,5 +1,0 @@
-{"file":"docs/spec/05-photoshop.md","reason":"Defines Photoshop clipping modes, JSX export behavior, Windows-only COM constraints, and output structure for PS mockup tasks."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline index for Electron main-process/service code touched by Photoshop clipping."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend guideline index in case clipping options or shared types affect renderer-facing contracts."}
-{"file":".trellis/spec/guides/index.md","reason":"Thinking guide index for reuse and cross-layer checks before changing shared Photoshop helpers."}
-{"file":".trellis/tasks/05-23-ps-clipping/prd.md","reason":"Task-specific Windows + Photoshop 2023+ requirements, REAL_PS guards, and real local PSD/material/output paths."}

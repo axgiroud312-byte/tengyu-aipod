@@ -1,3 +1,0 @@
-{"file":"docs/spec/07-listing.md","reason":"上架模块 v1 范围、四层结构、真实验证和 port/rewrite 边界。"}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"ADR-0004 要求只 port 框架，并按 listing-automation-builder 重写店小秘 DOM 操作。"}
-{"file":".trellis/tasks/05-23-listing-skill-import/research/listing-source-map.md","reason":"记录外部一键pod上架程序源码路径、真实模板 URL、素材路径和真实测试基线。"}

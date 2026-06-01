@@ -1,7 +1,0 @@
-{"file":"docs/spec/03-generation.md","reason":"Defines the ComfyUI provider flow, required routes, polling behavior, and adapter boundaries for generation."}
-{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Documents the Chenyu-to-ComfyUI integration flow and native ComfyUI route sequence used by Tengyu."}
-{"file":".trellis/tasks/05-23-comfyui-http-adapter/research/comfyui-http-api.md","reason":"Task-specific notes for ComfyUI native HTTP endpoints and implementation boundaries."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for main-process service code."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Error handling reference; adapter errors must use project AppError patterns."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality expectations and test requirements for backend code."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Required because this task must reuse existing generation adapter/service patterns instead of duplicating slice 4 work."}

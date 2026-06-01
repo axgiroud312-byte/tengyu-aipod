@@ -111,7 +111,7 @@ sequenceDiagram
 └─ 04-上架工作区/      ← PS 输出 + 标题 + 上架输入（上架唯一读取域）
 ```
 
-`02-印花工作区` 下面固定四个能力目录：`文生图` / `图生图` / `提取` / `抠图`。每次运行会在能力目录下再建一个 `{任务名}` 文件夹，默认“能力-时间”，前端可自定义。
+`02-印花工作区` 下面固定四个能力目录：`文生图` / `图生图` / `提取` / `抠图`。每次运行会在能力目录下再建一个 `{任务名}` 文件夹，默认“能力-时间”，前端可自定义；“提取后抠图”入口的最终图归入 `抠图` 目录。
 
 ---
 
@@ -137,9 +137,9 @@ sequenceDiagram
 | **Spec** | `docs/spec/04-detection.md` |
 | **相关归档 task** | `detection-module-service` / `module-ui` / `cost-estimator` / `thresholds` / `promote-to-matting` / `e2e` |
 
-### 3️⃣ 生图模块 — 按能力组织，ComfyUI 走默认云机
+### 3️⃣ 生图模块 — 按入口组织，ComfyUI 选择运行云机
 
-当前 UI 只把**文生图**收敛成统一页：提示词生成、自己写提示词、提示词审稿共用，右侧“生图路径”选择 Grsai 或 ComfyUI 工作流，默认 Grsai。**图生图不合并**，Grsai 图生图和 ComfyUI 图生图继续按原入口走。
+当前 UI 只把**文生图**收敛成统一页：提示词生成、自己写提示词、提示词审稿共用，右侧“生图路径”选择 Grsai 或 ComfyUI 工作流，默认 Grsai。**图生图不合并**，Grsai 图生图和 ComfyUI 图生图继续按原入口走；另有 ComfyUI-only 的“提取后抠图”入口。
 
 | 部分 | 文件 |
 |---|---|
@@ -152,7 +152,7 @@ sequenceDiagram
 | **Spec** | `docs/spec/03-generation.md` |
 | **相关归档 task** | `grsai-adapter` / `generation-*` / `comfyui-*` / `chenyu-cloud-adapter` / `txt2img-*` / `img2img-*` / `extract-*` / `matting-*` |
 
-ComfyUI 路径页面只显示默认云机状态卡：状态、实例 UUID、ComfyUI 地址和刷新按钮。开机、关机、设为默认云机仍在设置页处理。
+ComfyUI 路径页面显示运行云机选择卡：运行状态、云机下拉框、实例 UUID、ComfyUI 地址和刷新按钮。开机、关机、设为默认云机仍在设置页处理。
 
 生图页顶部的“日志”按钮打开运行期日志弹窗，实时显示提示词生成、任务提交、模型调用进度、完成/失败和保存路径。它只保存在前端内存中，最近 `1000` 条，重启后清空。
 

@@ -1,4 +1,0 @@
-{"file":".trellis/spec/backend/index.md","reason":"Backend review checklist for adapter correctness and error handling."}
-{"file":".trellis/spec/guides/index.md","reason":"Shared thinking guide index for review context."}
-{"file":"docs/spec/03-generation.md","reason":"Verify adapter behavior against generation module contract and matrix."}
-{"file":"references/generation-paid/grsai-api.md","reason":"Verify request/response payloads and error semantics against the captured API reference."}

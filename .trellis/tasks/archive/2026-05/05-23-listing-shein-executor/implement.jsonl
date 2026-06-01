@@ -1,4 +1,0 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
-{"file": "docs/spec/07-listing.md", "reason": "Executor must stay in selectors/parser/action-executor/workflow layering and verify target_state after each action."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Use source project only as research context; rewrite Shein DOM actions in the new four-layer structure."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for historical Shein workflow; do not port DOM code."}

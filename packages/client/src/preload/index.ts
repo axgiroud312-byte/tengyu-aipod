@@ -82,6 +82,7 @@ import type {
 import type {
   ChenyuWorkflowMarketListInput,
   ChenyuWorkflowRunInput,
+  ComfyuiExtractMattingRunInput,
   ComfyuiExtractRunInput,
   ComfyuiImg2imgRunInput,
   ComfyuiMattingRunInput,
@@ -403,6 +404,8 @@ const api = {
       ipcRenderer.invoke('generation:run-extract', input) as Promise<string>,
     runComfyuiExtract: (input: ComfyuiExtractRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-extract', input) as Promise<string>,
+    runComfyuiExtractMatting: (input: ComfyuiExtractMattingRunInput) =>
+      ipcRenderer.invoke('generation:run-comfyui-extract-matting', input) as Promise<string>,
     runComfyuiMatting: (input: ComfyuiMattingRunInput) =>
       ipcRenderer.invoke('generation:run-comfyui-matting', input) as Promise<string>,
     runMixedMatting: (input: MixedMattingRunInput) =>

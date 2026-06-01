@@ -1,5 +1,0 @@
-{"file":"docs/spec/05-photoshop.md","reason":"Photoshop adapter contract, COM execution flow, error codes, and mutex requirement."}
-{"file":"docs/adr/0007-photoshop-windows-only-v1.md","reason":"Windows-only guard and non-Windows behavior for Photoshop COM modules."}
-{"file":".trellis/spec/backend/index.md","reason":"Main-process service and IPC guideline index."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"AppError and actionable error behavior guidance."}
-{"note":"REAL_PS evidence: `$env:REAL_PS='1'; pnpm -F @tengyu-aipod/client exec vitest run src/main/photoshop/com-adapter.test.ts --reporter=verbose` passed on Windows with real Photoshop COM version check; Photoshop COM version previously observed as 27.7.0. REAL_PS_MUTATE was not set and no destructive document close/output overwrite was performed."}

@@ -1,3 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Failure retry must respect listing_status, retry_failed_only, evidence paths, and profile workflow rules."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Keep retry UI wired to the rewritten runner; do not port source-project DOM code."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only for historical retry behavior; do not port DOM code."}

@@ -10,7 +10,7 @@ import {
 } from '@tengyu-aipod/shared'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
-import { ChenyuCloudClient } from './chenyu-cloud-client'
+import { ChenyuCloudClient, type ChenyuInstanceInfo, chenyuStatusName } from './chenyu-cloud-client'
 import {
   type ChenyuRunImageWorkflowInput,
   type ChenyuRunImageWorkflowResult,
@@ -18,7 +18,11 @@ import {
 } from './chenyu-workflow-runner'
 import { ComfyHttpClient } from './comfy-http-client'
 import { ComfyuiChenyuAdapter } from './comfyui-chenyu-adapter'
-import { ComfyuiInstanceManager } from './comfyui-instance-manager'
+import {
+  ComfyuiInstanceManager,
+  type ComfyuiInstanceSummary,
+  comfyuiUrlCandidates,
+} from './comfyui-instance-manager'
 import { type ComfyuiWorkflowSummary, comfyuiWorkflowCacheManager } from './comfyui-workflow-cache'
 import { GenerationConcurrencyController } from './generation-concurrency'
 import { normalizeGenerationLocalConfig } from './generation-local-config'
@@ -67,7 +71,11 @@ export type Txt2imgRunInput = {
   taskId?: string
 }
 
-export type ComfyuiTxt2imgRunInput = {
+export type ComfyuiInstanceRunInput = {
+  instanceUuid?: string
+}
+
+export type ComfyuiTxt2imgRunInput = ComfyuiInstanceRunInput & {
   prompts: string[]
   workflowId: string
   workflowName?: string
@@ -165,7 +173,7 @@ export type ExtractRunInput = {
   taskId?: string
 }
 
-export type ComfyuiImg2imgRunInput = {
+export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   sourceArtifactIds?: string[]
   sourceImagePaths?: string[]
   workflowId: string
@@ -177,7 +185,7 @@ export type ComfyuiImg2imgRunInput = {
   taskId?: string
 }
 
-export type ComfyuiExtractRunInput = {
+export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
   sourceImagePaths: string[]
   workflowId: string
   workflowName?: string
@@ -190,7 +198,7 @@ export type ComfyuiExtractRunInput = {
   taskId?: string
 }
 
-export type ComfyuiMattingRunInput = {
+export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
   sourceArtifactIds?: string[]
   sourceImagePaths?: string[]
   workflowId: string
@@ -207,6 +215,22 @@ export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & 
   maskSkillId?: string
   maskSkillVersion?: string
   maskModel?: string
+}
+
+export type ComfyuiExtractMattingRunInput = ComfyuiInstanceRunInput & {
+  sourceImagePaths: string[]
+  extractWorkflowId: string
+  extractWorkflowName?: string
+  extractWorkflowVersion?: string
+  mattingWorkflowId: string
+  mattingWorkflowName?: string
+  mattingWorkflowVersion?: string
+  skillId?: string
+  skillVersion?: string
+  prompt?: string
+  width?: number
+  height?: number
+  taskId?: string
 }
 
 export type ChenyuWorkflowMarketListInput = {
@@ -253,7 +277,12 @@ type GenerationServiceDependencies = {
   createComfyuiAdapter?: (input: {
     apiKey: string
     workbenchRoot: string
+    instance?: ComfyuiInstanceSummary
   }) => Pick<ComfyuiChenyuAdapter, 'generate'>
+  getChenyuInstanceInfo?: (input: {
+    apiKey: string
+    instanceUuid: string
+  }) => Promise<ChenyuInstanceInfo>
   createChenyuWorkflowRunner?: (input: {
     apiKey: string
     workbenchRoot: string
@@ -327,6 +356,120 @@ function promptSkillCategory(
     return printMode === 'full' ? 'txt2img-full-print' : 'txt2img-local-print'
   }
   return printMode === 'full' ? 'img2img-full-reference' : 'img2img-local-reference'
+}
+
+class ComfyuiInstanceLockManager {
+  private readonly locks = new Map<string, string>()
+
+  async run<T>(input: ComfyuiInstanceRunInput, taskId: string, operation: () => Promise<T>) {
+    const lockKey = comfyuiInstanceLockKey(input)
+    const runId = randomUUID()
+    const holder = this.locks.get(lockKey)
+    if (holder) {
+      throw new AppErrorClass('HTTP_4XX', '该云机正在执行其他任务，请换一台或稍后再试', false, {
+        provider: 'comfyui-chenyu',
+        instance: lockKey,
+        taskId,
+      })
+    }
+
+    this.locks.set(lockKey, runId)
+    try {
+      return await operation()
+    } finally {
+      if (this.locks.get(lockKey) === runId) {
+        this.locks.delete(lockKey)
+      }
+    }
+  }
+}
+
+export const comfyuiInstanceLocks = new ComfyuiInstanceLockManager()
+
+function comfyuiInstanceLockKey(input: ComfyuiInstanceRunInput) {
+  return input.instanceUuid?.trim() || 'default'
+}
+
+async function selectedComfyuiInstance(
+  input: ComfyuiInstanceRunInput,
+  apiKey: string,
+  dependencies: GenerationServiceDependencies,
+): Promise<ComfyuiInstanceSummary | undefined> {
+  const instanceUuid = input.instanceUuid?.trim()
+  if (!instanceUuid) {
+    return undefined
+  }
+
+  const info =
+    (await dependencies.getChenyuInstanceInfo?.({ apiKey, instanceUuid })) ??
+    (await new ChenyuCloudClient(apiKey).getInstanceInfo(instanceUuid))
+  const status = chenyuStatusName(info.status)
+  if (status !== 'running') {
+    throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '所选云机未运行，请到设置页开机后重试', false, {
+      provider: 'comfyui-chenyu',
+      instanceUuid,
+      status,
+    })
+  }
+
+  const comfyuiUrl = comfyuiUrlCandidates(info.server_map, info.server_url)[0]?.url
+  if (!comfyuiUrl) {
+    throw new AppErrorClass(
+      'HTTP_4XX',
+      '所选云机没有可用 ComfyUI 地址，请刷新实例列表或到设置页确认端口映射',
+      false,
+      {
+        provider: 'comfyui-chenyu',
+        instanceUuid,
+      },
+    )
+  }
+
+  const now = Date.now()
+  return {
+    provider: 'chenyu',
+    instanceUuid: info.instance_uuid,
+    comfyuiUrl,
+    podUuid: null,
+    gpuUuid: null,
+    gpuName: null,
+    status: 'running',
+    podPriceHour: 0,
+    gpuPriceHour: 0,
+    autoShutdownAt: null,
+    createdAt: now,
+    lastUsedAt: now,
+    runningMinutes: 0,
+    estimatedCost: 0,
+  }
+}
+
+async function createComfyuiAdapterForRun(
+  input: ComfyuiInstanceRunInput,
+  apiKey: string,
+  workbenchRoot: string,
+  db: Pick<SqliteDatabase, 'prepare'>,
+  dependencies: GenerationServiceDependencies,
+) {
+  const instance = await selectedComfyuiInstance(input, apiKey, dependencies)
+  return (
+    dependencies.createComfyuiAdapter?.({
+      apiKey,
+      workbenchRoot,
+      ...(instance ? { instance } : {}),
+    }) ??
+    new ComfyuiChenyuAdapter({
+      ...(instance ? { selectedInstance: instance } : {}),
+      instanceManager: new ComfyuiInstanceManager({
+        chenyu: new ChenyuCloudClient(apiKey),
+      }),
+      comfyHttp: new ComfyHttpClient(instance?.comfyuiUrl ?? currentComfyuiUrl(workbenchRoot, db)),
+      createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
+      workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+      workbenchRoot,
+      openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+    })
+  )
 }
 
 function observeGenerationError(
@@ -466,6 +609,11 @@ const GENERATION_TASK_PREFIX: Record<GenerationCapability, string> = {
 function generationTaskId(inputTaskId: string | undefined, capability: GenerationCapability) {
   const custom = inputTaskId?.trim()
   return safeBaseName(custom || `${GENERATION_TASK_PREFIX[capability]}-${timestampSlug()}`)
+}
+
+function extractMattingTaskId(inputTaskId: string | undefined) {
+  const custom = inputTaskId?.trim()
+  return safeBaseName(custom || `提取后抠图-${timestampSlug()}`)
 }
 
 function generationTaskOutputFolder(
@@ -1560,6 +1708,56 @@ export async function runComfyuiExtract(
   return taskId
 }
 
+export async function runComfyuiExtractMatting(
+  input: ComfyuiExtractMattingRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const sourceImagePaths = Array.from(
+    new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
+  )
+  if (sourceImagePaths.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张源图', false)
+  }
+  if (!input.extractWorkflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
+  }
+  if (!input.mattingWorkflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 抠图工作流', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = extractMattingTaskId(input.taskId)
+  createGenerationDebugLogger({}, { taskId, capability: 'matting' })('任务已提交', 'info', {
+    operation: 'submit',
+    provider: 'comfyui-chenyu',
+    sourceCount: sourceImagePaths.length,
+    extractWorkflowId: input.extractWorkflowId,
+    mattingWorkflowId: input.mattingWorkflowId,
+    width: input.width ?? 1024,
+    height: input.height ?? 1024,
+  })
+  void runComfyuiExtractMattingBatch(
+    { ...input, taskId, sourceImagePaths },
+    {
+      ...dependencies,
+      getSecret: async () => apiKey,
+    },
+  )
+    .then((result) => {
+      emitCompleted({ ok: true, result })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
+  return taskId
+}
+
 export async function runComfyuiMatting(
   input: ComfyuiMattingRunInput,
   dependencies: GenerationServiceDependencies = {},
@@ -1708,6 +1906,7 @@ async function runTxt2imgTask(
             succeeded: result.succeeded,
             failed: result.failed,
             current_prompt: prompt,
+            images: result.images,
           })
 
           try {
@@ -1775,6 +1974,7 @@ async function runTxt2imgTask(
               succeeded: result.succeeded,
               failed: result.failed,
               current_prompt: prompt,
+              images: result.images,
             })
           }
         }),
@@ -1944,106 +2144,282 @@ export async function runComfyuiExtractBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'extract')
-  const result: GenerationRunResult = {
-    taskId,
-    total: sourceImagePaths.length,
-    succeeded: 0,
-    failed: 0,
-    images: [],
-    failures: [],
-  }
-  const emit = createGenerationProgressEmitter(dependencies)
-  const skillId = input.skillId?.trim()
-  const skill = skillId
-    ? await (dependencies.skillCache ?? skillCacheManager).getSkill(skillId, input.skillVersion)
-    : null
-  const prompt =
-    skill?.systemPrompt.trim() ||
-    input.prompt?.trim() ||
-    'Extract the print from the source product image.'
-  const sizePx = comfyuiSizePx(input)
-  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+  return comfyuiInstanceLocks.run(input, taskId, async () => {
+    const result: GenerationRunResult = {
+      taskId,
+      total: sourceImagePaths.length,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+    }
+    const emit = createGenerationProgressEmitter(dependencies)
+    const skillId = input.skillId?.trim()
+    const skill = skillId
+      ? await (dependencies.skillCache ?? skillCacheManager).getSkill(skillId, input.skillVersion)
+      : null
+    const prompt =
+      skill?.systemPrompt.trim() ||
+      input.prompt?.trim() ||
+      'Extract the print from the source product image.'
+    const sizePx = comfyuiSizePx(input)
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
-  try {
-    ensureGenerationTables(db)
-    const adapter =
-      dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
-      new ComfyuiChenyuAdapter({
-        instanceManager: new ComfyuiInstanceManager({
-          chenyu: new ChenyuCloudClient(apiKey),
-        }),
-        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
-        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
-        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+    try {
+      ensureGenerationTables(db)
+      const adapter = await createComfyuiAdapterForRun(
+        input,
+        apiKey,
         workbenchRoot,
-        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
-      })
-    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
+        db,
+        dependencies,
+      )
+      const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
 
-    for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
-      emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
-      try {
-        const sourceIdentity = await imageIdentity(sourceImagePath)
-        registerSourceArtifact(db, {
-          identity: sourceIdentity,
-          imagePath: sourceImagePath,
-          taskId,
-          createdAt: Date.now(),
-        })
-        emitComfyuiRequestLog(debug, {
-          ...input,
-          prompt,
-          sourceImage: basename(sourceImagePath),
-          sourceIndex: index + 1,
-          total: sourceImagePaths.length,
-          width: sizePx.width,
-          height: sizePx.height,
-        })
-        const response = await adapter.generate({
-          capability: 'extract',
-          prompt,
-          workflow_id: input.workflowId.trim(),
-          reference_images: [await imageReference(sourceImagePath)],
-          output: { format: 'png', size_px: sizePx },
-          options: {
+      for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
+        emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
+        try {
+          const sourceIdentity = await imageIdentity(sourceImagePath)
+          registerSourceArtifact(db, {
+            identity: sourceIdentity,
+            imagePath: sourceImagePath,
             taskId,
-            sourceArtifactIds: [sourceIdentity.artifactId],
+            createdAt: Date.now(),
+          })
+          emitComfyuiRequestLog(debug, {
+            ...input,
+            prompt,
+            sourceImage: basename(sourceImagePath),
+            sourceIndex: index + 1,
+            total: sourceImagePaths.length,
             width: sizePx.width,
             height: sizePx.height,
-            ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
-          },
-        } satisfies GenerateRequest)
-        if (response.status !== 'succeeded') {
-          throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
-        }
-        result.succeeded += response.images.length
-        result.images.push(
-          ...response.images.map((image) => ({
+          })
+          const response = await adapter.generate({
+            capability: 'extract',
             prompt,
-            url: image.url,
-            ...(image.local_path ? { localPath: image.local_path } : {}),
+            workflow_id: input.workflowId.trim(),
+            reference_images: [await imageReference(sourceImagePath)],
+            output: { format: 'png', size_px: sizePx },
+            options: {
+              taskId,
+              sourceArtifactIds: [sourceIdentity.artifactId],
+              width: sizePx.width,
+              height: sizePx.height,
+              ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+            },
+          } satisfies GenerateRequest)
+          if (response.status !== 'succeeded') {
+            throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
+          }
+          result.succeeded += response.images.length
+          result.images.push(
+            ...response.images.map((image) => ({
+              prompt,
+              url: image.url,
+              ...(image.local_path ? { localPath: image.local_path } : {}),
+              sourcePath: sourceImagePath,
+              artifactId: sourceIdentity.artifactId,
+              printId: sourceIdentity.printId,
+            })),
+          )
+        } catch (error) {
+          result.failed += 1
+          result.failures.push({
+            prompt,
+            sourcePath: sourceImagePath,
+            error: appErrorMessage(error),
+          })
+        } finally {
+          emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
+        }
+      }
+
+      return result
+    } finally {
+      db.close()
+    }
+  })
+}
+
+export async function runComfyuiExtractMattingBatch(
+  input: ComfyuiExtractMattingRunInput,
+  dependencies: GenerationServiceDependencies = {},
+) {
+  const sourceImagePaths = Array.from(
+    new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
+  )
+  if (sourceImagePaths.length === 0) {
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张源图', false)
+  }
+  if (!input.extractWorkflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
+  }
+  if (!input.mattingWorkflowId.trim()) {
+    throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 抠图工作流', false)
+  }
+
+  const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
+  if (!apiKey) {
+    throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+
+  const taskId = extractMattingTaskId(input.taskId)
+  return comfyuiInstanceLocks.run(input, taskId, async () => {
+    const result: GenerationRunResult = {
+      taskId,
+      total: sourceImagePaths.length,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+    }
+    const emit = createGenerationProgressEmitter(dependencies)
+    const skillId = input.skillId?.trim()
+    const skill = skillId
+      ? await (dependencies.skillCache ?? skillCacheManager).getSkill(skillId, input.skillVersion)
+      : null
+    const extractPrompt =
+      skill?.systemPrompt.trim() ||
+      input.prompt?.trim() ||
+      'Extract the print from the source product image.'
+    const mattingPrompt = 'Remove the background and output transparent PNG.'
+    const sizePx = comfyuiSizePx(input)
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    const tempFiles = dependencies.tempFiles ?? tempFileManager
+    let createdTempDir = false
+
+    try {
+      ensureGenerationTables(db)
+      const tempDir = await tempFiles.createTaskDir('matting', taskId)
+      createdTempDir = true
+      const adapter = await createComfyuiAdapterForRun(
+        input,
+        apiKey,
+        workbenchRoot,
+        db,
+        dependencies,
+      )
+      const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
+
+      for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
+        emitMattingProgress(result, taskId, sourceImagePaths.length, emit)
+        try {
+          const sourceIdentity = await imageIdentity(sourceImagePath)
+          registerSourceArtifact(db, {
+            identity: sourceIdentity,
+            imagePath: sourceImagePath,
+            taskId,
+            createdAt: Date.now(),
+          })
+
+          emitComfyuiRequestLog(debug, {
+            workflowId: input.extractWorkflowId,
+            workflowName: input.extractWorkflowName,
+            workflowVersion: input.extractWorkflowVersion,
+            prompt: extractPrompt,
+            sourceImage: basename(sourceImagePath),
+            sourceIndex: index + 1,
+            total: sourceImagePaths.length,
+            width: sizePx.width,
+            height: sizePx.height,
+          })
+          const extractResponse = await adapter.generate({
+            capability: 'extract',
+            prompt: extractPrompt,
+            workflow_id: input.extractWorkflowId.trim(),
+            reference_images: [await imageReference(sourceImagePath)],
+            output: { format: 'png', size_px: sizePx },
+            options: {
+              taskId: `${taskId}-extract-${index + 1}`,
+              sourceArtifactIds: [sourceIdentity.artifactId],
+              width: sizePx.width,
+              height: sizePx.height,
+              outputFolderOverride: join(tempDir, `extract-${index + 1}`),
+              registerArtifact: false,
+              maxOutputs: 1,
+              ...(input.extractWorkflowVersion
+                ? { workflowVersion: input.extractWorkflowVersion }
+                : {}),
+            },
+          } satisfies GenerateRequest)
+          if (extractResponse.status !== 'succeeded') {
+            throw extractResponse.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
+          }
+          const extractedImage = extractResponse.images[0]
+          if (!extractedImage?.local_path) {
+            throw new AppErrorClass('HTTP_5XX', 'ComfyUI 提取未返回本地图片', true)
+          }
+
+          emitComfyuiRequestLog(debug, {
+            workflowId: input.mattingWorkflowId,
+            workflowName: input.mattingWorkflowName,
+            workflowVersion: input.mattingWorkflowVersion,
+            prompt: mattingPrompt,
+            sourceImage: basename(extractedImage.local_path),
+            sourceIndex: index + 1,
+            total: sourceImagePaths.length,
+            width: sizePx.width,
+            height: sizePx.height,
+          })
+          const mattingResponse = await adapter.generate({
+            capability: 'matting',
+            prompt: mattingPrompt,
+            workflow_id: input.mattingWorkflowId.trim(),
+            reference_images: [await imageReference(extractedImage.local_path)],
+            output: { format: 'png', size_px: sizePx },
+            options: {
+              taskId,
+              sourceArtifactIds: [sourceIdentity.artifactId],
+              printId: sourceIdentity.printId,
+              width: sizePx.width,
+              height: sizePx.height,
+              maxOutputs: 1,
+              ...(input.mattingWorkflowVersion
+                ? { workflowVersion: input.mattingWorkflowVersion }
+                : {}),
+            },
+          } satisfies GenerateRequest)
+          if (mattingResponse.status !== 'succeeded') {
+            throw mattingResponse.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图失败', true)
+          }
+          const finalImage = mattingResponse.images[0]
+          if (!finalImage) {
+            throw new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图未返回结果图', true)
+          }
+          result.succeeded += 1
+          result.images.push({
+            prompt: mattingPrompt,
+            url: finalImage.url,
+            ...(finalImage.local_path ? { localPath: finalImage.local_path } : {}),
             sourcePath: sourceImagePath,
             artifactId: sourceIdentity.artifactId,
             printId: sourceIdentity.printId,
-          })),
-        )
-      } catch (error) {
-        result.failed += 1
-        result.failures.push({
-          prompt,
-          sourcePath: sourceImagePath,
-          error: appErrorMessage(error),
-        })
-      } finally {
-        emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
+          })
+        } catch (error) {
+          result.failed += 1
+          result.failures.push({
+            prompt: extractPrompt,
+            sourcePath: sourceImagePath,
+            error: appErrorMessage(error),
+          })
+        } finally {
+          emitMattingProgress(result, taskId, sourceImagePaths.length, emit)
+        }
+      }
+
+      return result
+    } finally {
+      db.close()
+      if (createdTempDir) {
+        await tempFiles.cleanupTask('matting', taskId)
       }
     }
-
-    return result
-  } finally {
-    db.close()
-  }
+  })
 }
 
 export async function runComfyuiMattingBatch(
@@ -2065,93 +2441,90 @@ export async function runComfyuiMattingBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'matting')
-  const emit = createGenerationProgressEmitter(dependencies)
-  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+  return comfyuiInstanceLocks.run(input, taskId, async () => {
+    const emit = createGenerationProgressEmitter(dependencies)
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
-  try {
-    ensureGenerationTables(db)
-    const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
-    const result: GenerationRunResult = {
-      taskId,
-      total: sourceArtifactIds.length,
-      succeeded: 0,
-      failed: 0,
-      images: [],
-      failures: [],
-    }
-    const sizePx = comfyuiOptionalSizePx(input)
-    const adapter =
-      dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
-      new ComfyuiChenyuAdapter({
-        instanceManager: new ComfyuiInstanceManager({
-          chenyu: new ChenyuCloudClient(apiKey),
-        }),
-        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
-        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
-        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
-        workbenchRoot,
-        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
-      })
-    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-
-    for (const [index, artifactId] of sourceArtifactIds.entries()) {
-      emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
-      try {
-        const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
-        const prompt = input.prompt?.trim() || 'Remove the background and output transparent PNG.'
-        emitComfyuiRequestLog(debug, {
-          ...input,
-          prompt,
-          sourceImage: basename(source.imagePath),
-          sourceIndex: index + 1,
-          total: sourceArtifactIds.length,
-          ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
-        })
-        const response = await adapter.generate({
-          capability: 'matting',
-          prompt,
-          workflow_id: input.workflowId.trim(),
-          reference_images: [source.reference],
-          output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
-          options: {
-            taskId,
-            sourceArtifactIds: [artifactId],
-            printId: source.printId,
-            ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
-            ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
-          },
-        } satisfies GenerateRequest)
-        if (response.status !== 'succeeded') {
-          throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图失败', true)
-        }
-        result.succeeded += response.images.length
-        result.images.push(
-          ...response.images.map((image) => ({
-            prompt,
-            url: image.url,
-            ...(image.local_path ? { localPath: image.local_path } : {}),
-            sourcePath: source.imagePath,
-            artifactId,
-            printId: source.printId,
-          })),
-        )
-      } catch (error) {
-        result.failed += 1
-        result.failures.push({
-          prompt: input.prompt?.trim() ?? '',
-          error: appErrorMessage(error),
-          sourcePath: artifactId,
-        })
-      } finally {
-        emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+    try {
+      ensureGenerationTables(db)
+      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+      const result: GenerationRunResult = {
+        taskId,
+        total: sourceArtifactIds.length,
+        succeeded: 0,
+        failed: 0,
+        images: [],
+        failures: [],
       }
-    }
+      const sizePx = comfyuiOptionalSizePx(input)
+      const adapter = await createComfyuiAdapterForRun(
+        input,
+        apiKey,
+        workbenchRoot,
+        db,
+        dependencies,
+      )
+      const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
-    return result
-  } finally {
-    db.close()
-  }
+      for (const [index, artifactId] of sourceArtifactIds.entries()) {
+        emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+        try {
+          const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
+          const prompt = input.prompt?.trim() || 'Remove the background and output transparent PNG.'
+          emitComfyuiRequestLog(debug, {
+            ...input,
+            prompt,
+            sourceImage: basename(source.imagePath),
+            sourceIndex: index + 1,
+            total: sourceArtifactIds.length,
+            ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+          })
+          const response = await adapter.generate({
+            capability: 'matting',
+            prompt,
+            workflow_id: input.workflowId.trim(),
+            reference_images: [source.reference],
+            output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
+            options: {
+              taskId,
+              sourceArtifactIds: [artifactId],
+              printId: source.printId,
+              ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+              ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+            },
+          } satisfies GenerateRequest)
+          if (response.status !== 'succeeded') {
+            throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图失败', true)
+          }
+          result.succeeded += response.images.length
+          result.images.push(
+            ...response.images.map((image) => ({
+              prompt,
+              url: image.url,
+              ...(image.local_path ? { localPath: image.local_path } : {}),
+              sourcePath: source.imagePath,
+              artifactId,
+              printId: source.printId,
+            })),
+          )
+        } catch (error) {
+          result.failed += 1
+          result.failures.push({
+            prompt: input.prompt?.trim() ?? '',
+            error: appErrorMessage(error),
+            sourcePath: artifactId,
+          })
+        } finally {
+          emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+        }
+      }
+
+      return result
+    } finally {
+      db.close()
+    }
+  })
 }
 
 export async function runMixedMattingBatch(
@@ -2176,159 +2549,156 @@ export async function runMixedMattingBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'matting')
-  const emit = createGenerationProgressEmitter(dependencies)
-  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
-  const tempFiles = dependencies.tempFiles ?? tempFileManager
-  let createdTempDir = false
+  return comfyuiInstanceLocks.run(input, taskId, async () => {
+    const emit = createGenerationProgressEmitter(dependencies)
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+    const tempFiles = dependencies.tempFiles ?? tempFileManager
+    let createdTempDir = false
 
-  try {
-    ensureGenerationTables(db)
-    const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
-    const result: GenerationRunResult = {
-      taskId,
-      total: sourceArtifactIds.length,
-      succeeded: 0,
-      failed: 0,
-      images: [],
-      failures: [],
-    }
-    const sizePx = comfyuiOptionalSizePx(input)
-    await tempFiles.createTaskDir('matting', taskId)
-    createdTempDir = true
-    const skill = await resolveMixedMattingMaskSkill(
-      input,
-      dependencies.skillCache ?? skillCacheManager,
-    )
-    const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
-    const grsai =
-      dependencies.createGrsaiAdapter?.(grsaiKey) ??
-      new GrsaiAdapter(grsaiKey, settings.grsai_node, { retries: settings.grsai_retries })
-    const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
-    const comfyui =
-      dependencies.createComfyuiAdapter?.({ apiKey: chenyuKey, workbenchRoot }) ??
-      new ComfyuiChenyuAdapter({
-        instanceManager: new ComfyuiInstanceManager({
-          chenyu: new ChenyuCloudClient(chenyuKey),
-        }),
-        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
-        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
-        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+    try {
+      ensureGenerationTables(db)
+      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+      const result: GenerationRunResult = {
+        taskId,
+        total: sourceArtifactIds.length,
+        succeeded: 0,
+        failed: 0,
+        images: [],
+        failures: [],
+      }
+      const sizePx = comfyuiOptionalSizePx(input)
+      await tempFiles.createTaskDir('matting', taskId)
+      createdTempDir = true
+      const skill = await resolveMixedMattingMaskSkill(
+        input,
+        dependencies.skillCache ?? skillCacheManager,
+      )
+      const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
+      const grsai =
+        dependencies.createGrsaiAdapter?.(grsaiKey) ??
+        new GrsaiAdapter(grsaiKey, settings.grsai_node, { retries: settings.grsai_retries })
+      const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
+      const comfyui = await createComfyuiAdapterForRun(
+        input,
+        chenyuKey,
         workbenchRoot,
-        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
-      })
-    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
+        db,
+        dependencies,
+      )
+      const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
-    for (const [index, artifactId] of sourceArtifactIds.entries()) {
-      emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
-      let maskPath: string | null = null
-      try {
-        const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
-        maskPath = join(await tempFiles.createTaskDir('matting', taskId), 'mask.png')
-        const maskModel = normalizeModel(input.maskModel ?? DEFAULT_GENERATION_MODEL)
-        const maskResponse = await grsai.generate({
-          capability: 'img2img',
-          prompt: skill.systemPrompt,
-          reference_images: [source.reference],
-          output: {
-            aspect_ratio: '1024x1024',
-            format: 'png',
-          },
-          model: maskModel,
-          options: {
-            replyType: 'async',
-            skillId: skill.id,
-            skillVersion: skill.version,
-          },
-        } satisfies GenerateRequest)
-        if (maskResponse.status !== 'succeeded') {
-          throw (
-            maskResponse.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 黑白图生成失败', true)
-          )
-        }
-        const maskImage = maskResponse.images[0]
-        if (!maskImage) {
-          throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回黑白图', true)
-        }
-        const maskBuffer = maskImage.local_path
-          ? await readFile(maskImage.local_path)
-          : await downloadImage(maskImage.url)
-        await writeFile(maskPath, maskBuffer)
-
-        const prompt =
-          input.prompt?.trim() ||
-          'Convert the black and white mask to alpha and composite it with the original print.'
-        emitComfyuiRequestLog(debug, {
-          ...input,
-          prompt,
-          sourceImage: basename(source.imagePath),
-          sourceIndex: index + 1,
-          total: sourceArtifactIds.length,
-          ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
-        })
-        const response = await comfyui.generate({
-          capability: 'matting',
-          prompt,
-          workflow_id: input.workflowId.trim(),
-          reference_images: [source.reference, await imageReference(maskPath)],
-          output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
-          options: {
-            taskId,
-            sourceArtifactIds: [artifactId],
-            printId: source.printId,
-            ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
-            workflowCategory: 'matting-mixed',
-            artifactProvider: 'grsai+comfyui-mask',
-            maskSkillId: skill.id,
-            maskSkillVersion: skill.version,
-            maskModel,
-            imageSlotIndexes: {
-              sourceImage: 0,
-              originalImage: 0,
-              image: 0,
-              maskImage: 1,
-              mask: 1,
-              alpha: 1,
-            },
-            ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
-          },
-        } satisfies GenerateRequest)
-        if (response.status !== 'succeeded') {
-          throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 混合抠图失败', true)
-        }
-        result.succeeded += response.images.length
-        result.images.push(
-          ...response.images.map((image) => ({
-            prompt,
-            url: image.url,
-            ...(image.local_path ? { localPath: image.local_path } : {}),
-            sourcePath: source.imagePath,
-            artifactId,
-            printId: source.printId,
-          })),
-        )
-      } catch (error) {
-        result.failed += 1
-        result.failures.push({
-          prompt: input.prompt?.trim() ?? '',
-          error: appErrorMessage(error),
-          sourcePath: artifactId,
-        })
-      } finally {
-        if (maskPath) {
-          await rm(maskPath, { force: true })
-        }
+      for (const [index, artifactId] of sourceArtifactIds.entries()) {
         emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+        let maskPath: string | null = null
+        try {
+          const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
+          maskPath = join(await tempFiles.createTaskDir('matting', taskId), 'mask.png')
+          const maskModel = normalizeModel(input.maskModel ?? DEFAULT_GENERATION_MODEL)
+          const maskResponse = await grsai.generate({
+            capability: 'img2img',
+            prompt: skill.systemPrompt,
+            reference_images: [source.reference],
+            output: {
+              aspect_ratio: '1024x1024',
+              format: 'png',
+            },
+            model: maskModel,
+            options: {
+              replyType: 'async',
+              skillId: skill.id,
+              skillVersion: skill.version,
+            },
+          } satisfies GenerateRequest)
+          if (maskResponse.status !== 'succeeded') {
+            throw (
+              maskResponse.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 黑白图生成失败', true)
+            )
+          }
+          const maskImage = maskResponse.images[0]
+          if (!maskImage) {
+            throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回黑白图', true)
+          }
+          const maskBuffer = maskImage.local_path
+            ? await readFile(maskImage.local_path)
+            : await downloadImage(maskImage.url)
+          await writeFile(maskPath, maskBuffer)
+
+          const prompt =
+            input.prompt?.trim() ||
+            'Convert the black and white mask to alpha and composite it with the original print.'
+          emitComfyuiRequestLog(debug, {
+            ...input,
+            prompt,
+            sourceImage: basename(source.imagePath),
+            sourceIndex: index + 1,
+            total: sourceArtifactIds.length,
+            ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+          })
+          const response = await comfyui.generate({
+            capability: 'matting',
+            prompt,
+            workflow_id: input.workflowId.trim(),
+            reference_images: [source.reference, await imageReference(maskPath)],
+            output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
+            options: {
+              taskId,
+              sourceArtifactIds: [artifactId],
+              printId: source.printId,
+              ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+              workflowCategory: 'matting-mixed',
+              artifactProvider: 'grsai+comfyui-mask',
+              maskSkillId: skill.id,
+              maskSkillVersion: skill.version,
+              maskModel,
+              imageSlotIndexes: {
+                sourceImage: 0,
+                originalImage: 0,
+                image: 0,
+                maskImage: 1,
+                mask: 1,
+                alpha: 1,
+              },
+              ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+            },
+          } satisfies GenerateRequest)
+          if (response.status !== 'succeeded') {
+            throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 混合抠图失败', true)
+          }
+          result.succeeded += response.images.length
+          result.images.push(
+            ...response.images.map((image) => ({
+              prompt,
+              url: image.url,
+              ...(image.local_path ? { localPath: image.local_path } : {}),
+              sourcePath: source.imagePath,
+              artifactId,
+              printId: source.printId,
+            })),
+          )
+        } catch (error) {
+          result.failed += 1
+          result.failures.push({
+            prompt: input.prompt?.trim() ?? '',
+            error: appErrorMessage(error),
+            sourcePath: artifactId,
+          })
+        } finally {
+          if (maskPath) {
+            await rm(maskPath, { force: true })
+          }
+          emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
+        }
+      }
+
+      return result
+    } finally {
+      db.close()
+      if (createdTempDir) {
+        await tempFiles.cleanupTask('matting', taskId)
       }
     }
-
-    return result
-  } finally {
-    db.close()
-    if (createdTempDir) {
-      await tempFiles.cleanupTask('matting', taskId)
-    }
-  }
+  })
 }
 
 export async function runComfyuiTxt2imgBatch(
@@ -2351,91 +2721,88 @@ export async function runComfyuiTxt2imgBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'txt2img')
-  const result: GenerationRunResult = {
-    taskId,
-    total: prompts.length,
-    succeeded: 0,
-    failed: 0,
-    images: [],
-    failures: [],
-  }
-  const emit = createGenerationProgressEmitter(dependencies)
-  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+  return comfyuiInstanceLocks.run(input, taskId, async () => {
+    const result: GenerationRunResult = {
+      taskId,
+      total: prompts.length,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+    }
+    const emit = createGenerationProgressEmitter(dependencies)
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
-  try {
-    ensureGenerationTables(db)
-    const concurrency = clampInt(input.concurrency ?? 1, 1, 10, 1)
-    const controller = new GenerationConcurrencyController({ workers: concurrency })
-    const adapter =
-      dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
-      new ComfyuiChenyuAdapter({
-        instanceManager: new ComfyuiInstanceManager({
-          chenyu: new ChenyuCloudClient(apiKey),
-        }),
-        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
-        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
-        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+    try {
+      ensureGenerationTables(db)
+      const concurrency = clampInt(input.concurrency ?? 1, 1, 10, 1)
+      const controller = new GenerationConcurrencyController({ workers: concurrency })
+      const adapter = await createComfyuiAdapterForRun(
+        input,
+        apiKey,
         workbenchRoot,
-        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
-      })
-    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
-    const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
-    const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
+        db,
+        dependencies,
+      )
+      const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
+      const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
+      const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
 
-    await Promise.all(
-      prompts.map((prompt, index) =>
-        controller.run(`${taskId}-${index}`, async () => {
-          emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
-          try {
-            emitComfyuiRequestLog(debug, {
-              ...input,
-              prompt,
-              sourceIndex: index + 1,
-              total: prompts.length,
-              width,
-              height,
-            })
-            const response = await adapter.generate({
-              capability: 'txt2img',
-              prompt,
-              workflow_id: input.workflowId.trim(),
-              output: {
-                format: 'png',
-                size_px: { width, height },
-              },
-              options: {
-                taskId,
+      await Promise.all(
+        prompts.map((prompt, index) =>
+          controller.run(`${taskId}-${index}`, async () => {
+            emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
+            try {
+              emitComfyuiRequestLog(debug, {
+                ...input,
+                prompt,
+                sourceIndex: index + 1,
+                total: prompts.length,
                 width,
                 height,
-                ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
-              },
-            } satisfies GenerateRequest)
-            if (response.status !== 'succeeded') {
-              throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 文生图失败', true)
-            }
-            result.succeeded += response.images.length
-            result.images.push(
-              ...response.images.map((image) => ({
+              })
+              const response = await adapter.generate({
+                capability: 'txt2img',
                 prompt,
-                url: image.url,
-                ...(image.local_path ? { localPath: image.local_path } : {}),
-              })),
-            )
-          } catch (error) {
-            result.failed += 1
-            result.failures.push({ prompt, error: appErrorMessage(error) })
-          } finally {
-            emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
-          }
-        }),
-      ),
-    )
+                workflow_id: input.workflowId.trim(),
+                output: {
+                  format: 'png',
+                  size_px: { width, height },
+                },
+                options: {
+                  taskId,
+                  width,
+                  height,
+                  ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+                },
+              } satisfies GenerateRequest)
+              if (response.status !== 'succeeded') {
+                throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 文生图失败', true)
+              }
+              result.succeeded += response.images.length
+              result.images.push(
+                ...response.images.map((image) => ({
+                  prompt,
+                  url: image.url,
+                  ...(image.local_path ? { localPath: image.local_path } : {}),
+                })),
+              )
+            } catch (error) {
+              result.failed += 1
+              result.failures.push({ prompt, error: appErrorMessage(error) })
+            } finally {
+              emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
+            }
+          }),
+        ),
+      )
 
-    return result
-  } finally {
-    db.close()
-  }
+      return result
+    } finally {
+      db.close()
+    }
+  })
 }
 
 export async function runComfyuiImg2imgBatch(
@@ -2457,94 +2824,91 @@ export async function runComfyuiImg2imgBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'img2img')
-  const emit = createGenerationProgressEmitter(dependencies)
-  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
-  const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
+  return comfyuiInstanceLocks.run(input, taskId, async () => {
+    const emit = createGenerationProgressEmitter(dependencies)
+    const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
-  try {
-    ensureGenerationTables(db)
-    const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
-    const result: GenerationRunResult = {
-      taskId,
-      total: sourceArtifactIds.length,
-      succeeded: 0,
-      failed: 0,
-      images: [],
-      failures: [],
-    }
-    const sizePx = comfyuiSizePx(input)
-    const adapter =
-      dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
-      new ComfyuiChenyuAdapter({
-        instanceManager: new ComfyuiInstanceManager({
-          chenyu: new ChenyuCloudClient(apiKey),
-        }),
-        comfyHttp: new ComfyHttpClient(await currentComfyuiUrl(workbenchRoot, db)),
-        createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
-        workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+    try {
+      ensureGenerationTables(db)
+      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+      const result: GenerationRunResult = {
+        taskId,
+        total: sourceArtifactIds.length,
+        succeeded: 0,
+        failed: 0,
+        images: [],
+        failures: [],
+      }
+      const sizePx = comfyuiSizePx(input)
+      const adapter = await createComfyuiAdapterForRun(
+        input,
+        apiKey,
         workbenchRoot,
-        openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
-      })
-    const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
+        db,
+        dependencies,
+      )
+      const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
 
-    for (const [index, artifactId] of sourceArtifactIds.entries()) {
-      emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
-      try {
-        const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
-        const prompt = input.prompt?.trim() || 'Generate an image-to-image print variation.'
-        emitComfyuiRequestLog(debug, {
-          ...input,
-          prompt,
-          sourceImage: basename(source.imagePath),
-          sourceIndex: index + 1,
-          total: sourceArtifactIds.length,
-          width: sizePx.width,
-          height: sizePx.height,
-        })
-        const response = await adapter.generate({
-          capability: 'img2img',
-          prompt,
-          workflow_id: input.workflowId.trim(),
-          reference_images: [source.reference],
-          output: { format: 'png', size_px: sizePx },
-          options: {
-            taskId,
-            sourceArtifactIds: [artifactId],
-            printId: source.printId,
+      for (const [index, artifactId] of sourceArtifactIds.entries()) {
+        emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
+        try {
+          const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
+          const prompt = input.prompt?.trim() || 'Generate an image-to-image print variation.'
+          emitComfyuiRequestLog(debug, {
+            ...input,
+            prompt,
+            sourceImage: basename(source.imagePath),
+            sourceIndex: index + 1,
+            total: sourceArtifactIds.length,
             width: sizePx.width,
             height: sizePx.height,
-            ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
-          },
-        } satisfies GenerateRequest)
-        if (response.status !== 'succeeded') {
-          throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 图生图失败', true)
-        }
-        result.succeeded += response.images.length
-        result.images.push(
-          ...response.images.map((image) => ({
+          })
+          const response = await adapter.generate({
+            capability: 'img2img',
             prompt,
-            url: image.url,
-            ...(image.local_path ? { localPath: image.local_path } : {}),
-            artifactId,
-            printId: source.printId,
-          })),
-        )
-      } catch (error) {
-        result.failed += 1
-        result.failures.push({
-          prompt: input.prompt?.trim() ?? '',
-          error: appErrorMessage(error),
-          sourcePath: artifactId,
-        })
-      } finally {
-        emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
+            workflow_id: input.workflowId.trim(),
+            reference_images: [source.reference],
+            output: { format: 'png', size_px: sizePx },
+            options: {
+              taskId,
+              sourceArtifactIds: [artifactId],
+              printId: source.printId,
+              width: sizePx.width,
+              height: sizePx.height,
+              ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+            },
+          } satisfies GenerateRequest)
+          if (response.status !== 'succeeded') {
+            throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 图生图失败', true)
+          }
+          result.succeeded += response.images.length
+          result.images.push(
+            ...response.images.map((image) => ({
+              prompt,
+              url: image.url,
+              ...(image.local_path ? { localPath: image.local_path } : {}),
+              artifactId,
+              printId: source.printId,
+            })),
+          )
+        } catch (error) {
+          result.failed += 1
+          result.failures.push({
+            prompt: input.prompt?.trim() ?? '',
+            error: appErrorMessage(error),
+            sourcePath: artifactId,
+          })
+        } finally {
+          emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
+        }
       }
-    }
 
-    return result
-  } finally {
-    db.close()
-  }
+      return result
+    } finally {
+      db.close()
+    }
+  })
 }
 
 function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prepare'>) {
@@ -2836,6 +3200,10 @@ export function registerGenerationIpc() {
   ipcMain.handle('generation:run-extract', (_event, input: ExtractRunInput) => runExtract(input))
   ipcMain.handle('generation:run-comfyui-extract', (_event, input: ComfyuiExtractRunInput) =>
     runComfyuiExtract(input),
+  )
+  ipcMain.handle(
+    'generation:run-comfyui-extract-matting',
+    (_event, input: ComfyuiExtractMattingRunInput) => runComfyuiExtractMatting(input),
   )
   ipcMain.handle('generation:run-comfyui-matting', (_event, input: ComfyuiMattingRunInput) =>
     runComfyuiMatting(input),

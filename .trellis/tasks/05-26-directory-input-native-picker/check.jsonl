@@ -1,6 +1,0 @@
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "质量门：typecheck/lint/重复代码/未使用导出等"}
-{"file": ".trellis/spec/frontend/component-guidelines.md", "reason": "验证 DirectoryPicker 是否符合 renderer 组件 / preload IPC 边界约束"}
-{"file": ".trellis/spec/frontend/type-safety.md", "reason": "验证两端类型对齐、无 any / @ts-ignore、zod 校验到位"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证 IPC 返回结构与 AppError 风格符合现有约定"}
-{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "验证旧 4 个 IPC 已删除、无残留调用、不存在重复实现"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "验证 main / preload / renderer 三层数据流贯通，无类型断裂"}

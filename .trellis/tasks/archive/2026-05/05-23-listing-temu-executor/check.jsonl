@@ -1,7 +1,0 @@
-{"file":"docs/spec/07-listing.md","reason":"Check executor responsibilities, no workflow orchestration, and post-action parser verification."}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"Check source project DOM logic was used only as reference, not directly ported."}
-{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"Check state-transition discipline, structured evidence, and failure context."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Check runner/platform boundaries and real-test guard expectations."}
-{"file":".trellis/spec/frontend/type-safety.md","reason":"Check selector/parser contracts and serializable state boundaries."}
-{"file":".trellis/tasks/archive/2026-05/05-23-listing-temu-parser/research/temu-parser-contract.md","reason":"Confirm executor verifies against the parser output contract."}
-{"file":".trellis/tasks/05-23-listing-temu-executor/research/temu-executor-contract.md","reason":"Check executor action state transitions and upload real-test guard behavior."}

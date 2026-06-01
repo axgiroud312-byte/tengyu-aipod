@@ -1,6 +1,0 @@
-{"file": "docs/spec/02-collection.md", "reason": "验收行为对照：click/scroll 行为、货号识别保留、散图池命名规则"}
-{"file": "docs/spec/00-overview.md", "reason": "IPC 命名 / zod 校验 / AppError / 主进程边界规约的合规性检查"}
-{"file": ".trellis/spec/frontend/quality-guidelines.md", "reason": "前端代码质量基线（lint/typecheck/无 any 等）"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "主进程代码质量基线"}
-{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "本任务横跨注入脚本 / IPC / 渲染层，需要按跨层数据流检查"}
-{"file": ".trellis/tasks/05-26-spa/prd.md", "reason": "对照 Acceptance Criteria 和 Definition of Done 逐项过"}

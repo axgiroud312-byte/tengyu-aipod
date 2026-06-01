@@ -1,3 +1,0 @@
-{"file":"docs/spec/04-detection.md","reason":"The check agent should verify the implementation matches the detection module UI and result-flow contract."}
-{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"This task has renderer, preload, main-process, and database boundaries, so the check agent should verify round-trip data flow."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"The check agent should verify the UI reuses existing detection and title patterns instead of duplicating logic."}

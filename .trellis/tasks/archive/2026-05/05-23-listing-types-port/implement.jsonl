@@ -1,4 +1,0 @@
-{"file":"docs/spec/07-listing.md","reason":"定义上架 shared 类型 port 范围、错误码和真实验证边界。"}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"确认只 port 框架/类型，不 port 店小秘 DOM 操作。"}
-{"file":".agents/skills/listing-automation-builder/SKILL.md","reason":"后续 selectors/parser/executor/workflow 必须遵守的四层方法论。"}
-{"file":".trellis/tasks/05-23-listing-types-port/research/listing-types-source-map.md","reason":"记录源项目 shared 类型、纯函数、排除项和切片 8 真实基线。"}

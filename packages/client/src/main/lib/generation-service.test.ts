@@ -3,8 +3,10 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { type ChenyuInstanceInfo, ChenyuInstanceStatus } from './chenyu-cloud-client'
 import {
   type GenerationDebugLogEntry,
+  comfyuiInstanceLocks,
   generateTxt2imgPrompts,
   listComfyuiExtractWorkflows,
   listComfyuiImg2imgWorkflows,
@@ -15,6 +17,7 @@ import {
   listImg2imgSources,
   resolveImg2imgReferences,
   runComfyuiExtractBatch,
+  runComfyuiExtractMattingBatch,
   runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
   runComfyuiTxt2imgBatch,
@@ -182,6 +185,24 @@ async function createImage(path: string, content: string) {
   await writeFile(path, content)
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
+}
+
+function runningChenyuInstance(instanceUuid: string, comfyuiUrl: string): ChenyuInstanceInfo {
+  return {
+    instance_uuid: instanceUuid,
+    status: ChenyuInstanceStatus.Running,
+    server_map: [{ title: 'ComfyUI', url: comfyuiUrl }],
+  }
+}
+
 beforeEach(async () => {
   const { mkdtemp } = await import('node:fs/promises')
   tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-generation-service-'))
@@ -228,6 +249,7 @@ describe('generation Grsai paid image service', () => {
     })
     const downloadImage = vi.fn().mockResolvedValue(Buffer.from('txt-result-image'))
     const debugLogs: GenerationDebugLogEntry[] = []
+    const progress: unknown[] = []
 
     const result = await runTxt2imgBatch(
       {
@@ -244,6 +266,7 @@ describe('generation Grsai paid image service', () => {
         createGrsaiAdapter: () => ({ generate }),
         downloadImage,
         emitDebugLog: (entry) => debugLogs.push(entry),
+        emitProgress: (item) => progress.push(item),
       },
     )
 
@@ -257,6 +280,14 @@ describe('generation Grsai paid image service', () => {
     expect(fakeDb.artifacts[0]?.[3]).toBe('txt2img')
     expect(fakeDb.artifacts[0]?.[4]).toBe('grsai')
     expect(fakeDb.artifacts[0]?.[10]).toBe('centered y2k star print')
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        task_id: 'txt-task',
+        capability: 'txt2img',
+        processed: 1,
+        images: [expect.objectContaining({ localPath: result.images[0]?.localPath })],
+      }),
+    )
     expect(debugLogs).toContainEqual(
       expect.objectContaining({
         level: 'debug',
@@ -281,6 +312,7 @@ describe('generation Grsai paid image service', () => {
       status: 'succeeded',
       images: [{ url: 'https://example.test/img-result.png' }],
     })
+    const progress: unknown[] = []
 
     const result = await runTxt2imgBatch(
       {
@@ -298,6 +330,7 @@ describe('generation Grsai paid image service', () => {
         openDatabase: fakeDb.openDatabase,
         createGrsaiAdapter: () => ({ generate }),
         downloadImage: vi.fn().mockResolvedValue(Buffer.from('img-result-image')),
+        emitProgress: (item) => progress.push(item),
       },
     )
 
@@ -312,6 +345,14 @@ describe('generation Grsai paid image service', () => {
       }),
     )
     expect(fakeDb.artifacts[0]?.[3]).toBe('img2img')
+    expect(progress).toContainEqual(
+      expect.objectContaining({
+        task_id: 'img-task',
+        capability: 'img2img',
+        processed: 1,
+        images: [expect.objectContaining({ localPath: result.images[0]?.localPath })],
+      }),
+    )
   })
 })
 
@@ -491,6 +532,76 @@ describe('generation comfyui service', () => {
         images: [expect.objectContaining({ localPath: '/result.png' })],
       }),
     )
+  })
+
+  it('passes the selected running instance to the ComfyUI adapter without reading the default instance', async () => {
+    const fakeDb = createDbWithoutComfyuiInstance()
+    const adapterInputs: unknown[] = []
+    const getChenyuInstanceInfo = vi
+      .fn()
+      .mockResolvedValue(runningChenyuInstance('inst-selected', 'https://selected-comfy.example'))
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///selected-instance-result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiTxt2imgBatch(
+      {
+        prompts: ['selected cloud instance print'],
+        workflowId: 'txt2img-v1',
+        taskId: 'txt2img-selected-instance',
+        instanceUuid: 'inst-selected',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        getChenyuInstanceInfo,
+        createComfyuiAdapter: (adapterInput) => {
+          adapterInputs.push(adapterInput)
+          return { generate }
+        },
+      },
+    )
+
+    expect(result).toMatchObject({ taskId: 'txt2img-selected-instance', succeeded: 1, failed: 0 })
+    expect(getChenyuInstanceInfo).toHaveBeenCalledWith({
+      apiKey: 'cy-key',
+      instanceUuid: 'inst-selected',
+    })
+    expect(adapterInputs[0]).toEqual(
+      expect.objectContaining({
+        apiKey: 'cy-key',
+        workbenchRoot,
+        instance: expect.objectContaining({
+          instanceUuid: 'inst-selected',
+          comfyuiUrl: 'https://selected-comfy.example',
+          status: 'running',
+        }),
+      }),
+    )
+  })
+
+  it('locks the selected ComfyUI instance while a task is running and releases it afterward', async () => {
+    const running = createDeferred<string>()
+    const firstRun = comfyuiInstanceLocks.run(
+      { instanceUuid: 'inst-lock' },
+      'task-a',
+      () => running.promise,
+    )
+
+    await expect(
+      comfyuiInstanceLocks.run({ instanceUuid: 'inst-lock' }, 'task-a', async () => 'second-ok'),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      message: '该云机正在执行其他任务，请换一台或稍后再试',
+    })
+
+    running.resolve('first-ok')
+    await expect(firstRun).resolves.toBe('first-ok')
+    await expect(
+      comfyuiInstanceLocks.run({ instanceUuid: 'inst-lock' }, 'task-c', async () => 'third-ok'),
+    ).resolves.toBe('third-ok')
   })
 
   it('lists only extract ComfyUI workflows', async () => {
@@ -1108,6 +1219,126 @@ describe('generation comfyui matting service', () => {
           height: 1400,
         }),
       }),
+    )
+  })
+
+  it('runs extract then matting on the same ComfyUI instance and cleans temporary extract outputs', async () => {
+    const sourcePath = join(tempRoot, 'extract-matting-source', 'source.png')
+    const extractedPath = join(tempRoot, 'extract-matting-temp-output', 'extracted.png')
+    const finalPath = join(tempRoot, 'extract-matting-final', 'final.png')
+    await createImage(sourcePath, 'source-image')
+    await createImage(extractedPath, 'extracted-image')
+    const fakeDb = createFakeDb()
+    const tempDir = join(workbenchRoot, '.workbench', 'tmp', 'matting', 'extract-matting-task')
+    const createTaskDir = vi.fn(async () => {
+      await mkdir(tempDir, { recursive: true })
+      return tempDir
+    })
+    const cleanupTask = vi.fn()
+    const progress: unknown[] = []
+    const getChenyuInstanceInfo = vi
+      .fn()
+      .mockResolvedValue(
+        runningChenyuInstance('inst-extract-matting', 'https://extract-matting-comfy.example'),
+      )
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [{ url: 'file:///extracted.png', local_path: extractedPath }],
+      })
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [{ url: 'file:///final.png', local_path: finalPath }],
+      })
+
+    const result = await runComfyuiExtractMattingBatch(
+      {
+        sourceImagePaths: [sourcePath],
+        extractWorkflowId: 'extract-v1',
+        extractWorkflowName: 'Extract Workflow',
+        extractWorkflowVersion: '1.0.0',
+        mattingWorkflowId: 'matting-v1',
+        mattingWorkflowName: 'Matting Workflow',
+        mattingWorkflowVersion: '2.0.0',
+        skillId: 'extract-comfyui-workflow',
+        skillVersion: '1.0.0',
+        width: 1600,
+        height: 1200,
+        taskId: 'extract-matting-task',
+        instanceUuid: 'inst-extract-matting',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        getChenyuInstanceInfo,
+        createComfyuiAdapter: () => ({ generate }),
+        skillCache: {
+          getSkill: vi.fn().mockResolvedValue(
+            extractSkill({
+              id: 'extract-comfyui-workflow',
+              version: '1.0.0',
+              systemPrompt: 'backend extract prompt',
+            }),
+          ),
+          listSkills: vi.fn(),
+        },
+        tempFiles: { createTaskDir, cleanupTask },
+        emitProgress: (item) => progress.push(item),
+      },
+    )
+
+    const sourceArtifactId = String(fakeDb.artifacts[0]?.[0])
+    expect(result).toMatchObject({
+      taskId: 'extract-matting-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [expect.objectContaining({ localPath: finalPath, sourcePath })],
+    })
+    expect(fakeDb.artifacts).toHaveLength(1)
+    expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
+    expect(generate).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        capability: 'extract',
+        prompt: 'backend extract prompt',
+        workflow_id: 'extract-v1',
+        reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
+        output: expect.objectContaining({ size_px: { width: 1600, height: 1200 } }),
+        options: expect.objectContaining({
+          taskId: 'extract-matting-task-extract-1',
+          sourceArtifactIds: [sourceArtifactId],
+          outputFolderOverride: join(tempDir, 'extract-1'),
+          registerArtifact: false,
+          maxOutputs: 1,
+          workflowVersion: '1.0.0',
+        }),
+      }),
+    )
+    expect(generate).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        capability: 'matting',
+        prompt: 'Remove the background and output transparent PNG.',
+        workflow_id: 'matting-v1',
+        reference_images: [expect.objectContaining({ mime_type: 'image/png' })],
+        output: expect.objectContaining({ size_px: { width: 1600, height: 1200 } }),
+        options: expect.objectContaining({
+          taskId: 'extract-matting-task',
+          sourceArtifactIds: [sourceArtifactId],
+          width: 1600,
+          height: 1200,
+          maxOutputs: 1,
+          workflowVersion: '2.0.0',
+        }),
+      }),
+    )
+    expect(createTaskDir).toHaveBeenCalledWith('matting', 'extract-matting-task')
+    expect(cleanupTask).toHaveBeenCalledWith('matting', 'extract-matting-task')
+    expect(progress).toContainEqual(
+      expect.objectContaining({ task_id: 'extract-matting-task', capability: 'matting' }),
     )
   })
 

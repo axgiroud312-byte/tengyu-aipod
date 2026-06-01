@@ -29,6 +29,7 @@ export type ComfyuiChenyuAdapterOptions = {
   instanceManager: {
     refreshCurrentInstance(): Promise<ComfyuiInstanceSummary | null>
   }
+  selectedInstance?: ComfyuiInstanceSummary
   comfyHttp?: Pick<ComfyHttpClient, 'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'>
   createComfyHttp?: (
     baseUrl: string,
@@ -64,7 +65,8 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
-    const instance = await this.options.instanceManager.refreshCurrentInstance()
+    const instance =
+      this.options.selectedInstance ?? (await this.options.instanceManager.refreshCurrentInstance())
     if (!instance || instance.status !== 'running') {
       throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '默认云机未运行，请先到设置页开机', false, {
         provider: 'comfyui-chenyu',
@@ -142,19 +144,23 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     comfyHttp: { viewImage(input: ComfyViewImageInput): Promise<Buffer> }
   }) {
     const taskId = taskIdFromRequest(input.req)
-    const outputFolder = join(
-      this.options.workbenchRoot,
-      WORKBENCH_DIRECTORIES.generation,
-      CAPABILITY_FOLDERS[input.req.capability],
-      safePathSegment(taskId),
-    )
+    const outputFolder =
+      stringOption(input.req.options?.outputFolderOverride) ??
+      join(
+        this.options.workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        CAPABILITY_FOLDERS[input.req.capability],
+        safePathSegment(taskId),
+      )
+    const shouldRegisterArtifact = input.req.options?.registerArtifact !== false
+    const outputs = clampOutputCount(input.outputs, input.req.options?.maxOutputs)
     await mkdir(outputFolder, { recursive: true })
     const db = this.options.openDatabase(this.options.workbenchRoot)
     try {
       ensureArtifactsTable(db)
 
       const images: NonNullable<GenerateResponse['images']> = []
-      for (const output of input.outputs) {
+      for (const output of outputs) {
         if (!output.filename) {
           throw new AppErrorClass('HTTP_5XX', 'ComfyUI 输出缺少文件名', true, {
             provider: 'comfyui-chenyu',
@@ -176,17 +182,19 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
                 `${printId}${input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)}`,
               )
         await writeFile(targetPath, buffer)
-        const artifactId = await registerComfyuiArtifact(db, {
-          taskId,
-          printId,
-          targetPath,
-          capability: input.req.capability,
-          workflow: input.workflow,
-          prompt: input.req.prompt,
-          params: input.req.options ?? {},
-          sourceArtifactIds: sourceArtifactIdsFromRequest(input.req),
-          createdAt: this.now(),
-        })
+        if (shouldRegisterArtifact) {
+          await registerComfyuiArtifact(db, {
+            taskId,
+            printId,
+            targetPath,
+            capability: input.req.capability,
+            workflow: input.workflow,
+            prompt: input.req.prompt,
+            params: input.req.options ?? {},
+            sourceArtifactIds: sourceArtifactIdsFromRequest(input.req),
+            createdAt: this.now(),
+          })
+        }
         images.push({
           url: pathToFileURL(targetPath).toString(),
           local_path: targetPath,
@@ -311,6 +319,17 @@ function imageIndexForSlot(slot: ComfyuiWorkflowSlot, req: GenerateRequest) {
 
 function providerFromParams(params: Record<string, unknown>) {
   return params.artifactProvider === 'grsai+comfyui-mask' ? 'grsai+comfyui-mask' : 'comfyui-chenyu'
+}
+
+function stringOption(value: unknown) {
+  return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function clampOutputCount(outputs: ComfyImageOutput[], value: unknown) {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return outputs
+  }
+  return outputs.slice(0, Math.max(0, Math.floor(value)))
 }
 
 function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: GenerateRequest) {

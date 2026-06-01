@@ -287,6 +287,9 @@ declare global {
         runComfyuiExtract: (
           input: import('../../main/lib/generation-service').ComfyuiExtractRunInput,
         ) => Promise<string>
+        runComfyuiExtractMatting: (
+          input: import('../../main/lib/generation-service').ComfyuiExtractMattingRunInput,
+        ) => Promise<string>
         runComfyuiMatting: (
           input: import('../../main/lib/generation-service').ComfyuiMattingRunInput,
         ) => Promise<string>

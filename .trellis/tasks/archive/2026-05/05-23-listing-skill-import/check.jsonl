@@ -1,3 +1,0 @@
-{"file":"docs/spec/07-listing.md","reason":"核对 skill 导入是否满足上架 spec 的方法论和后续四层分离要求。"}
-{"file":"docs/adr/0004-listing-direct-port-with-rewrite.md","reason":"核对导入声明是否符合 ADR-0004 的强制 skill 依赖。"}
-{"file":".trellis/tasks/05-23-listing-skill-import/research/listing-source-map.md","reason":"核对 PRD/jsonl 是否覆盖真实测试基线、3 个模板和外部参考源码边界。"}

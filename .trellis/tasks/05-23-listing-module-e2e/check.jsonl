@@ -1,3 +1,0 @@
-{"file": "docs/spec/07-listing.md", "reason": "Check real E2E evidence, guarded REAL_LISTING behavior, resume, fail-streak, profile-lock, and listing_status success criteria."}
-{"file": "docs/adr/0004-listing-direct-port-with-rewrite.md", "reason": "Check E2E stays on the rewritten runner and four-layer platform implementation."}
-{"file": "/Users/macmini/Desktop/一键pod/上架程序/", "type": "directory", "reason": "Research context only; ensure no DOM code is copied or ported."}

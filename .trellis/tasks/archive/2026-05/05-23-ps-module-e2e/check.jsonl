@@ -1,5 +1,0 @@
-{"file":"docs/spec/05-photoshop.md","reason":"Primary acceptance source for PS E2E output layout, UI warnings, and skip-completed validation."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend quality guideline index for reviewing E2E evidence and real COM test coverage."}
-{"file":".trellis/spec/frontend/index.md","reason":"Frontend quality guideline index for reviewing UI evidence."}
-{"file":".trellis/spec/guides/index.md","reason":"Cross-layer and reuse thinking guide index for final review."}
-{"file":".trellis/tasks/05-23-ps-module-e2e/prd.md","reason":"Task-specific environment, REAL_PS guard, path, and validation requirements to verify before completion."}

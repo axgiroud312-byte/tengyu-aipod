@@ -1,7 +1,0 @@
-{"file":"docs/spec/03-generation.md","reason":"Defines ComfyUI execution flow, workflow cache/slot shape, output folders, and artifact requirements."}
-{"file":"references/generation-comfyui/chenyu-cloud-api.md","reason":"Confirms v1 uses native ComfyUI HTTP instead of Chenyu workflow/run APIs."}
-{"file":".trellis/tasks/05-23-comfyui-execution/research/comfyui-execution.md","reason":"Task-specific execution boundaries, slot injection, output parsing, and persistence notes."}
-{"file":".trellis/spec/backend/index.md","reason":"Backend guideline entry point for main-process adapter code."}
-{"file":".trellis/spec/backend/error-handling.md","reason":"Adapter must preserve ComfyUI/Chenyu AppError semantics and CHENYU_INSTANCE_DOWN behavior."}
-{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality expectations and test requirements for backend code."}
-{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Required to reuse existing generation service/artifact patterns instead of rewriting slice 4."}
