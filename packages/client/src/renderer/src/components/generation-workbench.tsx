@@ -9,8 +9,10 @@ import {
 } from '@/features/generation/generation-debug-log'
 import type { GenerationCapability, Skill, SkillVariable } from '@tengyu-aipod/shared'
 import {
+  ChevronDown,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
   CircleDashed,
   FolderOpen,
   ImagePlus,
@@ -189,6 +191,96 @@ function progressPercent(progress: GenerationProgress | null) {
     return 0
   }
   return Math.round((progress.processed / progress.total) * 100)
+}
+
+function useGenerationTaskEvents({
+  expectedCapability,
+  setProgress,
+  setPreviewImages,
+  setResult,
+  setError,
+  setRunning,
+}: {
+  expectedCapability: GenerationCapability
+  setProgress: (progress: GenerationProgress) => void
+  setPreviewImages: (images: GenerationRunImage[]) => void
+  setResult: (result: GenerationRunResult | null) => void
+  setError: (error: string | null) => void
+  setRunning: (running: boolean) => void
+}) {
+  const [taskId, setTaskId] = useState<string | null>(null)
+  const activeTaskIdRef = useRef<string | null>(null)
+  const awaitingTaskStartRef = useRef(false)
+  const handledTaskEventRef = useRef(false)
+
+  useEffect(() => {
+    const shouldHandleTask = (nextTaskId: string, nextCapability?: GenerationCapability) => {
+      const activeTaskId = activeTaskIdRef.current ?? taskId
+      if (activeTaskId) {
+        return nextTaskId === activeTaskId
+      }
+      if (
+        awaitingTaskStartRef.current &&
+        (!nextCapability || nextCapability === expectedCapability)
+      ) {
+        activeTaskIdRef.current = nextTaskId
+        awaitingTaskStartRef.current = false
+        setTaskId(nextTaskId)
+        return true
+      }
+      return false
+    }
+
+    const offProgress = window.api.generation.onProgress((nextProgress) => {
+      if (!shouldHandleTask(nextProgress.task_id, nextProgress.capability)) {
+        return
+      }
+      handledTaskEventRef.current = true
+      setProgress(nextProgress)
+      if (nextProgress.images) {
+        setPreviewImages(nextProgress.images)
+      }
+    })
+    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
+      const nextTaskId = event.ok ? event.result.taskId : event.taskId
+      if (!shouldHandleTask(nextTaskId)) {
+        return
+      }
+      handledTaskEventRef.current = true
+      setRunning(false)
+      awaitingTaskStartRef.current = false
+      if (event.ok) {
+        setResult(event.result)
+        setPreviewImages(event.result.images)
+        setError(null)
+        return
+      }
+      setError(event.error)
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [expectedCapability, taskId, setError, setPreviewImages, setProgress, setResult, setRunning])
+
+  return {
+    beginTask() {
+      activeTaskIdRef.current = null
+      awaitingTaskStartRef.current = true
+      handledTaskEventRef.current = false
+      setTaskId(null)
+    },
+    activateTask(nextTaskId: string) {
+      const alreadyHandled = activeTaskIdRef.current === nextTaskId && handledTaskEventRef.current
+      activeTaskIdRef.current = nextTaskId
+      awaitingTaskStartRef.current = false
+      setTaskId(nextTaskId)
+      return alreadyHandled
+    },
+    clearTaskStart() {
+      awaitingTaskStartRef.current = false
+    },
+  }
 }
 
 function splitDataUrl(dataUrl: string) {
@@ -709,49 +801,25 @@ function GrsaiPromptGenerationPanel({
   const [comfyuiTxt2imgConcurrency, setComfyuiTxt2imgConcurrency] = useState('1')
   const [loadingComfyuiTxt2imgWorkflows, setLoadingComfyuiTxt2imgWorkflows] = useState(false)
   const [drafts, setDrafts] = useState<Txt2imgPromptDraft[]>([])
+  const [draftsCollapsed, setDraftsCollapsed] = useState(true)
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
   const [taskName, setTaskName] = useState('')
-  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [generatingPrompts, setGeneratingPrompts] = useState(false)
   const [running, setRunning] = useState(false)
-
-  useEffect(() => {
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.task_id !== taskId) {
-        return
-      }
-      setProgress(nextProgress)
-      if (nextProgress.images) {
-        setPreviewImages(nextProgress.images)
-      }
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== taskId) {
-        return
-      }
-      if (!event.ok && event.taskId !== taskId) {
-        return
-      }
-      setRunning(false)
-      if (event.ok) {
-        setResult(event.result)
-        setPreviewImages(event.result.images)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [taskId])
+  const taskEvents = useGenerationTaskEvents({
+    expectedCapability: capability,
+    setProgress,
+    setPreviewImages,
+    setResult,
+    setError,
+    setRunning,
+  })
 
   const activeImg2imgMode = img2imgModes.find((item) => item.key === img2imgMode) ?? img2imgModes[0]
   const aiMode = capability === 'txt2img' ? mode === 'ai' : img2imgMode !== 'manual'
@@ -864,6 +932,7 @@ function GrsaiPromptGenerationPanel({
           : {}),
       })
       setDrafts(nextDrafts)
+      setDraftsCollapsed(true)
       return nextDrafts
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '生成提示词失败')
@@ -903,6 +972,7 @@ function GrsaiPromptGenerationPanel({
         selected: true,
       })),
     )
+    setDraftsCollapsed(true)
     return prompts
   }
 
@@ -913,6 +983,7 @@ function GrsaiPromptGenerationPanel({
   }
 
   function addDraft() {
+    setDraftsCollapsed(false)
     setDrafts((current) => [...current, { id: crypto.randomUUID(), text: '', selected: true }])
   }
 
@@ -933,6 +1004,7 @@ function GrsaiPromptGenerationPanel({
     setResult(null)
     setPreviewImages([])
     setRunning(true)
+    taskEvents.beginTask()
     try {
       let taskId: string
       if (usesComfyuiTxt2img) {
@@ -966,16 +1038,18 @@ function GrsaiPromptGenerationPanel({
           concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
         })
       }
-      setTaskId(taskId)
-      setProgress({
-        task_id: taskId,
-        capability,
-        processed: 0,
-        total: prompts.length,
-        succeeded: 0,
-        failed: 0,
-      })
+      if (!taskEvents.activateTask(taskId)) {
+        setProgress({
+          task_id: taskId,
+          capability,
+          processed: 0,
+          total: prompts.length,
+          succeeded: 0,
+          failed: 0,
+        })
+      }
     } catch (nextError) {
+      taskEvents.clearTaskStart()
       setRunning(false)
       setError(nextError instanceof Error ? nextError.message : '启动生图任务失败')
     }
@@ -1186,38 +1260,69 @@ function GrsaiPromptGenerationPanel({
           </div>
 
           <div className="rounded-md border bg-background p-4">
-            <div className="flex items-center justify-between">
-              <h4 className="font-semibold">提示词审稿</h4>
-              <Button className="h-9 px-3" onClick={addDraft} type="button" variant="secondary">
-                <Plus className="mr-2 h-4 w-4" />
-                添加自定义
-              </Button>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h4 className="font-semibold">提示词审稿</h4>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  已选 {selectedPrompts.length} / 共 {drafts.length}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                {drafts.length ? (
+                  <Button
+                    className="h-9 px-3"
+                    onClick={() => setDraftsCollapsed((current) => !current)}
+                    type="button"
+                    variant="secondary"
+                  >
+                    {draftsCollapsed ? (
+                      <ChevronDown className="mr-2 h-4 w-4" />
+                    ) : (
+                      <ChevronUp className="mr-2 h-4 w-4" />
+                    )}
+                    {draftsCollapsed ? '展开' : '收起'}
+                  </Button>
+                ) : null}
+                <Button className="h-9 px-3" onClick={addDraft} type="button" variant="secondary">
+                  <Plus className="mr-2 h-4 w-4" />
+                  添加自定义
+                </Button>
+              </div>
             </div>
-            <div className="mt-3 space-y-2">
-              {drafts.length ? (
-                drafts.map((draft) => (
-                  <div className="grid grid-cols-[24px_minmax(0,1fr)] gap-2" key={draft.id}>
-                    <input
-                      checked={draft.selected}
-                      className="mt-3"
-                      onChange={(event) =>
-                        updateDraft(draft.id, { selected: event.target.checked })
-                      }
-                      type="checkbox"
-                    />
-                    <textarea
-                      className="min-h-12 w-full resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      onChange={(event) => updateDraft(draft.id, { text: event.target.value })}
-                      value={draft.text}
-                    />
+            {!draftsCollapsed ? (
+              <div className="mt-3 space-y-2">
+                {drafts.length ? (
+                  drafts.map((draft) => (
+                    <div className="grid grid-cols-[24px_minmax(0,1fr)] gap-2" key={draft.id}>
+                      <input
+                        checked={draft.selected}
+                        className="mt-3"
+                        onChange={(event) =>
+                          updateDraft(draft.id, { selected: event.target.checked })
+                        }
+                        type="checkbox"
+                      />
+                      <textarea
+                        className="min-h-12 w-full resize-y rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => updateDraft(draft.id, { text: event.target.value })}
+                        value={draft.text}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  <div className="rounded-md bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
+                    暂无提示词
                   </div>
-                ))
-              ) : (
+                )}
+              </div>
+            ) : null}
+            {draftsCollapsed && drafts.length === 0 ? (
+              <div className="mt-3">
                 <div className="rounded-md bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
                   暂无提示词
                 </div>
-              )}
-            </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -1468,19 +1573,24 @@ function GrsaiExtractPanel() {
   const [sourceFolder, setSourceFolder] = useState('')
   const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
-  const [promptCount, setPromptCount] = useState('1')
-  const [llmModel, setLlmModel] = useState('qwen3.6-flash')
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [concurrency, setConcurrency] = useState('3')
   const [taskName, setTaskName] = useState('')
-  const [taskId, setTaskId] = useState<string | null>(null)
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [running, setRunning] = useState(false)
+  const taskEvents = useGenerationTaskEvents({
+    expectedCapability: 'extract',
+    setProgress,
+    setPreviewImages,
+    setResult,
+    setError,
+    setRunning,
+  })
 
   useEffect(() => {
     void loadSources()
@@ -1491,7 +1601,6 @@ function GrsaiExtractPanel() {
       .get({ id: GRSAI_EXTRACT_SKILL_ID })
       .then((skill) => {
         setSelectedSkill(skill)
-        setLlmModel(settings?.config.bailian_vision_model ?? 'qwen3.6-flash')
       })
       .catch((nextError) => {
         setSelectedSkill(null)
@@ -1501,39 +1610,7 @@ function GrsaiExtractPanel() {
             : '读取付费模型提取 Skill 失败，请先在后台配置',
         )
       })
-  }, [settings?.config.bailian_vision_model])
-
-  useEffect(() => {
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.task_id !== taskId) {
-        return
-      }
-      setProgress(nextProgress)
-      if (nextProgress.images) {
-        setPreviewImages(nextProgress.images)
-      }
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== taskId) {
-        return
-      }
-      if (!event.ok && event.taskId !== taskId) {
-        return
-      }
-      setRunning(false)
-      if (event.ok) {
-        setResult(event.result)
-        setPreviewImages(event.result.images)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [taskId])
+  }, [])
 
   const selectedCount = selectedPaths.length
   const percent = progressPercent(progress)
@@ -1545,7 +1622,6 @@ function GrsaiExtractPanel() {
   const sizeOptions = grsaiSizes(selectedGenerationModel)
   const maxConcurrency = 20
   const defaultConcurrency = settings?.config.grsai_concurrency ?? 3
-  const llmModels = useMemo(() => bailianModelsForUse(settings, true), [settings])
 
   useEffect(() => {
     const firstModel = generationModels[0]
@@ -1559,14 +1635,6 @@ function GrsaiExtractPanel() {
       setAspectRatio(sizeOptions[0] ?? '1024x1024')
     }
   }, [aspectRatio, sizeOptions])
-
-  useEffect(() => {
-    const firstLlm =
-      llmModels.find((model) => model.id === settings?.config.bailian_vision_model) ?? llmModels[0]
-    if (firstLlm && !llmModels.some((model) => model.id === llmModel)) {
-      setLlmModel(firstLlm.id)
-    }
-  }, [llmModel, llmModels, settings?.config.bailian_vision_model])
 
   async function loadSources() {
     setLoadingSources(true)
@@ -1613,29 +1681,30 @@ function GrsaiExtractPanel() {
     setResult(null)
     setPreviewImages([])
     setRunning(true)
+    taskEvents.beginTask()
     try {
       const taskId = await window.api.generation.runExtract({
         sourceImagePaths: selectedPaths,
         skillId: selectedSkill.id,
         skillVersion: selectedSkill.version,
         variables: {},
-        promptCount: clampNumber(promptCount, 1, 100, 1),
-        llmModel,
         model: generationModel,
         aspectRatio,
         concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
       })
-      setTaskId(taskId)
-      setProgress({
-        task_id: taskId,
-        capability: 'extract',
-        processed: 0,
-        total: selectedPaths.length * clampNumber(promptCount, 1, 100, 1),
-        succeeded: 0,
-        failed: 0,
-      })
+      if (!taskEvents.activateTask(taskId)) {
+        setProgress({
+          task_id: taskId,
+          capability: 'extract',
+          processed: 0,
+          total: selectedPaths.length,
+          succeeded: 0,
+          failed: 0,
+        })
+      }
     } catch (nextError) {
+      taskEvents.clearTaskStart()
       setRunning(false)
       setError(nextError instanceof Error ? nextError.message : '启动付费模型提取失败')
     }
@@ -1707,7 +1776,7 @@ function GrsaiExtractPanel() {
 
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">提取 Skill</h4>
-            <div className="mt-4 grid gap-4 md:grid-cols-[minmax(0,1fr)_230px]">
+            <div className="mt-4">
               <div className="rounded-md border p-3">
                 <p className="text-sm font-medium">付费模型提取提示词</p>
                 <p className="mt-2 text-xs leading-5 text-muted-foreground">
@@ -1716,17 +1785,6 @@ function GrsaiExtractPanel() {
                     : '未读取到固定提取 Skill'}
                 </p>
               </div>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>每张提示词数</span>
-                <input
-                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  max={100}
-                  min={1}
-                  onChange={(event) => setPromptCount(event.target.value)}
-                  type="number"
-                  value={promptCount}
-                />
-              </label>
             </div>
           </div>
         </div>
@@ -1740,20 +1798,6 @@ function GrsaiExtractPanel() {
               </div>
             ) : null}
             <div className="mt-4 grid gap-3">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>语言模型</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setLlmModel(event.target.value)}
-                  value={llmModel}
-                >
-                  {llmModels.map((model) => (
-                    <option key={model.id} value={model.id}>
-                      {modelLabel(model)}
-                    </option>
-                  ))}
-                </select>
-              </label>
               <label className="block space-y-2 text-sm font-medium">
                 <span>Grsai 模型</span>
                 <select
@@ -1862,49 +1906,24 @@ function ComfyuiImg2imgPanel() {
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
-  const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [running, setRunning] = useState(false)
+  const taskEvents = useGenerationTaskEvents({
+    expectedCapability: 'img2img',
+    setProgress,
+    setPreviewImages,
+    setResult,
+    setError,
+    setRunning,
+  })
 
   useEffect(() => {
     void loadWorkflows()
   }, [])
-
-  useEffect(() => {
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.task_id !== taskId) {
-        return
-      }
-      setProgress(nextProgress)
-      if (nextProgress.images) {
-        setPreviewImages(nextProgress.images)
-      }
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== taskId) {
-        return
-      }
-      if (!event.ok && event.taskId !== taskId) {
-        return
-      }
-      setRunning(false)
-      if (event.ok) {
-        setResult(event.result)
-        setPreviewImages(event.result.images)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [taskId])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
 
@@ -1966,6 +1985,7 @@ function ComfyuiImg2imgPanel() {
     setResult(null)
     setPreviewImages([])
     setRunning(true)
+    taskEvents.beginTask()
     try {
       const taskId = await window.api.generation.runComfyuiImg2img({
         sourceImagePaths: sourceImages.map((image) => image.path),
@@ -1976,17 +1996,19 @@ function ComfyuiImg2imgPanel() {
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
       })
-      setTaskId(taskId)
-      setProgress({
-        task_id: taskId,
-        capability: 'img2img',
-        processed: 0,
-        total: sourceImages.length,
-        succeeded: 0,
-        failed: 0,
-        images: [],
-      })
+      if (!taskEvents.activateTask(taskId)) {
+        setProgress({
+          task_id: taskId,
+          capability: 'img2img',
+          processed: 0,
+          total: sourceImages.length,
+          succeeded: 0,
+          failed: 0,
+          images: [],
+        })
+      }
     } catch (nextError) {
+      taskEvents.clearTaskStart()
       setRunning(false)
       setError(nextError instanceof Error ? nextError.message : '启动 ComfyUI 图生图失败')
     }
@@ -2106,13 +2128,20 @@ function ComfyuiExtractPanel() {
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
-  const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [running, setRunning] = useState(false)
+  const taskEvents = useGenerationTaskEvents({
+    expectedCapability: 'extract',
+    setProgress,
+    setPreviewImages,
+    setResult,
+    setError,
+    setRunning,
+  })
 
   useEffect(() => {
     void loadWorkflows()
@@ -2128,38 +2157,6 @@ function ComfyuiExtractPanel() {
         )
       })
   }, [])
-
-  useEffect(() => {
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.task_id !== taskId) {
-        return
-      }
-      setProgress(nextProgress)
-      if (nextProgress.images) {
-        setPreviewImages(nextProgress.images)
-      }
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== taskId) {
-        return
-      }
-      if (!event.ok && event.taskId !== taskId) {
-        return
-      }
-      setRunning(false)
-      if (event.ok) {
-        setResult(event.result)
-        setPreviewImages(event.result.images)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [taskId])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
 
@@ -2225,6 +2222,7 @@ function ComfyuiExtractPanel() {
     setResult(null)
     setPreviewImages([])
     setRunning(true)
+    taskEvents.beginTask()
     try {
       const taskId = await window.api.generation.runComfyuiExtract({
         sourceImagePaths: sources.map((source) => source.path),
@@ -2237,17 +2235,19 @@ function ComfyuiExtractPanel() {
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
       })
-      setTaskId(taskId)
-      setProgress({
-        task_id: taskId,
-        capability: 'extract',
-        processed: 0,
-        total: sources.length,
-        succeeded: 0,
-        failed: 0,
-        images: [],
-      })
+      if (!taskEvents.activateTask(taskId)) {
+        setProgress({
+          task_id: taskId,
+          capability: 'extract',
+          processed: 0,
+          total: sources.length,
+          succeeded: 0,
+          failed: 0,
+          images: [],
+        })
+      }
     } catch (nextError) {
+      taskEvents.clearTaskStart()
       setRunning(false)
       setError(nextError instanceof Error ? nextError.message : '启动 ComfyUI 提取失败')
     }
@@ -2376,49 +2376,24 @@ function ComfyuiMattingPanel() {
   const [mixedWorkflows, setMixedWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [taskName, setTaskName] = useState('')
-  const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [loadingSources, setLoadingSources] = useState(false)
   const [running, setRunning] = useState(false)
+  const taskEvents = useGenerationTaskEvents({
+    expectedCapability: 'matting',
+    setProgress,
+    setPreviewImages,
+    setResult,
+    setError,
+    setRunning,
+  })
 
   useEffect(() => {
     void loadWorkflows()
   }, [])
-
-  useEffect(() => {
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (nextProgress.task_id !== taskId) {
-        return
-      }
-      setProgress(nextProgress)
-      if (nextProgress.images) {
-        setPreviewImages(nextProgress.images)
-      }
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      if (event.ok && event.result.taskId !== taskId) {
-        return
-      }
-      if (!event.ok && event.taskId !== taskId) {
-        return
-      }
-      setRunning(false)
-      if (event.ok) {
-        setResult(event.result)
-        setPreviewImages(event.result.images)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [taskId])
 
   const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows
   const activeWorkflowKey = mode === 'mixed' ? mixedWorkflowKey : workflowKey
@@ -2492,6 +2467,7 @@ function ComfyuiMattingPanel() {
     setResult(null)
     setPreviewImages([])
     setRunning(true)
+    taskEvents.beginTask()
     const workflowVersion = selectedWorkflow.version
     let taskId: string
     const sourceImagePaths = sources.map((source) => source.path)
@@ -2514,20 +2490,22 @@ function ComfyuiMattingPanel() {
         })
       }
     } catch (nextError) {
+      taskEvents.clearTaskStart()
       setRunning(false)
       setError(nextError instanceof Error ? nextError.message : '启动 ComfyUI 抠图失败')
       return
     }
-    setTaskId(taskId)
-    setProgress({
-      task_id: taskId,
-      capability: 'matting',
-      processed: 0,
-      total: sources.length,
-      succeeded: 0,
-      failed: 0,
-      images: [],
-    })
+    if (!taskEvents.activateTask(taskId)) {
+      setProgress({
+        task_id: taskId,
+        capability: 'matting',
+        processed: 0,
+        total: sources.length,
+        succeeded: 0,
+        failed: 0,
+        images: [],
+      })
+    }
   }
 
   return (

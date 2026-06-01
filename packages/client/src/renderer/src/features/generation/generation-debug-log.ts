@@ -82,9 +82,6 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   if (typeof details.model === 'string') {
     parts.push(`model=${details.model}`)
   }
-  if (typeof details.llmModel === 'string') {
-    parts.push(`llm=${details.llmModel}`)
-  }
   if (typeof details.workflowName === 'string') {
     parts.push(`workflow=${details.workflowName}`)
   }
@@ -113,9 +110,6 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   }
   if (typeof details.sourceImage === 'string') {
     parts.push(`源图=${details.sourceImage}`)
-  }
-  if (typeof details.promptCount === 'number') {
-    parts.push(`每图提示词 ${details.promptCount}`)
   }
   if (typeof details.succeeded === 'number') {
     parts.push(`成功 ${details.succeeded}`)

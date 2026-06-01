@@ -158,8 +158,6 @@ export type ExtractRunInput = {
   skillId: string
   skillVersion?: string
   variables?: Record<string, unknown>
-  promptCount: number
-  llmModel?: string
   model: string
   aspectRatio: string
   imageSize?: '1K' | '2K' | '4K'
@@ -1408,9 +1406,7 @@ export async function runExtract(
     operation: 'submit',
     provider: 'grsai',
     sourceCount: sourceImagePaths.length,
-    promptCount: input.promptCount,
     model: input.model,
-    llmModel: input.llmModel ?? null,
     concurrency: input.concurrency,
   })
   void runExtractBatch(
@@ -1810,10 +1806,9 @@ export async function runExtractBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'extract')
-  const promptCount = clampInt(input.promptCount, 1, 100, 1)
   const result: GenerationRunResult = {
     taskId,
-    total: sourceImagePaths.length * promptCount,
+    total: sourceImagePaths.length,
     succeeded: 0,
     failed: 0,
     images: [],
@@ -1830,7 +1825,6 @@ export async function runExtractBatch(
     const adapter =
       dependencies.createGrsaiAdapter?.(apiKey) ??
       new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
-    const promptGenerator = dependencies.promptGenerator ?? promptGeneratorService
     const skillCache = dependencies.skillCache ?? skillCacheManager
     const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
@@ -1854,91 +1848,70 @@ export async function runExtractBatch(
             createdAt: Date.now(),
           })
           const reference = await imageReference(sourceImagePath)
-          const prompts = await promptGenerator.generatePrompts({
-            skill,
-            variables: {
-              ...(input.variables ?? {}),
-              count: promptCount,
-              sourceImage: basename(sourceImagePath),
-            },
-            refImages: [reference],
-            count: promptCount,
-            ...(input.llmModel ? { model: input.llmModel } : {}),
-            userMessage:
-              '识别源图中的印花元素，生成白底居中的英文印花提取提示词。每条提示词只描述要提取成独立印花的内容。',
-            responseFormat: 'json_object',
-          })
-
-          for (const prompt of prompts) {
-            emitExtractProgress(result, sourceImagePaths.length * promptCount, taskId, emit, prompt)
-            try {
-              const response = await adapter.generate({
-                capability: 'extract',
-                prompt,
-                reference_images: [reference],
-                output: {
-                  aspect_ratio: input.aspectRatio,
-                  format: 'png',
-                },
-                model,
-              } satisfies GenerateRequest)
-              if (response.status !== 'succeeded') {
-                throw response.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 提取失败', true)
-              }
-
-              if (response.images.length === 0) {
-                throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回结果图', true)
-              }
-
-              controller.onResponse(200)
-              for (const image of response.images) {
-                const printId = newPrintId()
-                const targetPath = await uniqueTargetPath(outputFolder, printId, '.png')
-                const imageBuffer = image.local_path
-                  ? await readFile(image.local_path)
-                  : await downloadImage(image.url)
-                await writeFile(targetPath, imageBuffer)
-                const artifact = await registerExtractArtifact(activeDb, {
-                  taskId,
-                  printId,
-                  targetPath,
-                  sourceArtifactId: sourceIdentity.artifactId,
-                  prompt,
-                  model,
-                  skill,
-                  params: {
-                    aspectRatio: input.aspectRatio,
-                    variables: input.variables ?? {},
-                  },
-                  createdAt: Date.now(),
-                })
-                result.succeeded += 1
-                result.images.push({
-                  prompt,
-                  url: fileUrl(targetPath),
-                  localPath: targetPath,
-                  sourcePath: sourceImagePath,
-                  artifactId: artifact.artifactId,
-                  printId: artifact.printId,
-                })
-              }
-            } catch (error) {
-              observeGenerationError(controller, error)
-              result.failed += 1
-              result.failures.push({
-                prompt,
-                sourcePath: sourceImagePath,
-                error: appErrorMessage(error),
-              })
-            } finally {
-              emitExtractProgress(
-                result,
-                sourceImagePaths.length * promptCount,
-                taskId,
-                emit,
-                prompt,
-              )
+          const prompt =
+            skill.systemPrompt.trim() || 'Extract the print from the source product image.'
+          emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
+          try {
+            const response = await adapter.generate({
+              capability: 'extract',
+              prompt,
+              reference_images: [reference],
+              output: {
+                aspect_ratio: input.aspectRatio,
+                format: 'png',
+              },
+              model,
+            } satisfies GenerateRequest)
+            if (response.status !== 'succeeded') {
+              throw response.error ?? new AppErrorClass('GRSAI_FAILED', 'Grsai 提取失败', true)
             }
+
+            if (response.images.length === 0) {
+              throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回结果图', true)
+            }
+
+            controller.onResponse(200)
+            for (const image of response.images) {
+              const printId = newPrintId()
+              const targetPath = await uniqueTargetPath(outputFolder, printId, '.png')
+              const imageBuffer = image.local_path
+                ? await readFile(image.local_path)
+                : await downloadImage(image.url)
+              await writeFile(targetPath, imageBuffer)
+              const artifact = await registerExtractArtifact(activeDb, {
+                taskId,
+                printId,
+                targetPath,
+                sourceArtifactId: sourceIdentity.artifactId,
+                prompt,
+                model,
+                skill,
+                params: {
+                  aspectRatio: input.aspectRatio,
+                  variables: input.variables ?? {},
+                },
+                createdAt: Date.now(),
+              })
+              result.succeeded += 1
+              result.images.push({
+                prompt,
+                url: fileUrl(targetPath),
+                localPath: targetPath,
+                sourcePath: sourceImagePath,
+                artifactId: artifact.artifactId,
+                printId: artifact.printId,
+              })
+            }
+          } catch (error) {
+            observeGenerationError(controller, error)
+            result.failed += 1
+            result.failures.push({
+              prompt,
+              sourcePath: sourceImagePath,
+              error: appErrorMessage(error),
+            })
+          } finally {
+            emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
           }
         }),
       ),
@@ -2166,7 +2139,7 @@ export async function runComfyuiMattingBatch(
       } catch (error) {
         result.failed += 1
         result.failures.push({
-          prompt: input.prompt ?? '',
+          prompt: input.prompt?.trim() ?? '',
           error: appErrorMessage(error),
           sourcePath: artifactId,
         })
@@ -2337,7 +2310,7 @@ export async function runMixedMattingBatch(
       } catch (error) {
         result.failed += 1
         result.failures.push({
-          prompt: input.prompt ?? '',
+          prompt: input.prompt?.trim() ?? '',
           error: appErrorMessage(error),
           sourcePath: artifactId,
         })
@@ -2559,7 +2532,7 @@ export async function runComfyuiImg2imgBatch(
       } catch (error) {
         result.failed += 1
         result.failures.push({
-          prompt: input.prompt ?? '',
+          prompt: input.prompt?.trim() ?? '',
           error: appErrorMessage(error),
           sourcePath: artifactId,
         })

@@ -547,11 +547,11 @@ ComfyUI 提取右侧显示默认云机状态卡；不显示原百分比、处理
 落到 02-印花工作区/提取/{任务名}/
 ```
 
-提取 skill 提示词约束 LLM 写出"识别图中的印花元素，生成白底居中的印花"这种提示词。
+提取 skill 的 `system_prompt` 直接作为 Grsai 提取提示词。Grsai 提取和 ComfyUI 提取一样，都是一张源图对应一次运行，只是生图渠道不同。
 
-### 6.3 多原图 → 多印花
+### 6.3 多原图 → 多次运行
 
-一张采集图可能提取出 0、1、N 个印花，由 skill 控制（用户可在变量里设"每张图提取几个印花"）。
+用户选择 N 张源图时，客户端提交 N 次提取运行。每次运行保存返回的最终印花。
 
 ## 7. 抠图能力
 
@@ -978,7 +978,7 @@ CREATE TABLE comfyui_instances (
                                           concurrency
                                         } → TaskId
 'generation:run-comfyui-txt2img'      → { prompts, workflowId, workflowVersion?, width, height, concurrency } → TaskId
-'generation:run-extract'              → { sourceImagePaths, skillId, promptCount, model, aspectRatio, concurrency } → TaskId
+'generation:run-extract'              → { sourceImagePaths, skillId, model, aspectRatio, concurrency } → TaskId
 'generation:run-comfyui-img2img'      → { sourceArtifactIds, workflowId, workflowVersion?, prompt } → TaskId
 'generation:run-comfyui-extract'      → { sourceImagePaths, workflowId, workflowVersion?, skillId?, prompt? } → TaskId
 'generation:run-comfyui-matting'      → { sourceArtifactIds, workflowId, workflowVersion?, prompt? } → TaskId
