@@ -80,6 +80,7 @@ const defaultCollectionPageState: CollectionPageState = {
   maxWidth: 0,
   minHeight: 0,
   maxHeight: 0,
+  searchSeeMoreClicks: 1,
 }
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
@@ -111,6 +112,13 @@ function parseNonNegativeNumber(value: string, fallback: number) {
 
 function nonNegativeInteger(value: number) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
+}
+
+function searchSeeMoreClicks(value: number) {
+  if (!Number.isFinite(value)) {
+    return 1
+  }
+  return Math.min(10, Math.max(0, Math.floor(value)))
 }
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
@@ -152,6 +160,7 @@ function collectionPageStateFromConfig(config: CollectionConfig): CollectionPage
     maxWidth: config.size_filter.max_width,
     minHeight: config.size_filter.min_height,
     maxHeight: config.size_filter.max_height,
+    searchSeeMoreClicks: 1,
   }
 }
 
@@ -847,6 +856,7 @@ function MainWorkbench() {
       ...(outputDir ? { output_dir: outputDir } : {}),
       ...(pageUrl?.trim() ? { page_url: pageUrl.trim() } : {}),
       ...(limit !== undefined ? { limit } : {}),
+      see_more_clicks: searchSeeMoreClicks(collectionPageState.searchSeeMoreClicks),
     }
   }
 

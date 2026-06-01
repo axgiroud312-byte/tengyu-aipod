@@ -13,7 +13,7 @@ describe('collection image pool merge', () => {
   it('dedupes image URLs after query params', () => {
     expect(
       collectionImagePoolKey(
-        imageItem('https://img.kwcdn.com/product/open/a.jpg?imageView2/2/w/800/q/90'),
+        imageItem('https://img.kwcdn.com/product/open/a.jpg?imageView2/2/w/800/q/90#preview'),
       ),
     ).toBe('loose:https://img.kwcdn.com/product/open/a.jpg')
   })

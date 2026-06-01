@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type CollectionImageIndexItem,
   chooseCollectionCurrentPage,
+  collectionImageIndexChooseTemuSeeMoreCandidateIndex,
   collectionImageIndexDetailGalleryBounds,
   collectionImageIndexExtractTemuShopImagesFromSsr,
   collectionImageIndexIsTemuShopPageUrl,
@@ -136,6 +137,71 @@ describe('collection image index product folders', () => {
         'https://www.temu.com/ca/al-garments-m-634418228197396.html',
       ),
     ).toBe('shop')
+  })
+})
+
+describe('collection image index Temu See more chooser', () => {
+  it('prefers aria-label See more items candidates', () => {
+    const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
+      {
+        label: 'See more',
+        text: 'See more',
+        ariaLabel: '',
+        area: 1600,
+        visible: true,
+      },
+      {
+        label: 'See more items See more',
+        text: 'See more',
+        ariaLabel: 'See more items',
+        area: 3200,
+        visible: true,
+      },
+    ])
+
+    expect(index).toBe(1)
+  })
+
+  it('uses the smallest visible text candidate when aria-label is missing', () => {
+    const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
+      {
+        label: 'See more',
+        text: 'See more',
+        ariaLabel: '',
+        area: 12_000,
+        visible: true,
+      },
+      {
+        label: 'See more',
+        text: 'See more',
+        ariaLabel: '',
+        area: 800,
+        visible: true,
+      },
+      {
+        label: 'See more',
+        text: 'See more',
+        ariaLabel: '',
+        area: 200,
+        visible: false,
+      },
+    ])
+
+    expect(index).toBe(1)
+  })
+
+  it('ignores unrelated candidates', () => {
+    expect(
+      collectionImageIndexChooseTemuSeeMoreCandidateIndex([
+        {
+          label: 'Download app',
+          text: 'Download app',
+          ariaLabel: '',
+          area: 1200,
+          visible: true,
+        },
+      ]),
+    ).toBeNull()
   })
 })
 

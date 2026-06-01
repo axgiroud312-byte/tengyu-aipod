@@ -195,6 +195,7 @@ declare global {
           output_dir?: string
           page_url?: string
           limit?: number
+          see_more_clicks?: number
         }) => Promise<
           import('../../main/lib/collection-image-index-service').CollectionImageIndexScanResult
         >

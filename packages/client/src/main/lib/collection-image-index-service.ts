@@ -47,6 +47,14 @@ export type TemuShopImageCandidate = {
   naturalHeight: number
 }
 
+export type CollectionImageIndexSeeMoreCandidate = {
+  label: string
+  text: string
+  ariaLabel: string
+  area: number
+  visible: boolean
+}
+
 export type CollectionImageIndexDetailGalleryCandidate = {
   rect: CollectionImageIndexRect
   naturalWidth: number
@@ -147,7 +155,35 @@ type ProbeInput = {
   outputDir?: string | undefined
   pageUrl?: string | undefined
   limit?: number | undefined
+  seeMoreClicks?: number | undefined
   debug?: CollectionImageIndexDebug | undefined
+}
+
+type CollectionImageIndexSeeMoreClickTarget = CollectionImageIndexSeeMoreCandidate & {
+  x: number
+  y: number
+  width: number
+  height: number
+}
+
+type CollectionImageIndexTemuPageMetrics = {
+  productImageCount: number
+  scrollHeight: number
+  scrollTop: number
+  viewportHeight: number
+}
+
+type CollectionImageIndexSeeMoreClickResult = {
+  clicked: boolean
+  reason: 'clicked' | 'not_found' | 'target_missing' | 'click_failed'
+  candidateCount: number
+  target: CollectionImageIndexSeeMoreClickTarget | null
+  before: CollectionImageIndexTemuPageMetrics
+  after: CollectionImageIndexTemuPageMetrics
+}
+
+type ScanPageImageIndexOptions = {
+  seeMoreClicks?: number | undefined
 }
 
 type CurrentPageInput = {
@@ -181,6 +217,9 @@ const CLICK_PROBE_TIMEOUT_MS = 30_000
 const SCAN_PAGE_STABILIZE_MS = 1_500
 const SHOP_SCAN_MAX_SCROLLS = 30
 const SHOP_SCAN_STABLE_ROUNDS = 3
+const SHOP_SEE_MORE_MAX_CLICKS = 50
+const SEARCH_SEE_MORE_MAX_CLICKS = 10
+const SEE_MORE_CLICK_WAIT_MS = 2_500
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
 let collectionImageIndexDebugSequence = 0
@@ -338,6 +377,7 @@ export async function scanCollectionImageIndex(input: ProbeInput) {
           input.limit ?? DEFAULT_ITEM_LIMIT,
           input.platform,
           debug,
+          { seeMoreClicks: input.seeMoreClicks },
         )
         debug?.(`扫描页面完成 ${index + 1}/${scanCandidates.length}`, 'info', {
           operation: 'scan',
@@ -589,7 +629,7 @@ export function collectionImageIndexIsTemuShopPageUrl(value: string | null | und
   return (
     pathname.endsWith('/mall.html') ||
     /-m-\d+\.html$/i.test(pathname) ||
-    (url.searchParams.has('mall_id') && !temuGoodsIdFromUrl(value))
+    url.searchParams.has('mall_id')
   )
 }
 
@@ -953,6 +993,27 @@ function urlWithoutSearchAndHash(value: string) {
   }
 }
 
+function collectionImageIndexPreferredItem(
+  candidate: CollectionImageIndexItem,
+  existing: CollectionImageIndexItem,
+) {
+  if (candidate.score !== existing.score) {
+    return candidate.score > existing.score
+  }
+  if (candidate.visible !== existing.visible) {
+    return candidate.visible
+  }
+  const candidateSize = collectionImageIndexItemSizeScore(candidate)
+  const existingSize = collectionImageIndexItemSizeScore(existing)
+  return candidateSize > existingSize
+}
+
+function collectionImageIndexItemSizeScore(item: CollectionImageIndexItem) {
+  const naturalArea = item.naturalWidth * item.naturalHeight
+  const rectArea = item.rect ? item.rect.width * item.rect.height : 0
+  return Math.max(naturalArea, rectArea)
+}
+
 function scanResultFromItems(
   items: CollectionImageIndexItem[],
   pageUrl: string | undefined,
@@ -981,14 +1042,72 @@ async function scanPageImageIndex(
   itemLimit: number,
   platform: string,
   debug?: CollectionImageIndexDebug | undefined,
+  options: ScanPageImageIndexOptions = {},
 ): Promise<CollectionImageIndexScanResult> {
   await page.waitForLoadState('domcontentloaded').catch(() => null)
   await page.waitForTimeout(SCAN_PAGE_STABILIZE_MS).catch(() => null)
-  if (collectionImageIndexPageKind(platform, page.url()) === 'shop') {
+  const pageKind = collectionImageIndexPageKind(platform, page.url())
+  if (pageKind === 'shop') {
     return scanScrollableShopPageImageIndex(page, itemLimit, platform, debug)
+  }
+  if (platform === 'temu' && pageKind === 'search') {
+    const seeMoreClicks = collectionImageIndexSearchSeeMoreClicks(options.seeMoreClicks)
+    if (seeMoreClicks > 0) {
+      return scanSearchPageImageIndexWithSeeMore(page, itemLimit, platform, seeMoreClicks, debug)
+    }
   }
   const payload = (await page.evaluate(scanScript(itemLimit, platform))) as PageIndexPayload
   return scanResultFromPageIndexPayload(payload)
+}
+
+function collectionImageIndexSearchSeeMoreClicks(value: number | undefined) {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+  return Math.min(SEARCH_SEE_MORE_MAX_CLICKS, Math.max(0, Math.floor(value ?? 0)))
+}
+
+async function scanSearchPageImageIndexWithSeeMore(
+  page: Page,
+  itemLimit: number,
+  platform: string,
+  seeMoreClicks: number,
+  debug?: CollectionImageIndexDebug | undefined,
+): Promise<CollectionImageIndexScanResult> {
+  throwIfTemuVerificationPage(page.url())
+  let mergedPayload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
+
+  for (let index = 0; index < seeMoreClicks; index += 1) {
+    throwIfTemuVerificationPage(page.url())
+    const clickResult = await clickTemuSeeMore(page)
+    debug?.('搜索页 See more 点击进度', 'debug', {
+      operation: 'scan',
+      stage: 'progress',
+      round: index + 1,
+      requestedClicks: seeMoreClicks,
+      clickedSeeMore: clickResult.clicked,
+      reason: clickResult.reason,
+      candidateCount: clickResult.candidateCount,
+      productImageCount: clickResult.after.productImageCount,
+      scrollHeight: clickResult.after.scrollHeight,
+      pageUrl: page.url(),
+    })
+    if (!clickResult.clicked) {
+      break
+    }
+    const payload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
+    mergedPayload = mergePageIndexPayloads(mergedPayload, payload)
+  }
+
+  throwIfTemuVerificationPage(page.url())
+  const finalPayload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
+  mergedPayload = mergePageIndexPayloads(mergedPayload, finalPayload)
+  const limit = Math.max(0, itemLimit)
+  return scanResultFromPageIndexPayload({
+    ...mergedPayload,
+    items: limit > 0 ? mergedPayload.items.slice(0, limit) : mergedPayload.items,
+    collectableCount: mergedPayload.items.length,
+  })
 }
 
 async function scanScrollableShopPageImageIndex(
@@ -1000,24 +1119,36 @@ async function scanScrollableShopPageImageIndex(
   let mergedPayload: PageIndexPayload | null = null
   let stableRounds = 0
   let previousKey = ''
+  let seeMoreClicks = 0
+  let scrollRounds = 0
+  const maxLoops = SHOP_SCAN_MAX_SCROLLS + SHOP_SEE_MORE_MAX_CLICKS + SHOP_SCAN_STABLE_ROUNDS
 
-  for (let index = 0; index <= SHOP_SCAN_MAX_SCROLLS; index += 1) {
+  for (let index = 0; index < maxLoops; index += 1) {
+    throwIfTemuVerificationPage(page.url())
     const payload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
     mergedPayload = mergedPayload ? mergePageIndexPayloads(mergedPayload, payload) : payload
 
-    const metrics = await page
-      .evaluate(() => {
-        const documentElement = document.documentElement
-        const scrollHeight = documentElement.scrollHeight
-        const scrollTop = window.scrollY
-        const viewportHeight = window.innerHeight
-        return { scrollHeight, scrollTop, viewportHeight }
-      })
-      .catch(() => ({ scrollHeight: 0, scrollTop: 0, viewportHeight: 0 }))
+    const metrics = await temuPageMetrics(page)
     const currentKey = `${mergedPayload.items.length}:${metrics.scrollHeight}`
     const atBottom =
       metrics.scrollTop + metrics.viewportHeight >= Math.max(0, metrics.scrollHeight - 8)
-    if (currentKey === previousKey && atBottom) {
+    const clickResult =
+      atBottom && seeMoreClicks < SHOP_SEE_MORE_MAX_CLICKS
+        ? await clickTemuSeeMore(page)
+        : ({
+            clicked: false,
+            reason: 'not_found',
+            candidateCount: 0,
+            target: null,
+            before: metrics,
+            after: metrics,
+          } satisfies CollectionImageIndexSeeMoreClickResult)
+    if (clickResult.clicked) {
+      seeMoreClicks += 1
+    }
+    if (clickResult.clicked) {
+      stableRounds = 0
+    } else if (currentKey === previousKey && atBottom) {
       stableRounds += 1
     } else {
       stableRounds = 0
@@ -1027,23 +1158,34 @@ async function scanScrollableShopPageImageIndex(
       stage: 'progress',
       round: index + 1,
       stableRounds,
+      clickedSeeMore: clickResult.clicked,
+      seeMoreClicks,
+      scrollRounds,
       imageCount: payload.imageCount,
       indexedCount: mergedPayload.indexedCount,
       collectableCount: mergedPayload.items.length,
+      productImageCount: clickResult.after.productImageCount,
       scrollTop: Math.round(metrics.scrollTop),
-      scrollHeight: metrics.scrollHeight,
+      scrollHeight: clickResult.after.scrollHeight || metrics.scrollHeight,
       pageUrl: payload.href,
     })
-    if (stableRounds >= SHOP_SCAN_STABLE_ROUNDS) {
+    if (!clickResult.clicked && stableRounds >= SHOP_SCAN_STABLE_ROUNDS) {
       break
     }
     previousKey = currentKey
+    if (clickResult.clicked) {
+      continue
+    }
+    if (scrollRounds >= SHOP_SCAN_MAX_SCROLLS) {
+      break
+    }
 
     await page
       .evaluate(() => {
         window.scrollBy(0, Math.max(window.innerHeight * 1.5, 900))
       })
       .catch(() => null)
+    scrollRounds += 1
     await page.waitForTimeout(1_200).catch(() => null)
   }
 
@@ -1083,7 +1225,7 @@ function mergePageIndexPayloads(left: PageIndexPayload, right: PageIndexPayload)
   for (const item of [...left.items, ...right.items]) {
     const key = collectionImageIndexDownloadKey(item)
     const existing = itemsByKey.get(key)
-    if (!existing || item.score > existing.score || (item.visible && !existing.visible)) {
+    if (!existing || collectionImageIndexPreferredItem(item, existing)) {
       itemsByKey.set(key, item)
     }
   }
@@ -1126,6 +1268,259 @@ function bestScanResult(results: CollectionImageIndexScanResult[]) {
       collectableCount: item.collectableCount,
     })),
   } satisfies CollectionImageIndexScanResult
+}
+
+export function collectionImageIndexChooseTemuSeeMoreCandidateIndex(
+  candidates: CollectionImageIndexSeeMoreCandidate[],
+): number | null {
+  const ranked = candidates
+    .map((candidate, index) => ({
+      index,
+      candidate,
+      score: collectionImageIndexTemuSeeMoreCandidateScore(candidate),
+    }))
+    .filter((item) => item.score > 0)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score
+      }
+      if (left.candidate.area !== right.candidate.area) {
+        return left.candidate.area - right.candidate.area
+      }
+      return left.index - right.index
+    })
+  return ranked[0]?.index ?? null
+}
+
+function collectionImageIndexTemuSeeMoreCandidateScore(
+  candidate: CollectionImageIndexSeeMoreCandidate,
+) {
+  if (!candidate.visible || candidate.area <= 0) {
+    return 0
+  }
+  const ariaLabel = normalizedSeeMoreText(candidate.ariaLabel)
+  const text = normalizedSeeMoreText(candidate.text)
+  const label = normalizedSeeMoreText(candidate.label)
+  const combined = `${ariaLabel} ${text} ${label}`
+  if (!combined.includes('see more')) {
+    return 0
+  }
+  if (ariaLabel.includes('see more items')) {
+    return 400
+  }
+  if (ariaLabel.includes('see more')) {
+    return 350
+  }
+  if (text === 'see more') {
+    return 300
+  }
+  if (text.includes('see more')) {
+    return 250
+  }
+  if (label.includes('see more')) {
+    return 200
+  }
+  return 0
+}
+
+function normalizedSeeMoreText(value: string) {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+async function clickTemuSeeMore(page: Page): Promise<CollectionImageIndexSeeMoreClickResult> {
+  const before = await temuPageMetrics(page)
+  const candidates = await page.evaluate(temuSeeMoreCandidatesOnPage).catch(() => [])
+  const targetIndex = collectionImageIndexChooseTemuSeeMoreCandidateIndex(candidates)
+  if (targetIndex === null) {
+    return {
+      clicked: false,
+      reason: 'not_found',
+      candidateCount: candidates.length,
+      target: null,
+      before,
+      after: before,
+    }
+  }
+  const target = await page.evaluate(temuSeeMoreClickTargetOnPage, targetIndex).catch(() => null)
+  if (!target) {
+    return {
+      clicked: false,
+      reason: 'target_missing',
+      candidateCount: candidates.length,
+      target: null,
+      before,
+      after: before,
+    }
+  }
+  try {
+    await page.mouse.click(target.x, target.y)
+  } catch {
+    return {
+      clicked: false,
+      reason: 'click_failed',
+      candidateCount: candidates.length,
+      target,
+      before,
+      after: before,
+    }
+  }
+  throwIfTemuVerificationPage(page.url())
+  const after = await waitForTemuSeeMoreSettle(page, before)
+  throwIfTemuVerificationPage(page.url())
+  return {
+    clicked: true,
+    reason: 'clicked',
+    candidateCount: candidates.length,
+    target,
+    before,
+    after,
+  }
+}
+
+async function waitForTemuSeeMoreSettle(page: Page, before: CollectionImageIndexTemuPageMetrics) {
+  let latest = before
+  let stableChangedRounds = 0
+  const startedAt = Date.now()
+  while (Date.now() - startedAt < SEE_MORE_CLICK_WAIT_MS) {
+    await page.waitForTimeout(250).catch(() => null)
+    const next = await temuPageMetrics(page)
+    const changedFromLatest =
+      next.productImageCount !== latest.productImageCount ||
+      next.scrollHeight !== latest.scrollHeight
+    const changedFromBefore =
+      next.productImageCount !== before.productImageCount ||
+      next.scrollHeight !== before.scrollHeight
+    latest = next
+    if (changedFromLatest) {
+      stableChangedRounds = 0
+      continue
+    }
+    if (changedFromBefore) {
+      stableChangedRounds += 1
+      if (stableChangedRounds >= 2) {
+        break
+      }
+    }
+  }
+  return latest
+}
+
+function throwIfTemuVerificationPage(pageUrl: string) {
+  if (!collectionImageIndexIsTemuVerificationPageUrl(pageUrl)) {
+    return
+  }
+  throw new AppErrorClass(
+    'HTTP_4XX',
+    'Temu 跳转到安全验证页，请先在比特浏览器完成验证后再扫描图池',
+    false,
+    {
+      kind: 'blocked_by_verification',
+      pageUrl,
+    },
+  )
+}
+
+async function temuPageMetrics(page: Page): Promise<CollectionImageIndexTemuPageMetrics> {
+  return page
+    .evaluate(() => {
+      const productRe = /img\.kwcdn\.com\/(product|local-image)\//i
+      const normalizeUrl = (value: string) => {
+        try {
+          const url = new URL(value, location.href)
+          url.search = ''
+          url.hash = ''
+          return url.href
+        } catch {
+          return value.replace(/[?#].*$/, '')
+        }
+      }
+      const productUrls = new Set<string>()
+      for (const image of document.querySelectorAll('img')) {
+        const img = image as HTMLImageElement
+        const url = img.currentSrc || img.src || img.getAttribute('src') || ''
+        if (productRe.test(url)) {
+          productUrls.add(normalizeUrl(url))
+        }
+      }
+      const documentElement = document.documentElement
+      return {
+        productImageCount: productUrls.size,
+        scrollHeight: documentElement.scrollHeight,
+        scrollTop: window.scrollY,
+        viewportHeight: window.innerHeight,
+      }
+    })
+    .catch(() => ({ productImageCount: 0, scrollHeight: 0, scrollTop: 0, viewportHeight: 0 }))
+}
+
+function temuSeeMoreCandidatesOnPage(): CollectionImageIndexSeeMoreCandidate[] {
+  const selector = '[aria-label],button,[role="button"],a,div,span'
+  const elements = Array.from(document.querySelectorAll(selector)).slice(0, 10_000)
+  return elements.map((element) => {
+    const htmlElement = element as HTMLElement
+    const rect = htmlElement.getBoundingClientRect()
+    const style = window.getComputedStyle(htmlElement)
+    const text = (htmlElement.innerText || htmlElement.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 160)
+    const ariaLabel = (htmlElement.getAttribute('aria-label') || '').trim().slice(0, 160)
+    return {
+      label: `${ariaLabel} ${text}`.trim(),
+      text,
+      ariaLabel,
+      area: Math.round(rect.width * rect.height),
+      visible:
+        rect.width > 0 &&
+        rect.height > 0 &&
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        style.visibility !== 'collapse' &&
+        style.opacity !== '0',
+    }
+  })
+}
+
+async function temuSeeMoreClickTargetOnPage(
+  candidateIndex: number,
+): Promise<CollectionImageIndexSeeMoreClickTarget | null> {
+  const selector = '[aria-label],button,[role="button"],a,div,span'
+  const element = Array.from(document.querySelectorAll(selector)).slice(0, 10_000)[candidateIndex]
+  if (!element) {
+    return null
+  }
+  const htmlElement = element as HTMLElement
+  htmlElement.scrollIntoView({ block: 'center', inline: 'center' })
+  await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+  const rect = htmlElement.getBoundingClientRect()
+  const style = window.getComputedStyle(htmlElement)
+  if (
+    rect.width <= 0 ||
+    rect.height <= 0 ||
+    style.display === 'none' ||
+    style.visibility === 'hidden' ||
+    style.visibility === 'collapse' ||
+    style.opacity === '0'
+  ) {
+    return null
+  }
+  const text = (htmlElement.innerText || htmlElement.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 160)
+  const ariaLabel = (htmlElement.getAttribute('aria-label') || '').trim().slice(0, 160)
+  const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
+  return {
+    label: `${ariaLabel} ${text}`.trim(),
+    text,
+    ariaLabel,
+    area: Math.round(rect.width * rect.height),
+    visible: true,
+    x: clamp(rect.left + rect.width / 2, 1, Math.max(1, window.innerWidth - 1)),
+    y: clamp(rect.top + rect.height / 2, 1, Math.max(1, window.innerHeight - 1)),
+    width: Math.round(rect.width),
+    height: Math.round(rect.height),
+  }
 }
 
 function currentPageCacheKey(input: CurrentPageInput) {
@@ -1466,6 +1861,7 @@ const ImageIndexInputSchema = z.object({
   output_dir: z.string().optional(),
   page_url: z.string().optional(),
   limit: z.number().int().min(0).max(500).optional(),
+  see_more_clicks: z.number().int().min(0).max(10).optional(),
   items: z.array(ImageIndexItemSchema).max(1000).optional(),
 })
 
@@ -1521,6 +1917,9 @@ export function registerCollectionImageIndexIpc() {
       ...(parsed.data.output_dir ? { outputDir: parsed.data.output_dir } : {}),
       ...(parsed.data.page_url ? { pageUrl: parsed.data.page_url } : {}),
       ...(parsed.data.limit !== undefined ? { limit: parsed.data.limit } : {}),
+      ...(parsed.data.see_more_clicks !== undefined
+        ? { seeMoreClicks: parsed.data.see_more_clicks }
+        : {}),
       debug: createCollectionImageIndexDebugEmitter(),
     })
   })
@@ -1722,7 +2121,7 @@ function scanImageIndexOnPage(
     if (
       pathname.endsWith('/mall.html') ||
       /-m-\d+\.html$/i.test(pathname) ||
-      (url.searchParams.has('mall_id') && !temuGoodsIdFromUrl(pageUrl))
+      url.searchParams.has('mall_id')
     ) {
       return 'shop'
     }
@@ -1871,6 +2270,36 @@ function scanImageIndexOnPage(
     if (item.source === 'performance') value -= 8
     if (badRe.test(item.originalUrl)) value -= 60
     return value
+  }
+
+  function normalizedOriginalUrl(value: string) {
+    try {
+      const url = new URL(value, location.href)
+      url.search = ''
+      url.hash = ''
+      return url.href
+    } catch {
+      return value.replace(/[?#].*$/, '')
+    }
+  }
+
+  function sizeScore(item: CollectionImageIndexItem) {
+    const naturalArea = item.naturalWidth * item.naturalHeight
+    const rectArea = item.rect ? item.rect.width * item.rect.height : 0
+    return Math.max(naturalArea, rectArea)
+  }
+
+  function preferCandidate(
+    candidate: CollectionImageIndexItem,
+    existing: CollectionImageIndexItem,
+  ) {
+    if (candidate.score !== existing.score) {
+      return candidate.score > existing.score
+    }
+    if (candidate.visible !== existing.visible) {
+      return candidate.visible
+    }
+    return sizeScore(candidate) > sizeScore(existing)
   }
 
   const rawItems: Array<Omit<CollectionImageIndexItem, 'id' | 'score'>> = []
@@ -2038,14 +2467,14 @@ function scanImageIndexOnPage(
 
   const uniqueItems = new Map<string, CollectionImageIndexItem>()
   for (const item of rawItems) {
-    const key = item.originalUrl.replace(/\?.*$/, '')
     const candidate = {
       ...item,
       id: '',
       score: score(item),
     }
+    const key = normalizedOriginalUrl(candidate.originalUrl)
     const existing = uniqueItems.get(key)
-    if (!existing || candidate.score > existing.score || (candidate.visible && !existing.visible)) {
+    if (!existing || preferCandidate(candidate, existing)) {
       uniqueItems.set(key, candidate)
     }
   }

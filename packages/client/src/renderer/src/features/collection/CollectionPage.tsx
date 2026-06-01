@@ -64,6 +64,7 @@ export interface CollectionPageState {
   maxWidth: number
   minHeight: number
   maxHeight: number
+  searchSeeMoreClicks: number
 }
 
 const EMPTY_IMAGE_ITEMS: CollectionImageIndexItem[] = []
@@ -177,6 +178,13 @@ function temuDownloadWidth(value: string) {
   }
   const width = Number(match[1])
   return Number.isFinite(width) && width > 0 ? width : null
+}
+
+function clampSearchSeeMoreClicks(value: number) {
+  if (!Number.isFinite(value)) {
+    return 0
+  }
+  return Math.min(10, Math.max(0, Math.floor(value)))
 }
 
 function profileLabel(profileId: string, profiles: CollectionProfileOption[]) {
@@ -355,6 +363,26 @@ export function CollectionPage({
                 <RefreshCw className="mr-2 h-4 w-4" />
                 {imageIndexScanning ? '扫描中' : '扫描图池'}
               </Button>
+              <label
+                className="flex h-10 items-center gap-2 rounded-md border bg-background px-2 text-xs font-medium"
+                htmlFor="collection-see-more-clicks"
+              >
+                <span className="whitespace-nowrap">See more 次数</span>
+                <Input
+                  className="h-8 w-16 px-2"
+                  id="collection-see-more-clicks"
+                  max={10}
+                  min={0}
+                  onChange={(event) =>
+                    onStateChange(
+                      'searchSeeMoreClicks',
+                      clampSearchSeeMoreClicks(Number(event.target.value)),
+                    )
+                  }
+                  type="number"
+                  value={state.searchSeeMoreClicks}
+                />
+              </label>
               <Button
                 disabled={!imageItems.length}
                 onClick={onSelectAllImagePoolItems}
@@ -578,7 +606,7 @@ export function CollectionPage({
               </div>
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
-              搜索结果页想看到更多结果时，先在比特浏览器里点 See more，再回到这里重新扫描图池。
+              搜索页按设置次数加载 See more，店铺页会自动加载到稳定。
               {keywordPreview ? ` 当前关键词搜索页：${keywordPreview}` : ''}
             </div>
             {lastScanExistingCount > 0 && lastScanAddedCount === 0 ? (

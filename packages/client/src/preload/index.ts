@@ -308,6 +308,7 @@ const api = {
       output_dir?: string
       page_url?: string
       limit?: number
+      see_more_clicks?: number
     }) =>
       ipcRenderer.invoke(
         'collection:scan-image-index',
