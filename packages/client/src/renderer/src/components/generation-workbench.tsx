@@ -23,6 +23,7 @@ import {
   RefreshCw,
   Scissors,
   Terminal,
+  Trash2,
   WandSparkles,
 } from 'lucide-react'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -269,6 +270,10 @@ function progressPercent(progress: GenerationProgress | null) {
     return 0
   }
   return Math.round((progress.processed / progress.total) * 100)
+}
+
+function selectedPromptTexts(drafts: Txt2imgPromptDraft[]) {
+  return drafts.filter((draft) => draft.selected && draft.text.trim()).map((draft) => draft.text)
 }
 
 function useExtractSkillOptions(setError: (error: string | null) => void) {
@@ -1241,10 +1246,7 @@ function GrsaiPromptGenerationPanel({
   const promptSkillSelection = usePromptSkillOptions(promptSkillCategory, setError)
   const selectedPromptSkill = promptSkillSelection.selectedSkill
 
-  const selectedPrompts = useMemo(
-    () => drafts.filter((draft) => draft.selected && draft.text.trim()).map((draft) => draft.text),
-    [drafts],
-  )
+  const selectedPrompts = useMemo(() => selectedPromptTexts(drafts), [drafts])
   const percent = progressPercent(progress)
   const usesComfyuiTxt2img = capability === 'txt2img' && txt2imgGenerationPath === 'comfyui'
   const comfyuiInstanceSelection = useComfyuiInstanceSelection('txt2img', usesComfyuiTxt2img)
@@ -1338,7 +1340,7 @@ function GrsaiPromptGenerationPanel({
             }
           : {}),
       })
-      setDrafts(nextDrafts)
+      setDrafts((current) => [...current, ...nextDrafts])
       setDraftsCollapsed(true)
       return nextDrafts
     } catch (nextError) {
@@ -1372,15 +1374,14 @@ function GrsaiPromptGenerationPanel({
 
   async function parseManualText() {
     const prompts = await window.api.generation.parseManualPrompts(manualText)
-    setDrafts(
-      prompts.map((text) => ({
-        id: crypto.randomUUID(),
-        text,
-        selected: true,
-      })),
-    )
+    const nextDrafts = prompts.map((text) => ({
+      id: crypto.randomUUID(),
+      text,
+      selected: true,
+    }))
+    setDrafts((current) => [...current, ...nextDrafts])
     setDraftsCollapsed(true)
-    return prompts
+    return nextDrafts
   }
 
   function updateDraft(id: string, patch: Partial<Txt2imgPromptDraft>) {
@@ -1392,6 +1393,11 @@ function GrsaiPromptGenerationPanel({
   function addDraft() {
     setDraftsCollapsed(false)
     setDrafts((current) => [...current, { id: crypto.randomUUID(), text: '', selected: true }])
+  }
+
+  function clearDrafts() {
+    setDrafts([])
+    setDraftsCollapsed(true)
   }
 
   async function runGenerationWithPrompts(prompts: string[]) {
@@ -1469,14 +1475,16 @@ function GrsaiPromptGenerationPanel({
 
   async function startGeneration() {
     setError(null)
-    const prompts = manualMode ? await parseManualText() : selectedPrompts
+    const prompts = manualMode
+      ? [...selectedPrompts, ...selectedPromptTexts(await parseManualText())]
+      : selectedPrompts
     await runGenerationWithPrompts(prompts)
   }
 
   async function oneClickRun() {
     setError(null)
     if (manualMode) {
-      const prompts = await parseManualText()
+      const prompts = [...selectedPrompts, ...selectedPromptTexts(await parseManualText())]
       await runGenerationWithPrompts(prompts)
       return
     }
@@ -1485,9 +1493,7 @@ function GrsaiPromptGenerationPanel({
     if (nextDrafts.length === 0) {
       return
     }
-    const prompts = nextDrafts
-      .filter((draft) => draft.selected && draft.text.trim())
-      .map((draft) => draft.text)
+    const prompts = [...selectedPrompts, ...selectedPromptTexts(nextDrafts)]
     await runGenerationWithPrompts(prompts)
   }
 
@@ -1674,21 +1680,33 @@ function GrsaiPromptGenerationPanel({
                   已选 {selectedPrompts.length} / 共 {drafts.length}
                 </p>
               </div>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap justify-end gap-2">
                 {drafts.length ? (
-                  <Button
-                    className="h-9 px-3"
-                    onClick={() => setDraftsCollapsed((current) => !current)}
-                    type="button"
-                    variant="secondary"
-                  >
-                    {draftsCollapsed ? (
-                      <ChevronDown className="mr-2 h-4 w-4" />
-                    ) : (
-                      <ChevronUp className="mr-2 h-4 w-4" />
-                    )}
-                    {draftsCollapsed ? '展开' : '收起'}
-                  </Button>
+                  <>
+                    <Button
+                      className="h-9 px-3"
+                      disabled={running || generatingPrompts}
+                      onClick={clearDrafts}
+                      type="button"
+                      variant="secondary"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      清除当前提示词
+                    </Button>
+                    <Button
+                      className="h-9 px-3"
+                      onClick={() => setDraftsCollapsed((current) => !current)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      {draftsCollapsed ? (
+                        <ChevronDown className="mr-2 h-4 w-4" />
+                      ) : (
+                        <ChevronUp className="mr-2 h-4 w-4" />
+                      )}
+                      {draftsCollapsed ? '展开' : '收起'}
+                    </Button>
+                  </>
                 ) : null}
                 <Button className="h-9 px-3" onClick={addDraft} type="button" variant="secondary">
                   <Plus className="mr-2 h-4 w-4" />
