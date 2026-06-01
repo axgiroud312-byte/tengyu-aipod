@@ -102,6 +102,29 @@ describe('ComfyHttpClient', () => {
     expect(filename).toBe('result.png')
   })
 
+  it('downloads output images with ComfyUI subfolder and type', async () => {
+    let requestUrl = ''
+    server.use(
+      http.get(`${baseUrl}/view`, ({ request }) => {
+        requestUrl = request.url
+        return new HttpResponse(Buffer.from('png-bytes'))
+      }),
+    )
+    const client = new ComfyHttpClient(baseUrl)
+
+    await expect(
+      client.viewImage({
+        filename: 'ComfyUI_0001.png',
+        subfolder: '2026-05-31',
+        type: 'output',
+      }),
+    ).resolves.toEqual(Buffer.from('png-bytes'))
+    const params = new URL(requestUrl).searchParams
+    expect(params.get('filename')).toBe('ComfyUI_0001.png')
+    expect(params.get('subfolder')).toBe('2026-05-31')
+    expect(params.get('type')).toBe('output')
+  })
+
   it('maps queue-full responses to retryable HTTP_429 errors', async () => {
     server.use(
       http.post(`${baseUrl}/prompt`, () =>

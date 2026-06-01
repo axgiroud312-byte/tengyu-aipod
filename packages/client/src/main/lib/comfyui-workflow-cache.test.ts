@@ -141,4 +141,37 @@ describe('ComfyuiWorkflowCacheManager', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('detects linked prompt and primitive size input nodes', async () => {
+    const manager = new ComfyuiWorkflowCacheManager()
+
+    const imported = await manager.importWorkflow({
+      name: 'Linked Txt2Img',
+      capability: 'txt2img',
+      workflowJsonText: JSON.stringify({
+        '1': {
+          class_type: 'CLIPTextEncode',
+          inputs: { text: ['2', 0] },
+          _meta: { title: 'CLIP Text Encode (Positive Prompt)' },
+        },
+        '2': { class_type: 'CR Prompt Text', inputs: { prompt: '' }, _meta: { title: '提示词' } },
+        '3': { class_type: 'PrimitiveInt', inputs: { value: 1024 }, _meta: { title: '宽' } },
+        '4': { class_type: 'PrimitiveInt', inputs: { value: 1024 }, _meta: { title: '高' } },
+        '5': {
+          class_type: 'EmptyFlux2LatentImage',
+          inputs: { width: ['3', 0], height: ['4', 0] },
+        },
+        '6': { class_type: 'SaveImage', inputs: {} },
+      }),
+    })
+
+    await expect(manager.get(imported.id, 'txt2img')).resolves.toMatchObject({
+      inputSlots: expect.arrayContaining([
+        { name: 'prompt', nodeId: '2', field: 'prompt' },
+        { name: 'width', nodeId: '3', field: 'value' },
+        { name: 'height', nodeId: '4', field: 'value' },
+      ]),
+      outputSlots: [{ name: 'output_1', nodeId: '6', field: 'images' }],
+    })
+  })
 })

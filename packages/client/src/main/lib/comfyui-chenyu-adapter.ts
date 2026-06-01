@@ -7,7 +7,7 @@ import {
   type ComfyuiWorkflowSlot,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
-import type { ComfyHistoryEntry, ComfyHttpClient } from './comfy-http-client'
+import type { ComfyHistoryEntry, ComfyHttpClient, ComfyViewImageInput } from './comfy-http-client'
 import type { ComfyuiInstanceSummary } from './comfyui-instance-manager'
 import type { CachedComfyuiWorkflow, ComfyuiWorkflowCategory } from './comfyui-workflow-cache'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
@@ -85,6 +85,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       workflowCategoryFromRequest(req),
       workflowVersionFromRequest(req),
     )
+    validateWorkflowForRequest(workflow, req)
     const uploadedImages = await this.uploadReferenceImages(req, comfyHttp)
     const injectedWorkflow = injectComfyuiInputs(workflow.workflowJson, workflow.inputSlots, req, {
       uploadedImages,
@@ -138,7 +139,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     workflow: CachedComfyuiWorkflow
     outputs: ComfyImageOutput[]
     promptId: string
-    comfyHttp: Pick<ComfyHttpClient, 'viewImage'>
+    comfyHttp: { viewImage(input: ComfyViewImageInput): Promise<Buffer> }
   }) {
     const taskId = taskIdFromRequest(input.req)
     const outputFolder = join(
@@ -161,7 +162,11 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
           })
         }
 
-        const buffer = await input.comfyHttp.viewImage(output.filename)
+        const buffer = await input.comfyHttp.viewImage({
+          filename: output.filename,
+          ...(output.subfolder ? { subfolder: output.subfolder } : {}),
+          ...(output.type ? { type: output.type } : {}),
+        })
         const printId = printIdFromRequest(input.req) ?? newPrintId()
         const targetPath =
           input.req.capability === 'img2img'
@@ -215,7 +220,10 @@ export function injectComfyuiInputs(
       })
     }
     node.inputs ??= {}
-    node.inputs[slot.field] = valueForSlot(slot, req, context)
+    const value = valueForSlot(slot, req, context)
+    if (value !== undefined) {
+      node.inputs[slot.field] = value
+    }
   }
 
   return workflow
@@ -230,13 +238,16 @@ export function outputsFromHistory(history: ComfyHistoryEntry, outputSlots: Comf
     outputs.push(...(nodeOutput?.images ?? []))
   }
 
-  if (outputs.length === 0) {
+  const persistedOutputs = outputs.filter((output) => output.type === 'output')
+  const selectedOutputs = persistedOutputs.length > 0 ? persistedOutputs : outputs
+
+  if (selectedOutputs.length === 0) {
     throw new AppErrorClass('HTTP_5XX', 'ComfyUI 未返回输出图片', true, {
       provider: 'comfyui-chenyu',
     })
   }
 
-  return outputs
+  return selectedOutputs
 }
 
 function valueForSlot(
@@ -251,10 +262,10 @@ function valueForSlot(
 
   const normalizedName = `${slot.name} ${slot.field}`.toLowerCase()
   if (normalizedName.includes('width')) {
-    return req.output.size_px?.width ?? 1024
+    return req.output.size_px?.width
   }
   if (normalizedName.includes('height')) {
-    return req.output.size_px?.height ?? 1024
+    return req.output.size_px?.height
   }
 
   if (normalizedName.includes('image')) {
@@ -300,6 +311,38 @@ function imageIndexForSlot(slot: ComfyuiWorkflowSlot, req: GenerateRequest) {
 
 function providerFromParams(params: Record<string, unknown>) {
   return params.artifactProvider === 'grsai+comfyui-mask' ? 'grsai+comfyui-mask' : 'comfyui-chenyu'
+}
+
+function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: GenerateRequest) {
+  const outputCount = workflow.outputSlots.length
+  const imageInputCount = workflow.inputSlots.filter((slot) =>
+    `${slot.name} ${slot.field}`.toLowerCase().includes('image'),
+  ).length
+  const promptInputCount = workflow.inputSlots.filter((slot) =>
+    `${slot.name} ${slot.field}`.toLowerCase().includes('prompt'),
+  ).length
+
+  if (outputCount === 0) {
+    throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流未识别到保存或预览输出节点', false, {
+      provider: 'comfyui-chenyu',
+      workflowId: workflow.id,
+    })
+  }
+
+  if ((req.reference_images?.length ?? 0) > 0 && imageInputCount === 0) {
+    throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流未识别到加载图像节点', false, {
+      provider: 'comfyui-chenyu',
+      workflowId: workflow.id,
+    })
+  }
+
+  if (req.capability !== 'matting' && promptInputCount === 0) {
+    throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流未识别到提示词输入节点', false, {
+      provider: 'comfyui-chenyu',
+      workflowId: workflow.id,
+      capability: req.capability,
+    })
+  }
 }
 
 function ensureArtifactsTable(db: Pick<SqliteDatabase, 'exec'>) {

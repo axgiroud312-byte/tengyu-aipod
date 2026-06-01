@@ -1324,8 +1324,20 @@ function LocalWorkflowCard({
                       key={`${workflow.id}@${workflow.version}`}
                     >
                       <div className="min-w-0">
-                        <p className="truncate font-medium">{workflow.name}</p>
-                        <p className="truncate text-xs text-muted-foreground">{workflow.version}</p>
+                        <div className="flex min-w-0 flex-wrap items-center gap-2">
+                          <p className="truncate font-medium">{workflow.name}</p>
+                          <WorkflowDetectionBadge workflow={workflow} />
+                        </div>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {workflow.version} · 图像 {workflow.detection.imageInputs} · 提示词{' '}
+                          {workflow.detection.promptInputs} · 尺寸 {workflow.detection.sizeInputs} ·
+                          输出 {workflow.detection.outputImages}
+                        </p>
+                        {workflow.detection.warnings.length ? (
+                          <p className="mt-1 line-clamp-2 text-xs text-amber-700">
+                            {workflow.detection.warnings.join('；')}
+                          </p>
+                        ) : null}
                       </div>
                       <Button
                         className="h-8 px-2"
@@ -1350,6 +1362,16 @@ function LocalWorkflowCard({
       </CardContent>
     </Card>
   )
+}
+
+function WorkflowDetectionBadge({ workflow }: { workflow: LocalWorkflowSummary }) {
+  if (workflow.detection.status === 'ready') {
+    return <Badge className="bg-emerald-50 text-emerald-700">可运行</Badge>
+  }
+  if (workflow.detection.status === 'warning') {
+    return <Badge className="bg-amber-50 text-amber-800">可运行，有提示</Badge>
+  }
+  return <Badge className="bg-red-50 text-red-700">需检查</Badge>
 }
 
 function SyncStatusRow({ label, value }: { label: string; value: string }) {

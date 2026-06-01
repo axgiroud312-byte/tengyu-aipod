@@ -111,7 +111,7 @@ describe('ComfyuiChenyuAdapter', () => {
       '9': { inputs: {} },
     })
     expect(getHistory).toHaveBeenCalledWith('prompt-1')
-    expect(viewImage).toHaveBeenCalledWith('result.png')
+    expect(viewImage).toHaveBeenCalledWith({ filename: 'result.png' })
     expect(response.images[0]?.local_path).toContain('/workbench/02-印花工作区/提取/task-1/')
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([
@@ -171,7 +171,7 @@ describe('ComfyuiChenyuAdapter', () => {
 
     expect(createComfyHttp).toHaveBeenCalledWith('https://fresh-comfy.example')
     expect(queuePrompt).toHaveBeenCalled()
-    expect(viewImage).toHaveBeenCalledWith('result.png')
+    expect(viewImage).toHaveBeenCalledWith({ filename: 'result.png' })
   })
 
   it('writes img2img outputs with source print id version names', async () => {
@@ -494,5 +494,23 @@ describe('ComfyuiChenyuAdapter', () => {
         { name: 'result', nodeId: '9', field: 'images' },
       ]),
     ).toThrow('ComfyUI 未返回输出图片')
+  })
+
+  it('prefers persisted output images over temp previews', () => {
+    expect(
+      outputsFromHistory(
+        {
+          outputs: {
+            '9': {
+              images: [
+                { filename: 'preview.png', type: 'temp' },
+                { filename: 'saved.png', subfolder: '2026-05-31', type: 'output' },
+              ],
+            },
+          },
+        },
+        [{ name: 'result', nodeId: '9', field: 'images' }],
+      ),
+    ).toEqual([{ filename: 'saved.png', subfolder: '2026-05-31', type: 'output' }])
   })
 })

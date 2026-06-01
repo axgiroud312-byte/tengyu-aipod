@@ -1,7 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative } from 'node:path'
-import type { ComfyuiWorkflow, GenerationCapability } from '@tengyu-aipod/shared'
+import type {
+  ComfyuiWorkflow,
+  ComfyuiWorkflowSlot,
+  GenerationCapability,
+} from '@tengyu-aipod/shared'
 import { app, dialog, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
 
@@ -11,10 +15,21 @@ export type ComfyuiWorkflowCategory = GenerationCapability | 'matting-mixed'
 export type CachedComfyuiWorkflow = Omit<ComfyuiWorkflow, 'capability'> & {
   capability: ComfyuiWorkflowCategory
 }
+export type ComfyuiWorkflowDetectionStatus = 'ready' | 'warning' | 'blocked'
+export type ComfyuiWorkflowDetectionSummary = {
+  imageInputs: number
+  promptInputs: number
+  sizeInputs: number
+  outputImages: number
+  status: ComfyuiWorkflowDetectionStatus
+  warnings: string[]
+}
 export type ComfyuiWorkflowSummary = Pick<
   CachedComfyuiWorkflow,
   'id' | 'version' | 'name' | 'capability' | 'requiredModels'
->
+> & {
+  detection: ComfyuiWorkflowDetectionSummary
+}
 
 export type ImportLocalComfyuiWorkflowInput = {
   name: string
@@ -148,22 +163,28 @@ function normalizeSlot(raw: unknown) {
 
 function normalizeWorkflow(raw: unknown): CachedComfyuiWorkflow {
   const record = isRecord(raw) ? raw : {}
+  const workflowJson = record.workflowJson ?? record.workflow_json
+  const detectedSlots = workflowJson ? detectSlots(workflowJson) : null
   return {
     id: stringValue(record.id),
     version: stringValue(record.version),
     name: stringValue(record.name),
     capability: normalizeCapability(record.capability ?? record.category),
-    workflowJson: record.workflowJson ?? record.workflow_json,
-    inputSlots: Array.isArray(record.inputSlots)
-      ? record.inputSlots.map(normalizeSlot)
-      : Array.isArray(record.input_slots)
-        ? record.input_slots.map(normalizeSlot)
-        : [],
-    outputSlots: Array.isArray(record.outputSlots)
-      ? record.outputSlots.map(normalizeSlot)
-      : Array.isArray(record.output_slots)
-        ? record.output_slots.map(normalizeSlot)
-        : [],
+    workflowJson,
+    inputSlots: detectedSlots
+      ? detectedSlots.inputSlots
+      : Array.isArray(record.inputSlots)
+        ? record.inputSlots.map(normalizeSlot)
+        : Array.isArray(record.input_slots)
+          ? record.input_slots.map(normalizeSlot)
+          : [],
+    outputSlots: detectedSlots
+      ? detectedSlots.outputSlots
+      : Array.isArray(record.outputSlots)
+        ? record.outputSlots.map(normalizeSlot)
+        : Array.isArray(record.output_slots)
+          ? record.output_slots.map(normalizeSlot)
+          : [],
     requiredModels: stringArrayValue(record.requiredModels ?? record.required_models),
   }
 }
@@ -199,23 +220,163 @@ function nodeMetaTitle(node: unknown) {
   return isRecord(node) && isRecord(node._meta) ? stringValue(node._meta.title) : ''
 }
 
+function nodeLabel(node: unknown) {
+  return `${classTypeOf(node)} ${nodeMetaTitle(node)}`.toLowerCase()
+}
+
 function looksNegativePrompt(node: unknown) {
   const text = `${nodeMetaTitle(node)} ${stringValue(nodeInputs(node).text)}`.toLowerCase()
   return text.includes('negative') || text.includes('反向') || text.includes('负面')
 }
 
+function linkedNodeId(value: unknown) {
+  return Array.isArray(value) && typeof value[0] === 'string' ? value[0] : null
+}
+
+function linkedNode(workflowJson: unknown, value: unknown) {
+  const nodeId = linkedNodeId(value)
+  if (!nodeId || !isRecord(workflowJson)) {
+    return null
+  }
+  const node = workflowJson[nodeId]
+  return node ? { nodeId, node } : null
+}
+
+function promptSlotForTextInput(workflowJson: unknown, nodeId: string, textInput: unknown) {
+  const linkedSlot = findLinkedPromptSlot(workflowJson, textInput, new Set<string>())
+  if (linkedSlot) {
+    return linkedSlot
+  }
+
+  return {
+    name: 'prompt',
+    nodeId,
+    field: 'text',
+  }
+}
+
+function findLinkedPromptSlot(
+  workflowJson: unknown,
+  inputValue: unknown,
+  visitedNodeIds: Set<string>,
+): { name: string; nodeId: string; field: string } | null {
+  const linked = linkedNode(workflowJson, inputValue)
+  if (!linked || visitedNodeIds.has(linked.nodeId)) {
+    return null
+  }
+  visitedNodeIds.add(linked.nodeId)
+
+  const inputs = nodeInputs(linked.node)
+  const label = nodeLabel(linked.node)
+  if ('prompt' in inputs && /prompt|text|提示词/.test(label)) {
+    return {
+      name: 'prompt',
+      nodeId: linked.nodeId,
+      field: 'prompt',
+    }
+  }
+  if ('text' in inputs && /prompt|text|提示词/.test(label)) {
+    return {
+      name: 'prompt',
+      nodeId: linked.nodeId,
+      field: 'text',
+    }
+  }
+
+  for (const [field, value] of Object.entries(inputs)) {
+    if (isPromptCarrierField(field)) {
+      const slot = findLinkedPromptSlot(workflowJson, value, visitedNodeIds)
+      if (slot) {
+        return slot
+      }
+    }
+  }
+
+  for (const [field, value] of Object.entries(inputs)) {
+    if (
+      typeof value === 'string' &&
+      isPromptCarrierField(field) &&
+      /prompt|text|提示词/.test(`${label} ${field}`)
+    ) {
+      return {
+        name: 'prompt',
+        nodeId: linked.nodeId,
+        field,
+      }
+    }
+  }
+
+  return null
+}
+
+function isPromptCarrierField(field: string) {
+  return /prompt|text|文本|提示词/i.test(field) && !/delimiter|separator|分隔符|split/i.test(field)
+}
+
+function sizeSlotForInput(
+  workflowJson: unknown,
+  nodeId: string,
+  field: 'width' | 'height',
+  inputValue: unknown,
+) {
+  const linked = linkedNode(workflowJson, inputValue)
+  if (linked) {
+    const inputs = nodeInputs(linked.node)
+    const label = `${nodeLabel(linked.node)} ${field}`
+    if ('value' in inputs && /primitive|int|integer|number|宽|高|width|height/.test(label)) {
+      return {
+        name: field,
+        nodeId: linked.nodeId,
+        field: 'value',
+      }
+    }
+    if (field in inputs) {
+      return {
+        name: field,
+        nodeId: linked.nodeId,
+        field,
+      }
+    }
+  }
+
+  return {
+    name: field,
+    nodeId,
+    field,
+  }
+}
+
+function slotKey(slot: { name: string; nodeId: string; field: string }) {
+  return `${slot.name}:${slot.nodeId}:${slot.field}`
+}
+
 function detectSlots(workflowJson: unknown) {
-  const inputSlots = []
-  const outputSlots = []
+  const inputSlots: ComfyuiWorkflowSlot[] = []
+  const outputSlots: ComfyuiWorkflowSlot[] = []
   let foundPromptSlot = false
   let imageSlotCount = 0
+  const seenInputSlots = new Set<string>()
+
+  function pushInputSlot(slot: {
+    name: string
+    nodeId: string
+    field: string
+    imageIndex?: number
+  }) {
+    const key = slotKey(slot)
+    if (seenInputSlots.has(key)) {
+      return
+    }
+    seenInputSlots.add(key)
+    inputSlots.push(slot)
+  }
 
   for (const [nodeId, node] of nodeEntries(workflowJson)) {
     const classType = classTypeOf(node)
     const inputs = nodeInputs(node)
     if (/loadimage/i.test(classType)) {
       const imageIndex = imageSlotCount
-      inputSlots.push({
+      pushInputSlot({
         name: `image_${imageIndex + 1}`,
         nodeId,
         field: 'image',
@@ -229,21 +390,13 @@ function detectSlots(workflowJson: unknown) {
       'text' in inputs &&
       !looksNegativePrompt(node)
     ) {
-      inputSlots.push({
-        name: 'prompt',
-        nodeId,
-        field: 'text',
-      })
+      pushInputSlot(promptSlotForTextInput(workflowJson, nodeId, inputs.text))
       foundPromptSlot = true
     }
     if (hasSizeInputs(classType, inputs)) {
-      for (const field of ['width', 'height']) {
+      for (const field of ['width', 'height'] as const) {
         if (field in inputs) {
-          inputSlots.push({
-            name: field,
-            nodeId,
-            field,
-          })
+          pushInputSlot(sizeSlotForInput(workflowJson, nodeId, field, inputs[field]))
         }
       }
     }
@@ -267,12 +420,67 @@ function hasSizeInputs(classType: string, inputs: Record<string, unknown>) {
 }
 
 function workflowSummary(workflow: CachedComfyuiWorkflow): ComfyuiWorkflowSummary {
+  const detection = workflowDetectionSummary(workflow)
   return {
     id: workflow.id,
     version: workflow.version,
     name: workflow.name,
     capability: workflow.capability,
     requiredModels: workflow.requiredModels,
+    detection,
+  }
+}
+
+function workflowDetectionSummary(
+  workflow: CachedComfyuiWorkflow,
+): ComfyuiWorkflowDetectionSummary {
+  const imageInputs = workflow.inputSlots.filter((slot) =>
+    `${slot.name} ${slot.field}`.toLowerCase().includes('image'),
+  ).length
+  const promptInputs = workflow.inputSlots.filter((slot) =>
+    `${slot.name} ${slot.field}`.toLowerCase().includes('prompt'),
+  ).length
+  const sizeInputs = workflow.inputSlots.filter(
+    (slot) => slot.name === 'width' || slot.name === 'height',
+  ).length
+  const outputImages = workflow.outputSlots.length
+  const warnings: string[] = []
+
+  if (workflow.capability !== 'txt2img' && imageInputs === 0) {
+    warnings.push('未识别到加载图像输入')
+  }
+  if (
+    workflow.capability !== 'matting' &&
+    workflow.capability !== 'matting-mixed' &&
+    promptInputs === 0
+  ) {
+    warnings.push('未识别到提示词输入')
+  }
+  if (outputImages === 0) {
+    warnings.push('未识别到保存或预览输出')
+  }
+  if (
+    workflow.capability !== 'matting' &&
+    workflow.capability !== 'matting-mixed' &&
+    sizeInputs === 0
+  ) {
+    warnings.push('未识别到尺寸输入，将使用工作流默认尺寸')
+  }
+
+  const hasBlockingWarning =
+    outputImages === 0 ||
+    (workflow.capability !== 'txt2img' && imageInputs === 0) ||
+    (workflow.capability !== 'matting' &&
+      workflow.capability !== 'matting-mixed' &&
+      promptInputs === 0)
+
+  return {
+    imageInputs,
+    promptInputs,
+    sizeInputs,
+    outputImages,
+    status: hasBlockingWarning ? 'blocked' : warnings.length > 0 ? 'warning' : 'ready',
+    warnings,
   }
 }
 
@@ -377,7 +585,13 @@ async function workflowFromFile(root: string, filePath: string) {
 export class ComfyuiWorkflowCacheManager {
   async listWorkflows(category?: ComfyuiWorkflowCategory): Promise<ComfyuiWorkflowSummary[]> {
     const index = await this.readIndex()
-    return index.items.filter((workflow) => matchesCategory(workflow, category))
+    const summaries = await Promise.all(
+      index.items.map(async (item) => {
+        const workflow = await this.readWorkflow(item.id, item.version)
+        return workflow ? workflowSummary(workflow) : item
+      }),
+    )
+    return summaries.filter((workflow) => matchesCategory(workflow, category))
   }
 
   async get(

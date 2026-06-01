@@ -1327,84 +1327,96 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
           <WorkspaceRequired onOpenSettings={() => navigate('/settings')} />
         ) : (
           <div className="space-y-6">
-            {activeModule === 'collection' ? (
-              <CollectionPage
-                currentPage={collectionCurrentPage}
-                debugLogs={collectionDebugLogs}
-                deletingRecordId={deletingRecordId}
-                detectingCurrentPage={isDetectingCollectionCurrentPage}
-                error={collectionError}
-                imageIndexClick={collectionImageIndexClick}
-                imageIndexDownload={collectionImageIndexDownload}
-                imagePoolItems={collectionImagePoolItems}
-                imageIndexScan={collectionImageIndexScan}
-                imageIndexScanning={isScanningCollectionImageIndex}
-                imageIndexClickProbing={isProbingCollectionImageIndexClick}
-                imageIndexDownloading={isDownloadingCollectionImageIndex}
-                onClearDebugLogs={clearCollectionDebugLogs}
-                onClearImagePool={clearCollectionImagePool}
-                onClearImagePoolSelection={clearCollectionImagePoolSelection}
-                onDownloadImageIndexSample={(pageUrl) =>
-                  void downloadCollectionImageIndexSample(pageUrl)
-                }
-                onDownloadImageIndexItems={(items, pageUrl) =>
-                  void downloadCollectionImageIndexItems(items, pageUrl)
-                }
-                onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
-                onOpenSearchPage={(keyword) => void openCollectionSearchPage(keyword)}
-                onProbeImageIndexClick={(pageUrl) => void probeCollectionImageIndexClick(pageUrl)}
-                onRefreshProfiles={() => void refreshCollectionProfiles()}
-                onRefreshRecords={() => void refreshCollectionRecords()}
-                onResumeSession={() => void resumeCollectionSession()}
-                onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
-                onScanImageIndex={(pageUrl) => void scanCollectionImageIndex(pageUrl)}
-                onSelectAllImagePoolItems={selectAllCollectionImagePoolItems}
-                onStartSession={() => void startCollectionSession()}
-                onStateChange={updateCollectionPageState}
-                onStopSession={() => void stopCollectionSession()}
-                onToggleImagePoolItem={toggleCollectionImagePoolItem}
-                lastDownloadFailedCount={collectionLastDownloadFailedCount}
-                lastScanAddedCount={collectionLastScanAddedCount}
-                lastScanExistingCount={collectionLastScanExistingCount}
-                openingSearchPage={isOpeningCollectionSearchPage}
-                platforms={collectionPlatforms}
-                profiles={collectionProfiles}
-                refreshingProfiles={isRefreshingCollectionProfiles}
-                records={collectionRecords}
-                resuming={isResumingCollection}
-                retryingRecordId={retryingRecordId}
-                selectedImageIds={collectionSelectedImageIds}
-                session={collectionSession}
-                starting={isStartingCollection}
-                state={collectionPageState}
-                stopping={isStoppingCollection}
-              />
-            ) : activeModule === 'title' ? (
-              <TitlePage
-                languages={languages}
-                models={models}
-                onChooseBatchDir={() => void chooseBatchDir()}
-                onOpenPath={(path) => void openPath(path)}
-                onRetryFailed={() => void retryFailed()}
-                onRunBatch={() => void runTitleBatch()}
-                onScanBatchDir={() => void scanBatchDir()}
-                onStateChange={updateTitleFormState}
-                openMessage={openMessage}
-                platforms={platforms}
-                state={titlePageState}
-                titleError={titleError}
-              />
-            ) : activeModule === 'generation' ? (
-              <GenerationPage />
-            ) : activeModule === 'listing' ? (
-              <ListingPage />
-            ) : activeModule === 'ps' ? (
-              <PhotoshopPage />
-            ) : activeModule === 'settings' ? (
+            {workspaceRoot ? (
+              <>
+                <div hidden={activeModule !== 'collection'}>
+                  <CollectionPage
+                    currentPage={collectionCurrentPage}
+                    debugLogs={collectionDebugLogs}
+                    deletingRecordId={deletingRecordId}
+                    detectingCurrentPage={isDetectingCollectionCurrentPage}
+                    error={collectionError}
+                    imageIndexClick={collectionImageIndexClick}
+                    imageIndexDownload={collectionImageIndexDownload}
+                    imagePoolItems={collectionImagePoolItems}
+                    imageIndexScan={collectionImageIndexScan}
+                    imageIndexScanning={isScanningCollectionImageIndex}
+                    imageIndexClickProbing={isProbingCollectionImageIndexClick}
+                    imageIndexDownloading={isDownloadingCollectionImageIndex}
+                    onClearDebugLogs={clearCollectionDebugLogs}
+                    onClearImagePool={clearCollectionImagePool}
+                    onClearImagePoolSelection={clearCollectionImagePoolSelection}
+                    onDownloadImageIndexSample={(pageUrl) =>
+                      void downloadCollectionImageIndexSample(pageUrl)
+                    }
+                    onDownloadImageIndexItems={(items, pageUrl) =>
+                      void downloadCollectionImageIndexItems(items, pageUrl)
+                    }
+                    onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
+                    onOpenSearchPage={(keyword) => void openCollectionSearchPage(keyword)}
+                    onProbeImageIndexClick={(pageUrl) =>
+                      void probeCollectionImageIndexClick(pageUrl)
+                    }
+                    onRefreshProfiles={() => void refreshCollectionProfiles()}
+                    onRefreshRecords={() => void refreshCollectionRecords()}
+                    onResumeSession={() => void resumeCollectionSession()}
+                    onRetryRecord={(recordId) => void retryCollectionRecord(recordId)}
+                    onScanImageIndex={(pageUrl) => void scanCollectionImageIndex(pageUrl)}
+                    onSelectAllImagePoolItems={selectAllCollectionImagePoolItems}
+                    onStartSession={() => void startCollectionSession()}
+                    onStateChange={updateCollectionPageState}
+                    onStopSession={() => void stopCollectionSession()}
+                    onToggleImagePoolItem={toggleCollectionImagePoolItem}
+                    lastDownloadFailedCount={collectionLastDownloadFailedCount}
+                    lastScanAddedCount={collectionLastScanAddedCount}
+                    lastScanExistingCount={collectionLastScanExistingCount}
+                    openingSearchPage={isOpeningCollectionSearchPage}
+                    platforms={collectionPlatforms}
+                    profiles={collectionProfiles}
+                    refreshingProfiles={isRefreshingCollectionProfiles}
+                    records={collectionRecords}
+                    resuming={isResumingCollection}
+                    retryingRecordId={retryingRecordId}
+                    selectedImageIds={collectionSelectedImageIds}
+                    session={collectionSession}
+                    starting={isStartingCollection}
+                    state={collectionPageState}
+                    stopping={isStoppingCollection}
+                  />
+                </div>
+                <div hidden={activeModule !== 'title'}>
+                  <TitlePage
+                    languages={languages}
+                    models={models}
+                    onChooseBatchDir={() => void chooseBatchDir()}
+                    onOpenPath={(path) => void openPath(path)}
+                    onRetryFailed={() => void retryFailed()}
+                    onRunBatch={() => void runTitleBatch()}
+                    onScanBatchDir={() => void scanBatchDir()}
+                    onStateChange={updateTitleFormState}
+                    openMessage={openMessage}
+                    platforms={platforms}
+                    state={titlePageState}
+                    titleError={titleError}
+                  />
+                </div>
+                <div hidden={activeModule !== 'generation'}>
+                  <GenerationPage />
+                </div>
+                <div hidden={activeModule !== 'listing'}>
+                  <ListingPage />
+                </div>
+                <div hidden={activeModule !== 'ps'}>
+                  <PhotoshopPage />
+                </div>
+                <div hidden={activeModule !== 'detection'}>
+                  <DetectionPage />
+                </div>
+              </>
+            ) : null}
+            <div hidden={activeModule !== 'settings'}>
               <SettingsPage onWorkspaceSaved={setWorkspaceRoot} />
-            ) : (
-              <DetectionPage />
-            )}
+            </div>
           </div>
         )}
       </div>

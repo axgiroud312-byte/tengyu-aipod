@@ -307,6 +307,16 @@ function comfyuiSizePx(input: { width?: number; height?: number }) {
   }
 }
 
+function comfyuiOptionalSizePx(input: { width?: number; height?: number }) {
+  if (input.width === undefined && input.height === undefined) {
+    return undefined
+  }
+  return {
+    width: clampInt(input.width ?? 1024, 256, 4096, 1024),
+    height: clampInt(input.height ?? 1024, 256, 4096, 1024),
+  }
+}
+
 function promptSkillCategory(
   capability: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>,
   printMode: 'local' | 'full' = 'local',
@@ -2044,7 +2054,7 @@ export async function runComfyuiMattingBatch(
       images: [],
       failures: [],
     }
-    const sizePx = comfyuiSizePx(input)
+    const sizePx = comfyuiOptionalSizePx(input)
     const adapter =
       dependencies.createComfyuiAdapter?.({ apiKey, workbenchRoot }) ??
       new ComfyuiChenyuAdapter({
@@ -2067,13 +2077,12 @@ export async function runComfyuiMattingBatch(
           prompt: input.prompt?.trim() || 'Remove the background and output transparent PNG.',
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference],
-          output: { format: 'png', size_px: sizePx },
+          output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
           options: {
             taskId,
             sourceArtifactIds: [artifactId],
             printId: source.printId,
-            width: sizePx.width,
-            height: sizePx.height,
+            ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
             ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
           },
         } satisfies GenerateRequest)
@@ -2148,7 +2157,7 @@ export async function runMixedMattingBatch(
       images: [],
       failures: [],
     }
-    const sizePx = comfyuiSizePx(input)
+    const sizePx = comfyuiOptionalSizePx(input)
     await tempFiles.createTaskDir('matting', taskId)
     createdTempDir = true
     const skill = await resolveMixedMattingMaskSkill(
@@ -2216,13 +2225,12 @@ export async function runMixedMattingBatch(
             'Convert the black and white mask to alpha and composite it with the original print.',
           workflow_id: input.workflowId.trim(),
           reference_images: [source.reference, await imageReference(maskPath)],
-          output: { format: 'png', size_px: sizePx },
+          output: { format: 'png', ...(sizePx ? { size_px: sizePx } : {}) },
           options: {
             taskId,
             sourceArtifactIds: [artifactId],
             printId: source.printId,
-            width: sizePx.width,
-            height: sizePx.height,
+            ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
             workflowCategory: 'matting-mixed',
             artifactProvider: 'grsai+comfyui-mask',
             maskSkillId: skill.id,

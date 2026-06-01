@@ -2372,8 +2372,6 @@ function ComfyuiMattingPanel() {
   const [workflowKey, setWorkflowKey] = useState('')
   const [mixedWorkflows, setMixedWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
-  const [width, setWidth] = useState('1024')
-  const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
   const [taskId, setTaskId] = useState<string | null>(null)
   const [, setProgress] = useState<GenerationProgress | null>(null)
@@ -2494,16 +2492,12 @@ function ComfyuiMattingPanel() {
     const workflowVersion = selectedWorkflow.version
     let taskId: string
     const sourceImagePaths = sources.map((source) => source.path)
-    const widthValue = clampNumber(width, 256, 4096, 1024)
-    const heightValue = clampNumber(height, 256, 4096, 1024)
     try {
       if (mode === 'mixed') {
         taskId = await window.api.generation.runMixedMatting({
           sourceImagePaths,
           workflowId: selectedWorkflow.id,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
-          width: widthValue,
-          height: heightValue,
           ...(workflowVersion ? { workflowVersion } : {}),
         })
       } else {
@@ -2511,8 +2505,6 @@ function ComfyuiMattingPanel() {
           sourceImagePaths,
           workflowId: selectedWorkflow.id,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
-          width: widthValue,
-          height: heightValue,
           ...(workflowVersion ? { workflowVersion } : {}),
         })
       }
@@ -2575,7 +2567,7 @@ function ComfyuiMattingPanel() {
                 </label>
               ))}
             </div>
-            <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <div className="mt-4 grid gap-4">
               <label className="block space-y-2 text-sm font-medium">
                 <span>工作流</span>
                 <select
@@ -2597,28 +2589,6 @@ function ComfyuiMattingPanel() {
                     </option>
                   ))}
                 </select>
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>宽度</span>
-                <input
-                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  max={4096}
-                  min={256}
-                  onChange={(event) => setWidth(event.target.value)}
-                  type="number"
-                  value={width}
-                />
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>高度</span>
-                <input
-                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  max={4096}
-                  min={256}
-                  onChange={(event) => setHeight(event.target.value)}
-                  type="number"
-                  value={height}
-                />
               </label>
             </div>
           </div>
@@ -2820,67 +2790,81 @@ export function GenerationWorkbench() {
         </Tabs>
       </div>
 
-      {activeCapability === 'txt2img' ? (
-        <div className="rounded-md border bg-background p-5 shadow-sm">
-          <GrsaiPromptGenerationPanel capability="txt2img" />
+      <div
+        className="rounded-md border bg-background p-5 shadow-sm"
+        hidden={activeCapability !== 'txt2img'}
+      >
+        <GrsaiPromptGenerationPanel capability="txt2img" />
+      </div>
+
+      <div
+        className="rounded-md border bg-background p-5 shadow-sm"
+        hidden={activeCapability === 'txt2img'}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <h3 className="text-base font-semibold">实现方式</h3>
+            <p className="mt-1 text-sm text-muted-foreground">{providerNotes[activeProvider]}</p>
+          </div>
+          <div className="flex gap-2">
+            {generationProviders.map((provider) => {
+              const available = isGenerationProviderAvailable(activeCapability, provider.key)
+              const selected = activeProvider === provider.key
+              return (
+                <Button
+                  className="h-10"
+                  disabled={!available}
+                  key={provider.key}
+                  onClick={() => setProvider(activeCapability, provider.key)}
+                  title={available ? provider.label : unavailableText[activeCapability]}
+                  type="button"
+                  variant={selected ? 'default' : 'secondary'}
+                >
+                  {provider.label}
+                </Button>
+              )
+            })}
+          </div>
         </div>
-      ) : (
-        <div className="rounded-md border bg-background p-5 shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-3">
+
+        <div hidden={!(activeCapability === 'extract' && activeProvider === 'grsai')}>
+          <GrsaiExtractPanel />
+        </div>
+        <div hidden={!(activeCapability === 'extract' && activeProvider === 'comfyui-chenyu')}>
+          <ComfyuiExtractPanel />
+        </div>
+        <div hidden={!(activeCapability === 'matting' && activeProvider === 'comfyui-chenyu')}>
+          <ComfyuiMattingPanel />
+        </div>
+        <div hidden={!(activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu')}>
+          <ComfyuiImg2imgPanel />
+        </div>
+        <div hidden={!(activeCapability === 'img2img' && activeProvider === 'grsai')}>
+          <GrsaiPromptGenerationPanel capability="img2img" />
+        </div>
+        <div
+          className={`mt-5 rounded-md border p-5 ${
+            unavailable ? 'border-amber-200 bg-amber-50 text-amber-900' : 'bg-muted/40'
+          }`}
+          hidden={
+            (activeCapability === 'extract' &&
+              (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu')) ||
+            (activeCapability === 'matting' && activeProvider === 'comfyui-chenyu') ||
+            (activeCapability === 'img2img' &&
+              (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu'))
+          }
+        >
+          <div className="flex items-start gap-3">
+            <CircleDashed className="mt-0.5 h-5 w-5 shrink-0" />
             <div>
-              <h3 className="text-base font-semibold">实现方式</h3>
-              <p className="mt-1 text-sm text-muted-foreground">{providerNotes[activeProvider]}</p>
-            </div>
-            <div className="flex gap-2">
-              {generationProviders.map((provider) => {
-                const available = isGenerationProviderAvailable(activeCapability, provider.key)
-                const selected = activeProvider === provider.key
-                return (
-                  <Button
-                    className="h-10"
-                    disabled={!available}
-                    key={provider.key}
-                    onClick={() => setProvider(activeCapability, provider.key)}
-                    title={available ? provider.label : unavailableText[activeCapability]}
-                    type="button"
-                    variant={selected ? 'default' : 'secondary'}
-                  >
-                    {provider.label}
-                  </Button>
-                )
-              })}
+              <h4 className="font-semibold">{activeCopy.title}</h4>
+              <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                {activeCopy.description}
+              </p>
             </div>
           </div>
-
-          {activeCapability === 'extract' && activeProvider === 'grsai' ? (
-            <GrsaiExtractPanel />
-          ) : activeCapability === 'extract' && activeProvider === 'comfyui-chenyu' ? (
-            <ComfyuiExtractPanel />
-          ) : activeCapability === 'matting' && activeProvider === 'comfyui-chenyu' ? (
-            <ComfyuiMattingPanel />
-          ) : activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu' ? (
-            <ComfyuiImg2imgPanel />
-          ) : activeCapability === 'img2img' && activeProvider === 'grsai' ? (
-            <GrsaiPromptGenerationPanel capability={activeCapability} />
-          ) : (
-            <div
-              className={`mt-5 rounded-md border p-5 ${
-                unavailable ? 'border-amber-200 bg-amber-50 text-amber-900' : 'bg-muted/40'
-              }`}
-            >
-              <div className="flex items-start gap-3">
-                <CircleDashed className="mt-0.5 h-5 w-5 shrink-0" />
-                <div>
-                  <h4 className="font-semibold">{activeCopy.title}</h4>
-                  <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                    {activeCopy.description}
-                  </p>
-                </div>
-              </div>
-            </div>
-          )}
         </div>
-      )}
+      </div>
 
       <Dialog onOpenChange={setIsDebugLogOpen} open={isDebugLogOpen}>
         <DialogContent className="max-w-5xl gap-0 p-0">

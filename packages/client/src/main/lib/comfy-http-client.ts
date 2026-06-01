@@ -30,6 +30,14 @@ type ComfyUploadResponse = {
   type?: string
 }
 
+export type ComfyViewImageInput =
+  | string
+  | {
+      filename: string
+      subfolder?: string | undefined
+      type?: string | undefined
+    }
+
 const DEFAULT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
 const DEFAULT_POLL_TIMEOUT_MS = 300_000
@@ -107,10 +115,19 @@ export class ComfyHttpClient {
     })
   }
 
-  async viewImage(filename: string) {
-    const response = await this.request(`/view?filename=${encodeURIComponent(filename)}`, {
-      method: 'GET',
-    })
+  async viewImage(input: ComfyViewImageInput) {
+    const params = new URLSearchParams()
+    const filename = typeof input === 'string' ? input : input.filename
+    params.set('filename', filename)
+    if (typeof input !== 'string') {
+      if (input.subfolder) {
+        params.set('subfolder', input.subfolder)
+      }
+      if (input.type) {
+        params.set('type', input.type)
+      }
+    }
+    const response = await this.request(`/view?${params.toString()}`, { method: 'GET' })
     return Buffer.from(await response.arrayBuffer())
   }
 
