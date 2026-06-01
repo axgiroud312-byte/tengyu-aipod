@@ -76,8 +76,11 @@ GET /api/skills?module=generation&category=txt2img-local-print
 
 返回启用的 Skill 摘要，不包含 `system_prompt` 全文。
 
-同一个 `module + category` 可以有多条不同 `id` 的 Skill。提取能力使用
-`module=generation&category=extract-paid-model` 这一组 Skill，Grsai 提取和
+同一个 `module + category` 可以有多条不同 `id` 的 Skill。文生图 / 图生图提示词生成按
+`txt2img-local-print`、`txt2img-full-print`、`img2img-local-reference`、
+`img2img-full-reference` 四个 category 分组；客户端根据当前“能力 + 印花类型”只展示当前组合下的 Skill。
+
+提取能力使用 `module=generation&category=extract-paid-model` 这一组 Skill，Grsai 提取和
 ComfyUI 提取都从这里选择；这个 category 名称是历史兼容名，不表示只给付费模型使用。
 
 ### 4.2 Skill 详情
@@ -132,8 +135,8 @@ Admin API 由后台页面调用，使用管理员 JWT。
 
 Skill 管理页面分两类：
 
-- 固定业务槽位：文生图、图生图、侵权检测等一类只需要一个默认 Skill 的场景。
-- 多条可选 Skill：提取提示词允许新增多条同分类 Skill，客户端在 Grsai 提取和 ComfyUI 提取里给用户选择。
+- 默认业务槽位：文生图 / 图生图四个提示词组合和侵权检测都有默认 Skill，保持旧配置兼容。
+- 多条可选 Skill：文生图 / 图生图四个提示词组合、提取提示词都允许新增多条同分类 Skill；客户端只展示当前组合下的可用项。
 
 ## 7. Skill 版本策略
 

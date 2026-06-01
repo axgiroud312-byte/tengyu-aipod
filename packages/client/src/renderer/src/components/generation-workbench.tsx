@@ -142,7 +142,27 @@ const EXTRACT_SKILL_CATEGORY = 'extract-paid-model'
 const LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY = 'extract-comfyui-workflow'
 const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
 const COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-instance:'
+const PROMPT_SKILL_SELECTION_STORAGE_PREFIX = 'tengyu:generation-prompt-skill:'
 const GENERATION_DEBUG_LOG_LIMIT = 1000
+const promptSkillCategories: Record<
+  Extract<GenerationCapability, 'txt2img' | 'img2img'>,
+  Record<'local' | 'full', string>
+> = {
+  txt2img: {
+    local: 'txt2img-local-print',
+    full: 'txt2img-full-print',
+  },
+  img2img: {
+    local: 'img2img-local-reference',
+    full: 'img2img-full-reference',
+  },
+}
+const promptSkillLabels: Record<string, string> = {
+  'txt2img-local-print': '文生图局部',
+  'txt2img-full-print': '文生图满印',
+  'img2img-local-reference': '图生图局部',
+  'img2img-full-reference': '图生图满印',
+}
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
     key: 'layout',
@@ -215,6 +235,25 @@ function isExtractSkillSummary(skill: SkillSummary) {
     (skill.category === EXTRACT_SKILL_CATEGORY ||
       skill.category === LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY)
   )
+}
+
+function promptSkillCategoryFor(
+  capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>,
+  printMode: 'local' | 'full',
+) {
+  return promptSkillCategories[capability][printMode]
+}
+
+function promptSkillStorageKey(category: string) {
+  return `${PROMPT_SKILL_SELECTION_STORAGE_PREFIX}${category}`
+}
+
+function defaultPromptSkillId(category: string) {
+  return category
+}
+
+function promptSkillLabel(category: string) {
+  return promptSkillLabels[category] ?? category
 }
 
 function clampNumber(value: string, min: number, max: number, fallback: number) {
@@ -361,6 +400,110 @@ function ExtractSkillPicker({
         ) : null}
       </div>
     </div>
+  )
+}
+
+function usePromptSkillOptions(category: string, setError: (error: string | null) => void) {
+  const [promptSkills, setPromptSkills] = useState<SkillSummary[]>([])
+  const [selectedSkillId, setSelectedSkillId] = useState('')
+  const selectedSkill = useMemo(
+    () => promptSkills.find((skill) => skill.id === selectedSkillId) ?? null,
+    [promptSkills, selectedSkillId],
+  )
+
+  useEffect(() => {
+    let mounted = true
+    window.api.skill
+      .list({ module: 'generation', category })
+      .then((skills) => {
+        if (!mounted) {
+          return
+        }
+        setPromptSkills(skills)
+        setSelectedSkillId((current) => {
+          if (current && skills.some((skill) => skill.id === current)) {
+            return current
+          }
+
+          const remembered = window.localStorage.getItem(promptSkillStorageKey(category))
+          if (remembered && skills.some((skill) => skill.id === remembered)) {
+            return remembered
+          }
+
+          const fallbackId = defaultPromptSkillId(category)
+          if (skills.some((skill) => skill.id === fallbackId)) {
+            return fallbackId
+          }
+
+          return skills[0]?.id ?? ''
+        })
+      })
+      .catch((nextError) => {
+        if (!mounted) {
+          return
+        }
+        setPromptSkills([])
+        setSelectedSkillId('')
+        setError(nextError instanceof Error ? nextError.message : '读取提示词 Skill 失败')
+      })
+
+    return () => {
+      mounted = false
+    }
+  }, [category, setError])
+
+  function selectPromptSkill(skillId: string) {
+    setSelectedSkillId(skillId)
+    if (skillId) {
+      window.localStorage.setItem(promptSkillStorageKey(category), skillId)
+    } else {
+      window.localStorage.removeItem(promptSkillStorageKey(category))
+    }
+  }
+
+  return { promptSkills, selectedSkill, selectedSkillId, selectPromptSkill }
+}
+
+function PromptSkillPicker({
+  category,
+  promptSkills,
+  selectedSkill,
+  selectedSkillId,
+  onChange,
+}: {
+  category: string
+  promptSkills: SkillSummary[]
+  selectedSkill: SkillSummary | null
+  selectedSkillId: string
+  onChange: (skillId: string) => void
+}) {
+  const label = promptSkillLabel(category)
+  if (!promptSkills.length) {
+    return (
+      <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
+        暂无可用的{label} Skill，请先在后台配置
+      </div>
+    )
+  }
+
+  return (
+    <label className="block min-w-0 space-y-2 text-sm font-medium">
+      <span>提示词配置</span>
+      <select
+        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+        onChange={(event) => onChange(event.target.value)}
+        value={selectedSkillId}
+      >
+        {promptSkills.map((skill) => (
+          <option key={skill.id} value={skill.id}>
+            {skillOptionLabel(skill)}
+          </option>
+        ))}
+      </select>
+      <span className="block truncate text-xs font-normal text-muted-foreground">
+        {selectedSkill ? `${selectedSkill.id} · ${selectedSkill.version}` : `当前组合：${label}`}
+      </span>
+    </label>
   )
 }
 
@@ -1094,6 +1237,9 @@ function GrsaiPromptGenerationPanel({
     () => bailianModelsForUse(settings, usesPromptReference),
     [settings, usesPromptReference],
   )
+  const promptSkillCategory = promptSkillCategoryFor(capability, printMode)
+  const promptSkillSelection = usePromptSkillOptions(promptSkillCategory, setError)
+  const selectedPromptSkill = promptSkillSelection.selectedSkill
 
   const selectedPrompts = useMemo(
     () => drafts.filter((draft) => draft.selected && draft.text.trim()).map((draft) => draft.text),
@@ -1169,9 +1315,16 @@ function GrsaiPromptGenerationPanel({
       setGeneratingPrompts(false)
       return []
     }
+    if (!selectedPromptSkill) {
+      setError(`请先在后台配置${promptSkillLabel(promptSkillCategory)} Skill`)
+      setGeneratingPrompts(false)
+      return []
+    }
     try {
       const nextDrafts = await window.api.generation.generatePrompts({
         capability,
+        skillId: selectedPromptSkill.id,
+        skillVersion: selectedPromptSkill.version,
         printMode,
         requirement,
         count: clampNumber(promptCount, 1, 1000, 5),
@@ -1473,31 +1626,26 @@ function GrsaiPromptGenerationPanel({
                   />
                 </label>
 
-                <div className="flex flex-wrap items-end justify-between gap-3 rounded-md border bg-muted/30 px-3 py-3">
-                  <div className="min-w-0 text-sm text-muted-foreground">
-                    当前会自动使用后台固定槽位：
-                    {capability === 'txt2img'
-                      ? printMode === 'full'
-                        ? '文生图满印'
-                        : '文生图局部印花'
-                      : printMode === 'full'
-                        ? '图生图满印参考图'
-                        : '图生图局部参考图'}
-                  </div>
-                  <div className="flex items-end">
-                    <Button
-                      disabled={generatingPrompts || running}
-                      onClick={() => void generatePrompts()}
-                      type="button"
-                    >
-                      {generatingPrompts ? (
-                        <Loader2 className="mr-2 h-4 w-4" />
-                      ) : (
-                        <WandSparkles className="mr-2 h-4 w-4" />
-                      )}
-                      生成提示词
-                    </Button>
-                  </div>
+                <div className="grid gap-3 rounded-md border bg-muted/30 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-end">
+                  <PromptSkillPicker
+                    category={promptSkillCategory}
+                    onChange={promptSkillSelection.selectPromptSkill}
+                    promptSkills={promptSkillSelection.promptSkills}
+                    selectedSkill={selectedPromptSkill}
+                    selectedSkillId={promptSkillSelection.selectedSkillId}
+                  />
+                  <Button
+                    disabled={generatingPrompts || running || !selectedPromptSkill}
+                    onClick={() => void generatePrompts()}
+                    type="button"
+                  >
+                    {generatingPrompts ? (
+                      <Loader2 className="mr-2 h-4 w-4" />
+                    ) : (
+                      <WandSparkles className="mr-2 h-4 w-4" />
+                    )}
+                    生成提示词
+                  </Button>
                 </div>
               </div>
             ) : (
@@ -1753,6 +1901,7 @@ function GrsaiPromptGenerationPanel({
                 disabled={
                   running ||
                   generatingPrompts ||
+                  (aiMode && !selectedPromptSkill) ||
                   (usesComfyuiTxt2img && !comfyuiInstanceSelection.runTarget)
                 }
                 onClick={() => void oneClickRun()}

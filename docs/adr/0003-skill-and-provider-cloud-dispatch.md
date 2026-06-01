@@ -7,7 +7,7 @@
 
 腾域的"内置经验"主要由 3 类资产承载：
 
-1. **Skill**：云端后台维护的系统提示词，当前生图固定 4 个槽位
+1. **Skill**：云端后台维护的系统提示词，文生图 / 图生图按 4 个 category 分组，每组可配置多条 Skill 给客户端选择
 2. **本地模型配置**：Grsai、百炼、晨羽 API Key、模型清单、并发、重试等
 3. **本地 ComfyUI Workflow**：用户在客户端导入的 workflow JSON + input/output 槽
 

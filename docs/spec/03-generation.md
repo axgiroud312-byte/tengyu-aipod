@@ -374,6 +374,15 @@ GET /api/skills/{id}                                → PaidSkill (full)
 
 缓存 30 分钟刷新一次。
 
+文生图 / 图生图提示词生成也按同一 category 多条 Skill 管理。客户端根据当前业务组合只展示对应 category 下的 Skill，下拉选择后运行时传 `skillId`；不把四类混在一个大下拉框里。
+
+| 组合 | category | 默认 Skill ID |
+|---|---|---|
+| 文生图局部 | `txt2img-local-print` | `txt2img-local-print` |
+| 文生图满印 | `txt2img-full-print` | `txt2img-full-print` |
+| 图生图局部 | `img2img-local-reference` | `img2img-local-reference` |
+| 图生图满印 | `img2img-full-reference` | `img2img-full-reference` |
+
 提取能力使用同一组 Skill：`module='generation'`，`category='extract-paid-model'`。这个 category 名称沿用历史 ID，但业务含义是“提取提示词”，不是只给付费模型使用。后台可以创建多条不同 `id` 的提取 Skill，客户端在 Grsai 提取和 ComfyUI 提取里都展示给用户选择。
 
 ## 4. 文生图能力（Grsai / ComfyUI）
@@ -398,7 +407,7 @@ GET /api/skills/{id}                                → PaidSkill (full)
   ③ 印花要求：
      [textarea，placeholder: "圣诞风格小熊主题，复古海报感"]
   
-  固定 Skill 槽位：txt2img-local-print / txt2img-full-print
+  提示词配置：[当前组合下的 Skill ▼]
   语言模型：[qwen3.6-flash ▼]
   
   [生成提示词] ← 调阿里云百炼

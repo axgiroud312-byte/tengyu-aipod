@@ -29,7 +29,7 @@ type SkillDetailResponse = {
   data: Skill
 }
 
-const fixedSkillSlots: [SkillSlot, ...SkillSlot[]] = [
+const promptDefaultSkillSlots: [SkillSlot, ...SkillSlot[]] = [
   {
     id: 'txt2img-local-print',
     module: 'generation',
@@ -66,17 +66,29 @@ const fixedSkillSlots: [SkillSlot, ...SkillSlot[]] = [
     recommendedModel: 'qwen3-vl-plus',
     returnHint: '要求返回 JSON：{ "prompts": ["..."] }。',
   },
-  {
-    id: 'infringement-detection',
-    module: 'detection',
-    category: 'infringement',
-    title: '侵权检测提示词',
-    description: '用于侵权检测：把印花图像和这段系统提示词发送给百炼视觉模型。',
-    recommendedModel: 'qwen3-vl-flash',
-    returnHint: '要求返回 JSON：{ "risk_score": 0-100, "reason": "..." }。',
-  },
 ]
-const defaultSkillSlot = fixedSkillSlots[0]
+
+const detectionSkillSlot: SkillSlot = {
+  id: 'infringement-detection',
+  module: 'detection',
+  category: 'infringement',
+  title: '侵权检测提示词',
+  description: '用于侵权检测：把印花图像和这段系统提示词发送给百炼视觉模型。',
+  recommendedModel: 'qwen3-vl-flash',
+  returnHint: '要求返回 JSON：{ "risk_score": 0-100, "reason": "..." }。',
+}
+
+const fixedSkillSlots: [SkillSlot, ...SkillSlot[]] = [
+  ...promptDefaultSkillSlots,
+  detectionSkillSlot,
+]
+const promptSkillGroups = promptDefaultSkillSlots.map((slot) => ({ defaultSlot: slot }))
+const promptSkillCategories = new Set(
+  promptDefaultSkillSlots
+    .map((slot) => slot.category)
+    .filter((category): category is string => Boolean(category)),
+)
+const defaultSkillSlot = promptDefaultSkillSlots[0]
 
 function isExtractSkillSummary(skill: SkillSummary) {
   return (
@@ -86,11 +98,60 @@ function isExtractSkillSummary(skill: SkillSummary) {
   )
 }
 
+function promptGroupForCategory(category: string | null) {
+  return promptSkillGroups.find((group) => group.defaultSlot.category === category) ?? null
+}
+
+function isPromptCustomSkillSummary(skill: SkillSummary) {
+  const group = promptGroupForCategory(skill.category)
+  return Boolean(skill.module === 'generation' && group && skill.id !== group.defaultSlot.id)
+}
+
+function isPromptSlot(slot: SkillSlot) {
+  return Boolean(
+    slot.module === 'generation' && slot.category && promptSkillCategories.has(slot.category),
+  )
+}
+
+function isPromptDefaultSlot(slot: SkillSlot) {
+  const group = promptGroupForCategory(slot.category)
+  return group?.defaultSlot.id === slot.id
+}
+
+function isPromptCustomSlot(slot: SkillSlot) {
+  return isPromptSlot(slot) && !isPromptDefaultSlot(slot)
+}
+
 function isExtractSlot(slot: SkillSlot) {
   return (
     slot.module === 'generation' &&
     (slot.category === EXTRACT_SKILL_CATEGORY || slot.category === LEGACY_COMFYUI_EXTRACT_CATEGORY)
   )
+}
+
+function newPromptSlot(
+  group: (typeof promptSkillGroups)[number],
+  id: string,
+  title: string,
+): SkillSlot {
+  return {
+    ...group.defaultSlot,
+    id,
+    title,
+  }
+}
+
+function promptSkillTitle(skill: SkillSummary, group: (typeof promptSkillGroups)[number]) {
+  const noteTitle = skill.notes?.split('：')[0]?.trim()
+  if (!noteTitle || noteTitle.startsWith('用于')) {
+    return group.defaultSlot.title
+  }
+  return noteTitle
+}
+
+function promptSlotFromSkill(skill: SkillSummary): SkillSlot | null {
+  const group = promptGroupForCategory(skill.category)
+  return group ? newPromptSlot(group, skill.id, promptSkillTitle(skill, group)) : null
 }
 
 function newExtractSlot(id: string, title = '提取提示词'): SkillSlot {
@@ -154,6 +215,7 @@ export default function AdminSkillsPage() {
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
   const [titles, setTitles] = useState<Record<string, string>>({})
+  const [customPromptSlots, setCustomPromptSlots] = useState<SkillSlot[]>([])
   const [customExtractSlots, setCustomExtractSlots] = useState<SkillSlot[]>([])
   const [selectedSlotId, setSelectedSlotId] = useState(defaultSkillSlot.id)
   const [message, setMessage] = useState<string | null>(null)
@@ -168,9 +230,24 @@ export default function AdminSkillsPage() {
         .map(extractSlotFromSkill),
     [skills],
   )
+  const promptSlots = useMemo(
+    () =>
+      Object.values(skills)
+        .filter(isPromptCustomSkillSummary)
+        .sort((left, right) => left.id.localeCompare(right.id))
+        .map(promptSlotFromSkill)
+        .filter((slot): slot is SkillSlot => Boolean(slot)),
+    [skills],
+  )
   const allSlots = useMemo(
-    () => [...fixedSkillSlots, ...extractSlots, ...customExtractSlots],
-    [customExtractSlots, extractSlots],
+    () => [
+      ...fixedSkillSlots,
+      ...promptSlots,
+      ...customPromptSlots,
+      ...extractSlots,
+      ...customExtractSlots,
+    ],
+    [customExtractSlots, customPromptSlots, extractSlots, promptSlots],
   )
   const selectedSlot = useMemo(
     () => allSlots.find((slot) => slot.id === selectedSlotId) ?? defaultSkillSlot,
@@ -180,7 +257,7 @@ export default function AdminSkillsPage() {
   const selectedPrompt = drafts[selectedSlot.id] ?? ''
   const selectedEnabled = enabled[selectedSlot.id] ?? true
   const selectedTitle = titles[selectedSlot.id] ?? selectedSlot.title
-  const selectedIsExtractSlot = isExtractSlot(selectedSlot)
+  const selectedHasEditableTitle = isExtractSlot(selectedSlot) || isPromptCustomSlot(selectedSlot)
 
   const loadSkills = useCallback(async () => {
     setIsLoading(true)
@@ -199,6 +276,10 @@ export default function AdminSkillsPage() {
     const nextTitles: Record<string, string> = {}
     const loadedSlots = [
       ...fixedSkillSlots,
+      ...result.data.items
+        .filter(isPromptCustomSkillSummary)
+        .map(promptSlotFromSkill)
+        .filter((slot): slot is SkillSlot => Boolean(slot)),
       ...result.data.items.filter(isExtractSkillSummary).map(extractSlotFromSkill),
     ]
 
@@ -231,6 +312,7 @@ export default function AdminSkillsPage() {
     setDrafts(nextDrafts)
     setEnabled(nextEnabled)
     setTitles(nextTitles)
+    setCustomPromptSlots([])
     setCustomExtractSlots([])
     setIsLoading(false)
   }, [])
@@ -271,6 +353,17 @@ export default function AdminSkillsPage() {
     await loadSkills()
   }
 
+  function addPromptSlot(group: (typeof promptSkillGroups)[number]) {
+    const id = `${group.defaultSlot.category ?? group.defaultSlot.id}-${Date.now()}`
+    const slot = newPromptSlot(group, id, `新的${group.defaultSlot.title}`)
+    setCustomPromptSlots((current) => [...current, slot])
+    setDrafts((current) => ({ ...current, [id]: '' }))
+    setEnabled((current) => ({ ...current, [id]: true }))
+    setTitles((current) => ({ ...current, [id]: slot.title }))
+    setSelectedSlotId(id)
+    setMessage(null)
+  }
+
   function addExtractSlot() {
     const id = `extract-paid-model-${Date.now()}`
     const slot = newExtractSlot(id, '新的提取提示词')
@@ -308,6 +401,37 @@ export default function AdminSkillsPage() {
     )
   }
 
+  function renderPromptGroup(group: (typeof promptSkillGroups)[number]) {
+    const slots = [...promptSlots, ...customPromptSlots].filter(
+      (slot) => slot.category === group.defaultSlot.category,
+    )
+    return (
+      <div className="border-t pt-3" key={group.defaultSlot.id}>
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium">{group.defaultSlot.title}</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              默认 Skill 保持兼容，也可新增多条给客户端选择。
+            </p>
+          </div>
+          <Button
+            className="h-8 px-3"
+            disabled={isLoading}
+            onClick={() => addPromptSlot(group)}
+            type="button"
+            variant="outline"
+          >
+            + 新增
+          </Button>
+        </div>
+        <div className="space-y-3">
+          {renderSlotButton(group.defaultSlot)}
+          {slots.map(renderSlotButton)}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <AdminShell
       description="这里只配置业务 Skill 的系统提示词；模型、密钥和 Workflow 都在客户端本地设置。"
@@ -319,7 +443,8 @@ export default function AdminSkillsPage() {
             <CardTitle>Skill 槽位</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
-            {fixedSkillSlots.map(renderSlotButton)}
+            {promptSkillGroups.map(renderPromptGroup)}
+            <div className="border-t pt-3">{renderSlotButton(detectionSkillSlot)}</div>
             <div className="border-t pt-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
@@ -380,7 +505,7 @@ export default function AdminSkillsPage() {
                 <p>{selectedSlot.returnHint}</p>
                 <p>后台只保存 system prompt，不保存用户 API Key、模型密钥或图片。</p>
               </div>
-              {selectedIsExtractSlot ? (
+              {selectedHasEditableTitle ? (
                 <label className="block space-y-2 text-sm font-medium">
                   <span>显示名称</span>
                   <input
@@ -392,7 +517,11 @@ export default function AdminSkillsPage() {
                         [selectedSlot.id]: event.target.value,
                       }))
                     }
-                    placeholder="例如：常规提取 / 文字 Logo 提取 / 只提主图案"
+                    placeholder={
+                      isExtractSlot(selectedSlot)
+                        ? '例如：常规提取 / 文字 Logo 提取 / 只提主图案'
+                        : '例如：圣诞局部 / 欧美满印 / 潮牌参考图'
+                    }
                     value={selectedTitle}
                   />
                 </label>
