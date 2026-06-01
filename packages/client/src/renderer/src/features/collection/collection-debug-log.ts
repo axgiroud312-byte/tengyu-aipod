@@ -61,6 +61,20 @@ function collectionDebugDetailText(details: CollectionDebugLogEntry['details']) 
   if (typeof details.durationMs === 'number') {
     parts.push(formatCollectionDebugDuration(details.durationMs))
   }
+  if (typeof details.round === 'number' && typeof details.requestedClicks === 'number') {
+    parts.push(`第 ${details.round}/${details.requestedClicks} 轮`)
+  } else if (typeof details.round === 'number') {
+    parts.push(`第 ${details.round} 轮`)
+  }
+  if (typeof details.clickedSeeMore === 'boolean') {
+    parts.push(details.clickedSeeMore ? 'See more 已点击' : 'See more 未点击')
+  }
+  if (typeof details.reason === 'string') {
+    parts.push(`原因 ${details.reason}`)
+  }
+  if (typeof details.revealScrollRounds === 'number') {
+    parts.push(`找按钮滚动 ${details.revealScrollRounds} 次`)
+  }
   if (typeof details.added === 'number') {
     parts.push(`新增 ${details.added}`)
   }
@@ -81,6 +95,9 @@ function collectionDebugDetailText(details: CollectionDebugLogEntry['details']) 
   }
   if (typeof details.imageCount === 'number') {
     parts.push(`页面图片 ${details.imageCount}`)
+  }
+  if (typeof details.productImageCount === 'number') {
+    parts.push(`商品图 ${details.productImageCount}`)
   }
   if (typeof details.outputDir === 'string') {
     parts.push(details.outputDir)
