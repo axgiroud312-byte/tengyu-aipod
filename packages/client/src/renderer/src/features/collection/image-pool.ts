@@ -208,11 +208,14 @@ function pageKindFromUrl(value: string | null | undefined) {
   if (!value) {
     return 'platform'
   }
-  if (isGoodsPageUrl(value)) {
-    return 'detail'
-  }
   if (value.includes('/search_result.html')) {
     return 'search'
+  }
+  if (isTemuShopPageUrl(value)) {
+    return 'shop'
+  }
+  if (isGoodsPageUrl(value)) {
+    return 'detail'
   }
   if (value.includes('/channel/')) {
     return 'channel'
@@ -246,4 +249,21 @@ function isGoodsPageUrl(value: string | null | undefined) {
   return Boolean(
     value && /(?:-g-\d+\.html|\/goods(?:\/|\.html|$)|[?&](?:goods_id|goodsId)=)/i.test(value),
   )
+}
+
+function isTemuShopPageUrl(value: string | null | undefined) {
+  if (!value) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    const pathname = url.pathname.toLowerCase()
+    return (
+      pathname.endsWith('/mall.html') ||
+      /-m-\d+\.html$/i.test(pathname) ||
+      (url.searchParams.has('mall_id') && !isGoodsPageUrl(value))
+    )
+  } catch {
+    return false
+  }
 }

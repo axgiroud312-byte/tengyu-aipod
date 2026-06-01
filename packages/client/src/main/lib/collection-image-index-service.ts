@@ -26,10 +26,26 @@ export type CollectionImageIndexSource =
   | 'background'
   | 'performance'
   | 'url_param'
+  | 'ssr'
 
 export type CollectionImageIndexBucket = 'loose' | 'product'
 
-export type CollectionImageIndexPageKind = 'home' | 'search' | 'channel' | 'detail' | 'platform'
+export type CollectionImageIndexPageKind =
+  | 'home'
+  | 'search'
+  | 'channel'
+  | 'detail'
+  | 'shop'
+  | 'platform'
+
+export type TemuShopImageCandidate = {
+  displayUrl: string
+  goodsId: string | null
+  goodsLink: string | null
+  groupTitle: string | null
+  naturalWidth: number
+  naturalHeight: number
+}
 
 export type CollectionImageIndexDetailGalleryCandidate = {
   rect: CollectionImageIndexRect
@@ -163,6 +179,8 @@ const DEFAULT_ITEM_LIMIT = 60
 const DEFAULT_DOWNLOAD_LIMIT = 5
 const CLICK_PROBE_TIMEOUT_MS = 30_000
 const SCAN_PAGE_STABILIZE_MS = 1_500
+const SHOP_SCAN_MAX_SCROLLS = 30
+const SHOP_SCAN_STABLE_ROUNDS = 3
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
 let collectionImageIndexDebugSequence = 0
@@ -275,33 +293,57 @@ export async function scanCollectionImageIndex(input: ProbeInput) {
         },
       )
     }
+    const scanCandidates = candidates.filter(
+      (page) => !collectionImageIndexIsTemuVerificationPageUrl(page.url()),
+    )
+    if (scanCandidates.length !== candidates.length) {
+      debug?.('跳过 Temu 安全验证页', 'warn', {
+        operation: 'scan',
+        stage: 'blocked',
+        skipped: candidates.length - scanCandidates.length,
+        pageUrl: input.pageUrl ?? null,
+      })
+    }
+    if (scanCandidates.length === 0) {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        '当前是 Temu 安全验证页，请先在比特浏览器完成验证后再扫描图池',
+        false,
+        {
+          kind: 'blocked_by_verification',
+          platform: input.platform,
+          pageUrl: input.pageUrl ?? null,
+        },
+      )
+    }
 
     debug?.('定位到可扫描页面', 'info', {
       operation: 'scan',
       stage: 'progress',
-      total: candidates.length,
+      total: scanCandidates.length,
       pageUrl: input.pageUrl ?? null,
     })
     const pageResults = await Promise.all(
-      candidates.map(async (page, index) => {
+      scanCandidates.map(async (page, index) => {
         const pageUrl = page.url()
-        debug?.(`扫描页面开始 ${index + 1}/${candidates.length}`, 'info', {
+        debug?.(`扫描页面开始 ${index + 1}/${scanCandidates.length}`, 'info', {
           operation: 'scan',
           stage: 'progress',
           index: index + 1,
-          total: candidates.length,
+          total: scanCandidates.length,
           pageUrl,
         })
         const result = await scanPageImageIndex(
           page,
           input.limit ?? DEFAULT_ITEM_LIMIT,
           input.platform,
+          debug,
         )
-        debug?.(`扫描页面完成 ${index + 1}/${candidates.length}`, 'info', {
+        debug?.(`扫描页面完成 ${index + 1}/${scanCandidates.length}`, 'info', {
           operation: 'scan',
           stage: 'success',
           index: index + 1,
-          total: candidates.length,
+          total: scanCandidates.length,
           pageUrl: result.pageUrl,
           imageCount: result.imageCount,
           collectableCount: result.collectableCount,
@@ -317,7 +359,7 @@ export async function scanCollectionImageIndex(input: ProbeInput) {
       pageUrl: result.pageUrl,
       imageCount: result.imageCount,
       collectableCount: result.collectableCount,
-      total: candidates.length,
+      total: scanCandidates.length,
     })
     return result
   } catch (error) {
@@ -505,9 +547,6 @@ export function collectionImageIndexPageKind(
   if (platform !== 'temu' || !pageUrl) {
     return 'platform'
   }
-  if (temuGoodsIdFromUrl(pageUrl)) {
-    return 'detail'
-  }
   let url: URL
   try {
     url = new URL(pageUrl)
@@ -518,6 +557,12 @@ export function collectionImageIndexPageKind(
   if (pathname.includes('/search_result.html')) {
     return 'search'
   }
+  if (collectionImageIndexIsTemuShopPageUrl(pageUrl)) {
+    return 'shop'
+  }
+  if (temuGoodsIdFromUrl(pageUrl)) {
+    return 'detail'
+  }
   if (pathname.includes('/channel/')) {
     return 'channel'
   }
@@ -525,6 +570,231 @@ export function collectionImageIndexPageKind(
     return 'home'
   }
   return 'platform'
+}
+
+export function collectionImageIndexIsTemuShopPageUrl(value: string | null | undefined) {
+  if (!value) {
+    return false
+  }
+  let url: URL
+  try {
+    url = new URL(value)
+  } catch {
+    return false
+  }
+  if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
+    return false
+  }
+  const pathname = url.pathname.toLowerCase()
+  return (
+    pathname.endsWith('/mall.html') ||
+    /-m-\d+\.html$/i.test(pathname) ||
+    (url.searchParams.has('mall_id') && !temuGoodsIdFromUrl(value))
+  )
+}
+
+export function collectionImageIndexIsTemuVerificationPageUrl(value: string | null | undefined) {
+  if (!value) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    return /(\.|^)temu\.com$/i.test(url.hostname) && url.pathname.includes('/bgn_verification.html')
+  } catch {
+    return false
+  }
+}
+
+export function collectionImageIndexExtractTemuShopImagesFromSsr(
+  scripts: string[],
+  pageUrl: string,
+): TemuShopImageCandidate[] {
+  const productImageRe = /img\.kwcdn\.com\/(product|local-image)\//i
+  const candidates = new Map<string, TemuShopImageCandidate>()
+
+  for (const script of scripts) {
+    const rawData = parseTemuRawDataFromScript(script)
+    if (!rawData) {
+      continue
+    }
+    const seen: unknown[] = []
+    const walk = (value: unknown, depth: number) => {
+      if (!value || typeof value !== 'object' || depth > 8 || seen.includes(value)) {
+        return
+      }
+      seen.push(value)
+      if (Array.isArray(value)) {
+        for (const item of value) {
+          walk(item, depth + 1)
+        }
+        return
+      }
+
+      const record = value as Record<string, unknown>
+      addTemuShopCandidate(record)
+      const data = record.data
+      if (data && typeof data === 'object') {
+        addTemuShopCandidate(data as Record<string, unknown>)
+      }
+      for (const child of Object.values(record)) {
+        walk(child, depth + 1)
+      }
+    }
+
+    walk(rawData, 0)
+  }
+
+  return Array.from(candidates.values())
+
+  function addTemuShopCandidate(record: Record<string, unknown>) {
+    const goodsId = stringValue(
+      record.goodsId ?? record.goods_id ?? record.goods_id_str ?? record.goodsIdStr,
+    )
+    const image = objectValue(record.image)
+    const displayUrl = firstString([
+      image?.url,
+      record.thumbUrl,
+      record.longThumbUrl,
+      record.galleryUrl,
+      record.imageUrl,
+      record.goodsImageUrl,
+      record.goodsThumbUrl,
+      record.goods_img_url,
+    ])
+    if (!displayUrl || !productImageRe.test(displayUrl)) {
+      return
+    }
+
+    const goodsLink = absoluteTemuUrl(firstString([record.seoLinkUrl, record.linkUrl]), pageUrl)
+    const title = firstString([record.title, record.goodsName, record.goodsTitle, record.name])
+    const naturalWidth = numberValue(image?.width ?? record.width)
+    const naturalHeight = numberValue(image?.height ?? record.height)
+    const key = `${goodsId ?? goodsLink ?? ''}:${withoutSearchAndHash(displayUrl)}`
+    if (!key.trim() || candidates.has(key)) {
+      return
+    }
+    candidates.set(key, {
+      displayUrl,
+      goodsId,
+      goodsLink,
+      groupTitle: title,
+      naturalWidth,
+      naturalHeight,
+    })
+  }
+
+  function objectValue(value: unknown) {
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as Record<string, unknown>)
+      : null
+  }
+
+  function stringValue(value: unknown) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim()
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value)
+    }
+    return null
+  }
+
+  function firstString(values: unknown[]) {
+    for (const value of values) {
+      const text = stringValue(value)
+      if (text) {
+        return text
+      }
+    }
+    return null
+  }
+
+  function numberValue(value: unknown) {
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value)
+      return Number.isFinite(parsed) ? parsed : 0
+    }
+    return 0
+  }
+
+  function absoluteTemuUrl(value: string | null, baseUrl: string) {
+    if (!value) {
+      return null
+    }
+    try {
+      return new URL(value, baseUrl).href
+    } catch {
+      return null
+    }
+  }
+
+  function withoutSearchAndHash(value: string) {
+    try {
+      const url = new URL(value)
+      url.search = ''
+      url.hash = ''
+      return url.href
+    } catch {
+      return value.replace(/[?#].*$/, '')
+    }
+  }
+}
+
+function parseTemuRawDataFromScript(script: string): unknown | null {
+  const start = script.indexOf('window.rawData=')
+  if (start < 0) {
+    return null
+  }
+  const objectStart = script.indexOf('{', start)
+  if (objectStart < 0) {
+    return null
+  }
+
+  let depth = 0
+  let inString = false
+  let escaped = false
+  let objectEnd = -1
+  for (let index = objectStart; index < script.length; index += 1) {
+    const char = script[index]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (char === '\\') {
+        escaped = true
+      } else if (char === '"') {
+        inString = false
+      }
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+      continue
+    }
+    if (char === '{') {
+      depth += 1
+      continue
+    }
+    if (char === '}') {
+      depth -= 1
+      if (depth === 0) {
+        objectEnd = index + 1
+        break
+      }
+    }
+  }
+
+  if (objectEnd < 0) {
+    return null
+  }
+  try {
+    return JSON.parse(script.slice(objectStart, objectEnd))
+  } catch {
+    return null
+  }
 }
 
 export function collectionImageIndexDetailGalleryBounds(
@@ -710,10 +980,84 @@ async function scanPageImageIndex(
   page: Page,
   itemLimit: number,
   platform: string,
+  debug?: CollectionImageIndexDebug | undefined,
 ): Promise<CollectionImageIndexScanResult> {
   await page.waitForLoadState('domcontentloaded').catch(() => null)
   await page.waitForTimeout(SCAN_PAGE_STABILIZE_MS).catch(() => null)
+  if (collectionImageIndexPageKind(platform, page.url()) === 'shop') {
+    return scanScrollableShopPageImageIndex(page, itemLimit, platform, debug)
+  }
   const payload = (await page.evaluate(scanScript(itemLimit, platform))) as PageIndexPayload
+  return scanResultFromPageIndexPayload(payload)
+}
+
+async function scanScrollableShopPageImageIndex(
+  page: Page,
+  itemLimit: number,
+  platform: string,
+  debug?: CollectionImageIndexDebug | undefined,
+): Promise<CollectionImageIndexScanResult> {
+  let mergedPayload: PageIndexPayload | null = null
+  let stableRounds = 0
+  let previousKey = ''
+
+  for (let index = 0; index <= SHOP_SCAN_MAX_SCROLLS; index += 1) {
+    const payload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
+    mergedPayload = mergedPayload ? mergePageIndexPayloads(mergedPayload, payload) : payload
+
+    const metrics = await page
+      .evaluate(() => {
+        const documentElement = document.documentElement
+        const scrollHeight = documentElement.scrollHeight
+        const scrollTop = window.scrollY
+        const viewportHeight = window.innerHeight
+        return { scrollHeight, scrollTop, viewportHeight }
+      })
+      .catch(() => ({ scrollHeight: 0, scrollTop: 0, viewportHeight: 0 }))
+    const currentKey = `${mergedPayload.items.length}:${metrics.scrollHeight}`
+    const atBottom =
+      metrics.scrollTop + metrics.viewportHeight >= Math.max(0, metrics.scrollHeight - 8)
+    if (currentKey === previousKey && atBottom) {
+      stableRounds += 1
+    } else {
+      stableRounds = 0
+    }
+    debug?.('店铺页滚动扫描进度', 'debug', {
+      operation: 'scan',
+      stage: 'progress',
+      round: index + 1,
+      stableRounds,
+      imageCount: payload.imageCount,
+      indexedCount: mergedPayload.indexedCount,
+      collectableCount: mergedPayload.items.length,
+      scrollTop: Math.round(metrics.scrollTop),
+      scrollHeight: metrics.scrollHeight,
+      pageUrl: payload.href,
+    })
+    if (stableRounds >= SHOP_SCAN_STABLE_ROUNDS) {
+      break
+    }
+    previousKey = currentKey
+
+    await page
+      .evaluate(() => {
+        window.scrollBy(0, Math.max(window.innerHeight * 1.5, 900))
+      })
+      .catch(() => null)
+    await page.waitForTimeout(1_200).catch(() => null)
+  }
+
+  const payload =
+    mergedPayload ?? ((await page.evaluate(scanScript(0, platform))) as PageIndexPayload)
+  const limit = Math.max(0, itemLimit)
+  return scanResultFromPageIndexPayload({
+    ...payload,
+    items: limit > 0 ? payload.items.slice(0, limit) : payload.items,
+    collectableCount: payload.items.length,
+  })
+}
+
+function scanResultFromPageIndexPayload(payload: PageIndexPayload): CollectionImageIndexScanResult {
   return {
     pageUrl: payload.href,
     title: payload.title,
@@ -731,6 +1075,33 @@ async function scanPageImageIndex(
         collectableCount: payload.collectableCount,
       },
     ],
+  }
+}
+
+function mergePageIndexPayloads(left: PageIndexPayload, right: PageIndexPayload): PageIndexPayload {
+  const itemsByKey = new Map<string, CollectionImageIndexItem>()
+  for (const item of [...left.items, ...right.items]) {
+    const key = collectionImageIndexDownloadKey(item)
+    const existing = itemsByKey.get(key)
+    if (!existing || item.score > existing.score || (item.visible && !existing.visible)) {
+      itemsByKey.set(key, item)
+    }
+  }
+  const items = Array.from(itemsByKey.values())
+    .sort((leftItem, rightItem) => rightItem.score - leftItem.score)
+    .map((item, index) => ({ ...item, id: `img_${String(index + 1).padStart(3, '0')}` }))
+  const sourceCounts = items.reduce<Record<string, number>>((counts, item) => {
+    counts[item.source] = (counts[item.source] ?? 0) + 1
+    return counts
+  }, {})
+  return {
+    href: right.href || left.href,
+    title: right.title || left.title,
+    imageCount: Math.max(left.imageCount, right.imageCount),
+    indexedCount: items.length,
+    collectableCount: items.length,
+    sourceCounts,
+    items,
   }
 }
 
@@ -766,17 +1137,7 @@ export function chooseCollectionCurrentPage(
   snapshots: CollectionPageActivitySnapshot[],
   previous: CollectionCurrentPageResult | undefined,
 ): CollectionCurrentPageResult {
-  const active = snapshots
-    .filter((item) => item.visible || item.focused)
-    .sort((left, right) => {
-      if (Number(right.focused) !== Number(left.focused)) {
-        return Number(right.focused) - Number(left.focused)
-      }
-      if (Number(right.visible) !== Number(left.visible)) {
-        return Number(right.visible) - Number(left.visible)
-      }
-      return right.lastActivityAt - left.lastActivityAt || right.detectedAt - left.detectedAt
-    })[0]
+  const active = activeCollectionPageSnapshots(snapshots)[0]?.snapshot
   if (active) {
     return currentPageResultFromSnapshot(platform, active, 'active')
   }
@@ -793,12 +1154,39 @@ export function chooseCollectionCurrentPage(
   }
 }
 
+export function collectionImageIndexOpenPageTargetIndex(
+  snapshots: CollectionPageActivitySnapshot[],
+) {
+  return activeCollectionPageSnapshots(snapshots)[0]?.index ?? null
+}
+
+function activeCollectionPageSnapshots(snapshots: CollectionPageActivitySnapshot[]) {
+  return snapshots
+    .map((snapshot, index) => ({ snapshot, index }))
+    .filter((item) => item.snapshot.visible || item.snapshot.focused)
+    .sort((left, right) => {
+      if (Number(right.snapshot.focused) !== Number(left.snapshot.focused)) {
+        return Number(right.snapshot.focused) - Number(left.snapshot.focused)
+      }
+      if (Number(right.snapshot.visible) !== Number(left.snapshot.visible)) {
+        return Number(right.snapshot.visible) - Number(left.snapshot.visible)
+      }
+      return (
+        right.snapshot.lastActivityAt - left.snapshot.lastActivityAt ||
+        right.snapshot.detectedAt - left.snapshot.detectedAt
+      )
+    })
+}
+
 function currentPageResultFromSnapshot(
   platform: string,
   snapshot: CollectionPageActivitySnapshot,
   status: CollectionCurrentPageStatus,
 ): CollectionCurrentPageResult {
-  const goodsId = platform === 'temu' ? temuGoodsIdFromUrl(snapshot.pageUrl) : null
+  const isTemuShopPage =
+    platform === 'temu' && collectionImageIndexIsTemuShopPageUrl(snapshot.pageUrl)
+  const goodsId =
+    platform === 'temu' && !isTemuShopPage ? temuGoodsIdFromUrl(snapshot.pageUrl) : null
   return {
     pageUrl: snapshot.pageUrl,
     title: snapshot.title,
@@ -870,10 +1258,14 @@ async function ensurePageActivityTracker(page: Page) {
 }
 
 function candidatePages(browser: Browser, allowedDomains: string[]) {
+  return browserPages(browser).filter((page) => isAllowedDomain(page.url(), allowedDomains))
+}
+
+function browserPages(browser: Browser) {
   return browser
     .contexts()
     .flatMap((context) => context.pages())
-    .filter((page) => !page.isClosed() && isAllowedDomain(page.url(), allowedDomains))
+    .filter((page) => !page.isClosed())
 }
 
 async function targetPages(
@@ -908,14 +1300,19 @@ async function targetPages(
 }
 
 async function openOrReusePage(browser: Browser, allowedDomains: string[], pageUrl: string) {
-  const pages = candidatePages(browser, allowedDomains)
-  const existing = pages.find((page) => samePageUrl(page.url(), pageUrl))
-  if (existing) {
-    return existing
-  }
+  const pages = browserPages(browser)
+  const snapshots = await Promise.all(pages.map(pageActivitySnapshot))
+  const activeIndex = collectionImageIndexOpenPageTargetIndex(snapshots)
+  const activePage = activeIndex === null ? null : pages[activeIndex]
+  const existing = pages.find(
+    (page) => isAllowedDomain(page.url(), allowedDomains) && samePageUrl(page.url(), pageUrl),
+  )
   const context = browser.contexts()[0] ?? (await browser.newContext())
-  const page = await context.newPage()
-  await page.goto(pageUrl, { waitUntil: 'domcontentloaded' }).catch(() => null)
+  const page = activePage ?? existing ?? (await context.newPage())
+  await page.bringToFront().catch(() => null)
+  if (!samePageUrl(page.url(), pageUrl)) {
+    await page.goto(pageUrl, { waitUntil: 'domcontentloaded' }).catch(() => null)
+  }
   return page
 }
 
@@ -1044,8 +1441,8 @@ const ImageIndexRectSchema = z.object({
 const ImageIndexItemSchema = z.object({
   id: z.string(),
   bucket: z.enum(['loose', 'product']).default('loose'),
-  pageKind: z.enum(['home', 'search', 'channel', 'detail', 'platform']).default('platform'),
-  source: z.enum(['img', 'source', 'background', 'performance', 'url_param']),
+  pageKind: z.enum(['home', 'search', 'channel', 'detail', 'shop', 'platform']).default('platform'),
+  source: z.enum(['img', 'source', 'background', 'performance', 'url_param', 'ssr']),
   displayUrl: z.string().min(1),
   originalUrl: z.string().min(1),
   score: z.number(),
@@ -1195,8 +1592,10 @@ function scanScript(itemLimit: number, platform: string) {
     const detailGalleryBounds = (${collectionImageIndexDetailGalleryBounds.toString()});
     const rectCenterInside = (${collectionImageIndexRectCenterInside.toString()});
     const upgradeTemuImageUrl = (${collectionImageIndexUpgradeTemuImageUrl.toString()});
+    const parseTemuRawDataFromScript = (${parseTemuRawDataFromScript.toString()});
+    const extractTemuShopImagesFromSsr = (${collectionImageIndexExtractTemuShopImagesFromSsr.toString()});
     const scanImageIndex = (${scanImageIndexOnPage.toString()});
-    return scanImageIndex(${JSON.stringify(itemLimit)}, ${JSON.stringify(platform)}, detailGalleryBounds, rectCenterInside, upgradeTemuImageUrl);
+    return scanImageIndex(${JSON.stringify(itemLimit)}, ${JSON.stringify(platform)}, detailGalleryBounds, rectCenterInside, upgradeTemuImageUrl, extractTemuShopImagesFromSsr);
   })()`
 }
 
@@ -1242,6 +1641,7 @@ function scanImageIndexOnPage(
   detailGalleryBounds: typeof collectionImageIndexDetailGalleryBounds,
   rectCenterInside: typeof collectionImageIndexRectCenterInside,
   upgradeTemuImageUrl: typeof collectionImageIndexUpgradeTemuImageUrl,
+  extractTemuShopImagesFromSsr: typeof collectionImageIndexExtractTemuShopImagesFromSsr,
 ): PageIndexPayload {
   const productRe = /img\.kwcdn\.com\/(product|local-image)\//i
   const goodsRe = /(?:-g-\d+|goods(?:\.html)?|goods_id=|goodsId=)/i
@@ -1252,6 +1652,7 @@ function scanImageIndexOnPage(
   const groupKey = bucket === 'product' ? productGroupKey(platform, location.href) : null
   const groupTitle = bucket === 'product' ? document.title || null : null
   const isTemuDetailPage = platform === 'temu' && pageKind === 'detail'
+  const isTemuShopPage = platform === 'temu' && pageKind === 'shop'
   let temuDetailGalleryBounds: CollectionImageIndexRect | null | undefined
 
   function abs(raw: string | null | undefined) {
@@ -1308,9 +1709,6 @@ function scanImageIndexOnPage(
     if (platformName !== 'temu') {
       return 'platform'
     }
-    if (temuGoodsIdFromUrl(pageUrl)) {
-      return 'detail'
-    }
     let url: URL
     try {
       url = new URL(pageUrl)
@@ -1320,6 +1718,16 @@ function scanImageIndexOnPage(
     const pathname = url.pathname.toLowerCase()
     if (pathname.includes('/search_result.html')) {
       return 'search'
+    }
+    if (
+      pathname.endsWith('/mall.html') ||
+      /-m-\d+\.html$/i.test(pathname) ||
+      (url.searchParams.has('mall_id') && !temuGoodsIdFromUrl(pageUrl))
+    ) {
+      return 'shop'
+    }
+    if (temuGoodsIdFromUrl(pageUrl)) {
+      return 'detail'
     }
     if (pathname.includes('/channel/')) {
       return 'channel'
@@ -1336,6 +1744,11 @@ function scanImageIndexOnPage(
       return goodsId ? `temu-g-${goodsId}` : null
     }
     return null
+  }
+
+  function productGroupKeyFromGoodsLink(goodsLink: string | null | undefined) {
+    const goodsId = temuGoodsIdFromUrl(goodsLink)
+    return goodsId ? `temu-g-${goodsId}` : null
   }
 
   function rectOf(element: Element): CollectionImageIndexRect {
@@ -1451,7 +1864,7 @@ function scanImageIndexOnPage(
   function score(item: Omit<CollectionImageIndexItem, 'id' | 'score'>) {
     let value = 0
     if (productRe.test(item.originalUrl)) value += 45
-    if (item.goodsLink) value += 25
+    if (item.goodsLink || item.groupKey) value += 25
     if (item.visible) value += 10
     if (item.rect && item.rect.width >= 120 && item.rect.height >= 120) value += 15
     if (item.naturalWidth >= 500 || item.naturalHeight >= 500) value += 10
@@ -1469,6 +1882,10 @@ function scanImageIndexOnPage(
     naturalWidth?: number | undefined
     naturalHeight?: number | undefined
     goodsLink?: string | null | undefined
+    bucket?: CollectionImageIndexBucket | undefined
+    groupKey?: string | null | undefined
+    groupTitle?: string | null | undefined
+    coverUrl?: string | null | undefined
     tag?: string | undefined
   }) {
     const displayUrl = abs(entry.url)
@@ -1479,8 +1896,14 @@ function scanImageIndexOnPage(
     if (!shouldKeepDetailImage(entry.source, originalUrl, entry.rect)) {
       return
     }
+    const itemBucket = entry.bucket ?? bucket
+    const itemGroupKey = entry.groupKey ?? (itemBucket === 'product' ? groupKey : null)
+    const itemGroupTitle = entry.groupTitle ?? (itemBucket === 'product' ? groupTitle : null)
+    if (isTemuShopPage && (!productRe.test(originalUrl) || !itemGroupKey)) {
+      return
+    }
     rawItems.push({
-      bucket,
+      bucket: itemBucket,
       pageKind,
       source: entry.source,
       displayUrl,
@@ -1490,19 +1913,43 @@ function scanImageIndexOnPage(
       naturalWidth: entry.naturalWidth ?? 0,
       naturalHeight: entry.naturalHeight ?? 0,
       goodsLink: entry.goodsLink ?? null,
-      groupKey,
-      groupTitle,
-      coverUrl: bucket === 'product' ? originalUrl : null,
+      groupKey: itemGroupKey,
+      groupTitle: itemGroupTitle,
+      coverUrl: itemBucket === 'product' ? (entry.coverUrl ?? originalUrl) : null,
       tag: entry.tag ?? '',
       sourcePageUrl: location.href,
       sourcePageTitle: document.title,
     })
   }
 
+  if (isTemuShopPage) {
+    const ssrCandidates = extractTemuShopImagesFromSsr(
+      Array.from(document.scripts).map((script) => script.textContent || ''),
+      location.href,
+    )
+    for (const candidate of ssrCandidates) {
+      const group = candidate.goodsId ? `temu-g-${candidate.goodsId}` : null
+      add({
+        source: 'ssr',
+        url: candidate.displayUrl,
+        rect: null,
+        naturalWidth: candidate.naturalWidth,
+        naturalHeight: candidate.naturalHeight,
+        goodsLink: candidate.goodsLink,
+        bucket: 'product',
+        groupKey: group ?? productGroupKeyFromGoodsLink(candidate.goodsLink),
+        groupTitle: candidate.groupTitle,
+        coverUrl: candidate.displayUrl,
+        tag: 'temu-shop-ssr',
+      })
+    }
+  }
+
   for (const image of document.querySelectorAll('img')) {
     const img = image as HTMLImageElement
     const rect = rectOf(img)
     const goodsLink = nearestGoodsLink(img)
+    const shopGroupKey = isTemuShopPage ? productGroupKeyFromGoodsLink(goodsLink) : null
     const urls = [
       img.currentSrc,
       img.src,
@@ -1521,6 +1968,13 @@ function scanImageIndexOnPage(
         naturalWidth: img.naturalWidth,
         naturalHeight: img.naturalHeight,
         goodsLink,
+        ...(isTemuShopPage
+          ? {
+              bucket: 'product' as const,
+              groupKey: shopGroupKey,
+              groupTitle: img.alt || null,
+            }
+          : {}),
         tag: img.className || img.getAttribute('data-js-main-img') || '',
       })
     }
@@ -1534,6 +1988,12 @@ function scanImageIndexOnPage(
         url,
         rect: rectOf(boxElement),
         goodsLink: nearestGoodsLink(source),
+        ...(isTemuShopPage
+          ? {
+              bucket: 'product' as const,
+              groupKey: productGroupKeyFromGoodsLink(nearestGoodsLink(source)),
+            }
+          : {}),
         tag: 'source',
       })
     }
@@ -1550,6 +2010,12 @@ function scanImageIndexOnPage(
         url: match[2],
         rect: rectOf(element),
         goodsLink: nearestGoodsLink(element),
+        ...(isTemuShopPage
+          ? {
+              bucket: 'product' as const,
+              groupKey: productGroupKeyFromGoodsLink(nearestGoodsLink(element)),
+            }
+          : {}),
         tag: String((element as HTMLElement).className || element.id || '').slice(0, 120),
       })
     }
@@ -1559,11 +2025,14 @@ function scanImageIndexOnPage(
     .getEntriesByType('resource')
     .map((entry) => entry.name)
     .filter((url) => /\.(avif|webp|png|jpe?g)(\?|$)|img\.kwcdn\.com/i.test(url))) {
+    if (isTemuShopPage) {
+      continue
+    }
     add({ source: 'performance', url, rect: null })
   }
 
   const topGalleryUrl = new URLSearchParams(location.search).get('top_gallery_url')
-  if (topGalleryUrl) {
+  if (topGalleryUrl && !isTemuShopPage) {
     add({ source: 'url_param', url: topGalleryUrl, rect: null })
   }
 

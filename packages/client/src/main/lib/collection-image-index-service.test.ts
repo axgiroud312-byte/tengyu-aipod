@@ -6,7 +6,11 @@ import {
   type CollectionImageIndexItem,
   chooseCollectionCurrentPage,
   collectionImageIndexDetailGalleryBounds,
+  collectionImageIndexExtractTemuShopImagesFromSsr,
+  collectionImageIndexIsTemuShopPageUrl,
+  collectionImageIndexIsTemuVerificationPageUrl,
   collectionImageIndexItemTargetDir,
+  collectionImageIndexOpenPageTargetIndex,
   collectionImageIndexPageKind,
   collectionImageIndexProductFolderName,
   collectionImageIndexRectCenterInside,
@@ -114,6 +118,142 @@ describe('collection image index product folders', () => {
         'https://www.temu.com/ca/example-product-g-606267330393299.html',
       ),
     ).toBe('detail')
+    expect(
+      collectionImageIndexPageKind(
+        'temu',
+        'https://www.temu.com/mall.html?mall_id=634418228197396',
+      ),
+    ).toBe('shop')
+    expect(
+      collectionImageIndexPageKind(
+        'temu',
+        'https://www.temu.com/mall.html?mall_id=634418228197396&goods_id=605661857420796',
+      ),
+    ).toBe('shop')
+    expect(
+      collectionImageIndexPageKind(
+        'temu',
+        'https://www.temu.com/ca/al-garments-m-634418228197396.html',
+      ),
+    ).toBe('shop')
+  })
+})
+
+describe('collection image index Temu shop page SSR parser', () => {
+  it('detects Temu shop URLs', () => {
+    expect(
+      collectionImageIndexIsTemuShopPageUrl(
+        'https://www.temu.com/mall.html?mall_id=634418228197396',
+      ),
+    ).toBe(true)
+    expect(
+      collectionImageIndexIsTemuShopPageUrl(
+        'https://www.temu.com/mall.html?mall_id=634418228197396&goods_id=605661857420796',
+      ),
+    ).toBe(true)
+    expect(
+      collectionImageIndexIsTemuShopPageUrl(
+        'https://www.temu.com/ca/al-garments-m-634418228197396.html',
+      ),
+    ).toBe(true)
+    expect(
+      collectionImageIndexIsTemuShopPageUrl(
+        'https://www.temu.com/ca/product-g-606267330393299.html',
+      ),
+    ).toBe(false)
+  })
+
+  it('detects Temu verification URLs so they are not scanned as image pools', () => {
+    expect(
+      collectionImageIndexIsTemuVerificationPageUrl(
+        'https://www.temu.com/bgn_verification.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html',
+      ),
+    ).toBe(true)
+    expect(
+      collectionImageIndexIsTemuVerificationPageUrl(
+        'https://www.temu.com/mall.html?mall_id=634418228197396',
+      ),
+    ).toBe(false)
+  })
+
+  it('extracts product-related shop images from Temu rawData and skips decorations', () => {
+    const rawData = {
+      store: {
+        categoryStore: {
+          goodsList: [
+            {
+              data: {
+                image: {
+                  url: 'https://img.kwcdn.com/product/open/a-goods.jpeg',
+                  width: 1340,
+                  height: 1785,
+                },
+                goodsId: 606533735830828,
+                title: 'First shirt',
+                seoLinkUrl: '/ca/first-shirt-g-606533735830828.html',
+              },
+            },
+            {
+              data: {
+                image: {
+                  url: 'https://aimg.kwcdn.com/upload_aimg/iconphoto/icon.png',
+                  width: 64,
+                  height: 64,
+                },
+                goodsId: 111,
+                title: 'Decoration',
+              },
+            },
+            {
+              data: {
+                image: {
+                  url: 'https://img.kwcdn.com/product/open/a-goods.jpeg',
+                  width: 1340,
+                  height: 1785,
+                },
+                goodsId: 606533735830828,
+                title: 'Duplicate shirt',
+              },
+            },
+          ],
+          topItemsList: [
+            {
+              topItemsGoodsSimpleInfoList: [
+                {
+                  goodsId: 606039814538424,
+                  imageUrl: 'https://img.kwcdn.com/product/fancy/b.jpg',
+                  title: 'Second shirt',
+                  linkUrl: 'goods.html?goods_id=606039814538424',
+                },
+              ],
+            },
+          ],
+        },
+      },
+    }
+    const result = collectionImageIndexExtractTemuShopImagesFromSsr(
+      [`window.__CHUNK_DATA__={};window.rawData=${JSON.stringify(rawData)};`],
+      'https://www.temu.com/mall.html?mall_id=634418228197396',
+    )
+
+    expect(result).toEqual([
+      {
+        displayUrl: 'https://img.kwcdn.com/product/open/a-goods.jpeg',
+        goodsId: '606533735830828',
+        goodsLink: 'https://www.temu.com/ca/first-shirt-g-606533735830828.html',
+        groupTitle: 'First shirt',
+        naturalWidth: 1340,
+        naturalHeight: 1785,
+      },
+      {
+        displayUrl: 'https://img.kwcdn.com/product/fancy/b.jpg',
+        goodsId: '606039814538424',
+        goodsLink: 'https://www.temu.com/goods.html?goods_id=606039814538424',
+        groupTitle: 'Second shirt',
+        naturalWidth: 0,
+        naturalHeight: 0,
+      },
+    ])
   })
 })
 
@@ -187,6 +327,69 @@ describe('collection current page chooser', () => {
       isGoodsPage: true,
       goodsId: '606267330393299',
     })
+  })
+
+  it('does not mark Temu mall URLs with goods_id query as goods detail pages', () => {
+    const result = chooseCollectionCurrentPage(
+      'temu',
+      [
+        {
+          pageUrl:
+            'https://www.temu.com/mall.html?mall_id=634418228197396&goods_id=605661857420796',
+          title: 'Temu shop',
+          visible: true,
+          focused: true,
+          lastActivityAt: 100,
+          detectedAt: 1000,
+        },
+      ],
+      undefined,
+    )
+
+    expect(result).toMatchObject({
+      pageUrl: 'https://www.temu.com/mall.html?mall_id=634418228197396&goods_id=605661857420796',
+      status: 'active',
+      isGoodsPage: false,
+      goodsId: null,
+    })
+  })
+
+  it('chooses the focused visible page as the open-page navigation target', () => {
+    const index = collectionImageIndexOpenPageTargetIndex([
+      {
+        pageUrl: 'https://www.temu.com/search_result.html?search_key=a',
+        title: 'Search',
+        visible: true,
+        focused: false,
+        lastActivityAt: 500,
+        detectedAt: 1000,
+      },
+      {
+        pageUrl: 'https://www.temu.com/ca/example-g-606267330393299.html',
+        title: 'Goods',
+        visible: true,
+        focused: true,
+        lastActivityAt: 100,
+        detectedAt: 1000,
+      },
+    ])
+
+    expect(index).toBe(1)
+  })
+
+  it('returns no open-page navigation target when no page is active', () => {
+    const index = collectionImageIndexOpenPageTargetIndex([
+      {
+        pageUrl: 'https://www.temu.com/search_result.html?search_key=a',
+        title: 'Search',
+        visible: false,
+        focused: false,
+        lastActivityAt: 500,
+        detectedAt: 1000,
+      },
+    ])
+
+    expect(index).toBeNull()
   })
 
   it('falls back to the previous valid page when no platform page is active', () => {

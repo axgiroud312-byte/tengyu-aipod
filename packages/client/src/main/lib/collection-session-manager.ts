@@ -189,13 +189,14 @@ export class CollectionSessionManager {
       WORKBENCH_DIRECTORIES.collection,
       `${config.platform}-${timestampSlug(this.now())}`,
     )
+    const outputDir = config.output_dir ?? defaultOutputDir
     const session: CollectionSession = {
       id: sessionId,
       platform: config.platform,
       profile_id: config.profile_id,
       mode: config.mode,
       status: 'starting',
-      output_dir: defaultOutputDir,
+      output_dir: outputDir,
       started_at: this.now(),
     }
     await mkdir(session.output_dir, { recursive: true })

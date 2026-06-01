@@ -15,6 +15,7 @@ import {
   Images,
   RefreshCw,
   Search,
+  Store,
   Terminal,
   Trash2,
   X,
@@ -93,6 +94,7 @@ interface CollectionPageProps {
   imageIndexDownloading: boolean
   detectingCurrentPage: boolean
   openingSearchPage: boolean
+  openingShopPage: boolean
   retryingRecordId: string | null
   deletingRecordId: string | null
   onStateChange: <K extends keyof CollectionPageState>(
@@ -108,6 +110,7 @@ interface CollectionPageProps {
   onRefreshRecords: () => void
   onClearDebugLogs: () => void
   onOpenSearchPage: (keyword: string) => void
+  onOpenShopPage: (pageUrl: string) => void
   onScanImageIndex: (pageUrl?: string) => void
   onProbeImageIndexClick: (pageUrl?: string) => void
   onDownloadImageIndexSample: (pageUrl?: string) => void
@@ -142,6 +145,8 @@ function sourceLabel(source: CollectionImageIndexItem['source']) {
       return '资源'
     case 'source':
       return 'source'
+    case 'ssr':
+      return '页面数据'
     case 'url_param':
       return 'URL'
     default:
@@ -196,6 +201,12 @@ function currentPageKindLabel(currentPage: CollectionCurrentPageResult | null) {
   if (!currentPage?.pageUrl) {
     return '等待页面'
   }
+  if (currentPage.pageUrl.includes('/bgn_verification.html')) {
+    return '安全验证页'
+  }
+  if (isTemuShopPageUrl(currentPage.pageUrl)) {
+    return '店铺页'
+  }
   if (currentPage.isGoodsPage) {
     return '商品详情页'
   }
@@ -203,6 +214,20 @@ function currentPageKindLabel(currentPage: CollectionCurrentPageResult | null) {
     return '搜索结果页'
   }
   return '平台页面'
+}
+
+function isTemuShopPageUrl(value: string) {
+  try {
+    const url = new URL(value)
+    const pathname = url.pathname.toLowerCase()
+    return (
+      pathname.endsWith('/mall.html') ||
+      /-m-\d+\.html$/i.test(pathname) ||
+      url.searchParams.has('mall_id')
+    )
+  } catch {
+    return false
+  }
 }
 
 function sourcePageLabel(item: CollectionImageIndexItem) {
@@ -248,10 +273,12 @@ export function CollectionPage({
   imageIndexDownloading,
   detectingCurrentPage,
   openingSearchPage,
+  openingShopPage,
   onStateChange,
   onRefreshProfiles,
   onClearDebugLogs,
   onOpenSearchPage,
+  onOpenShopPage,
   onScanImageIndex,
   onDownloadImageIndexItems,
   onToggleImagePoolItem,
@@ -260,6 +287,7 @@ export function CollectionPage({
   onClearImagePool,
 }: CollectionPageProps) {
   const [keyword, setKeyword] = useState('')
+  const [shopUrl, setShopUrl] = useState('')
   const [openProductGroupKey, setOpenProductGroupKey] = useState<string | null>(null)
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
@@ -455,6 +483,39 @@ export function CollectionPage({
             </div>
           </div>
 
+          <div className="grid gap-3 lg:grid-cols-[minmax(260px,1fr)_auto]">
+            <label className="grid gap-2 text-sm font-medium" htmlFor="collection-shop-url">
+              <span>店铺链接</span>
+              <div className="relative min-w-0">
+                <Store className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  className="pl-9"
+                  id="collection-shop-url"
+                  onChange={(event) => setShopUrl(event.target.value)}
+                  placeholder="https://www.temu.com/mall.html?mall_id=..."
+                  value={shopUrl}
+                />
+              </div>
+            </label>
+            <div className="flex items-end">
+              <Button
+                className="w-full lg:w-auto"
+                disabled={
+                  !shopUrl.trim() ||
+                  openingShopPage ||
+                  imageIndexScanning ||
+                  state.platform !== 'temu'
+                }
+                onClick={() => onOpenShopPage(shopUrl)}
+                type="button"
+                variant="secondary"
+              >
+                <Store className="mr-2 h-4 w-4" />
+                {openingShopPage ? '打开中' : '打开店铺页'}
+              </Button>
+            </div>
+          </div>
+
           <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.6fr)]">
             <label className="grid gap-2 text-sm font-medium" htmlFor="collection-profile-id">
               <span>环境编号</span>
@@ -517,7 +578,7 @@ export function CollectionPage({
               </div>
             </div>
             <div className="mt-2 text-xs text-muted-foreground">
-              想看到更多搜索结果时，先在比特浏览器里点 See more，再回到这里重新扫描图池。
+              搜索结果页想看到更多结果时，先在比特浏览器里点 See more，再回到这里重新扫描图池。
               {keywordPreview ? ` 当前关键词搜索页：${keywordPreview}` : ''}
             </div>
             {lastScanExistingCount > 0 && lastScanAddedCount === 0 ? (

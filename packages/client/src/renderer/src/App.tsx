@@ -179,6 +179,18 @@ function temuSearchUrl(keyword: string) {
   return `https://www.temu.com/search_result.html?search_key=${encodeURIComponent(trimmed)}&search_method=user`
 }
 
+function isTemuVerificationPageUrl(value: string | null | undefined) {
+  if (!value) {
+    return false
+  }
+  try {
+    const url = new URL(value)
+    return /(\.|^)temu\.com$/i.test(url.hostname) && url.pathname.includes('/bgn_verification.html')
+  } catch {
+    return false
+  }
+}
+
 function onboardingPath(step: OnboardingStep) {
   return `/onboarding/${step}`
 }
@@ -255,6 +267,7 @@ function MainWorkbench() {
     useState<CollectionCurrentPageResult | null>(null)
   const [isDetectingCollectionCurrentPage, setIsDetectingCollectionCurrentPage] = useState(false)
   const [isOpeningCollectionSearchPage, setIsOpeningCollectionSearchPage] = useState(false)
+  const [isOpeningCollectionShopPage, setIsOpeningCollectionShopPage] = useState(false)
   const [collectionImagePoolItems, setCollectionImagePoolItems] = useState<
     CollectionImageIndexItem[]
   >([])
@@ -777,10 +790,48 @@ function MainWorkbench() {
         page_url: pageUrl,
       })
       setCollectionCurrentPage(result)
+      if (isTemuVerificationPageUrl(result.pageUrl)) {
+        setCollectionError('Temu 进入安全验证页，请先在比特浏览器完成验证后再扫描图池')
+      }
     } catch (error) {
       setCollectionError(error instanceof Error ? error.message : '打开搜索页面失败')
     } finally {
       setIsOpeningCollectionSearchPage(false)
+    }
+  }
+
+  async function openCollectionShopPage(pageUrl: string) {
+    const profileId = collectionPageState.profileId.trim()
+    const targetPageUrl = pageUrl.trim()
+    if (!profileId) {
+      setCollectionError('请先选择或填写比特浏览器环境编号')
+      return
+    }
+    if (collectionPageState.platform !== 'temu') {
+      setCollectionError('当前只有 Temu 支持店铺链接采集')
+      return
+    }
+    if (!targetPageUrl) {
+      setCollectionError('请先输入 Temu 店铺链接')
+      return
+    }
+
+    setIsOpeningCollectionShopPage(true)
+    setCollectionError(null)
+    try {
+      const result = await window.api.collection.openPage({
+        platform: collectionPageState.platform,
+        profile_id: profileId,
+        page_url: targetPageUrl,
+      })
+      setCollectionCurrentPage(result)
+      if (isTemuVerificationPageUrl(result.pageUrl)) {
+        setCollectionError('Temu 进入安全验证页，请先在比特浏览器完成验证后再扫描图池')
+      }
+    } catch (error) {
+      setCollectionError(error instanceof Error ? error.message : '打开店铺页失败')
+    } finally {
+      setIsOpeningCollectionShopPage(false)
     }
   }
 
@@ -806,6 +857,15 @@ function MainWorkbench() {
       appendCollectionDebugLog('扫描图池失败：未找到当前平台页面', 'warn', {
         operation: 'scan',
         stage: 'failed',
+      })
+      return
+    }
+    if (isTemuVerificationPageUrl(targetPageUrl)) {
+      setCollectionError('当前是 Temu 安全验证页，请先在比特浏览器完成验证后再扫描图池')
+      appendCollectionDebugLog('扫描图池已跳过：当前是 Temu 安全验证页', 'warn', {
+        operation: 'scan',
+        stage: 'blocked',
+        pageUrl: targetPageUrl,
       })
       return
     }
@@ -1142,6 +1202,7 @@ function MainWorkbench() {
                     }
                     onDeleteRecord={(recordId) => void deleteCollectionRecord(recordId)}
                     onOpenSearchPage={(keyword) => void openCollectionSearchPage(keyword)}
+                    onOpenShopPage={(pageUrl) => void openCollectionShopPage(pageUrl)}
                     onProbeImageIndexClick={(pageUrl) =>
                       void probeCollectionImageIndexClick(pageUrl)
                     }
@@ -1159,6 +1220,7 @@ function MainWorkbench() {
                     lastScanAddedCount={collectionLastScanAddedCount}
                     lastScanExistingCount={collectionLastScanExistingCount}
                     openingSearchPage={isOpeningCollectionSearchPage}
+                    openingShopPage={isOpeningCollectionShopPage}
                     platforms={collectionPlatforms}
                     profiles={collectionProfiles}
                     refreshingProfiles={isRefreshingCollectionProfiles}
