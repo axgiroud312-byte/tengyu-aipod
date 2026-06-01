@@ -382,17 +382,29 @@ export function parseTitle(text: string, language: string, platform = 'generic')
   return title
 }
 
-function buildUserPrompt(extraRequirement?: string) {
+function optionLabel(options: Array<{ key: string; label: string }>, key: string) {
+  const label = options.find((item) => item.key === key)?.label
+  return label ? `${label} (${key})` : key
+}
+
+function buildUserPrompt(platform: string, language: string, extraRequirement?: string) {
   const trimmed = extraRequirement?.trim()
+  const lines = [
+    `平台：${optionLabel(PLATFORM_OPTIONS, platform)}`,
+    `标题语言：${optionLabel(LANGUAGE_OPTIONS, language)}`,
+    '请根据图片生成一个适合跨境电商上架的标题。只输出最终标题。',
+  ]
   if (!trimmed) {
-    return '请根据图片生成一个适合跨境电商上架的标题。只输出最终标题。'
+    return lines.join('\n')
   }
-  return `请根据图片生成一个适合跨境电商上架的标题。只输出最终标题。\n额外要求：${trimmed}`
+  return [...lines, `额外要求：${trimmed}`].join('\n')
 }
 
 function createVisionMessages(
   skill: Skill,
   dataUrl: string,
+  platform: string,
+  language: string,
   extraRequirement?: string,
 ): ChatCompletionMessageParam[] {
   return [
@@ -404,7 +416,7 @@ function createVisionMessages(
       role: 'user',
       content: [
         { type: 'image_url', image_url: { url: dataUrl } },
-        { type: 'text', text: buildUserPrompt(extraRequirement) },
+        { type: 'text', text: buildUserPrompt(platform, language, extraRequirement) },
       ],
     },
   ]
@@ -906,6 +918,8 @@ export class TitleService {
             messages: createVisionMessages(
               input.skill,
               preprocessed.dataUrl,
+              input.config.platform,
+              input.config.language,
               input.config.extraRequirement,
             ),
           })

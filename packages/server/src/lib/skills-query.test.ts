@@ -82,6 +82,36 @@ describe('skills queries', () => {
     )
   })
 
+  it('falls back to generic platform and generic language when needed', async () => {
+    findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        skill({
+          id: 'title-generic-generic',
+          platform: 'generic',
+          language: 'generic',
+          version: '1.0.0',
+        }),
+      ])
+
+    await expect(
+      listSkills({ module: 'title', platform: 'temu_pop', language: 'en' }),
+    ).resolves.toMatchObject([
+      { id: 'title-generic-generic', platform: 'generic', language: 'generic' },
+    ])
+
+    expect(findMany).toHaveBeenCalledTimes(3)
+    expect(findMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          platform: 'generic',
+          language: 'generic',
+        }),
+      }),
+    )
+  })
+
   it('returns only the latest enabled version per skill id', async () => {
     findMany.mockResolvedValueOnce([
       skill({ version: '3.0.1' }),

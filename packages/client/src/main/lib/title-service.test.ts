@@ -224,6 +224,7 @@ describe('TitleService', () => {
       language: 'en',
       model: 'qwen3.6-flash',
       imageIndex: 1,
+      extraRequirement: '突出原创图案',
       existingStrategy: 'skip',
       maxRetries: 1,
       concurrency: 1,
@@ -250,6 +251,11 @@ describe('TitleService', () => {
       skipped: 1,
     })
     expect(visionCompletion).toHaveBeenCalledTimes(2)
+    expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain(
+      '平台：Temu PopTemu (temu_pop)',
+    )
+    expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain('标题语言：英语 (en)')
+    expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain('额外要求：突出原创图案')
     expect(preprocess).toHaveBeenCalledTimes(2)
     await expect(readExistingTitles(join(batchDir, 'titles.xlsx'))).resolves.toEqual(
       new Map([

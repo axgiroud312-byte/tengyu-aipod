@@ -92,6 +92,28 @@ describe('SkillCacheManager', () => {
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 
+  it('uses generic title fallback from a fresh local index', async () => {
+    const exactTitle = summary()
+    const genericTitle = summary({
+      id: 'title-generic-generic',
+      platform: 'generic',
+      language: 'generic',
+      version: '1.0.0',
+    })
+    vi.mocked(fetch).mockResolvedValue(okResponse([genericTitle, exactTitle]))
+    const manager = new SkillCacheManager()
+
+    await manager.refresh()
+
+    await expect(
+      manager.listSkills({ module: 'title', platform: 'temu_pop', language: 'en' }),
+    ).resolves.toEqual([exactTitle])
+    await expect(
+      manager.listSkills({ module: 'title', platform: 'shein', language: 'de' }),
+    ).resolves.toEqual([genericTitle])
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
   it('fetches and caches skill details by version', async () => {
     vi.mocked(fetch).mockResolvedValue(okResponse(skill()))
     const manager = new SkillCacheManager()

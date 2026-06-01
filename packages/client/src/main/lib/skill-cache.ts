@@ -65,6 +65,29 @@ function matchesFilter(skill: SkillSummary, filter: SkillListFilter) {
   )
 }
 
+function titleFallbackFilters(filter: SkillListFilter) {
+  if (filter.module !== 'title' || !filter.platform || !filter.language) {
+    return [filter]
+  }
+
+  return [
+    filter,
+    { ...filter, platform: 'generic' },
+    { ...filter, platform: 'generic', language: 'generic' },
+  ]
+}
+
+function filterSkillSummaries(items: SkillSummary[], filter: SkillListFilter) {
+  for (const candidate of titleFallbackFilters(filter)) {
+    const matches = items.filter((skill) => matchesFilter(skill, candidate))
+    if (matches.length > 0) {
+      return matches
+    }
+  }
+
+  return []
+}
+
 async function readJson<T>(path: string) {
   return JSON.parse(await readFile(path, 'utf8')) as T
 }
@@ -101,7 +124,7 @@ export class SkillCacheManager {
     const normalized = normalizeFilter(filter)
     const cachedIndex = await this.readCachedIndex(REFRESH_INTERVAL_MS)
     if (cachedIndex) {
-      return cachedIndex.items.filter((skill) => matchesFilter(skill, normalized))
+      return filterSkillSummaries(cachedIndex.items, normalized)
     }
 
     try {
@@ -236,7 +259,7 @@ export class SkillCacheManager {
 
   private async readCachedSummaries(filter: SkillListFilter) {
     const index = await this.readCachedIndex(CACHE_MAX_AGE_MS)
-    return index?.items.filter((skill) => matchesFilter(skill, filter)) ?? []
+    return index ? filterSkillSummaries(index.items, filter) : []
   }
 
   private async readCachedIndex(maxAgeMs: number) {

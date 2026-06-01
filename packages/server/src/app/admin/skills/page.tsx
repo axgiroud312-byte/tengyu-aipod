@@ -10,6 +10,8 @@ type SkillSlot = {
   id: string
   module: 'generation' | 'detection' | 'title'
   category: string | null
+  platform?: string | null
+  language?: string | null
   title: string
   description: string
   recommendedModel: string | null
@@ -78,9 +80,22 @@ const detectionSkillSlot: SkillSlot = {
   returnHint: '要求返回 JSON：{ "risk_score": 0-100, "reason": "..." }。',
 }
 
+const titleSkillSlot: SkillSlot = {
+  id: 'title-generic-generic',
+  module: 'title',
+  category: null,
+  platform: 'generic',
+  language: 'generic',
+  title: '标题生成提示词',
+  description: '用于标题生成：客户端会把成品图、平台、语言和额外要求发送给百炼视觉模型。',
+  recommendedModel: 'qwen3.6-flash',
+  returnHint: '要求直接输出单一标题字符串，不要 JSON、解释、引号或 Markdown。',
+}
+
 const fixedSkillSlots: [SkillSlot, ...SkillSlot[]] = [
   ...promptDefaultSkillSlots,
   detectionSkillSlot,
+  titleSkillSlot,
 ]
 const promptSkillGroups = promptDefaultSkillSlots.map((slot) => ({ defaultSlot: slot }))
 const promptSkillCategories = new Set(
@@ -191,8 +206,8 @@ function skillPayload(slot: SkillSlot, systemPrompt: string, enabled: boolean) {
     id: slot.id,
     module: slot.module,
     category: slot.category,
-    platform: null,
-    language: null,
+    platform: slot.platform ?? null,
+    language: slot.language ?? null,
     version: '1.0.0',
     enabled,
     system_prompt: systemPrompt,
@@ -445,6 +460,7 @@ export default function AdminSkillsPage() {
           <CardContent className="space-y-3">
             {promptSkillGroups.map(renderPromptGroup)}
             <div className="border-t pt-3">{renderSlotButton(detectionSkillSlot)}</div>
+            <div className="border-t pt-3">{renderSlotButton(titleSkillSlot)}</div>
             <div className="border-t pt-3">
               <div className="mb-3 flex items-center justify-between gap-3">
                 <div>
