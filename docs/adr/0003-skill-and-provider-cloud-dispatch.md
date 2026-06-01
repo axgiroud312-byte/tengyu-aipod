@@ -17,16 +17,16 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 
 **采纳"云端轻配置，本地运行"的设计：**
 
-- ✅ 云端服务器**管理**：微信登录、权益、客户、Skill 系统提示词、公告、版本通知
+- ✅ 云端服务器**管理**：客户记录、Skill 系统提示词、公告、版本通知
 - ✅ 客户端本地**管理**：Provider / 模型清单 / API Key / ComfyUI Workflow
 - ❌ 云端服务器**不代理**：用户的图片、生图调用、LLM 调用、任务数据等业务数据
-- ❌ 云端服务器**不存储**：用户的 API Key、图片、提示词、生成内容；身份侧只存微信身份、客户、权益、会话和兑换码
+- ❌ 云端服务器**不存储**：用户的 API Key、图片、提示词、生成内容和任务数据
 
 ## 数据流
 
 ```
 腾域服务器（你的）
-  ├─ 微信登录 / 权益校验 / 客户管理
+  ├─ 客户记录管理
   ├─ 派发 Skill 系统提示词 / Announcement / ClientVersion
   └─ 不接触图片、API Key、模型配置、Workflow
         │
@@ -88,13 +88,11 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 ```
 GET /api/skills
 GET /api/skills/:id
-GET /api/status
-GET /api/auth/wechat/*
 GET /api/announcements/active
 GET /api/client-version/check
 ```
 
-腾域客户端**只调这些**和 `/api/auth/wechat/*` `/api/redeem-code` `/api/status` `/api/telemetry/error`。**不调任何生图/LLM 端点**。
+腾域客户端**只调这些**和 `/api/telemetry/error`。**不调任何生图/LLM 端点**。
 
 ## 缓存策略
 
@@ -117,7 +115,7 @@ GET /api/client-version/check
 
 - 用户要管理多个外部账号（晨羽/Grsai/百炼）—— 通过首次启动引导和文档缓解
 - 费用/余额展示不统一（不同 provider 有不同 API，有些没有）—— v1 主界面不做统一余额展示；晨羽只用连接检测和显式开关机降低费用风险
-- 离线场景受限（必须 7 天联网一次）
+- 离线时只能使用已有本地 Skill 缓存，无法获得最新提示词
 
 ## 替代决策的触发条件
 

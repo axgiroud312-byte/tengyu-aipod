@@ -47,38 +47,6 @@ function sendJson(response: ServerResponse, body: unknown, status = 200) {
 async function startMockServer(state: MockState) {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/api/activate') {
-      sendJson(response, {
-        ok: true,
-        data: {
-          activation_token: [
-            'header',
-            Buffer.from(JSON.stringify({ code: 'E2E-1234-5678-9012' })).toString('base64url'),
-            'signature',
-          ].join('.'),
-          expires_at: Date.now() + 30 * 24 * 60 * 60 * 1000,
-          max_devices: 2,
-          used_devices: 1,
-          device_name: 'E2E Mac',
-        },
-      })
-      return
-    }
-    if (url.pathname === '/api/status') {
-      sendJson(response, {
-        ok: true,
-        data: {
-          status: 'active',
-          days_remaining: 30,
-          max_devices: 2,
-          used_devices: 1,
-          device_name: 'E2E Mac',
-          customer: { name: 'E2E', has_contact: true },
-        },
-      })
-      return
-    }
-
     if (url.pathname === '/api/skills') {
       sendJson(response, { ok: true, data: [titleSkill] })
       return
@@ -197,12 +165,8 @@ async function launchApp(mockBaseUrl: string, userDataDir: string) {
   })
 }
 
-async function prepareApp(app: ElectronApplication, page: Page, workbenchRoot: string) {
+async function prepareApp(page: Page, workbenchRoot: string) {
   await page.evaluate(async (root) => {
-    await window.api.activation.activate({
-      code: 'POD-1234-5678-9012',
-      device_name: 'E2E Mac',
-    })
     await window.api.onboarding.saveWorkbenchRoot(root)
     await window.api.onboarding.saveApiKeys({ bailian: 'sk-e2e' })
     await window.api.onboarding.complete()
@@ -235,7 +199,7 @@ test.describe('title module E2E', () => {
 
     app = await launchApp(mockServer.baseUrl, join(tempRoot, 'user-data'))
     const page = await app.firstWindow()
-    await prepareApp(app, page, workbenchRoot)
+    await prepareApp(page, workbenchRoot)
     await page.reload()
     await expect(page.getByText('标题生成模块')).toBeVisible()
 

@@ -1,5 +1,4 @@
 import type {
-  ActivationBadgeState,
   ListingItem,
   ListingProgress,
   ListingTaskInput,
@@ -590,34 +589,6 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('listing:progress', listener)
-      }
-    },
-  },
-  activation: {
-    activate: (input: { code: string; device_name: string }) =>
-      ipcRenderer.invoke('activation:activate', input) as Promise<
-        | {
-            ok: true
-            data: {
-              activation_token: string
-              expires_at: number
-              max_devices: number
-              used_devices: number
-              device_name: string
-            }
-          }
-        | { ok: false; error: { code: string; message: string } }
-      >,
-    getStatus: () => ipcRenderer.invoke('activation:get-status') as Promise<ActivationBadgeState>,
-    syncStatus: () => ipcRenderer.invoke('activation:sync-status') as Promise<ActivationBadgeState>,
-    onStatusChanged: (callback: (status: ActivationBadgeState) => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, status: ActivationBadgeState) => {
-        callback(status)
-      }
-      ipcRenderer.on('activation:status-changed', listener)
-
-      return () => {
-        ipcRenderer.removeListener('activation:status-changed', listener)
       }
     },
   },

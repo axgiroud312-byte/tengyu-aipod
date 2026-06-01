@@ -312,9 +312,9 @@ class ErrorReporter {
       error_code: error.code,
       error_message: error.message,
       stack_trace: error.stack,
-      client_session_id: authState.sessionId,
+      client_id: userSettings.telemetryClientId,
       occurred_at: Date.now(),
-      // 不包含：用户数据、图片路径、Skill 内容、API Key、硬件机器码、Customer 信息
+      // 不包含：用户数据、图片路径、Skill 内容、API Key、客户信息
     }
     
     this.queue.push(sanitized)
@@ -333,7 +333,7 @@ class ErrorReporter {
     try {
       await fetch('https://api.tengyu-aipod.com/api/telemetry/error', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json', authorization: `Bearer ${token}` },
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(this.queue),
       })
       this.queue = []
@@ -350,8 +350,8 @@ class ErrorReporter {
 设置 → 隐私：
   ☑ 自动上报错误日志（帮助改进）
   
-  我们收集：错误类型、堆栈、模块名、版本、会话 ID
-  我们不收集：您的图片、硬件机器码、API Key、提示词、生成内容
+  我们收集：错误类型、堆栈、模块名、版本、匿名客户端 ID
+  我们不收集：您的图片、API Key、提示词、生成内容、客户信息
   
   您随时可关闭。
 ```
@@ -441,20 +441,15 @@ function Onboarding() {
 }
 ```
 
-### 8.1 Step 1：微信登录 / 权益
+### 8.1 Step 1：工作区选择
 
 ```
 ┌─ 欢迎使用腾域 aipod ──────────────────────────┐
-│ Step 1/4 — 微信登录                          │
+│ Step 1/2 — 选择工作区                        │
 │                                              │
-│ 请使用微信扫码登录                            │
+│ 请选择本机用于保存业务文件的工作区。          │
 │                                              │
-│        [     二维码     ]                     │
-│                                              │
-│ 登录后将自动检查你的权益。                    │
-│ 需要时可在权益页输入兑换码。                  │
-│                                              │
-│ [刷新二维码]  [联系客服微信：xxx]              │
+│ [选择工作区]                                  │
 └─────────────────────────────────────────────┘
 ```
 
@@ -483,10 +478,10 @@ function Onboarding() {
 
 未选择工作区时，业务模块入口显示“请先选择工作区”并引导到设置页；设置页本身不被拦截。
 
-### 8.3 Step 3：API Keys
+### 8.3 Step 2：API Keys
 
 ```
-Step 3/4 — API Keys（可全跳过，后续模块面板补填）
+Step 2/2 — API Keys（可全跳过，后续模块面板补填）
 
 晨羽智云 API Key（用于 ComfyUI 生图）：
   [______]  [跳过]  [说明: 在 chenyu.cn 控制台创建]
@@ -626,7 +621,7 @@ macOS：
 | 主进程启动 → 加载完成 | < 2 秒 |
 | 渲染进程加载 | < 2 秒 |
 | 首次启动（含 onboarding 检查）| < 5 秒 |
-| 后续启动（已登录且权益有效）| < 4 秒 |
+| 后续启动（已完成首次设置）| < 4 秒 |
 | 客户端拉云端资源（在线）| < 3 秒 |
 
 ### 11.2 内存
@@ -645,14 +640,6 @@ macOS：
 ```
 [设置]
 
-├─ 账号与权益
-│   - 微信用户：张三
-│   - 权益状态：✅ 生效 · 剩余 222 天
-│   - 席位占用：2/3
-│   - [解绑当前席位]
-│   - [输入兑换码（可选）]
-│   - [退出登录]
-│
 ├─ 工作区
 │   - /Users/.../腾域aipod工作区/
 │   - [更改]
@@ -695,17 +682,15 @@ macOS：
 
 ## 13. 用户体验细节
 
-### 13.1 客户端右上角状态徽章
+### 13.1 客户端右上角状态
 
 ```
-🟢 权益生效·剩余 222 天
-🟡 即将过期·7 天内
-🔴 权益已过期
-🔴 账号或权益已封禁
-🟢 试用·3 天剩余
+🟢 服务器已连接
+🟡 使用本地 Skill 缓存
+🔴 外部服务连接失败
 ```
 
-点徽章 → 弹出当前微信用户和权益信息卡片。
+状态入口只展示服务连接、Skill 缓存和外部服务配置，不展示授权信息。
 
 ### 13.2 通知系统
 
@@ -714,7 +699,6 @@ OS 原生通知用于：
 - 任务完成（"套版完成 30/30 ✅"）
 - 任务失败（"上架失败 5/30，点查看"）
 - 版本更新（"新版本 v1.3.0 已发布"）
-- 权益过期警告（"距离到期 3 天，请联系客服续费"）
 
 用户在设置可关闭。
 

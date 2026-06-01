@@ -35,10 +35,10 @@ afterEach(async () => {
 
 describe('keychain', () => {
   it('sets and gets encrypted secrets', async () => {
-    await keychain.setSecret('activation_token', 'token-value')
+    await keychain.setSecret('bailian_api_key', 'token-value')
 
-    await expect(keychain.getSecret('activation_token')).resolves.toBe('token-value')
-    await expect(keychain.hasSecret('activation_token')).resolves.toBe(true)
+    await expect(keychain.getSecret('bailian_api_key')).resolves.toBe('token-value')
+    await expect(keychain.hasSecret('bailian_api_key')).resolves.toBe(true)
   })
 
   it('deletes secrets', async () => {

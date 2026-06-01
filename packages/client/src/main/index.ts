@@ -2,7 +2,6 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
 import { registerListingRunnerIpc } from '../modules/listing/runner'
-import { activationPoller } from './lib/activation-poller'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerChenyuInstanceIpc } from './lib/chenyu-instance-service'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
@@ -50,8 +49,6 @@ function createMainWindow(): void {
   mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Preload failed: ${preloadPath}`, error)
   })
-  activationPoller.bindWindow(mainWindow)
-
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
     return
@@ -69,8 +66,6 @@ app.whenReady().then(() => {
   }
 
   ipcMain.handle('app:ping', () => 'pong')
-  ipcMain.handle('activation:get-status', () => activationPoller.currentStatus())
-  ipcMain.handle('activation:sync-status', () => activationPoller.poll())
   registerOnboardingIpc()
   registerChenyuInstanceIpc()
   registerBrowserProfileLockIpc()
@@ -91,7 +86,6 @@ app.whenReady().then(() => {
   registerPhotoshopIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
   createMainWindow()
-  activationPoller.start()
   skillCacheManager.start()
 
   app.on('activate', () => {
@@ -102,7 +96,6 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
-  activationPoller.stop()
   skillCacheManager.stop()
   if (process.platform !== 'darwin') {
     app.quit()

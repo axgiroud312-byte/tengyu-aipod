@@ -1,4 +1,4 @@
-import { type CustomerWithRelations, serializeCustomer } from '@/lib/customers'
+import { serializeCustomer } from '@/lib/customers'
 import { db } from '@/lib/db'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -28,16 +28,6 @@ function nullableText(value: string | undefined) {
 async function loadCustomer(id: string) {
   return db.customer.findUnique({
     where: { id },
-    include: {
-      codes: {
-        include: {
-          devices: {
-            orderBy: [{ last_active_at: 'desc' }, { activated_at: 'desc' }],
-          },
-        },
-        orderBy: [{ created_at: 'desc' }],
-      },
-    },
   })
 }
 
@@ -55,7 +45,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
   return NextResponse.json({
     ok: true,
     data: {
-      customer: serializeCustomer(customer as CustomerWithRelations),
+      customer: serializeCustomer(customer),
       server_time: new Date().toISOString(),
     },
   })

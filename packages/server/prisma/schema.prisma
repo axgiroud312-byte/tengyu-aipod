@@ -17,44 +17,7 @@ model Customer {
   is_active  Boolean  @default(true)
   created_at DateTime @default(now())
 
-  codes ActivationCode[]
-
   @@map("customers")
-}
-
-model ActivationCode {
-  code         String    @id
-  customer_id  String?
-  batch_id     String?
-  days_total   Int
-  max_devices  Int
-  is_active    Boolean   @default(true)
-  expires_at   DateTime?
-  activated_at DateTime?
-  notes        String?
-  created_at   DateTime  @default(now())
-
-  customer Customer?          @relation(fields: [customer_id], references: [id])
-  devices  DeviceActivation[]
-
-  @@index([customer_id])
-  @@index([batch_id])
-  @@map("activation_codes")
-}
-
-model DeviceActivation {
-  id                 String   @id @default(cuid())
-  code_id            String
-  device_fingerprint String
-  device_name        String?
-  activated_at       DateTime @default(now())
-  last_active_at     DateTime @default(now())
-
-  code ActivationCode @relation(fields: [code_id], references: [code])
-
-  @@unique([code_id, device_fingerprint])
-  @@index([device_fingerprint])
-  @@map("device_activations")
 }
 
 enum SkillModule {
@@ -127,15 +90,15 @@ model Admin {
 }
 
 model TelemetryError {
-  id                 String   @id @default(cuid())
-  client_version     String
-  module             String
-  error_code         String
-  error_message      String   @db.Text
-  stack_trace        String?  @db.Text
-  device_fingerprint String
-  occurred_at        DateTime
-  received_at        DateTime @default(now())
+  id             String   @id @default(cuid())
+  client_version String
+  module         String
+  error_code     String
+  error_message  String   @db.Text
+  stack_trace    String?  @db.Text
+  client_id      String?
+  occurred_at    DateTime
+  received_at    DateTime @default(now())
 
   @@index([error_code, occurred_at])
   @@index([module, occurred_at])

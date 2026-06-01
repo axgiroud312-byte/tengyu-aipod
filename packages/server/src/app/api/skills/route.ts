@@ -1,4 +1,3 @@
-import { ClientAuthError, requireClientAuth } from '@/lib/client-auth'
 import { listSkills } from '@/lib/skills'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
@@ -15,15 +14,6 @@ function errorResponse(code: string, message: string, status: number) {
 }
 
 export async function GET(request: Request) {
-  try {
-    await requireClientAuth(request.headers.get('authorization'), { allowDevelopmentBypass: true })
-  } catch (error) {
-    if (error instanceof ClientAuthError) {
-      return errorResponse(error.code, '客户端授权无效', 401)
-    }
-    return errorResponse('INTERNAL_ERROR', '服务器内部错误', 500)
-  }
-
   const url = new URL(request.url)
   const parsed = skillListQuerySchema.safeParse({
     module: url.searchParams.get('module') ?? undefined,

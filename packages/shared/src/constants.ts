@@ -1,13 +1,10 @@
 export const APP_VERSION = '0.0.0'
 
 export const DEFAULT_TASK_CONCURRENCY = 3
-export const ACTIVATION_MAX_OFFLINE_DAYS = 7
 export const CACHE_REFRESH_INTERVAL_MINUTES = 30
 export const TEMP_FILE_MAX_AGE_HOURS = 24
 
 export const API_PATHS = {
-  activate: '/api/activate',
-  status: '/api/status',
   skills: '/api/skills',
   announcements: '/api/announcements',
   clientVersion: '/api/client-version',

@@ -9,7 +9,6 @@ import {
 } from '@tengyu-aipod/shared'
 import { app, ipcMain } from 'electron'
 import { readAppConfig } from '../onboarding'
-import { getSecret } from './keychain'
 import { serverUrl } from './server-base-url'
 
 const REFRESH_INTERVAL_MS = CACHE_REFRESH_INTERVAL_MINUTES * 60 * 1000
@@ -174,10 +173,7 @@ export class SkillCacheManager {
   }
 
   private async fetchJson<T>(url: string) {
-    const token = await getSecret('activation_token')
-    const response = await fetch(url, {
-      headers: token ? { authorization: `Bearer ${token}` } : {},
-    })
+    const response = await fetch(url)
     if (!response.ok) {
       throw new Error(`skill request failed: ${response.status}`)
     }

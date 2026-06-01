@@ -6,7 +6,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let userDataDir = ''
 let workbenchRoot = ''
-let activationToken: string | null = 'token'
 
 vi.mock('electron', () => ({
   app: {
@@ -20,10 +19,6 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn(),
   },
-}))
-
-vi.mock('./keychain', () => ({
-  getSecret: () => activationToken,
 }))
 
 vi.mock('../onboarding', () => ({
@@ -63,7 +58,6 @@ function okResponse<T>(data: T) {
 beforeEach(async () => {
   userDataDir = await mkdtemp(join(tmpdir(), 'tengyu-skill-cache-'))
   workbenchRoot = await mkdtemp(join(tmpdir(), 'tengyu-workbench-'))
-  activationToken = 'token'
   vi.useRealTimers()
   vi.stubGlobal('fetch', vi.fn())
 })
@@ -81,9 +75,7 @@ describe('SkillCacheManager', () => {
     const manager = new SkillCacheManager()
 
     await expect(manager.listSkills({ module: 'title' })).resolves.toEqual([summary()])
-    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:3100/api/skills?module=title', {
-      headers: { authorization: 'Bearer token' },
-    })
+    expect(fetch).toHaveBeenCalledWith('http://127.0.0.1:3100/api/skills?module=title')
   })
 
   it('falls back to local cached summaries while cache is fresh enough', async () => {

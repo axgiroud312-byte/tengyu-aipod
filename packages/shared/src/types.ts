@@ -70,23 +70,3 @@ export interface Customer {
   banned: boolean
   createdAt: number
 }
-
-export interface ActivationCode {
-  id: string
-  code: string
-  customerId?: string
-  batchId?: string
-  maxDevices: number
-  expiresAt?: number
-  banned: boolean
-  createdAt: number
-}
-
-export interface DeviceActivation {
-  id: string
-  activationCodeId: string
-  deviceFingerprint: string
-  deviceName?: string
-  lastVerifiedAt: number
-  createdAt: number
-}

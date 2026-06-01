@@ -148,39 +148,6 @@ async function startMockServer(state: MockState) {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
 
-    if (url.pathname === '/api/activate') {
-      sendJson(response, {
-        ok: true,
-        data: {
-          activation_token: [
-            'header',
-            Buffer.from(JSON.stringify({ code: 'E2E-1234-5678-9012' })).toString('base64url'),
-            'signature',
-          ].join('.'),
-          expires_at: Date.now() + 30 * 24 * 60 * 60 * 1000,
-          max_devices: 2,
-          used_devices: 1,
-          device_name: 'Generation E2E Mac',
-        },
-      })
-      return
-    }
-
-    if (url.pathname === '/api/status') {
-      sendJson(response, {
-        ok: true,
-        data: {
-          status: 'active',
-          days_remaining: 30,
-          max_devices: 2,
-          used_devices: 1,
-          device_name: 'Generation E2E Mac',
-          customer: { name: 'Generation E2E', has_contact: true },
-        },
-      })
-      return
-    }
-
     if (url.pathname === '/api/skills') {
       state.skillIndexCalls += 1
       const category = url.searchParams.get('category')
@@ -313,10 +280,6 @@ async function launchApp(mockBaseUrl: string, userDataDir: string) {
 
 async function prepareApp(page: Page, workbenchRoot: string) {
   await page.evaluate(async (root) => {
-    await window.api.activation.activate({
-      code: 'POD-1234-5678-9012',
-      device_name: 'Generation E2E Mac',
-    })
     await window.api.onboarding.saveWorkbenchRoot(root)
     await window.api.onboarding.saveApiKeys({ bailian: 'sk-bailian-e2e', grsai: 'sk-grsai-e2e' })
     await window.api.onboarding.complete()

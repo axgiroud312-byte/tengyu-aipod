@@ -16,34 +16,6 @@ CREATE TABLE "customers" (
 );
 
 -- CreateTable
-CREATE TABLE "activation_codes" (
-    "code" TEXT NOT NULL,
-    "customer_id" TEXT,
-    "batch_id" TEXT,
-    "days_total" INTEGER NOT NULL,
-    "max_devices" INTEGER NOT NULL,
-    "is_active" BOOLEAN NOT NULL DEFAULT true,
-    "expires_at" TIMESTAMP(3),
-    "activated_at" TIMESTAMP(3),
-    "notes" TEXT,
-    "created_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "activation_codes_pkey" PRIMARY KEY ("code")
-);
-
--- CreateTable
-CREATE TABLE "device_activations" (
-    "id" TEXT NOT NULL,
-    "code_id" TEXT NOT NULL,
-    "device_fingerprint" TEXT NOT NULL,
-    "device_name" TEXT,
-    "activated_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    "last_active_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
-
-    CONSTRAINT "device_activations_pkey" PRIMARY KEY ("id")
-);
-
--- CreateTable
 CREATE TABLE "skills" (
     "id" TEXT NOT NULL,
     "module" "SkillModule" NOT NULL,
@@ -163,7 +135,7 @@ CREATE TABLE "telemetry_errors" (
     "error_code" TEXT NOT NULL,
     "error_message" TEXT NOT NULL,
     "stack_trace" TEXT,
-    "device_fingerprint" TEXT NOT NULL,
+    "client_id" TEXT,
     "occurred_at" TIMESTAMP(3) NOT NULL,
     "received_at" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
@@ -172,18 +144,6 @@ CREATE TABLE "telemetry_errors" (
 
 -- CreateIndex
 CREATE UNIQUE INDEX "customers_phone_key" ON "customers"("phone");
-
--- CreateIndex
-CREATE INDEX "activation_codes_customer_id_idx" ON "activation_codes"("customer_id");
-
--- CreateIndex
-CREATE INDEX "activation_codes_batch_id_idx" ON "activation_codes"("batch_id");
-
--- CreateIndex
-CREATE INDEX "device_activations_device_fingerprint_idx" ON "device_activations"("device_fingerprint");
-
--- CreateIndex
-CREATE UNIQUE INDEX "device_activations_code_id_device_fingerprint_key" ON "device_activations"("code_id", "device_fingerprint");
 
 -- CreateIndex
 CREATE INDEX "skills_module_category_idx" ON "skills"("module", "category");
@@ -214,9 +174,3 @@ CREATE INDEX "telemetry_errors_error_code_occurred_at_idx" ON "telemetry_errors"
 
 -- CreateIndex
 CREATE INDEX "telemetry_errors_module_occurred_at_idx" ON "telemetry_errors"("module", "occurred_at");
-
--- AddForeignKey
-ALTER TABLE "activation_codes" ADD CONSTRAINT "activation_codes_customer_id_fkey" FOREIGN KEY ("customer_id") REFERENCES "customers"("id") ON DELETE SET NULL ON UPDATE CASCADE;
-
--- AddForeignKey
-ALTER TABLE "device_activations" ADD CONSTRAINT "device_activations_code_id_fkey" FOREIGN KEY ("code_id") REFERENCES "activation_codes"("code") ON DELETE RESTRICT ON UPDATE CASCADE;

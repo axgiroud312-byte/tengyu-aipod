@@ -34,9 +34,7 @@ import {
   moduleFromPath,
   workbenchModules,
 } from '@/layout/navigation'
-import { initializeActivationStore, useActivationStore } from '@/store/activation'
-import type { ActivationBadgeState } from '@tengyu-aipod/shared'
-import { AlertTriangle, RefreshCw } from 'lucide-react'
+import { AlertTriangle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   HashRouter,
@@ -101,56 +99,6 @@ function compactCollectionDebugDetails(details: CollectionDebugDetails) {
 const COLLECTION_CONFIG_SAVE_DEBOUNCE_MS = 400
 const COLLECTION_CURRENT_PAGE_POLL_MS = 1_500
 
-function normalizeActivationCode(value: string) {
-  return value
-    .toUpperCase()
-    .replace(/[^A-Z0-9]/g, '')
-    .slice(0, 16)
-    .replace(/(.{4})(?=.)/g, '$1-')
-}
-
-function defaultDeviceName() {
-  return `我的${navigator.platform.includes('Mac') ? 'Mac' : '工作电脑'}`
-}
-
-function formatStatusTime(timestamp: number | null) {
-  if (!timestamp) {
-    return '未同步'
-  }
-
-  const date = new Date(timestamp)
-  return `${date.toLocaleDateString('zh-CN')} ${date.toLocaleTimeString('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-  })}`
-}
-
-function statusToneClassName(tone: ActivationBadgeState['tone']) {
-  switch (tone) {
-    case 'green':
-      return 'border-emerald-200 bg-emerald-50 text-emerald-800'
-    case 'yellow':
-      return 'border-amber-200 bg-amber-50 text-amber-900'
-    case 'red':
-      return 'border-red-200 bg-red-50 text-red-800'
-    default:
-      return 'border-border bg-muted text-muted-foreground'
-  }
-}
-
-function statusDotClassName(tone: ActivationBadgeState['tone']) {
-  switch (tone) {
-    case 'green':
-      return 'bg-emerald-500'
-    case 'yellow':
-      return 'bg-amber-500'
-    case 'red':
-      return 'bg-red-500'
-    default:
-      return 'bg-muted-foreground'
-  }
-}
-
 function parsePositiveNumber(value: string, fallback: number) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
@@ -167,7 +115,7 @@ function nonNegativeInteger(value: number) {
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
   const parsed = Number(value)
-  return parsed === 1 || parsed === 2 || parsed === 3 ? parsed : 1
+  return parsed === 1 || parsed === 2 ? parsed : 1
 }
 
 function collectionPlatformOption(rule: CollectionPlatformRule): CollectionPlatformOption {
@@ -235,150 +183,6 @@ function onboardingPath(step: OnboardingStep) {
   return `/onboarding/${step}`
 }
 
-function isForceOnboardingState(state: unknown) {
-  return (
-    typeof state === 'object' &&
-    state !== null &&
-    'forceOnboarding' in state &&
-    (state as { forceOnboarding?: unknown }).forceOnboarding === true
-  )
-}
-
-function ActivationBadge({
-  onEnterActivation,
-}: {
-  onEnterActivation: () => void
-}) {
-  const status = useActivationStore((state) => state.status)
-  const refresh = useActivationStore((state) => state.refresh)
-  const [open, setOpen] = useState(false)
-  const [syncing, setSyncing] = useState(false)
-  const displayStatus =
-    status ??
-    ({
-      kind: 'inactive',
-      tone: 'muted',
-      label: '读取中',
-      detail: '正在读取激活状态',
-      daysRemaining: null,
-      maxDevices: null,
-      usedDevices: null,
-      deviceName: null,
-      customerName: null,
-      customerHasContact: false,
-      codeSuffix: null,
-      lastServerCheck: null,
-      localBlockReason: null,
-      localBlockMessage: null,
-      cachedStatus: null,
-    } satisfies ActivationBadgeState)
-
-  async function syncStatus() {
-    setSyncing(true)
-    try {
-      await refresh()
-    } finally {
-      setSyncing(false)
-    }
-  }
-
-  return (
-    <div className="relative">
-      <button
-        className={`inline-flex h-10 min-w-40 items-center justify-center gap-2 rounded-md border px-3 text-sm font-medium shadow-sm transition-colors ${statusToneClassName(
-          displayStatus.tone,
-        )}`}
-        onClick={() => setOpen((current) => !current)}
-        type="button"
-      >
-        <span className={`h-2.5 w-2.5 rounded-full ${statusDotClassName(displayStatus.tone)}`} />
-        <span>{displayStatus.label}</span>
-      </button>
-
-      {open ? (
-        <div className="absolute right-0 top-12 z-20 w-80 rounded-md border bg-background p-4 text-sm shadow-lg">
-          <div className="space-y-1">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <p className="font-semibold text-foreground">{displayStatus.label}</p>
-                <p className="text-muted-foreground">{displayStatus.detail}</p>
-              </div>
-              {displayStatus.tone === 'red' ? (
-                <AlertTriangle className="h-5 w-5 shrink-0 text-red-600" />
-              ) : null}
-            </div>
-          </div>
-
-          <dl className="mt-4 grid grid-cols-2 gap-3 text-xs">
-            <div>
-              <dt className="text-muted-foreground">本机名称</dt>
-              <dd className="mt-1 font-medium">{displayStatus.deviceName ?? '-'}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">绑定设备</dt>
-              <dd className="mt-1 font-medium">
-                {displayStatus.usedDevices !== null && displayStatus.maxDevices !== null
-                  ? `${displayStatus.usedDevices}/${displayStatus.maxDevices}`
-                  : '-'}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">激活码后 4 位</dt>
-              <dd className="mt-1 font-mono font-medium">{displayStatus.codeSuffix ?? '-'}</dd>
-            </div>
-            <div>
-              <dt className="text-muted-foreground">上次联网</dt>
-              <dd className="mt-1 font-medium">
-                {formatStatusTime(displayStatus.lastServerCheck)}
-              </dd>
-            </div>
-          </dl>
-
-          {displayStatus.localBlockMessage ? (
-            <div className="mt-4 rounded-md border border-red-200 bg-red-50 p-3 text-xs text-red-800">
-              {displayStatus.localBlockMessage}
-            </div>
-          ) : null}
-
-          <div className="mt-4 flex items-center justify-between gap-2">
-            <Button
-              className="h-9 px-3"
-              disabled
-              title="服务端解绑接口尚未接入"
-              type="button"
-              variant="secondary"
-            >
-              解绑本机
-            </Button>
-            <div className="flex gap-2">
-              <Button
-                className="h-9 px-3"
-                disabled={syncing}
-                onClick={() => void syncStatus()}
-                type="button"
-                variant="secondary"
-              >
-                <RefreshCw className="mr-2 h-3.5 w-3.5" />
-                同步
-              </Button>
-              <Button
-                className="h-9 px-3"
-                onClick={() => {
-                  setOpen(false)
-                  onEnterActivation()
-                }}
-                type="button"
-              >
-                输入新激活码
-              </Button>
-            </div>
-          </div>
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
 function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
     <div className="mt-20 max-w-xl space-y-5 rounded-md border bg-background p-6 shadow-sm">
@@ -399,8 +203,7 @@ function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
   )
 }
 
-function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void }) {
-  const status = useActivationStore((state) => state.status)
+function MainWorkbench() {
   const location = useLocation()
   const navigate = useNavigate()
   const activeModule = moduleFromPath(location.pathname) ?? 'title'
@@ -477,9 +280,6 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
     useState(false)
   const [isDownloadingCollectionImageIndex, setIsDownloadingCollectionImageIndex] = useState(false)
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
-  const isBlocked =
-    status?.kind === 'expired' || status?.kind === 'banned' || status?.kind === 'blocked'
-
   useEffect(() => {
     let mounted = true
     async function loadWorkspace() {
@@ -1307,21 +1107,9 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
   }
 
   return (
-    <Shell activationBadge={<ActivationBadge onEnterActivation={onEnterActivation} />}>
+    <Shell>
       <div className="space-y-6">
-        {isBlocked ? (
-          <div className="mt-20 max-w-xl space-y-5 rounded-md border border-red-200 bg-red-50 p-6 text-red-900">
-            <div className="space-y-2">
-              <h1 className="text-2xl font-semibold tracking-normal">
-                {status?.label ?? '激活状态异常'}
-              </h1>
-              <p className="text-sm">{status?.localBlockMessage ?? status?.detail}</p>
-            </div>
-            <Button onClick={onEnterActivation} type="button">
-              输入新激活码
-            </Button>
-          </div>
-        ) : !isWorkspaceLoaded ? (
+        {!isWorkspaceLoaded ? (
           <div className="mt-20 text-sm text-muted-foreground">正在读取工作区...</div>
         ) : activeModule !== 'settings' && !workspaceRoot ? (
           <WorkspaceRequired onOpenSettings={() => navigate('/settings')} />
@@ -1468,15 +1256,9 @@ function MainWorkbench({ onEnterActivation }: { onEnterActivation: () => void })
 
 function Onboarding() {
   const navigate = useNavigate()
-  const location = useLocation()
   const params = useParams()
   const step = parseOnboardingStep(params.step)
   const requestedStep = params.step
-  const forceOnboarding = isForceOnboardingState(location.state)
-  const [activationCode, setActivationCode] = useState('')
-  const [deviceName, setDeviceName] = useState(defaultDeviceName)
-  const [activationMessage, setActivationMessage] = useState<string | null>(null)
-  const [isActivating, setIsActivating] = useState(false)
   const [apiKeys, setApiKeys] = useState<OnboardingApiKeys>({
     chenyu: '',
     grsai: '',
@@ -1486,15 +1268,10 @@ function Onboarding() {
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const [ready, setReady] = useState(false)
 
-  function enterActivation() {
-    setReady(false)
-    navigate(onboardingPath(1), { replace: true, state: { forceOnboarding: true } })
-  }
-
   useEffect(() => {
     async function loadState() {
       const state = await window.api.onboarding.getState()
-      if (!state.needs_onboarding && !forceOnboarding) {
+      if (!state.needs_onboarding) {
         setReady(true)
         navigate(getStoredWorkbenchRoute(), { replace: true })
       }
@@ -1502,12 +1279,7 @@ function Onboarding() {
     }
 
     void loadState()
-  }, [forceOnboarding, navigate])
-
-  const canActivate = useMemo(
-    () => /^POD-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}$/.test(activationCode),
-    [activationCode],
-  )
+  }, [navigate])
 
   useEffect(() => {
     if (requestedStep && onboardingPath(step) !== `/onboarding/${requestedStep}`) {
@@ -1515,27 +1287,7 @@ function Onboarding() {
     }
   }, [navigate, requestedStep, step])
 
-  async function activate() {
-    setActivationMessage(null)
-    setIsActivating(true)
-    const result = await window.api.activation.activate({
-      code: activationCode,
-      device_name: deviceName.trim() || defaultDeviceName(),
-    })
-    setIsActivating(false)
-
-    if (!result.ok) {
-      setActivationMessage(result.error.message)
-      return
-    }
-
-    setActivationMessage(
-      `激活成功，可用设备 ${result.data.used_devices}/${result.data.max_devices}`,
-    )
-    navigate(onboardingPath(2))
-  }
-
-  async function saveApiKeys(nextStep: OnboardingStep = 3) {
+  async function saveApiKeys(nextStep: OnboardingStep = 2) {
     const cleaned: OnboardingApiKeys = {
       chenyu: apiKeys.chenyu.trim(),
       grsai: apiKeys.grsai.trim(),
@@ -1557,7 +1309,7 @@ function Onboarding() {
   }
 
   if (ready) {
-    return <MainWorkbench onEnterActivation={enterActivation} />
+    return <MainWorkbench />
   }
 
   if (!isStateLoaded) {
@@ -1570,19 +1322,9 @@ function Onboarding() {
 
   return (
     <OnboardingPage
-      activationBadge={<ActivationBadge onEnterActivation={enterActivation} />}
-      activationCode={activationCode}
-      activationMessage={activationMessage}
       apiKeys={apiKeys}
-      canActivate={canActivate}
-      deviceName={deviceName}
-      isActivating={isActivating}
-      onActivate={() => void activate()}
-      onActivationCodeChange={(value) => setActivationCode(normalizeActivationCode(value))}
       onApiKeyChange={updateApiKey}
       onComplete={() => void complete()}
-      onDeviceNameChange={setDeviceName}
-      onNavigateStep={(nextStep) => navigate(onboardingPath(nextStep))}
       onSaveApiKeys={() => void saveApiKeys()}
       step={step}
     />
@@ -1626,13 +1368,7 @@ function WorkbenchRoute() {
     return <Navigate replace to={activePath} />
   }
 
-  return (
-    <MainWorkbench
-      onEnterActivation={() =>
-        navigate(onboardingPath(1), { replace: true, state: { forceOnboarding: true } })
-      }
-    />
-  )
+  return <MainWorkbench />
 }
 
 function AppRoutes() {
@@ -1647,18 +1383,6 @@ function AppRoutes() {
 }
 
 export function App() {
-  useEffect(() => {
-    let cleanup: (() => void) | null = null
-
-    void initializeActivationStore().then((nextCleanup) => {
-      cleanup = nextCleanup
-    })
-
-    return () => {
-      cleanup?.()
-    }
-  }, [])
-
   return (
     <HashRouter>
       <AppRoutes />

@@ -81,8 +81,8 @@
 │   │   │   │   │   ├─ listing/
 │   │   │   │   │   └─ orchestration/    ← v1.5
 │   │   │   │   ├─ db/                   ← SQLite 模式 + 迁移
-│   │   │   │   ├─ cache/                ← Skill/Provider/Workflow 缓存
-│   │   │   │   ├─ auth/                 ← 微信登录 + 权益客户端逻辑
+│   │   │   │   ├─ cache/                ← Skill 缓存
+│   │   │   │   ├─ local-workflows/      ← 用户导入的 ComfyUI Workflow
 │   │   │   │   └─ logger.ts
 │   │   │   ├─ preload/
 │   │   │   └─ renderer/                 ← React UI
@@ -278,16 +278,6 @@ CREATE TABLE listing_status (
   UNIQUE(batch_path, sku_code, platform, workspace_id)
 );
 
--- 客户端登录与权益态（本地缓存）
-CREATE TABLE auth_state (
-  id              INTEGER PRIMARY KEY CHECK (id = 1),
-  auth_token      TEXT NOT NULL,
-  wechat_user_json TEXT NOT NULL,
-  entitlement_json TEXT,
-  last_server_check INTEGER NOT NULL,
-  cached_status_json TEXT NOT NULL                   -- { status, days_remaining, modules, seat_count, ... }
-);
-
 -- 采集会话和记录（详见 spec/02-collection.md）
 CREATE TABLE collection_sessions (...);
 CREATE TABLE collection_records (...);
@@ -452,7 +442,7 @@ export interface AppError {
 5. **同一比特浏览器 profile 同时刻最多 1 个模块占用**
 6. **服务端不接触图片/API Key/任务数据**
 7. **客户端 API Key 永远 OS keychain 加密存储**
-8. **微信登录权益在 7 天内必须联网验证一次**
+8. **服务端只派发 Skill / 公告 / 版本，不做客户端授权拦截**
 9. **印花 ID 全局唯一**，跨 provider 共享同一 ID 空间
 10. **临时文件用完即删**，最长保留 24 小时
 

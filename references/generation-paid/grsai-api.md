@@ -135,8 +135,8 @@ Grsai 只负责最终生图；提示词由本地百炼按云端 Skill 生成。
 
 | 子能力 | 推荐模型 | 备注 |
 |---|---|---|
-| 文生图 | `gpt-image-2` / `gpt-image-2-vip` | 百炼文本模型先生成 `{ "prompts": [...] }` |
-| 图生图 | `gpt-image-2` / `gpt-image-2-vip` | 百炼视觉模型先看参考图生成 prompts；Grsai `images` 字段可传参考图 |
+| 文生图 | `gpt-image-2` / `gpt-image-2-vip` | 百炼文本模型先生成 `{ "prompts": [{ "index": 1, "prompt": "..." }] }` |
+| 图生图 | `gpt-image-2` / `gpt-image-2-vip` | 百炼视觉模型先看参考图生成 prompts；Grsai `images` 字段由“生图时带参考图”开关控制，默认不传 |
 | 提取 | `gpt-image-2` / `gpt-image-2-vip` | 走图生图同一端点，Skill 决定提取目标 |
 | 抠图 | 不走纯 Grsai | 走本地 ComfyUI Workflow 或混合路径 |
 
@@ -147,16 +147,18 @@ Grsai 只负责最终生图；提示词由本地百炼按云端 Skill 生成。
 ```
 1. 用户在生图模块选择文生图 / 图生图 / 提取
 2. 客户端读取云端同步下来的固定 Skill 系统提示词
-3. 百炼文本模型或视觉模型生成 `{ "prompts": ["..."] }`
-4. 客户端逐条取 prompt，按本地 Grsai 设置选择节点、模型、尺寸、并发
+3. 百炼文本模型或视觉模型生成 `{ "prompts": [{ "index": 1, "prompt": "..." }] }`
+4. 客户端逐条取 `prompt` 字段，按本地 Grsai 设置选择节点、模型、尺寸、并发
 5. POST /v1/api/generate
    - 大批量时 replyType=async，拿 task_id
    - 单张时 replyType=json，直接拿结果
 6. 异步模式：轮询 /v1/api/result（每 2 秒）直到 status≠running
-7. 成功 → 下载 results[].url，落到 02-生图/{子能力}/{印花ID}.png
+7. 成功 → 下载 `results[].url`，落到 `02-印花工作区/{能力目录}/{任务名}/{印花ID}.png`
 8. 数据库登记：印花ID、来源原图、provider="grsai"、model、prompt 快照、版本、status
 9. 失败/违规 → UI 提示
 ```
+
+图生图模式里，参考图一定会给百炼视觉模型看，用来写提示词；是否把同一张参考图继续发给 Grsai 生图接口，是用户开关，默认关闭。
 
 ### 3.4 节点选择
 

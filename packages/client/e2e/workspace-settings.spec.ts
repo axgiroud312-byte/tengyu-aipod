@@ -18,20 +18,6 @@ function sendJson(response: ServerResponse, body: unknown, status = 200) {
 async function startMockServer() {
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/api/status') {
-      sendJson(response, {
-        ok: true,
-        data: {
-          status: 'active',
-          days_remaining: 30,
-          max_devices: 2,
-          used_devices: 1,
-          device_name: 'E2E Mac',
-          customer: { name: 'E2E', has_contact: true },
-        },
-      })
-      return
-    }
     if (url.pathname === '/api/skills') {
       sendJson(response, {
         ok: true,
@@ -133,7 +119,6 @@ test.describe('workspace settings', () => {
       env: {
         ...process.env,
         NODE_ENV: 'development',
-        TENGYU_DEV_SKIP_ACTIVATION: '1',
         TENGYU_SERVER_URL: mockServer.baseUrl,
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
         TENGYU_ELECTRON_USER_DATA_DIR: userDataDir,
@@ -141,6 +126,8 @@ test.describe('workspace settings', () => {
     })
     const page = await app.firstWindow()
 
+    await page.getByRole('button', { name: '全部跳过' }).click()
+    await page.getByRole('button', { name: '开始使用' }).click()
     await expect(page.getByRole('heading', { name: '请先选择工作区' })).toBeVisible()
     await page.getByRole('button', { name: '去设置页选择工作区' }).click()
     await expect(

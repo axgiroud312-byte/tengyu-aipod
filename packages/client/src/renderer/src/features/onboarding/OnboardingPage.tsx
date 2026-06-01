@@ -10,33 +10,22 @@ import {
   CircleDot,
   KeyRound,
   LockKeyhole,
-  MonitorCheck,
   PlayCircle,
   ShieldCheck,
   Sparkles,
 } from 'lucide-react'
-import type { ComponentType, ReactNode, SVGProps } from 'react'
+import type { ComponentType, SVGProps } from 'react'
 
-export type OnboardingStep = 1 | 2 | 3
+export type OnboardingStep = 1 | 2
 export type OnboardingApiKey = 'chenyu' | 'grsai' | 'bailian' | 'bit_browser_url'
 export type OnboardingApiKeys = Record<OnboardingApiKey, string>
 
 interface OnboardingPageProps {
   step: OnboardingStep
-  activationBadge: ReactNode
-  activationCode: string
-  deviceName: string
-  activationMessage: string | null
-  isActivating: boolean
-  canActivate: boolean
   apiKeys: OnboardingApiKeys
-  onActivationCodeChange: (value: string) => void
-  onDeviceNameChange: (value: string) => void
   onApiKeyChange: (key: OnboardingApiKey, value: string) => void
-  onActivate: () => void
   onSaveApiKeys: () => void
   onComplete: () => void
-  onNavigateStep: (step: OnboardingStep) => void
 }
 
 interface StepMeta {
@@ -50,20 +39,13 @@ interface StepMeta {
 const stepMetas: StepMeta[] = [
   {
     number: 1,
-    label: '激活',
-    title: '绑定本机授权',
-    detail: '输入激活码并确认设备名称',
-    icon: MonitorCheck,
-  },
-  {
-    number: 2,
     label: '接口密钥',
     title: '保存本机密钥',
     detail: '密钥只进入系统加密存储',
     icon: KeyRound,
   },
   {
-    number: 3,
+    number: 2,
     label: '完成',
     title: '进入工作台',
     detail: '开始使用 6 个生产模块',
@@ -73,10 +55,10 @@ const stepMetas: StepMeta[] = [
 
 const defaultStepMeta: StepMeta = {
   number: 1,
-  label: '激活',
-  title: '绑定本机授权',
-  detail: '输入激活码并确认设备名称',
-  icon: MonitorCheck,
+  label: '接口密钥',
+  title: '保存本机密钥',
+  detail: '密钥只进入系统加密存储',
+  icon: KeyRound,
 }
 
 const apiKeyFields: Array<{
@@ -101,7 +83,7 @@ function currentStepMeta(step: OnboardingStep) {
 }
 
 function stepProgress(step: OnboardingStep) {
-  return Math.round((step / 3) * 100)
+  return Math.round((step / 2) * 100)
 }
 
 function StepRail({ step }: { step: OnboardingStep }) {
@@ -137,7 +119,7 @@ function StepRail({ step }: { step: OnboardingStep }) {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold">
-                第 {item.number} 步 共 3 步 · {item.label}
+                第 {item.number} 步 共 2 步 · {item.label}
               </p>
               <p className="mt-0.5 text-xs leading-4 opacity-80">{item.detail}</p>
             </div>
@@ -148,41 +130,17 @@ function StepRail({ step }: { step: OnboardingStep }) {
   )
 }
 
-function MessageBox({ message }: { message: string | null }) {
-  if (!message) {
-    return null
-  }
-
-  return (
-    <div className="rounded-md border border-primary/20 bg-primary/5 px-3 py-2 text-sm text-primary">
-      {message}
-    </div>
-  )
-}
-
 export function OnboardingPage({
   step,
-  activationBadge,
-  activationCode,
-  deviceName,
-  activationMessage,
-  isActivating,
-  canActivate,
   apiKeys,
-  onActivationCodeChange,
-  onDeviceNameChange,
   onApiKeyChange,
-  onActivate,
   onSaveApiKeys,
   onComplete,
-  onNavigateStep,
 }: OnboardingPageProps) {
   const meta = currentStepMeta(step)
 
   return (
     <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.16),_transparent_32%),linear-gradient(135deg,_hsl(var(--background))_0%,_hsl(var(--muted))_100%)] px-8 py-8 text-foreground">
-      <div className="fixed right-8 top-6 z-20">{activationBadge}</div>
-
       <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-6xl gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="flex flex-col justify-between rounded-lg border bg-background/80 p-6 shadow-sm backdrop-blur">
           <div className="space-y-6">
@@ -205,7 +163,7 @@ export function OnboardingPage({
                   把本机接入腾域工作台
                 </h1>
                 <p className="text-sm leading-6 text-muted-foreground">
-                  只需完成激活和密钥保存。工作区可稍后在设置页选择，图片、任务数据和密钥都留在本机。
+                  只需完成密钥保存。工作区可稍后在设置页选择，图片、任务数据和密钥都留在本机。
                 </p>
               </div>
             </div>
@@ -238,7 +196,7 @@ export function OnboardingPage({
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 space-y-1">
                 <p className="text-sm font-medium text-primary">
-                  第 {step} 步 共 3 步 · {meta.label}
+                  第 {step} 步 共 2 步 · {meta.label}
                 </p>
                 <CardTitle className="text-2xl leading-8">{meta.title}</CardTitle>
                 <p className="text-sm text-muted-foreground">{meta.detail}</p>
@@ -252,53 +210,6 @@ export function OnboardingPage({
 
           <CardContent className="p-6 pt-0">
             {step === 1 ? (
-              <div className="grid gap-5">
-                <div className="grid gap-4 md:grid-cols-[1.3fr_1fr]">
-                  <label className="space-y-2 text-sm font-medium" htmlFor="activation-code">
-                    <span>激活码</span>
-                    <Input
-                      className="h-11 font-mono text-base tracking-[0.18em]"
-                      id="activation-code"
-                      onChange={(event) => onActivationCodeChange(event.target.value)}
-                      placeholder="POD-XXXX-YYYY-ZZZZ"
-                      value={activationCode}
-                    />
-                  </label>
-                  <label className="space-y-2 text-sm font-medium" htmlFor="device-name">
-                    <span>本机名称</span>
-                    <Input
-                      className="h-11 text-base"
-                      id="device-name"
-                      onChange={(event) => onDeviceNameChange(event.target.value)}
-                      value={deviceName}
-                    />
-                  </label>
-                </div>
-
-                <div className="rounded-md border bg-muted/60 p-4 text-sm text-muted-foreground">
-                  激活只绑定当前设备授权，不上传素材、图片、密钥和任务数据。
-                </div>
-                <MessageBox message={activationMessage} />
-
-                <div className="flex items-center justify-between gap-3 pt-1">
-                  <Button
-                    disabled={!canActivate || isActivating}
-                    onClick={onActivate}
-                    type="button"
-                  >
-                    {isActivating ? '激活中...' : '激活并继续'}
-                  </Button>
-                  <a
-                    className="text-sm font-medium text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                    href="https://example.com/support"
-                  >
-                    联系客服微信
-                  </a>
-                </div>
-              </div>
-            ) : null}
-
-            {step === 2 ? (
               <div className="grid gap-5">
                 <div className="grid gap-3">
                   {apiKeyFields.map((field) => (
@@ -338,9 +249,7 @@ export function OnboardingPage({
                 </div>
 
                 <div className="flex items-center justify-between gap-3 pt-1">
-                  <Button onClick={() => onNavigateStep(1)} type="button" variant="secondary">
-                    上一步
-                  </Button>
+                  <div />
                   <div className="flex gap-2">
                     <Button onClick={onSaveApiKeys} type="button" variant="secondary">
                       全部跳过
@@ -353,7 +262,7 @@ export function OnboardingPage({
               </div>
             ) : null}
 
-            {step === 3 ? (
+            {step === 2 ? (
               <div className="grid gap-6 text-center">
                 <div className="mx-auto grid h-16 w-16 place-items-center rounded-lg bg-primary/10 text-primary">
                   <CheckCircle2 className="h-8 w-8" />
@@ -367,7 +276,7 @@ export function OnboardingPage({
                 <div className="grid gap-3 rounded-md border bg-muted/50 p-4 text-left text-sm md:grid-cols-3">
                   <div className="flex items-center gap-2">
                     <ShieldCheck className="h-4 w-4 text-primary" />
-                    授权已绑定
+                    本机已配置
                   </div>
                   <div className="flex items-center gap-2">
                     <KeyRound className="h-4 w-4 text-primary" />

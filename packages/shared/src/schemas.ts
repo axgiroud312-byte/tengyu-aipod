@@ -73,23 +73,3 @@ export const CustomerSchema = z.object({
   banned: z.boolean(),
   createdAt: z.number().int(),
 })
-
-export const ActivationCodeSchema = z.object({
-  id: z.string().min(1),
-  code: z.string().min(1),
-  customerId: z.string().optional(),
-  batchId: z.string().optional(),
-  maxDevices: z.number().int().positive(),
-  expiresAt: z.number().int().optional(),
-  banned: z.boolean(),
-  createdAt: z.number().int(),
-})
-
-export const DeviceActivationSchema = z.object({
-  id: z.string().min(1),
-  activationCodeId: z.string().min(1),
-  deviceFingerprint: z.string().min(1),
-  deviceName: z.string().optional(),
-  lastVerifiedAt: z.number().int(),
-  createdAt: z.number().int(),
-})

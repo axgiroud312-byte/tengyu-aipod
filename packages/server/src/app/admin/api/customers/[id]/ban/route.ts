@@ -16,20 +16,13 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     )
   }
 
-  const result = await db.$transaction(async (tx) => {
-    await tx.customer.update({
-      where: { id },
-      data: { is_active: false },
-    })
-    const codes = await tx.activationCode.updateMany({
-      where: { customer_id: id },
-      data: { is_active: false },
-    })
-    return codes
+  await db.customer.update({
+    where: { id },
+    data: { is_active: false },
   })
 
   return NextResponse.json({
     ok: true,
-    data: { customer_id: id, affected_codes: result.count },
+    data: { customer_id: id },
   })
 }

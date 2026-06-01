@@ -18,7 +18,7 @@
 | 切片 | 模块 | 状态 | 备注 |
 |---|---|---|---|
 | 0 | 工程骨架 | ✅ 已完成 | monorepo / Electron / Next.js / CI |
-| 1 | 登录与权益闭环 | ✅ 已完成 | v0.1.0，原授权闭环；文档已对齐微信登录 + 权益 |
+| 1 | 首次设置与本地配置 | ✅ 已完成 | v0.1.0，工作区选择 + API Key 本地保存 + Skill 缓存 |
 | 2 | 标题生成 | ✅ 已完成 | v0.2.0，百炼 + Skill 缓存 |
 | 3 | 侵权检测 | ✅ 已完成 | v0.3.0，百炼视觉 LLM |
 | 4 | 生图 Grsai | ✅ 已完成 | v0.4.0，付费 API |
@@ -47,7 +47,7 @@ graph TB
     end
     subgraph Cloud[云端 packages/server]
         Admin[Admin 后台 UI]
-        API[微信登录/权益/Skill API]
+        API[Skill / 客户 / 公告 / 版本 API]
         PG[(Postgres + Prisma)]
     end
     subgraph Externals[外部服务]
@@ -63,7 +63,7 @@ graph TB
     Renderer <-->|IPC| Preload <--> Main
     Main --> DB
     Main --> Keychain
-    Main -->|微信登录/权益校验/拉 Skill| API
+    Main -->|拉 Skill / 公告 / 版本| API
     Main -->|HTTP API Key 在本地| Bailian
     Main --> Grsai
     Main --> Comfy
@@ -74,7 +74,7 @@ graph TB
     API --> PG
 ```
 
-**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"账号与提示词控制台"（微信登录、权益、客户、Skill 系统提示词），不碰模型配置、图片和 Key。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
+**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"客户记录与提示词控制台"（客户、Skill 系统提示词、公告、版本），不碰模型配置、图片和 Key。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
 
 ---
 
@@ -188,13 +188,13 @@ ComfyUI 路径页面只显示默认云机状态卡：状态、实例 UUID、Comf
 | **守护变量** | `REAL_LISTING=1` / `REAL_LISTING_MUTATE=1` |
 | **相关归档 task** | `listing-skill-import` / `profile-lock` / `types-port` / `runner-port` / `temu-*` / `shein-*` / `batch-loader` / `resume` / `evidence` / `module-ui` / `failure-retry` / `module-e2e` |
 
-### 7️⃣ 微信登录 & 权益 — 身份用微信，授权看权益
+### 7️⃣ 首次设置与云端 Skill — 工作区先行，本地保存密钥
 
 | 部分 | 文件 |
 |---|---|
-| **主进程业务** | `packages/client/src/main/lib/activation-state.ts`（历史命名，后续应迁到 auth/entitlement）← 登录/权益态机<br/>`activation-poller.ts`（历史命名）← 7 天内联网验证（不变规则 #8）<br/>`keychain.ts` ← OS 钥匙串加密<br/>`packages/client/src/main/onboarding.ts` ← 入门流程 + Dev 跳过开关 |
-| **后台**（微信账户 / 客户 / 权益） | `packages/server/src/app/admin/customers/`（客户与微信账户）<br/>`packages/server/src/app/admin/skills/`（生图 Skill 系统提示词） |
-| **Spec** | `docs/adr/0002-activation-code-no-accounts.md` |
+| **主进程业务** | `packages/client/src/main/onboarding.ts` ← 首次设置 + 工作区/API Key 保存<br/>`packages/client/src/main/lib/onboarding-state.ts` ← setup 状态<br/>`keychain.ts` ← OS 钥匙串加密 |
+| **后台** | `packages/server/src/app/admin/customers/`（客户记录）<br/>`packages/server/src/app/admin/skills/`（Skill 系统提示词） |
+| **Spec** | `docs/adr/0002-no-client-auth-gate.md` |
 
 ### 公共基础设施（所有模块共用）
 
@@ -212,10 +212,9 @@ ComfyUI 路径页面只显示默认云机状态卡：状态、实例 UUID、Comf
 
 | 路径 | 干什么 |
 |---|---|
-| `packages/server/src/app/admin/customers/` | 客户 / 微信账户 / 权益管理 |
+| `packages/server/src/app/admin/customers/` | 客户记录管理 |
 | `packages/server/src/app/admin/skills/` | 生图、提取、侵权检测固定 Skill 系统提示词槽位 |
 | `packages/server/src/app/api/skills/` | 客户端拉取 Skill 系统提示词 |
-| `packages/server/src/app/api/status/` | 客户端登录态和权益状态校验 |
 | `packages/server/src/app/api/health/` | 服务健康检查 |
 | `packages/server/prisma/schema.prisma` | 数据库表结构 |
 
@@ -252,7 +251,7 @@ flowchart LR
 
 | 表（概念） | 干什么 |
 |---|---|
-| `workbench_config` | 工作台路径 / 当前登录与权益态 |
+| `workbench_config` | 工作区路径 / 本地配置 |
 | `print_artifact` | 印花 ID 全局唯一（不变规则 #9） |
 | `detection_result` | 检测历史 |
 | `generation_record` | 生图记录 |
@@ -260,16 +259,23 @@ flowchart LR
 | `listing_task` / `listing_stage` | 上架任务 + 12 阶段状态 |
 | `ps_job` | PS 套版任务 |
 
-**服务端 Postgres（云端，只放微信身份、客户、权益和 Skill）**：
+**服务端 Postgres（云端，只放客户记录、Skill、公告和版本）**：
 
 ```mermaid
 erDiagram
-    CUSTOMER ||--o{ WECHAT_USER : binds
-    CUSTOMER ||--o{ ENTITLEMENT : owns
-    WECHAT_USER ||--o{ CLIENT_SESSION : logs-in
+    CUSTOMER {
+      string id
+      string phone
+      boolean is_active
+    }
+    SKILL {
+      string id
+      string version
+      boolean enabled
+    }
 ```
 
-Skill 作为云端提示词资源单独管理，不再和 Provider / Workflow / Platform Rules 放在同一张云端关系图里。
+Skill 作为云端提示词资源单独管理；本地模型配置、Workflow 和平台规则都留在客户端侧。
 
 ---
 
@@ -279,7 +285,7 @@ Skill 作为云端提示词资源单独管理，不再和 Provider / Workflow / 
 
 1. `CLAUDE.md` — 项目协作规则 + 当前阶段
 2. `ROADMAP.md` — 108 task 总路线图 + 切片划分
-3. `docs/CONTEXT.md` — 领域语言（货号 / 印花 / Skill / 微信登录 / 权益）
+3. `docs/CONTEXT.md` — 领域语言（货号 / 印花 / Skill / 工作区）
 4. `docs/spec/00-overview.md` — 整体架构 + **10 条不可违反规则**
 5. `CHANGELOG.md` — 切片 1-8 已交付的能力
 
