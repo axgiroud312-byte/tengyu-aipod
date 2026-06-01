@@ -20,6 +20,7 @@ import {
   Plus,
   RefreshCw,
   Scissors,
+  Square,
   Terminal,
   Trash2,
   WandSparkles,
@@ -530,6 +531,7 @@ function useGenerationTaskEvents({
   const activeTaskIdRef = useRef<string | null>(null)
   const awaitingTaskStartRef = useRef(false)
   const handledTaskEventRef = useRef(false)
+  const cancelWhenTaskStartsRef = useRef(false)
 
   useEffect(() => {
     const shouldHandleTask = (nextTaskId: string, nextCapability?: GenerationCapability) => {
@@ -586,6 +588,7 @@ function useGenerationTaskEvents({
       activeTaskIdRef.current = null
       awaitingTaskStartRef.current = true
       handledTaskEventRef.current = false
+      cancelWhenTaskStartsRef.current = false
       setTaskId(null)
     },
     activateTask(nextTaskId: string) {
@@ -593,11 +596,36 @@ function useGenerationTaskEvents({
       activeTaskIdRef.current = nextTaskId
       awaitingTaskStartRef.current = false
       setTaskId(nextTaskId)
+      if (cancelWhenTaskStartsRef.current) {
+        cancelWhenTaskStartsRef.current = false
+        void window.api.generation.cancel({ task_id: nextTaskId })
+      }
       return alreadyHandled
+    },
+    async cancelTask() {
+      const activeTaskId = activeTaskIdRef.current ?? taskId
+      if (!activeTaskId && awaitingTaskStartRef.current) {
+        cancelWhenTaskStartsRef.current = true
+        setError(null)
+        return true
+      }
+      if (!activeTaskId) {
+        setError('没有正在运行的生图任务')
+        return false
+      }
+      const response = await window.api.generation.cancel({ task_id: activeTaskId })
+      if (!response.ok) {
+        setError('当前生图任务已结束，无法取消')
+        return false
+      }
+      setError(null)
+      return true
     },
     clearTaskStart() {
       awaitingTaskStartRef.current = false
+      cancelWhenTaskStartsRef.current = false
     },
+    taskId,
   }
 }
 
@@ -933,10 +961,28 @@ function GenerationFeedback({
       ) : null}
       {result ? (
         <div className="rounded-md bg-muted px-3 py-2 text-sm">
-          完成：成功 {result.succeeded}，失败 {result.failed}
+          {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败 {result.failed}
         </div>
       ) : null}
     </div>
+  )
+}
+
+function GenerationCancelButton({
+  running,
+  onCancel,
+}: {
+  running: boolean
+  onCancel: () => void
+}) {
+  if (!running) {
+    return null
+  }
+  return (
+    <Button onClick={onCancel} type="button" variant="secondary">
+      <Square className="mr-2 h-4 w-4" />
+      取消任务
+    </Button>
   )
 }
 
@@ -1954,6 +2000,10 @@ function GrsaiPromptGenerationPanel({
                 {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
                 开始生图
               </Button>
+              <GenerationCancelButton
+                onCancel={() => void taskEvents.cancelTask()}
+                running={running}
+              />
             </div>
           </div>
 
@@ -1998,7 +2048,8 @@ function GrsaiPromptGenerationPanel({
               ) : null}
               {result ? (
                 <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-                  完成：成功 {result.succeeded}，失败 {result.failed}
+                  {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败{' '}
+                  {result.failed}
                 </div>
               ) : null}
             </div>
@@ -2277,6 +2328,10 @@ function GrsaiExtractPanel() {
                 {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
                 开始提取
               </Button>
+              <GenerationCancelButton
+                onCancel={() => void taskEvents.cancelTask()}
+                running={running}
+              />
             </div>
           </div>
 
@@ -2315,7 +2370,8 @@ function GrsaiExtractPanel() {
             ) : null}
             {result ? (
               <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
-                完成：成功 {result.succeeded}，失败 {result.failed}
+                {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败{' '}
+                {result.failed}
               </div>
             ) : null}
           </div>
@@ -2588,6 +2644,12 @@ function ComfyuiImg2imgPanel() {
               )}
               开始图生图
             </Button>
+            <div className="mt-2">
+              <GenerationCancelButton
+                onCancel={() => void taskEvents.cancelTask()}
+                running={running}
+              />
+            </div>
           </div>
 
           <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
@@ -2834,6 +2896,12 @@ function ComfyuiExtractPanel() {
               {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
               开始提取
             </Button>
+            <div className="mt-2">
+              <GenerationCancelButton
+                onCancel={() => void taskEvents.cancelTask()}
+                running={running}
+              />
+            </div>
           </div>
 
           <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
@@ -3133,6 +3201,12 @@ function ComfyuiExtractMattingPanel() {
               {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
               开始提取后抠图
             </Button>
+            <div className="mt-2">
+              <GenerationCancelButton
+                onCancel={() => void taskEvents.cancelTask()}
+                running={running}
+              />
+            </div>
           </div>
 
           <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />
@@ -3398,6 +3472,12 @@ function ComfyuiMattingPanel() {
               {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
               开始抠图
             </Button>
+            <div className="mt-2">
+              <GenerationCancelButton
+                onCancel={() => void taskEvents.cancelTask()}
+                running={running}
+              />
+            </div>
           </div>
 
           <ComfyuiInstanceSelectorCard selection={comfyuiInstanceSelection} />

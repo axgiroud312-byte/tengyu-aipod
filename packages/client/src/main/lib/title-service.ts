@@ -28,11 +28,15 @@ export type ExistingTitleStrategy = 'skip' | 'regenerate'
 
 export type TitleBatchConfig = {
   batchDir: string
+  titleFileName?: string
   platform: string
   language: string
   model: string
   imageIndex?: number
   extraRequirement?: string
+  titlePrefix?: string
+  titleSuffix?: string
+  titleSeparator?: string
   existingStrategy?: ExistingTitleStrategy
   maxRetries?: number
   concurrency?: number
@@ -53,6 +57,7 @@ export type TitleProgress = {
   succeeded: number
   failed: number
   skipped: number
+  status?: 'running' | 'cancelled'
 }
 
 export type TitleSkuResult =
@@ -84,6 +89,7 @@ export type TitleBatchResult = {
   failed: number
   skipped: number
   results: TitleSkuResult[]
+  cancelled?: boolean
 }
 
 export type TitleTaskEvent =
@@ -127,9 +133,9 @@ type ImageSelection =
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const DEFAULT_MODEL = 'qwen3.6-flash'
+const DEFAULT_TITLE_FILE_BASENAME = '标题'
 const PLATFORM_TITLE_MAX_LEN: Record<string, number> = {
-  temu_pop: 150,
-  temu_full: 130,
+  temu: 150,
   shein: 200,
   tiktok: 250,
   shopee: 120,
@@ -140,8 +146,7 @@ const PLATFORM_TITLE_MAX_LEN: Record<string, number> = {
 }
 
 const PLATFORM_OPTIONS = [
-  { key: 'temu_pop', label: 'Temu PopTemu' },
-  { key: 'temu_full', label: 'Temu Full' },
+  { key: 'temu', label: 'Temu' },
   { key: 'shein', label: 'Shein' },
   { key: 'tiktok', label: 'TikTok Shop' },
   { key: 'shopee', label: 'Shopee' },
@@ -237,6 +242,37 @@ function isTitleHeader(sku: string, title: string) {
   )
 }
 
+export function normalizeTitleFileBaseName(value?: string) {
+  const withoutExtension = (value ?? DEFAULT_TITLE_FILE_BASENAME)
+    .trim()
+    .replace(/\.xlsx$/i, '')
+    .trim()
+  const safeName = withoutExtension
+    .replace(/[<>:"/\\|?*]/g, '_')
+    .split('')
+    .map((character) => (character.charCodeAt(0) < 32 ? '_' : character))
+    .join('')
+    .replace(/^\.+$/, '')
+    .trim()
+  return safeName || DEFAULT_TITLE_FILE_BASENAME
+}
+
+export function titleXlsxPath(batchDir: string, titleFileName?: string) {
+  return join(batchDir, `${normalizeTitleFileBaseName(titleFileName)}.xlsx`)
+}
+
+export function joinTitleParts(
+  prefix: string | undefined,
+  title: string,
+  suffix: string | undefined,
+  separator: string | undefined,
+) {
+  const delimiter = separator === undefined ? ' ' : separator
+  return [prefix?.trim() ?? '', title.trim(), suffix?.trim() ?? '']
+    .filter((part) => part.length > 0)
+    .join(delimiter)
+}
+
 export async function scanSkuFolders(batchDir: string): Promise<SkuFolder[]> {
   const entries = await readdir(batchDir, { withFileTypes: true })
   return entries
@@ -313,9 +349,9 @@ export async function writeTitlesXlsx(
 ) {
   try {
     const workbook = new ExcelJS.Workbook()
-    const sheet = workbook.addWorksheet('Titles')
+    const sheet = workbook.addWorksheet('Sheet')
     sheet.columns = [
-      { header: '货号', key: 'sku', width: 25 },
+      { header: '货号', key: 'sku', width: 30 },
       { header: '标题', key: 'title', width: 60 },
     ]
 
@@ -427,12 +463,19 @@ async function selectTitleSkill(
   platform: string,
   language: string,
 ) {
-  const summaries = await skillCache.listSkills({ module: 'title', platform, language })
-  const selected = summaries[0]
-  if (!selected) {
-    throw new AppErrorClass('HTTP_4XX', '未找到标题生成 Skill，请先在后台配置', false)
+  const platformCandidates = platform === 'temu' ? ['temu', 'temu_pop', 'temu_full'] : [platform]
+  for (const candidate of platformCandidates) {
+    const summaries = await skillCache.listSkills({
+      module: 'title',
+      platform: candidate,
+      language,
+    })
+    const selected = summaries[0]
+    if (selected) {
+      return skillCache.getSkill(selected.id, selected.version)
+    }
   }
-  return skillCache.getSkill(selected.id, selected.version)
+  throw new AppErrorClass('HTTP_4XX', '未找到标题生成 Skill，请先在后台配置', false)
 }
 
 function appErrorMessage(error: unknown) {
@@ -475,13 +518,14 @@ async function runWithConcurrency<T>(
   items: T[],
   concurrency: number,
   worker: (item: T) => Promise<void>,
+  shouldContinue: () => boolean = () => true,
 ) {
   let nextIndex = 0
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (nextIndex < items.length) {
+    while (nextIndex < items.length && shouldContinue()) {
       const current = items[nextIndex]
       nextIndex += 1
-      if (current !== undefined) {
+      if (current !== undefined && shouldContinue()) {
         await worker(current)
       }
     }
@@ -612,6 +656,8 @@ export class TitleService {
     string,
     { config: TitleBatchConfig; result: TitleBatchResult }
   >()
+  private readonly activeTasks = new Set<string>()
+  private readonly cancelledTasks = new Set<string>()
 
   listPlatforms() {
     return PLATFORM_OPTIONS
@@ -628,13 +674,25 @@ export class TitleService {
     }))
   }
 
-  async scanBatchDir(batchDir: string): Promise<TitleScanResult> {
+  async scanBatchDir(batchDir: string, titleFileName?: string): Promise<TitleScanResult> {
     const skuFolders = await scanSkuFolders(batchDir)
-    const existingTitles = await readExistingTitles(join(batchDir, 'titles.xlsx'))
+    const existingTitles = await readExistingTitles(titleXlsxPath(batchDir, titleFileName))
     return {
       skuCount: skuFolders.length,
       existingTitles: Object.fromEntries(existingTitles),
     }
+  }
+
+  cancelTask(taskId: string) {
+    if (!this.activeTasks.has(taskId)) {
+      return false
+    }
+    this.cancelledTasks.add(taskId)
+    return true
+  }
+
+  private isCancelled(taskId: string) {
+    return this.cancelledTasks.has(taskId)
   }
 
   startBatch(
@@ -702,6 +760,8 @@ export class TitleService {
     dependencies: TitleServiceDependencies = {},
   ): Promise<TitleBatchResult> {
     const taskId = config.taskId ?? randomUUID()
+    this.activeTasks.add(taskId)
+    this.cancelledTasks.delete(taskId)
     const ownsPool = !dependencies.preprocessPool
     let tempDirCreated = false
     let keepFailedTemp = false
@@ -729,7 +789,7 @@ export class TitleService {
         throw new Error('batchDir must be a directory')
       }
 
-      const xlsxPath = join(config.batchDir, 'titles.xlsx')
+      const xlsxPath = titleXlsxPath(config.batchDir, config.titleFileName)
       const existingTitles = await readExistingTitles(xlsxPath)
       const existingStrategy = config.existingStrategy ?? 'skip'
       const skuFilter = config.skuCodes ? new Set(config.skuCodes) : null
@@ -748,6 +808,7 @@ export class TitleService {
         succeeded: 0,
         failed: 0,
         skipped: 0,
+        status: 'running',
       }
       const emitProgress = () => dependencies.emitProgress?.({ ...progress })
 
@@ -766,7 +827,10 @@ export class TitleService {
 
       emitProgress()
 
-      if (pending.length === 0) {
+      if (pending.length === 0 || this.isCancelled(taskId)) {
+        const cancelled = this.isCancelled(taskId)
+        progress.status = cancelled ? 'cancelled' : 'running'
+        emitProgress()
         await writeTitlesXlsx(xlsxPath, generatedTitles, existingTitles)
         return {
           taskId,
@@ -776,18 +840,11 @@ export class TitleService {
           failed: 0,
           skipped: progress.skipped,
           results: results.sort((left, right) => naturalCompare(left.skuCode, right.skuCode)),
+          ...(cancelled ? { cancelled } : {}),
         }
       }
 
-      const skillSummaries = await resolved.skillCache.listSkills({
-        module: 'title',
-        platform: config.platform,
-        language: config.language,
-      })
-      const selectedSkill = skillSummaries[0]
-      const skill = selectedSkill
-        ? await resolved.skillCache.getSkill(selectedSkill.id, selectedSkill.version)
-        : await selectTitleSkill(resolved.skillCache, config.platform, config.language)
+      const skill = await selectTitleSkill(resolved.skillCache, config.platform, config.language)
       const model = config.model || skill.recommendedModel || DEFAULT_MODEL
       const apiKey = await resolved.getSecret('bailian')
       if (!apiKey) {
@@ -798,32 +855,42 @@ export class TitleService {
       const concurrency = clampInt(config.concurrency, 1, 10, 3)
       const imageIndex = clampInt(config.imageIndex, 1, Number.MAX_SAFE_INTEGER, 1)
 
-      await runWithConcurrency(pending, concurrency, async (skuFolder) => {
-        const result = await this.processSku({
-          skuFolder,
-          config,
-          taskId,
-          model,
-          skill,
-          adapter,
-          maxRetries,
-          imageIndex,
-          workbenchRoot,
-          preprocessPool: resolved.preprocessPool,
-        })
+      await runWithConcurrency(
+        pending,
+        concurrency,
+        async (skuFolder) => {
+          const result = await this.processSku({
+            skuFolder,
+            config,
+            taskId,
+            model,
+            skill,
+            adapter,
+            maxRetries,
+            imageIndex,
+            workbenchRoot,
+            preprocessPool: resolved.preprocessPool,
+          })
 
-        results.push(result)
-        progress.processed += 1
-        if (result.status === 'success') {
-          generatedTitles.set(result.skuCode, result.title)
-          progress.succeeded += 1
-        } else {
-          progress.failed += 1
-        }
-        emitProgress()
-      })
+          results.push(result)
+          progress.processed += 1
+          if (result.status === 'success') {
+            generatedTitles.set(result.skuCode, result.title)
+            progress.succeeded += 1
+          } else {
+            progress.failed += 1
+          }
+          emitProgress()
+        },
+        () => !this.isCancelled(taskId),
+      )
 
       keepFailedTemp = progress.failed > 0
+      const cancelled = this.isCancelled(taskId)
+      progress.status = cancelled ? 'cancelled' : 'running'
+      if (cancelled) {
+        emitProgress()
+      }
       const orderedGeneratedTitles = new Map(
         Array.from(generatedTitles.entries()).sort(([left], [right]) =>
           naturalCompare(left, right),
@@ -856,6 +923,7 @@ export class TitleService {
         failed: progress.failed,
         skipped: progress.skipped,
         results: results.sort((left, right) => naturalCompare(left.skuCode, right.skuCode)),
+        ...(cancelled ? { cancelled } : {}),
       }
     } finally {
       if (ownsPool && 'close' in resolved.preprocessPool) {
@@ -867,6 +935,8 @@ export class TitleService {
           keepIfFailed: keepFailedTemp,
         })
       }
+      this.activeTasks.delete(taskId)
+      this.cancelledTasks.delete(taskId)
     }
   }
 
@@ -927,7 +997,12 @@ export class TitleService {
           await rm(preprocessed.outputPath, { force: true }).catch(() => null)
         }
 
-        const title = parseTitle(response.text, input.config.language, input.config.platform)
+        const title = joinTitleParts(
+          input.config.titlePrefix,
+          parseTitle(response.text, input.config.language, input.config.platform),
+          input.config.titleSuffix,
+          input.config.titleSeparator,
+        )
         if (!title) {
           throw new AppErrorClass('HTTP_5XX', '模型返回空标题', true)
         }
@@ -986,19 +1061,24 @@ export function registerTitleIpc() {
         ? { defaultPath: join(config.workbench_root, WORKBENCH_DIRECTORIES.listing) }
         : {}),
       properties: ['openDirectory'],
-      title: '选择货号批次目录',
+      title: '选择货号父目录',
     })
     if (result.canceled || !result.filePaths[0]) {
       return { ok: false, error: { code: 'CANCELLED', message: '已取消选择目录' } }
     }
     return { ok: true, data: { path: result.filePaths[0] } }
   })
-  ipcMain.handle('title:scan-batch-dir', (_event, input: { batchDir: string }) =>
-    titleService.scanBatchDir(input.batchDir),
+  ipcMain.handle(
+    'title:scan-batch-dir',
+    (_event, input: { batchDir: string; titleFileName?: string }) =>
+      titleService.scanBatchDir(input.batchDir, input.titleFileName),
   )
   ipcMain.handle('title:run', (_event, input: TitleBatchConfig) =>
     titleService.startBatch(input, emitTitleProgress, emitTitleCompleted),
   )
+  ipcMain.handle('title:cancel', (_event, input: { task_id: string }) => ({
+    ok: titleService.cancelTask(input.task_id),
+  }))
   ipcMain.handle('title:retry-failed', (_event, input: { task_id: string }) =>
     titleService.retryFailed(input.task_id, emitTitleProgress, emitTitleCompleted),
   )

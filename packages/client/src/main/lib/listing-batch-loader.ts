@@ -1,4 +1,5 @@
-import { readFile, readdir } from 'node:fs/promises'
+import { constants } from 'node:fs'
+import { access, readFile, readdir } from 'node:fs/promises'
 import { extname, join, resolve } from 'node:path'
 import {
   type ListingImageGroup,
@@ -33,6 +34,7 @@ type CollectedMaterialFiles = {
 const IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm'])
 const DESCRIPTION_TEXT_FILE_NAMES = ['产品描述.txt', '描述.txt', 'description.txt']
+const TITLE_FILE_CANDIDATES = ['标题.xlsx', 'titles.xlsx']
 const GROUP_NAME_ALIASES: Record<ListingImageGroup, string[]> = {
   sku: ['sku', 'skc', '变种', '规格'],
   carousel: ['carousel', '轮播', '主图', '首页图', 'main'],
@@ -50,20 +52,21 @@ export async function loadBatchAsListingItems(
     ...template.excludedFolderNames,
     ...(options.excludedFolderNames ?? []),
   ])
-  const titles = await readExistingTitles(join(batchDir, 'titles.xlsx'))
+  const titleSource = await readListingTitles(batchDir)
+  const titles = titleSource.titles
   const folders = await scanSkuFolders(batchDir, excludedFolderNames)
   const items: ListingMaterialScanItem[] = []
   const listingItems: ListingItem[] = []
   const warnings: string[] = []
 
   if (titles.size === 0) {
-    warnings.push(`批次目录缺少 titles.xlsx 或标题为空：${join(batchDir, 'titles.xlsx')}`)
+    warnings.push(`批次目录缺少 标题.xlsx / titles.xlsx 或标题为空：${join(batchDir, '标题.xlsx')}`)
   }
 
   for (const folder of folders) {
     const title = titles.get(folder.name)
     if (!title) {
-      warnings.push(`货号 ${folder.name} 在 titles.xlsx 中无标题，跳过`)
+      warnings.push(`货号 ${folder.name} 在 ${titleSource.fileName} 中无标题，跳过`)
       continue
     }
 
@@ -97,6 +100,31 @@ export async function loadBatchAsListingItems(
     warnings,
     skuFolderCount: folders.length,
     titledSkuCount: folders.filter((folder) => titles.has(folder.name)).length,
+  }
+}
+
+async function readListingTitles(batchDir: string) {
+  for (const fileName of TITLE_FILE_CANDIDATES) {
+    const path = join(batchDir, fileName)
+    if (await pathExists(path)) {
+      return {
+        fileName,
+        titles: await readExistingTitles(path),
+      }
+    }
+  }
+  return {
+    fileName: TITLE_FILE_CANDIDATES.join(' / '),
+    titles: new Map<string, string>(),
+  }
+}
+
+async function pathExists(path: string) {
+  try {
+    await access(path, constants.F_OK)
+    return true
+  } catch {
+    return false
   }
 }
 

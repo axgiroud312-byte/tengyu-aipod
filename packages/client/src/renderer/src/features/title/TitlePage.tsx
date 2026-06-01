@@ -18,10 +18,8 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
-import { VISION_MODEL_PRICES, type VisionModelKey } from '@tengyu-aipod/shared'
-import { Calculator, FolderOpen, Loader2, Play, RotateCcw, ScanLine } from 'lucide-react'
+import { FolderOpen, Loader2, Play, RotateCcw, ScanLine, Square } from 'lucide-react'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
@@ -45,6 +43,10 @@ export type TitleFormState = {
   platform: string
   language: string
   model: string
+  titleFileName: string
+  titlePrefix: string
+  titleSuffix: string
+  titleSeparator: string
   imageIndex: string
   extraRequirement: string
   existingStrategy: TitleExistingStrategy
@@ -73,21 +75,9 @@ type TitlePageProps = {
   onChooseBatchDir: () => void
   onScanBatchDir: () => void
   onRunBatch: () => void
+  onCancelBatch: () => void
   onRetryFailed: () => void
   onOpenPath: (path: string) => void
-}
-
-function isVisionModelKey(value: string): value is VisionModelKey {
-  return value in VISION_MODEL_PRICES
-}
-
-function estimateTitleCost(imageCount: number, model: string, compression: boolean) {
-  const price = isVisionModelKey(model)
-    ? VISION_MODEL_PRICES[model]
-    : VISION_MODEL_PRICES['qwen3.6-flash']
-  const imageTokens = compression ? 256 : 1024
-  const outputTokens = 80
-  return (imageCount * (imageTokens * price.input + outputTokens * price.output)) / 1_000_000
 }
 
 function progressPercent(progress: TitleProgress | null) {
@@ -98,6 +88,9 @@ function progressPercent(progress: TitleProgress | null) {
 }
 
 function titleProgressText(state: TitlePageState, isRunning: boolean) {
+  if (state.progress?.status === 'cancelled' || state.result?.cancelled) {
+    return '已取消'
+  }
   if (state.isRetryingFailed) {
     return '失败重试中'
   }
@@ -132,6 +125,7 @@ export function TitlePage({
   onChooseBatchDir,
   onScanBatchDir,
   onRunBatch,
+  onCancelBatch,
   onRetryFailed,
   onOpenPath,
 }: TitlePageProps) {
@@ -143,10 +137,12 @@ export function TitlePage({
       ? Math.max(0, state.scanResult.skuCount - existingTitleCount)
       : state.scanResult.skuCount
     : 0
-  const estimatedCost = estimateTitleCost(pendingEstimateCount, state.model, state.compression)
   const percent = progressPercent(state.progress)
   const isRunning = Boolean(
-    state.progress && state.progress.processed < state.progress.total && !state.result,
+    state.progress &&
+      state.progress.processed < state.progress.total &&
+      !state.result &&
+      state.progress.status !== 'cancelled',
   )
   const canRun = Boolean(state.batchDir.trim()) && !isRunning
   const successRows = state.result?.results.filter((item) => item.status === 'success') ?? []
@@ -156,7 +152,7 @@ export function TitlePage({
 
   return (
     <div className="space-y-6">
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_320px]">
+      <div className="space-y-5">
         <div className="space-y-5">
           <Card>
             <CardHeader className="p-5 pb-3">
@@ -164,7 +160,7 @@ export function TitlePage({
                 <div>
                   <CardTitle className="text-lg">批次目录</CardTitle>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    选择 04-上架工作区 下的单个套版批次，扫描后开始估算。
+                    选择货号文件夹所在的父目录，标题表默认写在同一层。
                   </p>
                 </div>
                 <Badge variant="secondary">{state.scanResult ? '已扫描' : '待扫描'}</Badge>
@@ -175,7 +171,7 @@ export function TitlePage({
                 <Input
                   className="min-w-0 flex-1"
                   onChange={(event) => onStateChange('batchDir', event.target.value)}
-                  placeholder="选择上架工作区中的一个套版批次目录"
+                  placeholder="选择货号文件夹所在的父目录"
                   value={state.batchDir}
                 />
                 <Button onClick={onChooseBatchDir} type="button" variant="secondary">
@@ -283,6 +279,17 @@ export function TitlePage({
                   <AccordionContent>
                     <div className="grid gap-4 md:grid-cols-4">
                       <div className="space-y-2">
+                        <label className="text-sm font-medium" htmlFor="title-file-name">
+                          标题名称
+                        </label>
+                        <Input
+                          id="title-file-name"
+                          onChange={(event) => onStateChange('titleFileName', event.target.value)}
+                          placeholder="标题"
+                          value={state.titleFileName}
+                        />
+                      </div>
+                      <div className="space-y-2">
                         <label className="text-sm font-medium" htmlFor="title-image-index">
                           取第几张
                         </label>
@@ -296,34 +303,6 @@ export function TitlePage({
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium" htmlFor="title-max-retries">
-                          重试次数
-                        </label>
-                        <Input
-                          className="tabular-nums"
-                          id="title-max-retries"
-                          max={5}
-                          min={0}
-                          onChange={(event) => onStateChange('maxRetries', event.target.value)}
-                          type="number"
-                          value={state.maxRetries}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium" htmlFor="title-concurrency">
-                          并发数
-                        </label>
-                        <Input
-                          className="tabular-nums"
-                          id="title-concurrency"
-                          max={10}
-                          min={1}
-                          onChange={(event) => onStateChange('concurrency', event.target.value)}
-                          type="number"
-                          value={state.concurrency}
-                        />
-                      </div>
-                      <div className="space-y-2">
                         <label className="text-sm font-medium" htmlFor="title-max-size">
                           最大边长
                         </label>
@@ -334,6 +313,39 @@ export function TitlePage({
                           onChange={(event) => onStateChange('maxSize', event.target.value)}
                           type="number"
                           value={state.maxSize}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium" htmlFor="title-prefix">
+                          前缀
+                        </label>
+                        <Input
+                          id="title-prefix"
+                          onChange={(event) => onStateChange('titlePrefix', event.target.value)}
+                          placeholder="默认不填"
+                          value={state.titlePrefix}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium" htmlFor="title-suffix">
+                          后缀
+                        </label>
+                        <Input
+                          id="title-suffix"
+                          onChange={(event) => onStateChange('titleSuffix', event.target.value)}
+                          placeholder="默认不填"
+                          value={state.titleSuffix}
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <label className="text-sm font-medium" htmlFor="title-separator">
+                          分隔符
+                        </label>
+                        <Input
+                          id="title-separator"
+                          onChange={(event) => onStateChange('titleSeparator', event.target.value)}
+                          placeholder="空格"
+                          value={state.titleSeparator}
                         />
                       </div>
                     </div>
@@ -397,96 +409,58 @@ export function TitlePage({
           </Card>
         </div>
 
-        <aside className="space-y-5 xl:sticky xl:top-6 xl:self-start">
-          <Card className="border-primary/20">
-            <CardHeader className="p-5 pb-3">
-              <CardTitle className="flex items-center gap-2 text-lg">
-                <Calculator className="h-4 w-4 text-primary" />
-                预估
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4 p-5 pt-0">
-              <div className="rounded-md bg-primary/5 p-4">
-                <div className="text-sm text-muted-foreground">待生成张数</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums">
-                  {pendingEstimateCount}
+        <Card>
+          <CardHeader className="p-5 pb-3">
+            <div className="flex items-center justify-between gap-3">
+              <CardTitle className="text-lg">执行进度</CardTitle>
+              <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
+            </div>
+          </CardHeader>
+          <CardContent className="space-y-4 p-5 pt-0">
+            <dl className="grid gap-3 text-sm sm:grid-cols-5">
+              {statItems(state, existingTitleCount, pendingEstimateCount).map((item) => (
+                <div className="rounded-md bg-muted p-3" key={item.label}>
+                  <dt className="text-muted-foreground">{item.label}</dt>
+                  <dd className="mt-1 text-xl font-semibold tabular-nums">{item.value}</dd>
                 </div>
+              ))}
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">成功</dt>
+                <dd className="mt-1 text-xl font-semibold tabular-nums">
+                  {state.progress?.succeeded ?? 0}
+                </dd>
               </div>
-              <div>
-                <div className="text-sm text-muted-foreground">预计费用</div>
-                <div className="mt-1 text-2xl font-semibold tabular-nums">
-                  ¥{estimatedCost.toFixed(4)}
-                </div>
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">失败</dt>
+                <dd className="mt-1 text-xl font-semibold tabular-nums">
+                  {state.progress?.failed ?? 0}
+                </dd>
               </div>
-              <Button className="w-full" disabled={!canRun} onClick={onRunBatch} type="button">
-                {isRunning ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Play className="mr-2 h-4 w-4" />
-                )}
-                开始生成标题
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="p-5 pb-3">
-              <CardTitle className="text-lg">概览</CardTitle>
-            </CardHeader>
-            <CardContent className="p-5 pt-0">
-              <dl className="grid grid-cols-3 gap-2 text-sm">
-                {statItems(state, existingTitleCount, pendingEstimateCount).map((item) => (
-                  <div className="rounded-md bg-muted p-3" key={item.label}>
-                    <dt className="text-muted-foreground">{item.label}</dt>
-                    <dd className="mt-1 text-xl font-semibold tabular-nums">{item.value}</dd>
-                  </div>
-                ))}
-              </dl>
-              <Separator className="my-4" />
-              <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">费用</span>
-                <span className="font-medium tabular-nums">¥{estimatedCost.toFixed(4)}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="p-5 pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg">进度</CardTitle>
-                <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4 p-5 pt-0">
-              <Progress value={percent} />
-              <dl className="grid grid-cols-2 gap-3 text-sm">
-                <div>
-                  <dt className="text-muted-foreground">处理</dt>
-                  <dd className="mt-1 font-medium tabular-nums">
-                    {state.progress ? `${state.progress.processed}/${state.progress.total}` : '0/0'}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">跳过</dt>
-                  <dd className="mt-1 font-medium tabular-nums">{state.progress?.skipped ?? 0}</dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">成功</dt>
-                  <dd className="mt-1 font-medium tabular-nums">
-                    {state.progress?.succeeded ?? 0}
-                  </dd>
-                </div>
-                <div>
-                  <dt className="text-muted-foreground">失败</dt>
-                  <dd className="mt-1 font-medium tabular-nums">{state.progress?.failed ?? 0}</dd>
-                </div>
-              </dl>
+            </dl>
+            <Progress value={percent} />
+            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
                 {progressStatusText}
               </div>
-            </CardContent>
-          </Card>
-        </aside>
+              <div className="flex flex-wrap gap-2">
+                {isRunning ? (
+                  <Button onClick={onCancelBatch} type="button" variant="secondary">
+                    <Square className="mr-2 h-4 w-4" />
+                    取消任务
+                  </Button>
+                ) : null}
+                <Button disabled={!canRun} onClick={onRunBatch} type="button">
+                  {isRunning ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Play className="mr-2 h-4 w-4" />
+                  )}
+                  开始生成标题
+                </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {batchResult ? (

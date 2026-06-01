@@ -234,9 +234,13 @@ function MainWorkbench() {
   const [languages, setLanguages] = useState<Array<{ key: string; label: string }>>([])
   const [models, setModels] = useState<Array<{ key: string; label: string }>>([])
   const [batchDir, setBatchDir] = useState('')
-  const [platform, setPlatform] = useState('temu_pop')
+  const [platform, setPlatform] = useState('temu')
   const [language, setLanguage] = useState('en')
   const [model, setModel] = useState('qwen3.6-flash')
+  const [titleFileName, setTitleFileName] = useState('标题')
+  const [titlePrefix, setTitlePrefix] = useState('')
+  const [titleSuffix, setTitleSuffix] = useState('')
+  const [titleSeparator, setTitleSeparator] = useState(' ')
   const [imageIndex, setImageIndex] = useState('1')
   const [extraRequirement, setExtraRequirement] = useState('')
   const [existingStrategy, setExistingStrategy] = useState<TitleExistingStrategy>('skip')
@@ -518,14 +522,18 @@ function MainWorkbench() {
       if (event.ok) {
         setResult(event.result)
         setIsRetryingFailed(false)
-        setProgress({
+        setProgress((current) => ({
           task_id: event.result.taskId,
-          processed: event.result.total,
+          processed: event.result.cancelled
+            ? (current?.processed ??
+              event.result.succeeded + event.result.failed + event.result.skipped)
+            : event.result.total,
           total: event.result.total,
           succeeded: event.result.succeeded,
           failed: event.result.failed,
           skipped: event.result.skipped,
-        })
+          ...(event.result.cancelled ? { status: 'cancelled' as const } : {}),
+        }))
         setTitleError(null)
         return
       }
@@ -543,6 +551,10 @@ function MainWorkbench() {
     platform,
     language,
     model,
+    titleFileName,
+    titlePrefix,
+    titleSuffix,
+    titleSeparator,
     imageIndex,
     extraRequirement,
     existingStrategy,
@@ -573,6 +585,18 @@ function MainWorkbench() {
         return
       case 'model':
         if (typeof value === 'string') setModel(value)
+        return
+      case 'titleFileName':
+        if (typeof value === 'string') setTitleFileName(value)
+        return
+      case 'titlePrefix':
+        if (typeof value === 'string') setTitlePrefix(value)
+        return
+      case 'titleSuffix':
+        if (typeof value === 'string') setTitleSuffix(value)
+        return
+      case 'titleSeparator':
+        if (typeof value === 'string') setTitleSeparator(value)
         return
       case 'imageIndex':
         if (typeof value === 'string') setImageIndex(value)
@@ -614,7 +638,10 @@ function MainWorkbench() {
       return
     }
     try {
-      const nextScan = await window.api.title.scanBatchDir({ batchDir: path.trim() })
+      const nextScan = await window.api.title.scanBatchDir({
+        batchDir: path.trim(),
+        titleFileName,
+      })
       setScanResult(nextScan)
       setTitleError(null)
     } catch (error) {
@@ -633,9 +660,13 @@ function MainWorkbench() {
     setTitleError(null)
     const titleConfig: TitleBatchConfig = {
       batchDir: batchDir.trim(),
+      titleFileName,
       platform,
       language,
       model,
+      titlePrefix,
+      titleSuffix,
+      titleSeparator,
       imageIndex: parsePositiveNumber(imageIndex, 1),
       existingStrategy,
       maxRetries: parseNonNegativeNumber(maxRetries, 2),
@@ -659,6 +690,19 @@ function MainWorkbench() {
       failed: 0,
       skipped: 0,
     })
+  }
+
+  async function cancelTitleBatch() {
+    if (!taskId) {
+      setTitleError('没有正在运行的标题任务')
+      return
+    }
+    const response = await window.api.title.cancel({ task_id: taskId })
+    if (!response.ok) {
+      setTitleError('当前标题任务已结束，无法取消')
+      return
+    }
+    setTitleError(null)
   }
 
   async function retryFailed() {
@@ -1253,6 +1297,7 @@ function MainWorkbench() {
                     onRetryFailed={() => void retryFailed()}
                     onRunBatch={() => void runTitleBatch()}
                     onScanBatchDir={() => void scanBatchDir()}
+                    onCancelBatch={() => void cancelTitleBatch()}
                     onStateChange={updateTitleFormState}
                     openMessage={openMessage}
                     platforms={platforms}

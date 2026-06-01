@@ -451,6 +451,68 @@ describe('DetectionService', () => {
     expect(result.taskId).toMatch(/^检测-\d{8}-\d{6}$/)
   })
 
+  it('cancels a running batch without starting later images', async () => {
+    const imagePaths = [
+      join(tempRoot, 'inputs', 'cancel-a.png'),
+      join(tempRoot, 'inputs', 'cancel-b.png'),
+      join(tempRoot, 'inputs', 'cancel-c.png'),
+    ]
+    await Promise.all(imagePaths.map((path, index) => createImage(path, `cancel-${index}`)))
+    const fakeDb = createFakeDb()
+    const service = new DetectionService()
+    const visionCompletion = vi
+      .fn()
+      .mockResolvedValue({ text: '{"risk_score": 12, "reason": "原创图案"}' })
+    const preprocess = vi.fn(async (options: { taskId: string; inputName?: string }) => {
+      service.cancelTask(options.taskId)
+      const outputPath = join(
+        workbenchRoot,
+        '.workbench',
+        'tmp',
+        'detection',
+        options.taskId,
+        `${options.inputName ?? 'image'}_processed.jpg`,
+      )
+      await mkdir(dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, 'processed')
+      return {
+        outputPath,
+        mimeType: 'image/jpeg',
+        sizeBytes: 9,
+        dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+      }
+    })
+
+    const result = await service.runDetectionBatch(
+      {
+        imagePaths,
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+        concurrency: 1,
+        taskId: 'cancel-detection',
+      },
+      {
+        skillCache: { getSkill: vi.fn().mockResolvedValue(detectionSkill()) },
+        createBailianAdapter: () => ({ visionCompletion }),
+        preprocessPool: { process: preprocess, close: vi.fn() },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(result).toMatchObject({
+      total: 3,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      cancelled: true,
+    })
+    expect(visionCompletion).toHaveBeenCalledTimes(1)
+    expect(result.results).toHaveLength(1)
+  })
+
   it('skips cached detections for the same image, model, skill, and version', async () => {
     const imagePath = join(tempRoot, 'inputs', 'cached.png')
     await createImage(imagePath, 'same-image')

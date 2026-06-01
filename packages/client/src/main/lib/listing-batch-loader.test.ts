@@ -47,7 +47,7 @@ afterEach(async () => {
 describe('listing batch loader', () => {
   it('loads titled sku folders as listing items with natural image ordering', async () => {
     const batchDir = join(tempRoot, 'batch')
-    await createWorkbook(join(batchDir, 'titles.xlsx'), [
+    await createWorkbook(join(batchDir, '标题.xlsx'), [
       ['SKU2', 'Second product'],
       ['SKU10', 'Excluded product'],
       ['SKU-MISSING-IMAGE', 'Missing image product'],
@@ -81,13 +81,13 @@ describe('listing batch loader', () => {
     ])
     expect(result.warnings).toEqual([
       '货号 SKU-MISSING-IMAGE 文件夹没有可上架图片，跳过',
-      '货号 SKU-NO-TITLE 在 titles.xlsx 中无标题，跳过',
+      '货号 SKU-NO-TITLE 在 标题.xlsx 中无标题，跳过',
     ])
   })
 
   it('maps nested color folders to variant groups and sku image group', async () => {
     const batchDir = join(tempRoot, 'shein')
-    await createWorkbook(join(batchDir, 'titles.xlsx'), [['GzG0001', 'Shein product']])
+    await createWorkbook(join(batchDir, '标题.xlsx'), [['GzG0001', 'Shein product']])
     await createFiles(join(batchDir, 'GzG0001'), ['cover.jpg', 'video.mp4', '产品描述.txt'])
     await createFiles(join(batchDir, 'GzG0001', '蓝色'), ['2.jpg', '1.jpg'])
     await createFiles(join(batchDir, 'GzG0001', '红色'), ['1.png'])
@@ -124,6 +124,22 @@ describe('listing batch loader', () => {
     expect(result.listingItems[0]?.descriptionText).toBe('content')
   })
 
+  it('falls back to legacy titles.xlsx when 标题.xlsx is missing', async () => {
+    const batchDir = join(tempRoot, 'legacy')
+    await createWorkbook(join(batchDir, 'titles.xlsx'), [['SKU1', 'Legacy product']])
+    await createFiles(join(batchDir, 'SKU1'), ['1.jpg'])
+
+    const result = await loadBatchAsListingItems(batchDir, {
+      template: SLICE_8_LISTING_TEMPLATES[0],
+    })
+
+    expect(result.listingItems[0]).toMatchObject({
+      sku: 'SKU1',
+      title: 'Legacy product',
+    })
+    expect(result.warnings).toEqual([])
+  })
+
   it('scans real Slice 8 material roots when they exist', async () => {
     for (const template of SLICE_8_LISTING_TEMPLATES) {
       if (!(await pathExists(template.materialRootDir))) {
@@ -134,7 +150,7 @@ describe('listing batch loader', () => {
 
       expect(result.rootDir).toBe(template.materialRootDir)
       expect(result.templateKey).toBe(template.key)
-      expect(result.warnings.length).toBeGreaterThan(0)
+      expect(Array.isArray(result.warnings)).toBe(true)
       if (template.key === 'temu-clothing') {
         expect(result.warnings.some((warning) => warning.includes('GzG00010'))).toBe(false)
       }

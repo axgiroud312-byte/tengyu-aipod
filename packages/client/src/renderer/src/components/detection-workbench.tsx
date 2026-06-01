@@ -10,6 +10,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   ShieldQuestion,
+  Square,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
@@ -222,6 +223,7 @@ function RunPanel({
   progress,
   onCompressionChange,
   onRun,
+  onCancel,
 }: {
   imageCount: number
   compression: boolean
@@ -231,6 +233,7 @@ function RunPanel({
   progress: DetectionProgress | null
   onCompressionChange: (enabled: boolean) => void
   onRun: () => void
+  onCancel: () => void
 }) {
   const percent = progressPercent(progress)
   return (
@@ -280,6 +283,12 @@ function RunPanel({
           )}
           开始检测
         </Button>
+        {running ? (
+          <Button className="mt-2 w-full" onClick={onCancel} type="button" variant="secondary">
+            <Square className="mr-2 h-4 w-4" />
+            取消任务
+          </Button>
+        ) : null}
       </section>
 
       <section className="rounded-md border bg-background p-4 shadow-sm">
@@ -310,6 +319,11 @@ function RunPanel({
             <dd className="font-medium tabular-nums">{progress?.failed ?? 0}</dd>
           </div>
         </dl>
+        {progress?.status === 'cancelled' ? (
+          <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+            已取消
+          </div>
+        ) : null}
       </section>
     </aside>
   )
@@ -492,18 +506,24 @@ export function DetectionWorkbench() {
       }
 
       setResults(event.result.results)
-      setProgress({
+      setProgress((current) => ({
         task_id: event.result.taskId,
-        processed: event.result.total,
+        processed: event.result.cancelled
+          ? (current?.processed ??
+            event.result.succeeded + event.result.failed + event.result.skipped)
+          : event.result.total,
         total: event.result.total,
         succeeded: event.result.succeeded,
         failed: event.result.failed,
         skipped: event.result.skipped,
         concurrency: DEFAULT_CONCURRENCY,
-      })
+        ...(event.result.cancelled ? { status: 'cancelled' as const } : {}),
+      }))
       setRunningTaskId(event.result.taskId)
       setMessage(
-        `检测完成：成功 ${event.result.succeeded}，缓存 ${event.result.skipped}，失败 ${event.result.failed}`,
+        event.result.cancelled
+          ? `已取消：成功 ${event.result.succeeded}，缓存 ${event.result.skipped}，失败 ${event.result.failed}`
+          : `检测完成：成功 ${event.result.succeeded}，缓存 ${event.result.skipped}，失败 ${event.result.failed}`,
       )
       setError(null)
     })
@@ -634,6 +654,20 @@ export function DetectionWorkbench() {
     }
   }
 
+  async function cancelDetection() {
+    const taskId = runningTaskIdRef.current ?? runningTaskId
+    if (!taskId) {
+      setError('没有正在运行的检测任务')
+      return
+    }
+    const response = await window.api.detection.cancel({ task_id: taskId })
+    if (!response.ok) {
+      setError('当前检测任务已结束，无法取消')
+      return
+    }
+    setError(null)
+  }
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-start justify-between gap-4">
@@ -679,6 +713,7 @@ export function DetectionWorkbench() {
           skillLoading={skillLoading}
           skillReady={Boolean(skill)}
           onCompressionChange={setCompression}
+          onCancel={() => void cancelDetection()}
           onRun={() => void startDetection()}
         />
       </div>

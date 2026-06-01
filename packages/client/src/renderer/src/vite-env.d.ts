@@ -303,6 +303,7 @@ declare global {
         runChenyuWorkflow: (
           input: import('../../main/lib/generation-service').ChenyuWorkflowRunInput,
         ) => Promise<string>
+        cancel: (input: { task_id: string }) => Promise<{ ok: boolean }>
         onProgress: (
           callback: (
             progress: import('../../main/lib/generation-service').GenerationProgress,
@@ -337,6 +338,7 @@ declare global {
         run: (
           input: import('../../main/lib/detection-service').DetectionBatchConfig,
         ) => Promise<string>
+        cancel: (input: { task_id: string }) => Promise<{ ok: boolean }>
         listResults: (input?: {
           task_id?: string | null
           risk_level?: import('@tengyu-aipod/shared').RiskLevel | null
@@ -370,11 +372,12 @@ declare global {
           | { ok: true; data: { path: string } }
           | { ok: false; error: { code: string; message: string } }
         >
-        scanBatchDir: (input: { batchDir: string }) => Promise<{
+        scanBatchDir: (input: { batchDir: string; titleFileName?: string }) => Promise<{
           skuCount: number
           existingTitles: Record<string, string>
         }>
         run: (input: import('../../main/lib/title-service').TitleBatchConfig) => Promise<string>
+        cancel: (input: { task_id: string }) => Promise<{ ok: boolean }>
         retryFailed: (input: { task_id: string }) => Promise<string>
         getResult: (input: { sku_code: string; batch_dir: string }) => Promise<unknown | null>
         openPath: (input: { path: string }) => Promise<

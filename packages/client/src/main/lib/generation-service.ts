@@ -95,6 +95,7 @@ export type GenerationProgress = {
   failed: number
   current_prompt?: string
   images?: GenerationRunImage[]
+  status?: 'running' | 'cancelled'
 }
 
 export type GenerationRunImage = {
@@ -113,6 +114,7 @@ export type GenerationRunResult = {
   failed: number
   images: GenerationRunImage[]
   failures: Array<{ prompt: string; error: string; sourcePath?: string }>
+  cancelled?: boolean
 }
 
 export type GenerationTaskEvent =
@@ -302,6 +304,54 @@ const GENERATION_CAPABILITY_FOLDERS = {
   matting: '抠图',
 } satisfies Record<GenerationCapability, string>
 let generationDebugLogSequence = 0
+const activeGenerationTasks = new Set<string>()
+const cancelledGenerationTasks = new Set<string>()
+
+export function requestGenerationCancel(taskId: string) {
+  if (!activeGenerationTasks.has(taskId)) {
+    return false
+  }
+  cancelledGenerationTasks.add(taskId)
+  createGenerationDebugLogger({}, { taskId })('任务已请求取消', 'warn', {
+    operation: 'cancel',
+  })
+  return true
+}
+
+function beginGenerationTask(taskId: string) {
+  activeGenerationTasks.add(taskId)
+  cancelledGenerationTasks.delete(taskId)
+}
+
+function finishGenerationTask(taskId: string) {
+  activeGenerationTasks.delete(taskId)
+  cancelledGenerationTasks.delete(taskId)
+}
+
+function isGenerationCancelled(taskId: string) {
+  return cancelledGenerationTasks.has(taskId)
+}
+
+function markGenerationResultCancelled(result: GenerationRunResult) {
+  if (isGenerationCancelled(result.taskId)) {
+    result.cancelled = true
+  }
+  return result
+}
+
+function submitGenerationTask(taskId: string, run: () => Promise<GenerationRunResult>) {
+  beginGenerationTask(taskId)
+  void run()
+    .then((result) => {
+      emitCompleted({ ok: true, result: markGenerationResultCancelled(result) })
+    })
+    .catch((error) => {
+      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
+    })
+    .finally(() => {
+      finishGenerationTask(taskId)
+    })
+}
 
 function clampInt(value: number, min: number, max: number, fallback: number) {
   if (!Number.isFinite(value)) {
@@ -1534,13 +1584,7 @@ export async function runTxt2img(input: Txt2imgRunInput) {
       referenceImageCount: input.referenceImages?.length ?? 0,
     },
   )
-  void runTxt2imgTask(taskId, prompts, input, apiKey)
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
+  submitGenerationTask(taskId, () => runTxt2imgTask(taskId, prompts, input, apiKey))
   return taskId
 }
 
@@ -1594,19 +1638,15 @@ export async function runExtract(
     model: input.model,
     concurrency: input.concurrency,
   })
-  void runExtractBatch(
-    { ...input, taskId, sourceImagePaths },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
+  submitGenerationTask(taskId, () =>
+    runExtractBatch(
+      { ...input, taskId, sourceImagePaths },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1638,19 +1678,15 @@ export async function runComfyuiImg2img(
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
-  void runComfyuiImg2imgBatch(
-    { ...input, taskId },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
+  submitGenerationTask(taskId, () =>
+    runComfyuiImg2imgBatch(
+      { ...input, taskId },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1683,19 +1719,15 @@ export async function runComfyuiTxt2img(
     height: input.height ?? 1024,
     concurrency: input.concurrency ?? 1,
   })
-  void runComfyuiTxt2imgBatch(
-    { ...input, taskId, prompts },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
+  submitGenerationTask(taskId, () =>
+    runComfyuiTxt2imgBatch(
+      { ...input, taskId, prompts },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1729,19 +1761,15 @@ export async function runComfyuiExtract(
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
-  void runComfyuiExtractBatch(
-    { ...input, taskId, sourceImagePaths },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
+  submitGenerationTask(taskId, () =>
+    runComfyuiExtractBatch(
+      { ...input, taskId, sourceImagePaths },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1779,19 +1807,15 @@ export async function runComfyuiExtractMatting(
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
-  void runComfyuiExtractMattingBatch(
-    { ...input, taskId, sourceImagePaths },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
+  submitGenerationTask(taskId, () =>
+    runComfyuiExtractMattingBatch(
+      { ...input, taskId, sourceImagePaths },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1823,19 +1847,15 @@ export async function runComfyuiMatting(
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
-  void runComfyuiMattingBatch(
-    { ...input, taskId },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
+  submitGenerationTask(taskId, () =>
+    runComfyuiMattingBatch(
+      { ...input, taskId },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1871,27 +1891,23 @@ export async function runMixedMatting(
     width: input.width ?? 1024,
     height: input.height ?? 1024,
   })
-  void runMixedMattingBatch(
-    { ...input, taskId },
-    {
-      ...dependencies,
-      getSecret: async (key: string) => {
-        if (key === 'grsai') {
-          return grsaiKey
-        }
-        if (key === 'chenyu') {
-          return chenyuKey
-        }
-        return ''
+  submitGenerationTask(taskId, () =>
+    runMixedMattingBatch(
+      { ...input, taskId },
+      {
+        ...dependencies,
+        getSecret: async (key: string) => {
+          if (key === 'grsai') {
+            return grsaiKey
+          }
+          if (key === 'chenyu') {
+            return chenyuKey
+          }
+          return ''
+        },
       },
-    },
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -1935,6 +1951,9 @@ async function runTxt2imgTask(
     await Promise.all(
       prompts.map((prompt, index) =>
         controller.run(`${taskId}-${index}`, async () => {
+          if (isGenerationCancelled(taskId)) {
+            return
+          }
           emit({
             task_id: taskId,
             capability,
@@ -1947,6 +1966,9 @@ async function runTxt2imgTask(
           })
 
           try {
+            if (isGenerationCancelled(taskId)) {
+              return
+            }
             const response = await adapter.generate({
               capability,
               prompt,
@@ -2017,7 +2039,7 @@ async function runTxt2imgTask(
         }),
       ),
     )
-    return result
+    return markGenerationResultCancelled(result)
   } finally {
     db.close()
   }
@@ -2076,6 +2098,9 @@ export async function runExtractBatch(
     await Promise.all(
       sourceImagePaths.map((sourceImagePath, sourceIndex) =>
         controller.run(`${taskId}-${sourceIndex}`, async () => {
+          if (isGenerationCancelled(taskId)) {
+            return
+          }
           assertInsideFolder(sourceImagePath, sourceFolder)
           const sourceIdentity = await imageIdentity(sourceImagePath)
           registerSourceArtifact(activeDb, {
@@ -2089,6 +2114,9 @@ export async function runExtractBatch(
             skill.systemPrompt.trim() || 'Extract the print from the source product image.'
           emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
           try {
+            if (isGenerationCancelled(taskId)) {
+              return
+            }
             const response = await adapter.generate({
               capability: 'extract',
               prompt,
@@ -2153,7 +2181,7 @@ export async function runExtractBatch(
         }),
       ),
     )
-    return result
+    return markGenerationResultCancelled(result)
   } finally {
     db?.close()
   }
@@ -2215,6 +2243,9 @@ export async function runComfyuiExtractBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
+        if (isGenerationCancelled(taskId)) {
+          break
+        }
         emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
         try {
           const sourceIdentity = await imageIdentity(sourceImagePath)
@@ -2273,7 +2304,7 @@ export async function runComfyuiExtractBatch(
         }
       }
 
-      return result
+      return markGenerationResultCancelled(result)
     } finally {
       db.close()
     }
@@ -2344,6 +2375,9 @@ export async function runComfyuiExtractMattingBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
+        if (isGenerationCancelled(taskId)) {
+          break
+        }
         emitMattingProgress(result, taskId, sourceImagePaths.length, emit)
         try {
           const sourceIdentity = await imageIdentity(sourceImagePath)
@@ -2449,7 +2483,7 @@ export async function runComfyuiExtractMattingBatch(
         }
       }
 
-      return result
+      return markGenerationResultCancelled(result)
     } finally {
       db.close()
       if (createdTempDir) {
@@ -2505,6 +2539,9 @@ export async function runComfyuiMattingBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
+        if (isGenerationCancelled(taskId)) {
+          break
+        }
         emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
         try {
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
@@ -2557,7 +2594,7 @@ export async function runComfyuiMattingBatch(
         }
       }
 
-      return result
+      return markGenerationResultCancelled(result)
     } finally {
       db.close()
     }
@@ -2626,6 +2663,9 @@ export async function runMixedMattingBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
+        if (isGenerationCancelled(taskId)) {
+          break
+        }
         emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
         let maskPath: string | null = null
         try {
@@ -2728,7 +2768,7 @@ export async function runMixedMattingBatch(
         }
       }
 
-      return result
+      return markGenerationResultCancelled(result)
     } finally {
       db.close()
       if (createdTempDir) {
@@ -2789,8 +2829,14 @@ export async function runComfyuiTxt2imgBatch(
       await Promise.all(
         prompts.map((prompt, index) =>
           controller.run(`${taskId}-${index}`, async () => {
+            if (isGenerationCancelled(taskId)) {
+              return
+            }
             emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
             try {
+              if (isGenerationCancelled(taskId)) {
+                return
+              }
               emitComfyuiRequestLog(debug, {
                 ...input,
                 prompt,
@@ -2835,7 +2881,7 @@ export async function runComfyuiTxt2imgBatch(
         ),
       )
 
-      return result
+      return markGenerationResultCancelled(result)
     } finally {
       db.close()
     }
@@ -2888,6 +2934,9 @@ export async function runComfyuiImg2imgBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
+        if (isGenerationCancelled(taskId)) {
+          break
+        }
         emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
         try {
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
@@ -2943,7 +2992,7 @@ export async function runComfyuiImg2imgBatch(
         }
       }
 
-      return result
+      return markGenerationResultCancelled(result)
     } finally {
       db.close()
     }
@@ -3024,6 +3073,7 @@ export async function runChenyuWorkflow(
   if (!config.workbench_root) {
     throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
   }
+  const workbenchRoot = config.workbench_root
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {
     throw new AppErrorClass('HTTP_4XX', '缺少晨羽智云 API Key', false, {
@@ -3038,31 +3088,27 @@ export async function runChenyuWorkflow(
     workflowId: input.workflowId,
     revisionId: input.revisionId ?? null,
   })
-  void runChenyuWorkflowTask(
-    {
-      workflowId: input.workflowId,
-      capability: input.capability,
-      ...(input.revisionId ? { revisionId: input.revisionId } : {}),
-      ...(input.inputs ? { inputs: input.inputs } : {}),
-      ...(input.prompt ? { prompt: input.prompt } : {}),
-      ...(input.acceptExternalCostRisk !== undefined
-        ? { acceptExternalCostRisk: input.acceptExternalCostRisk }
-        : {}),
-      taskId,
-    },
-    {
-      ...dependencies,
-      getSecret: async () => apiKey,
-    },
-    config.workbench_root,
-    apiKey,
+  submitGenerationTask(taskId, () =>
+    runChenyuWorkflowTask(
+      {
+        workflowId: input.workflowId,
+        capability: input.capability,
+        ...(input.revisionId ? { revisionId: input.revisionId } : {}),
+        ...(input.inputs ? { inputs: input.inputs } : {}),
+        ...(input.prompt ? { prompt: input.prompt } : {}),
+        ...(input.acceptExternalCostRisk !== undefined
+          ? { acceptExternalCostRisk: input.acceptExternalCostRisk }
+          : {}),
+        taskId,
+      },
+      {
+        ...dependencies,
+        getSecret: async () => apiKey,
+      },
+      workbenchRoot,
+      apiKey,
+    ),
   )
-    .then((result) => {
-      emitCompleted({ ok: true, result })
-    })
-    .catch((error) => {
-      emitCompleted({ ok: false, taskId, error: appErrorMessage(error) })
-    })
   return taskId
 }
 
@@ -3083,6 +3129,17 @@ async function runChenyuWorkflowTask(
     failed: 0,
     ...(input.prompt ? { current_prompt: input.prompt } : {}),
   })
+  if (isGenerationCancelled(taskId)) {
+    return {
+      taskId,
+      total: 1,
+      succeeded: 0,
+      failed: 0,
+      images: [],
+      failures: [],
+      cancelled: true,
+    }
+  }
   const runner =
     dependencies.createChenyuWorkflowRunner?.({ apiKey, workbenchRoot }) ??
     new ChenyuWorkflowRunner({
@@ -3102,7 +3159,7 @@ async function runChenyuWorkflowTask(
     images: result.images,
     ...(input.prompt ? { current_prompt: input.prompt } : {}),
   })
-  return result
+  return markGenerationResultCancelled(result)
 }
 
 function chenyuWorkflowRunResult(
@@ -3256,4 +3313,7 @@ export function registerGenerationIpc() {
   ipcMain.handle('generation:run-chenyu-workflow', (_event, input: ChenyuWorkflowRunInput) =>
     runChenyuWorkflow(input),
   )
+  ipcMain.handle('generation:cancel', (_event, input: { task_id: string }) => ({
+    ok: requestGenerationCancel(input.task_id),
+  }))
 }

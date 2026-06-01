@@ -416,6 +416,8 @@ const api = {
       ipcRenderer.invoke('generation:run-comfyui-img2img', input) as Promise<string>,
     runChenyuWorkflow: (input: ChenyuWorkflowRunInput) =>
       ipcRenderer.invoke('generation:run-chenyu-workflow', input) as Promise<string>,
+    cancel: (input: { task_id: string }) =>
+      ipcRenderer.invoke('generation:cancel', input) as Promise<{ ok: boolean }>,
     onProgress: (callback: (progress: GenerationProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: GenerationProgress) => {
         callback(progress)
@@ -462,6 +464,8 @@ const api = {
     listModels: () => ipcRenderer.invoke('detection:list-models') as Promise<string[]>,
     run: (input: DetectionBatchConfig) =>
       ipcRenderer.invoke('detection:run', input) as Promise<string>,
+    cancel: (input: { task_id: string }) =>
+      ipcRenderer.invoke('detection:cancel', input) as Promise<{ ok: boolean }>,
     listResults: (input?: {
       task_id?: string | null
       risk_level?: 'pass' | 'review' | 'block' | null
@@ -511,12 +515,14 @@ const api = {
         | { ok: true; data: { path: string } }
         | { ok: false; error: { code: string; message: string } }
       >,
-    scanBatchDir: (input: { batchDir: string }) =>
+    scanBatchDir: (input: { batchDir: string; titleFileName?: string }) =>
       ipcRenderer.invoke('title:scan-batch-dir', input) as Promise<{
         skuCount: number
         existingTitles: Record<string, string>
       }>,
     run: (input: TitleBatchConfig) => ipcRenderer.invoke('title:run', input) as Promise<string>,
+    cancel: (input: { task_id: string }) =>
+      ipcRenderer.invoke('title:cancel', input) as Promise<{ ok: boolean }>,
     retryFailed: (input: { task_id: string }) =>
       ipcRenderer.invoke('title:retry-failed', input) as Promise<string>,
     getResult: (input: { sku_code: string; batch_dir: string }) =>

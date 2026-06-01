@@ -57,6 +57,7 @@ export type DetectionProgress = {
   skipped: number
   concurrency?: number
   current_image?: string
+  status?: 'running' | 'cancelled'
 }
 
 export type DetectionInputSource = {
@@ -153,6 +154,7 @@ export type DetectionBatchResult = {
   failed: number
   skipped: number
   results: DetectionImageResult[]
+  cancelled?: boolean
 }
 
 export type DetectionTaskEvent =
@@ -472,13 +474,14 @@ async function runWithConcurrency<T>(
   items: T[],
   concurrency: number,
   worker: (item: T) => Promise<void>,
+  shouldContinue: () => boolean = () => true,
 ) {
   let nextIndex = 0
   const workers = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
-    while (nextIndex < items.length) {
+    while (nextIndex < items.length && shouldContinue()) {
       const current = items[nextIndex]
       nextIndex += 1
-      if (current !== undefined) {
+      if (current !== undefined && shouldContinue()) {
         await worker(current)
       }
     }
@@ -885,8 +888,23 @@ export async function chooseDetectionInputFolder(): Promise<ChooseDetectionInput
 }
 
 export class DetectionService {
+  private readonly activeTasks = new Set<string>()
+  private readonly cancelledTasks = new Set<string>()
+
   async listModels() {
     return (await listBailianProviderModels('detection', true)).map((model) => model.id)
+  }
+
+  cancelTask(taskId: string) {
+    if (!this.activeTasks.has(taskId)) {
+      return false
+    }
+    this.cancelledTasks.add(taskId)
+    return true
+  }
+
+  private isCancelled(taskId: string) {
+    return this.cancelledTasks.has(taskId)
   }
 
   async listInputSources(
@@ -1145,6 +1163,8 @@ export class DetectionService {
     dependencies: DetectionServiceDependencies = {},
   ): Promise<DetectionBatchResult> {
     const taskId = config.taskId ?? detectionTaskId()
+    this.activeTasks.add(taskId)
+    this.cancelledTasks.delete(taskId)
     const ownsPool = !dependencies.preprocessPool
     let tempDirCreated = false
     let keepFailedTemp = false
@@ -1198,6 +1218,7 @@ export class DetectionService {
         failed: 0,
         skipped: 0,
         concurrency,
+        status: 'running',
       }
       const results: Array<DetectionImageResult | undefined> = Array.from({
         length: config.imagePaths.length,
@@ -1212,33 +1233,43 @@ export class DetectionService {
       emitProgress()
 
       const indexedImages = config.imagePaths.map((imagePath, index) => ({ index, imagePath }))
-      await runWithConcurrency(indexedImages, concurrency, async (item) => {
-        const result = await this.processImage({
-          item,
-          config,
-          taskId,
-          model,
-          skill,
-          threshold,
-          adapter,
-          maxRetries,
-          workbenchRoot,
-          preprocessPool: resolved.preprocessPool,
-          openDatabase: resolved.openDatabase,
-        })
-        results[item.index] = result
-        progress.processed += 1
-        if (result.status === 'success') {
-          progress.succeeded += 1
-        } else if (result.status === 'skipped') {
-          progress.skipped += 1
-        } else {
-          progress.failed += 1
-        }
-        emitProgress(basename(item.imagePath))
-      })
+      await runWithConcurrency(
+        indexedImages,
+        concurrency,
+        async (item) => {
+          const result = await this.processImage({
+            item,
+            config,
+            taskId,
+            model,
+            skill,
+            threshold,
+            adapter,
+            maxRetries,
+            workbenchRoot,
+            preprocessPool: resolved.preprocessPool,
+            openDatabase: resolved.openDatabase,
+          })
+          results[item.index] = result
+          progress.processed += 1
+          if (result.status === 'success') {
+            progress.succeeded += 1
+          } else if (result.status === 'skipped') {
+            progress.skipped += 1
+          } else {
+            progress.failed += 1
+          }
+          emitProgress(basename(item.imagePath))
+        },
+        () => !this.isCancelled(taskId),
+      )
 
       keepFailedTemp = progress.failed > 0
+      const cancelled = this.isCancelled(taskId)
+      progress.status = cancelled ? 'cancelled' : 'running'
+      if (cancelled) {
+        emitProgress()
+      }
       return {
         taskId,
         total: progress.total,
@@ -1246,6 +1277,7 @@ export class DetectionService {
         failed: progress.failed,
         skipped: progress.skipped,
         results: results.filter((item): item is DetectionImageResult => Boolean(item)),
+        ...(cancelled ? { cancelled } : {}),
       }
     } finally {
       if (ownsPool && 'close' in resolved.preprocessPool) {
@@ -1257,6 +1289,8 @@ export class DetectionService {
           keepIfFailed: keepFailedTemp,
         })
       }
+      this.activeTasks.delete(taskId)
+      this.cancelledTasks.delete(taskId)
     }
   }
 
@@ -1462,6 +1496,9 @@ export function registerDetectionIpc() {
   ipcMain.handle('detection:run', (_event, input: DetectionBatchConfig) =>
     detectionService.startBatch(input, emitDetectionProgress, emitDetectionCompleted),
   )
+  ipcMain.handle('detection:cancel', (_event, input: { task_id: string }) => ({
+    ok: detectionService.cancelTask(input.task_id),
+  }))
   ipcMain.handle(
     'detection:list-results',
     (_event, input?: { task_id?: string | null; risk_level?: RiskLevel | null }) =>

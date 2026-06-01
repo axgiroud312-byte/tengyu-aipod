@@ -11,9 +11,12 @@ import {
   type TitleBatchConfig,
   TitleService,
   getNthImageFromSkuFolder,
+  joinTitleParts,
+  normalizeTitleFileBaseName,
   parseTitle,
   readExistingTitles,
   scanSkuFolders,
+  titleXlsxPath,
   toXlsxWriteError,
   writeTitlesXlsx,
 } from './title-service'
@@ -50,7 +53,7 @@ function summary(overrides: Partial<SkillSummary> = {}): SkillSummary {
     id: 'title-temu-en',
     module: 'title',
     category: null,
-    platform: 'temu_pop',
+    platform: 'temu',
     language: 'en',
     version: '3.0.1',
     enabled: true,
@@ -111,7 +114,7 @@ describe('title service utilities', () => {
     await mkdir(join(batchDir, 'SKU10'), { recursive: true })
     await mkdir(join(batchDir, 'SKU2'), { recursive: true })
     await mkdir(join(batchDir, 'SKU1'), { recursive: true })
-    await writeFile(join(batchDir, 'titles.xlsx'), 'not a folder')
+    await writeFile(join(batchDir, '标题.xlsx'), 'not a folder')
 
     await expect(scanSkuFolders(batchDir)).resolves.toMatchObject([
       { skuCode: 'SKU1' },
@@ -141,11 +144,21 @@ describe('title service utilities', () => {
   })
 
   it('parses common LLM title wrappers and truncates platform length', () => {
-    expect(parseTitle('"Title: Vintage Floral Cotton T-Shirt"', 'en', 'temu_pop')).toBe(
+    expect(parseTitle('"Title: Vintage Floral Cotton T-Shirt"', 'en', 'temu')).toBe(
       'Vintage Floral Cotton T-Shirt',
     )
-    expect(parseTitle('标题：复古花卉短袖 T 恤', 'zh', 'temu_pop')).toBe('复古花卉短袖 T 恤')
+    expect(parseTitle('标题：复古花卉短袖 T 恤', 'zh', 'temu')).toBe('复古花卉短袖 T 恤')
     expect(parseTitle(`${'A'.repeat(80)} extra`, 'en', 'mercado')).toHaveLength(60)
+  })
+
+  it('normalizes title file names and joins prefix/suffix around generated title', () => {
+    expect(normalizeTitleFileBaseName(' 英文标题.xlsx ')).toBe('英文标题')
+    expect(normalizeTitleFileBaseName('../bad:name')).toBe('.._bad_name')
+    expect(titleXlsxPath('/tmp/batch', '英文标题')).toBe(join('/tmp/batch', '英文标题.xlsx'))
+    expect(joinTitleParts('Temu', 'Vintage Shirt', 'Summer', ' - ')).toBe(
+      'Temu - Vintage Shirt - Summer',
+    )
+    expect(joinTitleParts('', 'Vintage Shirt', '', ' - ')).toBe('Vintage Shirt')
   })
 
   it('reads and writes titles xlsx with generated titles overriding existing ones', async () => {
@@ -192,7 +205,7 @@ describe('TitleService', () => {
     const batchDir = join(tempRoot, 'batch')
     await createSku(batchDir, 'SKU1', ['1.png'])
     await createSku(batchDir, 'SKU2', ['1.png'])
-    await createWorkbook(join(batchDir, 'titles.xlsx'), [['SKU2', 'Existing title']])
+    await createWorkbook(join(batchDir, '标题.xlsx'), [['SKU2', 'Existing title']])
     const progress: unknown[] = []
     const visionCompletion = vi
       .fn()
@@ -220,7 +233,7 @@ describe('TitleService', () => {
     const service = new TitleService()
     const config = {
       batchDir,
-      platform: 'temu_pop',
+      platform: 'temu',
       language: 'en',
       model: 'qwen3.6-flash',
       imageIndex: 1,
@@ -251,13 +264,11 @@ describe('TitleService', () => {
       skipped: 1,
     })
     expect(visionCompletion).toHaveBeenCalledTimes(2)
-    expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain(
-      '平台：Temu PopTemu (temu_pop)',
-    )
+    expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain('平台：Temu (temu)')
     expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain('标题语言：英语 (en)')
     expect(JSON.stringify(visionCompletion.mock.calls[0]?.[0])).toContain('额外要求：突出原创图案')
     expect(preprocess).toHaveBeenCalledTimes(2)
-    await expect(readExistingTitles(join(batchDir, 'titles.xlsx'))).resolves.toEqual(
+    await expect(readExistingTitles(join(batchDir, '标题.xlsx'))).resolves.toEqual(
       new Map([
         ['SKU1', 'Generated SKU1'],
         ['SKU2', 'Existing title'],
@@ -265,7 +276,7 @@ describe('TitleService', () => {
     )
     expect(registeredRows).toHaveLength(1)
     expect(registeredRows[0]).toEqual(
-      expect.arrayContaining(['SKU1', 'batch', 'Generated SKU1', 'en', 'temu_pop']),
+      expect.arrayContaining(['SKU1', 'batch', 'Generated SKU1', 'en', 'temu']),
     )
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'task-title', processed: 2, succeeded: 1, skipped: 1 }),
@@ -278,13 +289,13 @@ describe('TitleService', () => {
   it('does not require skill or API key when every sku is skipped', async () => {
     const batchDir = join(tempRoot, 'skip-batch')
     await createSku(batchDir, 'SKU1', ['1.png'])
-    await createWorkbook(join(batchDir, 'titles.xlsx'), [['SKU1', 'Existing title']])
+    await createWorkbook(join(batchDir, '标题.xlsx'), [['SKU1', 'Existing title']])
     const service = new TitleService()
 
     const result = await service.runTitleBatch(
       {
         batchDir,
-        platform: 'temu_pop',
+        platform: 'temu',
         language: 'en',
         model: 'qwen3.6-flash',
         existingStrategy: 'skip',
@@ -303,5 +314,125 @@ describe('TitleService', () => {
     )
 
     expect(result).toMatchObject({ succeeded: 0, failed: 0, skipped: 1 })
+  })
+
+  it('cancels a running title batch without starting later skus', async () => {
+    const batchDir = join(tempRoot, 'cancel-title')
+    await createSku(batchDir, 'SKU1', ['1.png'])
+    await createSku(batchDir, 'SKU2', ['1.png'])
+    await createSku(batchDir, 'SKU3', ['1.png'])
+    const service = new TitleService()
+    const visionCompletion = vi.fn().mockResolvedValue({ text: 'Generated SKU1' })
+    const preprocess = vi.fn(async (options: { taskId: string }) => {
+      service.cancelTask(options.taskId)
+      const outputPath = join(workbenchRoot, '.workbench', 'tmp', 'title', options.taskId, 'p.jpg')
+      await mkdir(dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, 'processed')
+      return {
+        outputPath,
+        mimeType: 'image/jpeg',
+        sizeBytes: 9,
+        dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+      }
+    })
+
+    const result = await service.runTitleBatch(
+      {
+        batchDir,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+        concurrency: 1,
+        taskId: 'cancel-title',
+      },
+      {
+        skillCache: {
+          listSkills: vi.fn().mockResolvedValue([summary()]),
+          getSkill: vi.fn().mockResolvedValue(skill()),
+        },
+        createBailianAdapter: () => ({ visionCompletion }),
+        preprocessPool: { process: preprocess, close: vi.fn() },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: () =>
+          ({
+            exec: vi.fn(),
+            prepare: vi.fn(() => ({ run: vi.fn() })),
+            close: vi.fn(),
+          }) as unknown as TestDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(result).toMatchObject({
+      total: 3,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      cancelled: true,
+    })
+    expect(visionCompletion).toHaveBeenCalledTimes(1)
+    await expect(readExistingTitles(result.xlsxPath)).resolves.toEqual(
+      new Map([['SKU1', 'Generated SKU1']]),
+    )
+  })
+
+  it('writes custom title xlsx and wraps generated titles with prefix and suffix', async () => {
+    const batchDir = join(tempRoot, 'custom-title')
+    await createSku(batchDir, 'SKU1', ['1.png'])
+    const outputPath = join(workbenchRoot, '.workbench', 'tmp', 'title', 'custom-title', 'p.jpg')
+    const service = new TitleService()
+
+    const result = await service.runTitleBatch(
+      {
+        batchDir,
+        titleFileName: '英文标题.xlsx',
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+        titlePrefix: 'Temu',
+        titleSuffix: 'Summer',
+        titleSeparator: ' - ',
+        existingStrategy: 'skip',
+        concurrency: 1,
+        taskId: 'custom-title',
+      },
+      {
+        skillCache: {
+          listSkills: vi.fn().mockResolvedValue([summary()]),
+          getSkill: vi.fn().mockResolvedValue(skill()),
+        },
+        createBailianAdapter: () => ({
+          visionCompletion: vi.fn().mockResolvedValue({ text: 'Vintage Shirt' }),
+        }),
+        preprocessPool: {
+          process: vi.fn(async () => {
+            await mkdir(dirname(outputPath), { recursive: true })
+            await writeFile(outputPath, 'processed')
+            return {
+              outputPath,
+              mimeType: 'image/jpeg',
+              sizeBytes: 9,
+              dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+            }
+          }),
+          close: vi.fn(),
+        },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: () =>
+          ({
+            exec: vi.fn(),
+            prepare: vi.fn(() => ({ run: vi.fn() })),
+            close: vi.fn(),
+          }) as unknown as TestDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(result.xlsxPath).toBe(join(batchDir, '英文标题.xlsx'))
+    await expect(readExistingTitles(result.xlsxPath)).resolves.toEqual(
+      new Map([['SKU1', 'Temu - Vintage Shirt - Summer']]),
+    )
   })
 })
