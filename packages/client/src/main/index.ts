@@ -33,11 +33,15 @@ if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
 }
 
 function createMainWindow(): void {
+  const appIconPath = app.isPackaged
+    ? join(process.resourcesPath, 'icon.png')
+    : join(app.getAppPath(), 'resources/icon.png')
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
     minWidth: 1100,
     minHeight: 700,
+    icon: appIconPath,
     title: '腾域 aipod',
     webPreferences: {
       preload: join(currentDir, '../preload/index.mjs'),

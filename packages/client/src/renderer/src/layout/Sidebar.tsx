@@ -40,9 +40,12 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
       )}
     >
       <div className="flex h-16 items-center gap-3 px-4">
-        <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground shadow-xs">
-          <span className="h-3 w-3 rounded-sm bg-primary-foreground" />
-        </div>
+        <img
+          alt=""
+          aria-hidden="true"
+          className="h-8 w-8 shrink-0 rounded-md object-cover shadow-xs"
+          src="/brand/tengyu-ai-icon-256.png"
+        />
         {collapsed ? null : (
           <div className="min-w-0">
             <p className="truncate text-base font-semibold tracking-normal text-foreground">

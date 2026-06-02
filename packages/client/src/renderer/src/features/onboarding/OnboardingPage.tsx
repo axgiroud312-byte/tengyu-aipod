@@ -146,9 +146,12 @@ export function OnboardingPage({
           <div className="space-y-6">
             <div className="space-y-4">
               <div className="flex items-center gap-3">
-                <div className="grid h-10 w-10 place-items-center rounded-md bg-primary shadow-xs">
-                  <span className="h-4 w-4 rounded-sm bg-primary-foreground" />
-                </div>
+                <img
+                  alt=""
+                  aria-hidden="true"
+                  className="h-10 w-10 rounded-md object-cover shadow-xs"
+                  src="/brand/tengyu-ai-icon-256.png"
+                />
                 <div>
                   <p className="text-lg font-semibold tracking-normal">腾域 aipod</p>
                   <p className="text-xs text-muted-foreground">跨境电商生产工作台</p>
