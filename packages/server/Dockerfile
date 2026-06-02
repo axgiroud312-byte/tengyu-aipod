@@ -1,3 +1,5 @@
+# syntax=docker/dockerfile:1.7
+
 FROM node:22-slim AS base
 
 WORKDIR /app
@@ -16,14 +18,13 @@ COPY package.json pnpm-lock.yaml pnpm-workspace.yaml turbo.json tsconfig.base.js
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/server/package.json packages/server/package.json
 
-RUN pnpm install --frozen-lockfile
+RUN --mount=type=cache,id=tengyu-aipod-pnpm-store,target=/root/.local/share/pnpm/store \
+  pnpm install --frozen-lockfile
 
 FROM deps AS builder
 
 ENV DATABASE_URL="postgresql://build:build@localhost:5432/tengyu_aipod"
-ENV JWT_SECRET_ADMIN="build-time-placeholder"
 ENV NEXT_PUBLIC_APP_NAME="腾域 aipod"
-ENV PHP_AUTH_BASE_URL="https://www.tengyuai.com"
 
 COPY packages/shared packages/shared
 COPY packages/server packages/server

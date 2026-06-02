@@ -22,6 +22,7 @@
     "clsx": "^2.1.1",
     "jsonwebtoken": "^9.0.3",
     "next": "^15.5.18",
+    "radix-ui": "^1.4.3",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
     "tailwind-merge": "^3.6.0",
