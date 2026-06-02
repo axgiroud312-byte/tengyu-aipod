@@ -20,6 +20,35 @@ model Customer {
   @@map("customers")
 }
 
+enum CustomerAccountStatus {
+  pending
+  active
+  disabled
+}
+
+model CustomerAccount {
+  id                   String                @id @default(cuid())
+  php_uid              Int                   @unique
+  nickname             String?
+  avatar_url           String?
+  phone                String?
+  account              String?
+  status               CustomerAccountStatus @default(pending)
+  expires_at           DateTime?
+  notes                String?               @db.Text
+  approved_at          DateTime?
+  approved_by_admin_id String?
+  disabled_at          DateTime?
+  last_login_at        DateTime?
+  created_at           DateTime              @default(now())
+  updated_at           DateTime              @updatedAt
+
+  @@index([status])
+  @@index([phone])
+  @@index([expires_at])
+  @@map("customer_accounts")
+}
+
 enum SkillModule {
   generation
   detection

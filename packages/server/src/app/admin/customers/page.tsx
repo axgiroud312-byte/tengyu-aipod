@@ -3,124 +3,334 @@
 import { AdminShell } from '@/components/admin/admin-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
-interface CustomerListItem {
-  id: string
-  name: string
-  phone: string
-  email: string | null
-  wechat: string | null
-  notes: string | null
-  is_active: boolean
-  status: 'active' | 'banned'
+type CustomerAuthorizationStatus = 'pending' | 'active' | 'disabled' | 'expired'
+type CustomerDatabaseStatus = 'pending' | 'active' | 'disabled'
+
+type CustomerAccount = {
+  account: string | null
+  avatar_url: string | null
   created_at: string
+  database_status: CustomerDatabaseStatus
+  expires_at: string | null
+  id: string
+  last_login_at: string | null
+  nickname: string | null
+  notes: string | null
+  phone: string | null
+  php_uid: number
+  status: CustomerAuthorizationStatus
 }
 
-interface CustomersResponse {
-  ok: true
-  data: {
-    items: CustomerListItem[]
+type CustomerAccountsResponse =
+  | {
+      data: {
+        items: CustomerAccount[]
+      }
+      ok: true
+    }
+  | {
+      error?: { message: string }
+      ok: false
+    }
+
+function formatDateTime(value: string | null) {
+  if (!value) {
+    return '-'
   }
+  return new Date(value).toLocaleString('zh-CN')
 }
 
-function formatDate(value: string) {
-  return new Date(value).toLocaleDateString('zh-CN')
+function statusLabel(status: CustomerAuthorizationStatus) {
+  const labels: Record<CustomerAuthorizationStatus, string> = {
+    active: '已授权',
+    disabled: '已禁用',
+    expired: '已到期',
+    pending: '待开通',
+  }
+  return labels[status]
+}
+
+function statusClassName(status: CustomerAuthorizationStatus) {
+  const classes: Record<CustomerAuthorizationStatus, string> = {
+    active: 'bg-green-50 text-green-700 ring-green-200',
+    disabled: 'bg-zinc-100 text-zinc-700 ring-zinc-200',
+    expired: 'bg-amber-50 text-amber-700 ring-amber-200',
+    pending: 'bg-blue-50 text-blue-700 ring-blue-200',
+  }
+  return classes[status]
+}
+
+function dateInputValue(value: string | null) {
+  if (!value) {
+    return ''
+  }
+  return new Date(value).toISOString().slice(0, 10)
+}
+
+function localDateEndIso(value: string) {
+  const [yearText, monthText, dayText] = value.split('-')
+  return new Date(
+    Number(yearText),
+    Number(monthText) - 1,
+    Number(dayText),
+    23,
+    59,
+    59,
+    999,
+  ).toISOString()
+}
+
+function promptExpiresAt(defaultValue: string | null) {
+  const value = window.prompt('到期日（YYYY-MM-DD）', dateInputValue(defaultValue))
+  if (value === null) {
+    return null
+  }
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    window.alert('请填写 YYYY-MM-DD 格式的到期日')
+    return null
+  }
+  return localDateEndIso(value)
 }
 
 export default function AdminCustomersPage() {
-  const [customers, setCustomers] = useState<CustomerListItem[]>([])
+  const [accounts, setAccounts] = useState<CustomerAccount[]>([])
   const [search, setSearch] = useState('')
-  const [sort, setSort] = useState('created_at_desc')
+  const [message, setMessage] = useState<string | null>(null)
   const [isLoading, setIsLoading] = useState(false)
 
   const query = useMemo(() => {
-    const params = new URLSearchParams({ sort })
+    const params = new URLSearchParams()
     if (search.trim()) {
       params.set('search', search.trim())
     }
     return params
-  }, [search, sort])
+  }, [search])
 
-  useEffect(() => {
-    async function loadCustomers() {
-      setIsLoading(true)
-      const response = await fetch(`/admin/api/customers?${query.toString()}`)
-      const result = (await response.json()) as CustomersResponse | { ok: false }
-      setIsLoading(false)
-      if (!result.ok) {
-        return
-      }
-      setCustomers(result.data.items)
+  const loadAccounts = useCallback(async () => {
+    setIsLoading(true)
+    const response = await fetch(`/admin/api/customer-accounts?${query.toString()}`)
+    const result = (await response.json()) as CustomerAccountsResponse
+    setIsLoading(false)
+    if (!result.ok) {
+      setMessage(result.error?.message ?? '客户账号加载失败')
+      return
     }
-
-    void loadCustomers()
+    setAccounts(result.data.items)
   }, [query])
 
+  useEffect(() => {
+    void loadAccounts()
+  }, [loadAccounts])
+
+  async function submitJson(url: string, init: RequestInit) {
+    const response = await fetch(url, {
+      ...init,
+      headers: { 'content-type': 'application/json' },
+    })
+    const result = (await response.json()) as {
+      error?: { message: string }
+      ok: boolean
+    }
+    if (!result.ok) {
+      setMessage(result.error?.message ?? '操作失败')
+      return false
+    }
+    return true
+  }
+
+  async function approve(account: CustomerAccount) {
+    const expires_at = promptExpiresAt(account.expires_at)
+    if (!expires_at) {
+      return
+    }
+    const notes = window.prompt('备注', account.notes ?? '') ?? account.notes ?? ''
+    const ok = await submitJson(`/admin/api/customer-accounts/${account.id}/approve`, {
+      body: JSON.stringify({ expires_at, notes }),
+      method: 'POST',
+    })
+    if (ok) {
+      setMessage(`已授权 uid ${account.php_uid}`)
+      await loadAccounts()
+    }
+  }
+
+  async function updateAccount(account: CustomerAccount) {
+    const expires_at = promptExpiresAt(account.expires_at)
+    if (!expires_at) {
+      return
+    }
+    const notes = window.prompt('备注', account.notes ?? '') ?? account.notes ?? ''
+    const ok = await submitJson(`/admin/api/customer-accounts/${account.id}`, {
+      body: JSON.stringify({ expires_at, notes }),
+      method: 'PATCH',
+    })
+    if (ok) {
+      setMessage(`已更新 uid ${account.php_uid}`)
+      await loadAccounts()
+    }
+  }
+
+  async function disable(account: CustomerAccount) {
+    if (!window.confirm(`确认禁用 uid ${account.php_uid}？`)) {
+      return
+    }
+    const ok = await submitJson(`/admin/api/customer-accounts/${account.id}/disable`, {
+      body: JSON.stringify({}),
+      method: 'POST',
+    })
+    if (ok) {
+      setMessage(`已禁用 uid ${account.php_uid}`)
+      await loadAccounts()
+    }
+  }
+
+  async function enable(account: CustomerAccount) {
+    const expires_at = promptExpiresAt(account.expires_at)
+    if (!expires_at) {
+      return
+    }
+    const notes = window.prompt('备注', account.notes ?? '') ?? account.notes ?? ''
+    const ok = await submitJson(`/admin/api/customer-accounts/${account.id}/enable`, {
+      body: JSON.stringify({ expires_at, notes }),
+      method: 'POST',
+    })
+    if (ok) {
+      setMessage(`已重新启用 uid ${account.php_uid}`)
+      await loadAccounts()
+    }
+  }
+
   return (
-    <AdminShell description="查看客户记录、联系方式和封号状态。" title="客户管理">
+    <AdminShell
+      description="按 PHP uid 管理客户授权、到期日、禁用状态和备注。"
+      title="客户账号授权"
+    >
       <section className="flex flex-wrap items-center justify-between gap-4">
-        <p className="text-sm text-muted-foreground">共 {customers.length} 个客户</p>
+        <p className="text-sm text-muted-foreground">共 {accounts.length} 个客户账号</p>
+        {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
       </section>
 
       <Card>
         <CardHeader>
-          <CardTitle>客户列表</CardTitle>
+          <CardTitle>授权列表</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="mb-4 grid gap-3 md:grid-cols-3">
+          <div className="mb-4 grid gap-3 md:grid-cols-[minmax(260px,1fr)_auto]">
             <input
               className="h-10 rounded-md border px-3 text-sm"
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="搜索姓名 / 手机 / 微信"
+              placeholder="搜索 uid / 昵称 / 手机号"
               value={search}
             />
-            <select
-              className="h-10 rounded-md border px-3 text-sm"
-              onChange={(event) => setSort(event.target.value)}
-              value={sort}
-            >
-              <option value="created_at_desc">创建时间倒序</option>
-              <option value="created_at_asc">创建时间正序</option>
-            </select>
-            <Button disabled={isLoading} type="button" variant="secondary">
-              {isLoading ? '加载中...' : '已同步'}
+            <Button disabled={isLoading} onClick={() => void loadAccounts()} type="button">
+              {isLoading ? '加载中...' : '刷新'}
             </Button>
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+            <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b">
-                  {['客户名', '手机', '微信', '邮箱', '创建时间', '状态', '操作'].map((header) => (
-                    <th className="px-3 py-2 font-medium" key={header}>
-                      {header}
-                    </th>
-                  ))}
+                  {['客户', 'PHP uid', '手机', '状态', '到期日', '最后登录', '备注', '操作'].map(
+                    (header) => (
+                      <th className="px-3 py-2 font-medium" key={header}>
+                        {header}
+                      </th>
+                    ),
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {customers.map((customer) => (
-                  <tr className="border-b align-top" key={customer.id}>
-                    <td className="px-3 py-3">{customer.name}</td>
-                    <td className="px-3 py-3">{customer.phone}</td>
-                    <td className="px-3 py-3">{customer.wechat ?? '-'}</td>
-                    <td className="px-3 py-3">{customer.email ?? '-'}</td>
-                    <td className="px-3 py-3">{formatDate(customer.created_at)}</td>
+                {accounts.map((account) => (
+                  <tr className="border-b align-top" key={account.id}>
                     <td className="px-3 py-3">
-                      {customer.status === 'active' ? '正常' : '已封号'}
+                      <div className="flex items-center gap-3">
+                        {account.avatar_url ? (
+                          <img
+                            alt="头像"
+                            className="h-10 w-10 rounded-md object-cover"
+                            src={account.avatar_url}
+                          />
+                        ) : (
+                          <div className="grid h-10 w-10 place-items-center rounded-md bg-muted text-xs text-muted-foreground">
+                            -
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <div className="font-medium">{account.nickname ?? '-'}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {account.account ?? '-'}
+                          </div>
+                        </div>
+                      </div>
+                    </td>
+                    <td className="px-3 py-3 tabular-nums">{account.php_uid}</td>
+                    <td className="px-3 py-3">{account.phone ?? '-'}</td>
+                    <td className="px-3 py-3">
+                      <span
+                        className={`inline-flex rounded-md px-2 py-1 text-xs font-medium ring-1 ${statusClassName(
+                          account.status,
+                        )}`}
+                      >
+                        {statusLabel(account.status)}
+                      </span>
+                    </td>
+                    <td className="px-3 py-3">{formatDateTime(account.expires_at)}</td>
+                    <td className="px-3 py-3">{formatDateTime(account.last_login_at)}</td>
+                    <td className="max-w-[220px] px-3 py-3 text-muted-foreground">
+                      <span className="line-clamp-2">{account.notes ?? '-'}</span>
                     </td>
                     <td className="px-3 py-3">
-                      <Button asChild variant="secondary">
-                        <a href={`/admin/customers/${customer.id}`}>详情</a>
-                      </Button>
+                      <div className="flex flex-wrap gap-2">
+                        {account.status === 'pending' ? (
+                          <Button
+                            className="h-8 px-3"
+                            onClick={() => void approve(account)}
+                            type="button"
+                          >
+                            授权
+                          </Button>
+                        ) : null}
+                        {account.status === 'active' || account.status === 'expired' ? (
+                          <Button
+                            className="h-8 px-3"
+                            onClick={() => void updateAccount(account)}
+                            type="button"
+                            variant="secondary"
+                          >
+                            修改
+                          </Button>
+                        ) : null}
+                        {account.status === 'disabled' ? (
+                          <Button
+                            className="h-8 px-3"
+                            onClick={() => void enable(account)}
+                            type="button"
+                            variant="secondary"
+                          >
+                            启用
+                          </Button>
+                        ) : null}
+                        {account.database_status !== 'disabled' ? (
+                          <Button
+                            className="h-8 px-3"
+                            onClick={() => void disable(account)}
+                            type="button"
+                            variant="secondary"
+                          >
+                            禁用
+                          </Button>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))}
-                {!customers.length ? (
+                {!accounts.length ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-muted-foreground" colSpan={7}>
-                      暂无客户
+                    <td className="px-3 py-8 text-center text-muted-foreground" colSpan={8}>
+                      暂无客户账号
                     </td>
                   </tr>
                 ) : null}

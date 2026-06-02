@@ -27,8 +27,8 @@ async function getDashboardStats(): Promise<DashboardStats> {
     const [totalSkills, enabledSkills, totalCustomers, activeCustomers] = await Promise.all([
       db.skill.count(),
       db.skill.count({ where: { enabled: true } }),
-      db.customer.count(),
-      db.customer.count({ where: { is_active: true } }),
+      db.customerAccount.count(),
+      db.customerAccount.count({ where: { status: 'active' } }),
     ])
 
     return {
@@ -59,12 +59,12 @@ const moduleLinks = [
     title: 'Skill 管理',
   },
   {
-    description: '查看客户记录和封号状态，不做客户端授权拦截。',
+    description: '管理 PHP uid 对应的客户账号授权、到期日、禁用状态和备注。',
     href: '/admin/customers',
-    label: '客户记录',
+    label: '客户授权',
     statKey: 'customers',
-    statLabel: '活跃',
-    title: '客户管理',
+    statLabel: '已授权',
+    title: '客户账号',
   },
 ] as const
 
@@ -73,13 +73,13 @@ export default async function AdminHomePage() {
 
   return (
     <AdminShell
-      description="云端后台只保留客户记录和 Skill 系统提示词；模型、密钥和 Workflow 都由客户端本地管理。"
+      description="云端后台只保留客户账号授权和 Skill 系统提示词；模型、密钥和 Workflow 都由客户端本地管理。"
       title="后台管理"
     >
       <section className="flex flex-wrap items-start justify-between gap-4 rounded-md border bg-card p-5 shadow-[0_10px_28px_rgba(37,99,235,0.06)]">
         <div className="space-y-1">
           <p className="text-sm font-medium text-muted-foreground">云端轻配置中心</p>
-          <h2 className="text-xl font-semibold">只管理客户记录和业务系统提示词</h2>
+          <h2 className="text-xl font-semibold">只管理客户账号授权和业务系统提示词</h2>
           <p className="max-w-2xl text-sm text-muted-foreground">
             Grsai、百炼、晨羽 API Key、模型清单和本地 Workflow 都留在客户端，服务器不保存用户密钥。
           </p>
@@ -112,7 +112,7 @@ export default async function AdminHomePage() {
 
         {[
           { label: '启用', pair: stats.skills, title: 'Skill' },
-          { label: '活跃', pair: stats.customers, title: '客户' },
+          { label: '已授权', pair: stats.customers, title: '客户账号' },
         ].map((item) => (
           <Card key={item.title}>
             <CardHeader className="pb-3">

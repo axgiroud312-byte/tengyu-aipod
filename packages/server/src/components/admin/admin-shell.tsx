@@ -14,7 +14,7 @@ type AdminNavItem = {
 const adminNavItems: AdminNavItem[] = [
   { href: '/admin', label: '首页', description: '运营概览', marker: 'A' },
   { href: '/admin/skills', label: 'Skill', description: '系统提示词', marker: 'S' },
-  { href: '/admin/customers', label: '客户', description: '客户记录', marker: 'C' },
+  { href: '/admin/customers', label: '客户', description: '账号授权', marker: 'C' },
 ]
 
 function isActivePath(pathname: string, href: string) {
@@ -89,7 +89,7 @@ export function AdminShell({
         </nav>
 
         <div className="border-t px-4 py-3 text-xs leading-5 text-muted-foreground">
-          <p>云端只管理客户记录和 Skill。</p>
+          <p>云端只管理客户授权和 Skill。</p>
           <p>模型、Key、Workflow 均在本地客户端。</p>
         </div>
       </aside>
