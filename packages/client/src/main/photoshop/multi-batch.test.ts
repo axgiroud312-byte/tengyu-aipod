@@ -196,6 +196,122 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(skipFlags).toEqual([false])
   })
 
+  it('uses template-level execution when the engine supports it', async () => {
+    const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
+    const templateBatchCalls: string[] = []
+    const perGroupCalls: string[] = []
+
+    const result = await runBatch(
+      createPrints(),
+      [template.file_path],
+      {
+        taskId: 'batch-template-level',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        outputLayout: 'sku_first',
+      },
+      {
+        scanner: {
+          scanPsd: async () => template,
+        },
+        engine: {
+          runTemplateBatch: async (_template, groups) => {
+            templateBatchCalls.push(groups.map((group) => group.sku_folder).join(','))
+            return {
+              ok: true,
+              outputs: groups.flatMap((group) => group.job.output_paths),
+              groups: groups.map((group) => ({
+                group_index: group.group_index,
+                sku_folder: group.sku_folder,
+                outputs: group.job.output_paths,
+                skipped: false,
+              })),
+            }
+          },
+          runJob: async (job) => {
+            perGroupCalls.push(job.mockup_path)
+            return createCompletedJobResult(job.output_paths)
+          },
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(templateBatchCalls).toEqual(['img2,img10'])
+    expect(perGroupCalls).toEqual([])
+    expect(result.output_layout).toBe('sku_first')
+    expect(result.result_groups).toEqual([
+      {
+        template_id: 'tpl-1',
+        template_name: 'template',
+        group_index: 0,
+        sku_folder: 'img2',
+        print_ids: ['img2'],
+        outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img2/template/01.jpg'],
+      },
+      {
+        template_id: 'tpl-1',
+        template_name: 'template',
+        group_index: 1,
+        sku_folder: 'img10',
+        print_ids: ['img10'],
+        outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img10/template/01.jpg'],
+      },
+    ])
+  })
+
+  it('keeps cancelled template-level previews limited to completed groups', async () => {
+    const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
+
+    const result = await runBatch(
+      createPrints(),
+      [template.file_path],
+      {
+        taskId: 'batch-cancelled',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        outputLayout: 'sku_first',
+      },
+      {
+        scanner: {
+          scanPsd: async () => template,
+        },
+        engine: {
+          runTemplateBatch: async (_template, groups) => ({
+            ok: false,
+            cancelled: true,
+            outputs: groups[0]?.job.output_paths ?? [],
+            groups: groups[0]
+              ? [
+                  {
+                    group_index: groups[0].group_index,
+                    sku_folder: groups[0].sku_folder,
+                    outputs: groups[0].job.output_paths,
+                  },
+                ]
+              : [],
+          }),
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(result).toMatchObject({
+      ok: false,
+      cancelled: true,
+      groups_completed: 1,
+    })
+    expect(result.result_groups).toEqual([
+      {
+        template_id: 'tpl-1',
+        template_name: 'template',
+        group_index: 0,
+        sku_folder: 'img2',
+        print_ids: ['img2'],
+        outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img2/template/01.jpg'],
+      },
+    ])
+  })
+
   it('runs a small real multi-template Photoshop batch when REAL_PS=1', async () => {
     if (process.env.REAL_PS !== '1' || process.env.REAL_PS_MUTATE !== '1') {
       return

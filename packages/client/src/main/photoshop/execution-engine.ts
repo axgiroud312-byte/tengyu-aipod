@@ -1,11 +1,23 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
-import { AppErrorClass, type PhotoshopJob, type PhotoshopJobResult } from '@tengyu-aipod/shared'
+import { basename } from 'node:path'
+import {
+  AppErrorClass,
+  type PhotoshopJob,
+  type PhotoshopJobResult,
+  type PhotoshopProgressLogEntry,
+  type PhotoshopTaskGroup,
+  type PsdTemplate,
+} from '@tengyu-aipod/shared'
 import type { SqliteDatabase } from '../lib/sqlite'
 import { getDefaultWorkbenchDatabase } from '../lib/workbench-db'
 import { type PhotoshopComAdapter, photoshopComAdapter } from './com-adapter'
-import { writePhotoshopJobJsx } from './jsx-generator'
+import {
+  type PhotoshopTemplateBatchJsxFile,
+  writePhotoshopJobJsx,
+  writePhotoshopTemplateBatchJsx,
+} from './jsx-generator'
 
 type AccessFn = (path: string) => Promise<void>
 type TextReader = (path: string, encoding: BufferEncoding) => Promise<string>
@@ -15,11 +27,17 @@ type JsxWriter = (job: Omit<PhotoshopJob, 'result_file_path'>) => Promise<{
   jsx_path: string
   result_file_path: string
 }>
+type TemplateBatchJsxWriter = (
+  template: PsdTemplate,
+  groups: PhotoshopTaskGroup[],
+  cancelFilePath: string,
+) => Promise<PhotoshopTemplateBatchJsxFile>
 
 export interface WorkflowStepRecorder {
   recordRunning(job: PhotoshopJob, attempt: number): Promise<void>
   recordCompleted(job: PhotoshopJob, attempt: number, outputs: string[]): Promise<void>
   recordFailed(job: PhotoshopJob, attempt: number, error: AppErrorClass): Promise<void>
+  recordCancelled?(job: PhotoshopJob, attempt: number): Promise<void>
 }
 
 interface PhotoshopExecutionEngineOptions {
@@ -31,6 +49,7 @@ interface PhotoshopExecutionEngineOptions {
   sleep?: SleepFn
   recorder?: WorkflowStepRecorder
   shouldSkipJob?: (job: PhotoshopJob) => Promise<boolean>
+  writeTemplateBatchJsx?: TemplateBatchJsxWriter
 }
 
 interface RawJsxResult {
@@ -107,6 +126,86 @@ interface ArtifactRow {
   file_hash: string
 }
 
+interface RawTemplateBatchGroupResult {
+  group_index?: unknown
+  sku_folder?: unknown
+  outputs?: unknown
+  skipped?: unknown
+  error?: unknown
+}
+
+interface RawTemplateBatchResult {
+  ok?: boolean
+  cancelled?: boolean
+  error?: string
+  outputs?: unknown
+  groups?: unknown
+}
+
+interface TableInfoRow extends Record<string, unknown> {
+  name?: unknown
+}
+
+export function ensurePhotoshopWorkflowTables(db: Pick<SqliteDatabase, 'exec' | 'prepare'>): void {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS workflow_steps (
+      id TEXT PRIMARY KEY,
+      task_id TEXT NOT NULL,
+      module TEXT NOT NULL,
+      step TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempt INTEGER NOT NULL DEFAULT 0,
+      params_snapshot TEXT NOT NULL DEFAULT '{}',
+      output_json TEXT,
+      error_json TEXT,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_workflow_steps_task ON workflow_steps(task_id);
+    CREATE TABLE IF NOT EXISTS artifacts (
+      id TEXT PRIMARY KEY,
+      task_id TEXT,
+      sku_code TEXT,
+      print_id TEXT,
+      step TEXT NOT NULL,
+      provider TEXT,
+      model_or_workflow TEXT,
+      skill_id TEXT,
+      skill_version TEXT,
+      source_artifact_ids TEXT,
+      file_path TEXT NOT NULL,
+      file_size INTEGER,
+      file_hash TEXT,
+      prompt_snapshot TEXT,
+      params_snapshot TEXT,
+      created_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_artifacts_provider_path ON artifacts(provider, file_path);
+  `)
+
+  const artifactColumns = new Set(
+    (db.prepare('PRAGMA table_info(artifacts)').all() as TableInfoRow[]).map((row) =>
+      String(row.name),
+    ),
+  )
+  const optionalColumns: Array<[string, string]> = [
+    ['sku_code', 'TEXT'],
+    ['print_id', 'TEXT'],
+    ['step', 'TEXT'],
+    ['model_or_workflow', 'TEXT'],
+    ['skill_id', 'TEXT'],
+    ['skill_version', 'TEXT'],
+    ['source_artifact_ids', 'TEXT'],
+    ['file_size', 'INTEGER'],
+    ['prompt_snapshot', 'TEXT'],
+    ['params_snapshot', 'TEXT'],
+  ]
+  for (const [column, definition] of optionalColumns) {
+    if (!artifactColumns.has(column)) {
+      db.exec(`ALTER TABLE artifacts ADD COLUMN ${column} ${definition}`)
+    }
+  }
+}
+
 interface ShouldSkipJobOptions {
   db?: SqliteDatabase
   dbProvider?: DatabaseProvider
@@ -124,6 +223,7 @@ export async function shouldSkipJob(
   }
 
   const db = await dbProvider()
+  ensurePhotoshopWorkflowTables(db)
   const signature = createPhotoshopJobSignature(job)
   const rows = db
     .prepare(
@@ -273,25 +373,31 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
       `INSERT INTO artifacts (
         id,
         task_id,
-        step_id,
+        step,
         provider,
+        model_or_workflow,
         file_path,
         file_hash,
+        params_snapshot,
         created_at
       ) VALUES (
         @id,
         @task_id,
-        @step_id,
+        @step,
         @provider,
+        @model_or_workflow,
         @file_path,
         @file_hash,
+        @params_snapshot,
         @created_at
       )
-      ON CONFLICT(file_path) DO UPDATE SET
+      ON CONFLICT(id) DO UPDATE SET
         task_id = excluded.task_id,
-        step_id = excluded.step_id,
+        step = excluded.step,
         provider = excluded.provider,
+        model_or_workflow = excluded.model_or_workflow,
         file_hash = excluded.file_hash,
+        params_snapshot = excluded.params_snapshot,
         created_at = excluded.created_at`,
     )
     for (const output of outputs) {
@@ -304,10 +410,19 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
       artifactStatement.run({
         id: `artifact:${createHash('sha1').update(output).digest('hex')}`,
         task_id: job.task_id,
-        step_id: this.stepId(job),
+        step: 'mockup',
         provider: 'photoshop',
+        model_or_workflow: basename(job.mockup_path),
         file_path: output,
         file_hash: fileHash,
+        params_snapshot: JSON.stringify({
+          group_index: job.group_index,
+          job_signature: createPhotoshopJobSignature(job),
+          mockup_path: job.mockup_path,
+          output_path: output,
+          clip_mode: job.clip_mode ?? 'auto',
+          format: job.format,
+        }),
         created_at: Date.now(),
       })
     }
@@ -336,6 +451,28 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
     })
   }
 
+  async recordCancelled(job: PhotoshopJob, attempt: number): Promise<void> {
+    const db = await this.db()
+    db.prepare(
+      `UPDATE workflow_steps
+      SET status = @status,
+          attempt = @attempt,
+          error_json = @error_json,
+          updated_at = @updated_at
+      WHERE id = @id`,
+    ).run({
+      id: this.stepId(job),
+      status: 'cancelled',
+      attempt,
+      error_json: JSON.stringify({
+        code: 'CANCELLED',
+        message: '用户取消 PS 套版任务',
+        retryable: false,
+      }),
+      updated_at: Date.now(),
+    })
+  }
+
   private async db(): Promise<SqliteDatabase> {
     const db = await this.dbProvider()
     if (!this.schemaReady) {
@@ -346,31 +483,7 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
   }
 
   private ensureSchema(db: SqliteDatabase): void {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS workflow_steps (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        module TEXT NOT NULL,
-        step TEXT NOT NULL,
-        status TEXT NOT NULL,
-        attempt INTEGER NOT NULL DEFAULT 0,
-        params_snapshot TEXT NOT NULL DEFAULT '{}',
-        output_json TEXT,
-        error_json TEXT,
-        updated_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_workflow_steps_task ON workflow_steps(task_id);
-      CREATE TABLE IF NOT EXISTS artifacts (
-        id TEXT PRIMARY KEY,
-        task_id TEXT NOT NULL,
-        step_id TEXT NOT NULL,
-        provider TEXT NOT NULL,
-        file_path TEXT NOT NULL UNIQUE,
-        file_hash TEXT NOT NULL,
-        created_at INTEGER NOT NULL
-      );
-      CREATE INDEX IF NOT EXISTS idx_artifacts_provider_path ON artifacts(provider, file_path);
-    `)
+    ensurePhotoshopWorkflowTables(db)
   }
 
   private stepId(job: PhotoshopJob): string {
@@ -416,6 +529,48 @@ function classifyJsxResult(result: RawJsxResult, job: PhotoshopJob): AppErrorCla
   })
 }
 
+function classifyTemplateBatchResult(
+  result: RawTemplateBatchResult,
+  template: PsdTemplate,
+): AppErrorClass | null {
+  if (result.ok === true || result.cancelled === true) {
+    return null
+  }
+  const error = String(result.error ?? 'Photoshop 模板批处理未返回成功状态')
+  return new AppErrorClass('JSX_EXEC_FAILED', `Photoshop 模板批处理失败：${error}`, false, {
+    template_id: template.id,
+    template_path: template.file_path,
+    jsx_result: result as Record<string, unknown>,
+  })
+}
+
+function normalizeTemplateBatchGroups(
+  result: RawTemplateBatchResult,
+  pendingGroups: PhotoshopTaskGroup[],
+): Array<{
+  group_index: number
+  sku_folder: string
+  outputs: string[]
+}> {
+  const rawGroups = Array.isArray(result.groups)
+    ? (result.groups as RawTemplateBatchGroupResult[])
+    : []
+  return rawGroups
+    .filter((group) => group.error === undefined)
+    .map((group) => {
+      const groupIndex = Number(group.group_index)
+      const sourceGroup = pendingGroups.find((item) => item.group_index === groupIndex)
+      const outputs = Array.isArray(group.outputs)
+        ? group.outputs.map((output) => String(output))
+        : (sourceGroup?.job.output_paths ?? [])
+      return {
+        group_index: Number.isFinite(groupIndex) ? groupIndex : (sourceGroup?.group_index ?? 0),
+        sku_folder: String(group.sku_folder ?? sourceGroup?.sku_folder ?? 'group'),
+        outputs,
+      }
+    })
+}
+
 function retryDelayMs(attempt: number): number {
   return 2 ** attempt * 1000
 }
@@ -433,6 +588,7 @@ export class PhotoshopExecutionEngine {
   private readonly sleep: SleepFn
   private readonly recorder: WorkflowStepRecorder
   private readonly shouldSkipJob: (job: PhotoshopJob) => Promise<boolean>
+  private readonly writeTemplateBatchJsx: TemplateBatchJsxWriter
 
   constructor(options: PhotoshopExecutionEngineOptions = {}) {
     this.platform = options.platform ?? process.platform
@@ -445,6 +601,24 @@ export class PhotoshopExecutionEngine {
     this.shouldSkipJob =
       options.shouldSkipJob ??
       ((job) => shouldSkipJob(job, { dbProvider: getDefaultWorkbenchDatabase }))
+    this.writeTemplateBatchJsx =
+      options.writeTemplateBatchJsx ??
+      ((template, groups, cancelFilePath) =>
+        writePhotoshopTemplateBatchJsx({
+          task_id: groups[0]?.job.task_id ?? 'photoshop-batch',
+          mockup_path: template.file_path,
+          template_name: groups[0]?.template_name ?? basename(template.file_path),
+          cancel_file_path: cancelFilePath,
+          groups: groups.map((group) => ({
+            group_index: group.group_index,
+            sku_folder: group.sku_folder,
+            so_replacements: group.job.so_replacements,
+            clip_areas: group.job.clip_areas,
+            output_paths: group.job.output_paths,
+            format: group.job.format,
+            jpg_quality: group.job.jpg_quality,
+          })),
+        }))
   }
 
   async runJob(
@@ -479,6 +653,133 @@ export class PhotoshopExecutionEngine {
       }
 
       throw lastError ?? new AppErrorClass('JSX_EXEC_FAILED', 'Photoshop 执行失败', false)
+    })
+  }
+
+  async runTemplateBatch(
+    template: PsdTemplate,
+    groups: PhotoshopTaskGroup[],
+    maxRetries = 0,
+    options: {
+      skipCompleted?: boolean
+      cancelFilePath?: string
+      onLog?: (entry: PhotoshopProgressLogEntry) => void | Promise<void>
+    } = {},
+  ): Promise<{
+    ok: boolean
+    outputs: string[]
+    groups: Array<{
+      group_index: number
+      sku_folder: string
+      outputs: string[]
+      skipped?: boolean
+    }>
+    cancelled?: boolean
+  }> {
+    this.assertWindows()
+    const pendingGroups: PhotoshopTaskGroup[] = []
+    const skippedGroups: Array<{
+      group_index: number
+      sku_folder: string
+      outputs: string[]
+      skipped: true
+    }> = []
+
+    return executionMutex.runExclusive(async () => {
+      for (const group of groups) {
+        if (options.skipCompleted === true && (await this.shouldSkipJob(group.job))) {
+          skippedGroups.push({
+            group_index: group.group_index,
+            sku_folder: group.sku_folder,
+            outputs: group.job.output_paths,
+            skipped: true,
+          })
+          continue
+        }
+        pendingGroups.push(group)
+      }
+
+      if (pendingGroups.length === 0) {
+        return {
+          ok: true,
+          outputs: skippedGroups.flatMap((group) => group.outputs),
+          groups: skippedGroups,
+        }
+      }
+
+      for (const group of pendingGroups) {
+        await this.recorder.recordRunning(group.job, 0)
+      }
+
+      const cancelFilePath = options.cancelFilePath ?? ''
+      const jobFile = await this.writeTemplateBatchJsx(template, pendingGroups, cancelFilePath)
+      try {
+        await this.runJsxFileWithLogTail(jobFile.jsx_path, jobFile.log_file_path, options.onLog)
+        const raw = JSON.parse(
+          await this.readTextFile(jobFile.result_file_path, 'utf8'),
+        ) as RawTemplateBatchResult
+        const batchError = classifyTemplateBatchResult(raw, template)
+        if (batchError) {
+          throw batchError
+        }
+
+        const groupResults = normalizeTemplateBatchGroups(raw, pendingGroups)
+        for (const groupResult of groupResults) {
+          await this.verifyOutputs(groupResult.outputs)
+          const group = pendingGroups.find((item) => item.group_index === groupResult.group_index)
+          if (group) {
+            await this.recorder.recordCompleted(group.job, 0, groupResult.outputs)
+          }
+          for (const output of groupResult.outputs) {
+            await options.onLog?.({
+              ts: Date.now(),
+              level: 'info',
+              stage: 'output_verify',
+              template_name: groups[0]?.template_name ?? basename(template.file_path),
+              group: groupResult.group_index,
+              sku_folder: groupResult.sku_folder,
+              output_file: output,
+              message: '主进程已验证输出文件',
+            })
+          }
+        }
+
+        if (raw.cancelled === true) {
+          const completedGroupIndexes = new Set(groupResults.map((group) => group.group_index))
+          for (const group of pendingGroups) {
+            if (!completedGroupIndexes.has(group.group_index)) {
+              if (this.recorder.recordCancelled) {
+                await this.recorder.recordCancelled(group.job, 0)
+              } else {
+                await this.recorder.recordFailed(
+                  group.job,
+                  0,
+                  new AppErrorClass('JSX_EXEC_FAILED', '用户取消 PS 套版任务', false, {
+                    cancelled: true,
+                  }),
+                )
+              }
+            }
+          }
+        }
+
+        const outputs = [
+          ...skippedGroups.flatMap((group) => group.outputs),
+          ...groupResults.flatMap((group) => group.outputs),
+        ]
+        return {
+          ok: raw.ok === true && raw.cancelled !== true,
+          outputs,
+          groups: [...skippedGroups, ...groupResults],
+          ...(raw.cancelled === true ? { cancelled: true } : {}),
+        }
+      } catch (error) {
+        const appError = normalizeError(error)
+        for (const group of pendingGroups) {
+          await this.recorder.recordFailed(group.job, 0, appError)
+        }
+        throw appError
+      }
     })
   }
 
@@ -518,6 +819,58 @@ export class PhotoshopExecutionEngine {
       throw new AppErrorClass('OUTPUT_VERIFY_FAILED', 'Photoshop 输出文件缺失', true, {
         missing_outputs: missing,
       })
+    }
+  }
+
+  private async runJsxFileWithLogTail(
+    jsxPath: string,
+    logPath: string,
+    onLog: ((entry: PhotoshopProgressLogEntry) => void | Promise<void>) | undefined,
+  ): Promise<void> {
+    if (!onLog) {
+      await this.comAdapter.runJsxFile(jsxPath)
+      return
+    }
+
+    let done = false
+    let emittedLines = 0
+    const emitNewLogs = async () => {
+      let text = ''
+      try {
+        text = await this.readTextFile(logPath, 'utf8')
+      } catch {
+        return
+      }
+      const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0)
+      for (const line of lines.slice(emittedLines)) {
+        try {
+          await onLog(JSON.parse(line) as PhotoshopProgressLogEntry)
+        } catch {
+          await onLog({
+            ts: Date.now(),
+            level: 'warn',
+            stage: 'jsx_exec',
+            message: 'Photoshop 日志行解析失败',
+            error: line,
+          })
+        }
+      }
+      emittedLines = lines.length
+    }
+    const tail = async () => {
+      while (!done) {
+        await emitNewLogs()
+        await this.sleep(100)
+      }
+      await emitNewLogs()
+    }
+
+    const tailPromise = tail()
+    try {
+      await this.comAdapter.runJsxFile(jsxPath)
+    } finally {
+      done = true
+      await tailPromise
     }
   }
 

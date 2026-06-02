@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 import type { PhotoshopJob } from '@tengyu-aipod/shared'
 import { describe, expect, it } from 'vitest'
-import { generateJsx, writePhotoshopJobJsx } from './jsx-generator'
+import { generateJsx, generateTemplateBatchJsx, writePhotoshopJobJsx } from './jsx-generator'
 
 function createJob(overrides: Partial<PhotoshopJob> = {}): PhotoshopJob {
   return {
@@ -71,6 +71,43 @@ describe('generateJsx', () => {
         }),
       ),
     ).toThrow('output_paths 数量必须等于 clip_areas 数量')
+  })
+})
+
+describe('generateTemplateBatchJsx', () => {
+  it('renders a template-level JSX batch with document duplication, logs, and cancel checks', () => {
+    const jsx = generateTemplateBatchJsx({
+      task_id: 'task-1',
+      mockup_path: 'C:\\templates\\mockup.psd',
+      template_name: 'mockup',
+      result_file_path: 'C:\\tmp\\result.json',
+      log_file_path: 'C:\\tmp\\photoshop-task.log',
+      cancel_file_path: 'C:\\tmp\\cancel.flag',
+      groups: [
+        {
+          group_index: 0,
+          sku_folder: 'sku-1',
+          so_replacements: [
+            {
+              layer_path: 'SO 1',
+              input_image: 'C:\\prints\\sku-1.png',
+            },
+          ],
+          clip_areas: [{ x: 0, y: 0, w: 500, h: 500, is_full: true }],
+          output_paths: ['C:\\outputs\\sku-1\\mockup\\01.jpg'],
+          format: 'jpg',
+          jpg_quality: 10,
+        },
+      ],
+    })
+
+    expect(jsx).toContain('baseDocument = app.open(new File(CONFIG.mockup_path))')
+    expect(jsx).toContain('var workingDocument = baseDocument.duplicate()')
+    expect(jsx).toContain('appendLog({')
+    expect(jsx).toContain("stage: 'so_replace'")
+    expect(jsx).toContain('cancelRequested()')
+    expect(jsx).toContain('writeResult(result)')
+    expect(jsx).toContain('SaveOptions.DONOTSAVECHANGES')
   })
 })
 

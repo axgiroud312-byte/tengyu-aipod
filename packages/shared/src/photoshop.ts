@@ -10,6 +10,7 @@ export interface PhotoshopStatus {
 
 export type SmartObjectMode = 'single' | 'shared' | 'independent' | 'none'
 export type PhotoshopClipMode = 'none' | 'auto' | 'guides'
+export type PhotoshopOutputLayout = 'template_first' | 'sku_first'
 
 export type PsdBounds = [number, number, number, number]
 
@@ -113,10 +114,19 @@ export interface PhotoshopJobResult {
 
 export type PhotoshopProgressStage =
   | 'task_start'
+  | 'template_start'
+  | 'template_open'
+  | 'group_start'
   | 'jsx_generate'
   | 'jsx_exec'
+  | 'so_find'
+  | 'so_replace'
+  | 'export_start'
+  | 'export_complete'
   | 'output_verify'
   | 'group_complete'
+  | 'task_complete'
+  | 'cancelled'
 
 export interface PhotoshopProgressInfo {
   task_id: string
@@ -139,7 +149,12 @@ export interface PhotoshopProgressLogEntry {
   ts: number
   level: 'debug' | 'info' | 'warn' | 'error'
   stage: PhotoshopProgressStage
+  message?: string
+  task_id?: string
+  template_name?: string
   group?: number
+  sku_folder?: string
+  smart_object?: string
   input?: string
   attempt?: number
   output_file?: string
@@ -154,6 +169,8 @@ export interface PhotoshopPrintAsset {
 
 export interface PhotoshopTaskGroup {
   group_index: number
+  sku_folder: string
+  template_name: string
   print_assets: PhotoshopPrintAsset[]
   job: PhotoshopJob
 }
@@ -166,12 +183,25 @@ export interface PhotoshopBatchTemplateResult {
   outputs: string[]
 }
 
+export interface PhotoshopBatchOutputGroup {
+  template_id: string
+  template_name: string
+  group_index: number
+  sku_folder: string
+  print_ids: string[]
+  outputs: string[]
+}
+
 export interface PhotoshopBatchResult {
   ok: boolean
   task_id: string
+  output_layout: PhotoshopOutputLayout
+  cancelled?: boolean
+  log_path?: string
   templates_total: number
   groups_total: number
   groups_completed: number
   outputs: string[]
   templates: PhotoshopBatchTemplateResult[]
+  result_groups: PhotoshopBatchOutputGroup[]
 }

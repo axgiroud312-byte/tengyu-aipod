@@ -8,7 +8,12 @@ import type {
   ListingWorkspaceInput,
   ListingWorkspaceRecord,
   ListingWorkspaceStatus,
+  PhotoshopBatchResult,
+  PhotoshopClipMode,
+  PhotoshopExportFormat,
+  PhotoshopOutputLayout,
   PhotoshopProgressInfo,
+  PhotoshopProgressLogEntry,
   PhotoshopScanTemplateRequest,
   PhotoshopStatus,
   PsdTemplate,
@@ -103,6 +108,7 @@ import type {
 } from '../main/lib/generation-service'
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
+import type { PhotoshopPrintFolderScan } from '../main/photoshop/print-folder'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
 
 const api = {
@@ -619,10 +625,30 @@ const api = {
         | { ok: true; data: { paths: string[] } }
         | { ok: false; error: { code: string; message: string } }
       >,
+    chooseOutputFolder: () =>
+      ipcRenderer.invoke('photoshop:choose-output-folder') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
     openPath: (path: string) =>
       ipcRenderer.invoke('photoshop:open-path', { path }) as Promise<{ ok: true }>,
+    scanPrintFolder: (input: { folder: string }) =>
+      ipcRenderer.invoke('photoshop:scan-print-folder', input) as Promise<PhotoshopPrintFolderScan>,
     scanTemplate: (input: PhotoshopScanTemplateRequest) =>
       ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
+    runBatch: (input: {
+      print_folder: string
+      templates: string[]
+      replace_range: 'auto' | 'top' | 'all'
+      output_layout: PhotoshopOutputLayout
+      format: PhotoshopExportFormat
+      clip_mode: PhotoshopClipMode
+      skip_completed: boolean
+      max_retries: number
+      output_root: string
+    }) => ipcRenderer.invoke('photoshop:run-batch', input) as Promise<PhotoshopBatchResult>,
+    cancel: (input: { task_id: string }) =>
+      ipcRenderer.invoke('photoshop:cancel', input) as Promise<{ ok: boolean }>,
     listCachedTemplates: () =>
       ipcRenderer.invoke('photoshop:list-cached-templates') as Promise<PsdTemplate[]>,
     onProgress: (callback: (progress: PhotoshopProgressInfo) => void) => {
@@ -633,6 +659,16 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('photoshop:progress', listener)
+      }
+    },
+    onLog: (callback: (entry: PhotoshopProgressLogEntry) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, entry: PhotoshopProgressLogEntry) => {
+        callback(entry)
+      }
+      ipcRenderer.on('photoshop:log', listener)
+
+      return () => {
+        ipcRenderer.removeListener('photoshop:log', listener)
       }
     },
   },

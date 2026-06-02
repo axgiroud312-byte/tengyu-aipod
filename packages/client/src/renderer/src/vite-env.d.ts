@@ -449,13 +449,35 @@ declare global {
           | { ok: true; data: { paths: string[] } }
           | { ok: false; error: { code: string; message: string } }
         >
+        chooseOutputFolder: () => Promise<
+          | { ok: true; data: { path: string } }
+          | { ok: false; error: { code: string; message: string } }
+        >
         openPath: (path: string) => Promise<{ ok: true }>
+        scanPrintFolder: (input: { folder: string }) => Promise<
+          import('../../main/photoshop/print-folder').PhotoshopPrintFolderScan
+        >
         scanTemplate: (
           input: import('@tengyu-aipod/shared').PhotoshopScanTemplateRequest,
         ) => Promise<import('@tengyu-aipod/shared').PsdTemplate>
+        runBatch: (input: {
+          print_folder: string
+          templates: string[]
+          replace_range: 'auto' | 'top' | 'all'
+          output_layout: import('@tengyu-aipod/shared').PhotoshopOutputLayout
+          format: import('@tengyu-aipod/shared').PhotoshopExportFormat
+          clip_mode: import('@tengyu-aipod/shared').PhotoshopClipMode
+          skip_completed: boolean
+          max_retries: number
+          output_root: string
+        }) => Promise<import('@tengyu-aipod/shared').PhotoshopBatchResult>
+        cancel: (input: { task_id: string }) => Promise<{ ok: boolean }>
         listCachedTemplates: () => Promise<import('@tengyu-aipod/shared').PsdTemplate[]>
         onProgress: (
           callback: (progress: import('@tengyu-aipod/shared').PhotoshopProgressInfo) => void,
+        ) => () => void
+        onLog: (
+          callback: (entry: import('@tengyu-aipod/shared').PhotoshopProgressLogEntry) => void,
         ) => () => void
       }
     }

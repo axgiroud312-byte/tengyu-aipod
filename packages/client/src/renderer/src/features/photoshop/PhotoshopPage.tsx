@@ -1,5 +1,14 @@
 import { Button } from '@/components/ui/button'
-import type { PhotoshopProgressInfo, PhotoshopStatus, PsdTemplate } from '@tengyu-aipod/shared'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { ScrollArea } from '@/components/ui/scroll-area'
+import type {
+  PhotoshopBatchResult,
+  PhotoshopOutputLayout,
+  PhotoshopProgressInfo,
+  PhotoshopProgressLogEntry,
+  PhotoshopStatus,
+  PsdTemplate,
+} from '@tengyu-aipod/shared'
 import {
   AlertTriangle,
   ExternalLink,
@@ -8,9 +17,14 @@ import {
   PlayCircle,
   RefreshCw,
   Settings2,
+  Terminal,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import type { MattingCandidate } from '../../../../main/lib/detection-service'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import type { PhotoshopPrintFolderScan } from '../../../../main/photoshop/print-folder'
+import {
+  formatPhotoshopDebugLogLine,
+  photoshopDebugLogLevelCounts,
+} from './photoshop-debug-log'
 
 function statusLabel(status: PhotoshopStatus | null) {
   if (!status) {
@@ -76,9 +90,18 @@ function joinLocalPath(root: string, ...parts: string[]) {
   return [root.replace(/[\\/]+$/, ''), ...parts].join(separator)
 }
 
-function parentFolder(path: string) {
-  const index = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
-  return index > 0 ? path.slice(0, index) : path
+function localImageUrl(path: string) {
+  return `tengyu-local-image://image/${encodeURIComponent(path)}`
+}
+
+function photoshopDebugLogLevelClassName(level: PhotoshopProgressLogEntry['level']) {
+  if (level === 'error') {
+    return 'break-all whitespace-pre-wrap text-red-300'
+  }
+  if (level === 'warn') {
+    return 'break-all whitespace-pre-wrap text-amber-200'
+  }
+  return 'break-all whitespace-pre-wrap text-zinc-100'
 }
 
 const resultFilters = [
@@ -140,10 +163,11 @@ function PhotoshopStatusBar() {
 
 export function PhotoshopPage() {
   const [skipCompleted, setSkipCompleted] = useState(true)
+  const [outputLayout, setOutputLayout] = useState<PhotoshopOutputLayout>('template_first')
   const [printFolder, setPrintFolder] = useState('02-印花工作区')
   const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
-  const [mattingCandidates, setMattingCandidates] = useState<MattingCandidate[]>([])
-  const [loadingCandidates, setLoadingCandidates] = useState(false)
+  const [printScan, setPrintScan] = useState<PhotoshopPrintFolderScan | null>(null)
+  const [loadingPrints, setLoadingPrints] = useState(false)
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
   const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
   const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
@@ -151,12 +175,27 @@ export function PhotoshopPage() {
   const [maxRetries, setMaxRetries] = useState(1)
   const [resultFilter, setResultFilter] = useState<(typeof resultFilters)[number]['key']>('all')
   const [progress, setProgress] = useState<PhotoshopProgressInfo | null>(null)
+  const [debugLogs, setDebugLogs] = useState<PhotoshopProgressLogEntry[]>([])
+  const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
+  const [batchResult, setBatchResult] = useState<PhotoshopBatchResult | null>(null)
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
   const [scannedTemplates, setScannedTemplates] = useState<PsdTemplate[]>([])
   const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
   const [running, setRunning] = useState(false)
   const isMac = navigator.platform.toLowerCase().includes('mac')
+  const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const percent = progressPercent(progress)
-  const estimatedGroups = templatePaths.length
+  const logCounts = photoshopDebugLogLevelCounts(debugLogs)
+  const debugIssueCount = logCounts.warn + logCounts.error
+  const printAssets = printScan?.prints ?? []
+  const estimatedGroups =
+    scannedTemplates.length > 0
+      ? scannedTemplates.reduce(
+          (count, template) =>
+            count + Math.ceil(printAssets.length / Math.max(template.representative_so_count, 1)),
+          0,
+        )
+      : templatePaths.length * printAssets.length
   const estimatedOutputs = scannedTemplates.reduce(
     (count, item) => count + item.clip_areas.length,
     0,
@@ -165,8 +204,24 @@ export function PhotoshopPage() {
   useEffect(() => {
     return window.api.photoshop.onProgress((nextProgress) => {
       setProgress(nextProgress)
+      setCurrentTaskId(nextProgress.task_id)
     })
   }, [])
+
+  useEffect(() => {
+    return window.api.photoshop.onLog((entry) => {
+      if (entry.task_id) {
+        setCurrentTaskId(entry.task_id)
+      }
+      setDebugLogs((current) => [...current, entry].slice(-1000))
+    })
+  }, [])
+
+  useEffect(() => {
+    if (isDebugLogOpen && debugLogs.length > 0) {
+      debugLogEndRef.current?.scrollIntoView({ block: 'end' })
+    }
+  }, [debugLogs.length, isDebugLogOpen])
 
   useEffect(() => {
     window.api.workspace
@@ -175,23 +230,31 @@ export function PhotoshopPage() {
         if (!workspace.root) {
           return
         }
-        setPrintFolder(joinLocalPath(workspace.root, '02-印花工作区'))
+        const nextPrintFolder = joinLocalPath(workspace.root, '02-印花工作区')
+        setPrintFolder(nextPrintFolder)
         setOutputDir(
           joinLocalPath(workspace.root, '04-上架工作区', `套版-${timestampSlug(Date.now())}`),
         )
+        void loadPrintFolder(nextPrintFolder)
       })
       .catch(() => null)
-    void loadMattingCandidates()
   }, [])
 
-  async function loadMattingCandidates() {
-    setLoadingCandidates(true)
+  async function loadPrintFolder(folder = printFolder) {
+    if (!folder.trim()) {
+      setPrintScan(null)
+      return
+    }
+    setLoadingPrints(true)
     try {
-      setMattingCandidates(await window.api.detection.listMattingCandidates())
-    } catch {
-      setMattingCandidates([])
+      const scan = await window.api.photoshop.scanPrintFolder({ folder })
+      setPrintScan(scan)
+      setMessage(`已检索到 ${scan.prints.length} 张印花`)
+    } catch (error) {
+      setPrintScan(null)
+      setMessage(error instanceof Error ? error.message : String(error))
     } finally {
-      setLoadingCandidates(false)
+      setLoadingPrints(false)
     }
   }
 
@@ -199,6 +262,7 @@ export function PhotoshopPage() {
     const result = await window.api.photoshop.choosePrintFolder()
     if (result.ok) {
       setPrintFolder(result.data.path)
+      await loadPrintFolder(result.data.path)
     }
   }
 
@@ -207,6 +271,13 @@ export function PhotoshopPage() {
     if (result.ok) {
       setTemplatePaths(result.data.paths)
       setScannedTemplates([])
+    }
+  }
+
+  async function chooseOutputFolder() {
+    const result = await window.api.photoshop.chooseOutputFolder()
+    if (result.ok) {
+      setOutputDir(result.data.path)
     }
   }
 
@@ -255,6 +326,55 @@ export function PhotoshopPage() {
     }
   }
 
+  async function runPhotoshopBatch() {
+    setRunning(true)
+    setMessage('正在执行套版...')
+    setDebugLogs([])
+    setBatchResult(null)
+    try {
+      const scan = await window.api.photoshop.scanPrintFolder({ folder: printFolder })
+      setPrintScan(scan)
+      if (scan.prints.length === 0) {
+        throw new Error('印花文件夹内没有可套版图片')
+      }
+      const result = await window.api.photoshop.runBatch({
+        print_folder: printFolder,
+        templates: templatePaths,
+        replace_range: replaceRange,
+        output_layout: outputLayout,
+        format,
+        clip_mode: clipMode,
+        skip_completed: skipCompleted,
+        max_retries: maxRetries,
+        output_root: outputDir,
+      })
+      setBatchResult(result)
+      setCurrentTaskId(result.task_id)
+      setMessage(
+        result.cancelled
+          ? `套版已取消：已输出 ${result.outputs.length} 张成品图`
+          : `套版完成：输出 ${result.outputs.length} 张成品图`,
+      )
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error))
+      setProgress((current) =>
+        current
+          ? { ...current, failed: current.failed + 1, current_stage: 'group_complete' }
+          : null,
+      )
+    } finally {
+      setRunning(false)
+    }
+  }
+
+  async function cancelPhotoshopBatch() {
+    if (!currentTaskId) {
+      return
+    }
+    const result = await window.api.photoshop.cancel({ task_id: currentTaskId })
+    setMessage(result.ok ? '已发送取消请求，当前组结束后停止' : '当前没有可取消的 PS 任务')
+  }
+
   if (isMac) {
     return (
       <div className="space-y-6">
@@ -277,6 +397,26 @@ export function PhotoshopPage() {
 
   return (
     <div className="space-y-6">
+      <div className="rounded-md border bg-background p-5 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
+            <h2 className="mt-1 text-xl font-semibold">模板批量套版与上架图输出</h2>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button onClick={() => setIsDebugLogOpen(true)} type="button" variant="secondary">
+              <Terminal className="mr-2 h-4 w-4" />
+              日志 {debugLogs.length}
+              {debugIssueCount > 0 ? (
+                <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
+                  {debugIssueCount}
+                </span>
+              ) : null}
+            </Button>
+          </div>
+        </div>
+      </div>
+
       <PhotoshopStatusBar />
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
@@ -311,11 +451,11 @@ export function PhotoshopPage() {
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="text-sm font-medium text-muted-foreground">套版候选清单</p>
-                <h2 className="mt-1 text-lg font-semibold">检测通过印花</h2>
+                <h2 className="mt-1 text-lg font-semibold">输入目录印花</h2>
               </div>
               <Button
-                disabled={loadingCandidates}
-                onClick={() => void loadMattingCandidates()}
+                disabled={loadingPrints}
+                onClick={() => void loadPrintFolder()}
                 type="button"
                 variant="secondary"
               >
@@ -324,34 +464,33 @@ export function PhotoshopPage() {
               </Button>
             </div>
             <div className="mt-4 grid gap-2">
-              {mattingCandidates.length ? (
-                mattingCandidates.slice(0, 6).map((candidate) => (
-                  <button
+              {printAssets.length ? (
+                printAssets.slice(0, 6).map((candidate) => (
+                  <div
                     className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 rounded-md border bg-muted/30 p-2 text-left text-sm hover:bg-muted"
                     key={candidate.id}
-                    onClick={() => setPrintFolder(parentFolder(candidate.sourcePath))}
-                    type="button"
                   >
                     <img
                       alt=""
                       className="h-12 w-12 rounded border object-cover"
-                      src={candidate.thumbnailUrl}
+                      src={candidate.thumbnail_url}
                     />
                     <span className="min-w-0">
-                      <span className="block truncate font-medium">
-                        {candidate.printId ?? candidate.artifactId}
-                      </span>
+                      <span className="block truncate font-medium">{candidate.id}</span>
                       <span className="mt-1 block truncate text-xs text-muted-foreground">
-                        {candidate.sourcePath}
+                        {candidate.file_path}
                       </span>
                     </span>
-                  </button>
+                  </div>
                 ))
               ) : (
                 <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无检测通过印花
+                  当前输入目录未找到图片
                 </div>
               )}
+              {printAssets.length > 6 ? (
+                <p className="text-xs text-muted-foreground">还有 {printAssets.length - 6} 张未显示</p>
+              ) : null}
             </div>
           </div>
 
@@ -376,6 +515,17 @@ export function PhotoshopPage() {
                 type="checkbox"
               />
               跳过已完成
+            </label>
+            <label className="ml-2 mt-4 inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium">
+              <input
+                checked={outputLayout === 'sku_first'}
+                className="h-4 w-4"
+                onChange={(event) =>
+                  setOutputLayout(event.target.checked ? 'sku_first' : 'template_first')
+                }
+                type="checkbox"
+              />
+              货号优先输出
             </label>
           </div>
 
@@ -443,6 +593,14 @@ export function PhotoshopPage() {
               />
               <Button
                 className="h-10 px-3"
+                onClick={() => void chooseOutputFolder()}
+                type="button"
+                variant="secondary"
+              >
+                <FolderOpen className="h-4 w-4" />
+              </Button>
+              <Button
+                className="h-10 px-3"
                 disabled={!outputDir.trim()}
                 onClick={() => void window.api.photoshop.openPath(outputDir)}
                 type="button"
@@ -452,7 +610,7 @@ export function PhotoshopPage() {
               </Button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              当前版本仅展示目录配置，真实套版执行入口后续接入。
+              默认是本次套版批次目录，可直接改成其他批次目录。
             </p>
           </div>
         </div>
@@ -465,6 +623,10 @@ export function PhotoshopPage() {
               <div className="rounded-md bg-muted p-3">
                 <dt className="text-muted-foreground">模板数</dt>
                 <dd className="mt-1 font-semibold">{templatePaths.length}</dd>
+              </div>
+              <div className="rounded-md bg-muted p-3">
+                <dt className="text-muted-foreground">印花数</dt>
+                <dd className="mt-1 font-semibold">{printAssets.length || '-'}</dd>
               </div>
               <div className="rounded-md bg-muted p-3">
                 <dt className="text-muted-foreground">裁切数</dt>
@@ -487,6 +649,24 @@ export function PhotoshopPage() {
             >
               <PlayCircle className="mr-2 h-4 w-4" />
               {running ? '扫描中...' : '扫描模板'}
+            </Button>
+            <Button
+              className="mt-3 w-full"
+              disabled={running || templatePaths.length === 0 || !printFolder.trim()}
+              onClick={() => void runPhotoshopBatch()}
+              type="button"
+            >
+              <PlayCircle className="mr-2 h-4 w-4" />
+              {running ? '执行中...' : '开始套版'}
+            </Button>
+            <Button
+              className="mt-3 w-full"
+              disabled={!running || !currentTaskId}
+              onClick={() => void cancelPhotoshopBatch()}
+              type="button"
+              variant="secondary"
+            >
+              取消套版
             </Button>
           </div>
 
@@ -537,6 +717,16 @@ export function PhotoshopPage() {
               )}
             </div>
           </div>
+
+          <Button
+            className="w-full"
+            disabled={!outputDir.trim()}
+            onClick={() => void window.api.photoshop.openPath(outputDir)}
+            type="button"
+            variant="secondary"
+          >
+            打开输出目录
+          </Button>
         </aside>
       </div>
 
@@ -564,15 +754,107 @@ export function PhotoshopPage() {
           </div>
         </div>
         <div className="mt-4 flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/40 p-6 text-center">
-          <div className="max-w-sm">
-            <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
-            <p className="mt-3 text-sm font-medium">暂无套版结果</p>
-            <p className="mt-1 text-xs text-muted-foreground">
-              扫描模板后可先确认裁切区域；批量套版执行接入后，这里会显示输出缩略图。
-            </p>
-          </div>
+          {batchResult?.result_groups.length ? (
+            <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {batchResult.result_groups.map((group) => (
+                <div
+                  className="rounded-md border bg-background p-3 text-left shadow-sm"
+                  key={`${group.template_id}-${group.group_index}-${group.sku_folder}`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{group.sku_folder}</p>
+                      <p className="truncate text-xs text-muted-foreground">
+                        {group.template_name} · {group.print_ids.join(', ')}
+                      </p>
+                    </div>
+                    <Button
+                      className="h-8 px-2"
+                      onClick={() => void window.api.photoshop.openPath(group.outputs[0] ?? outputDir)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2">
+                    {group.outputs.map((output) => (
+                      <button
+                        className="aspect-square overflow-hidden rounded border bg-muted"
+                        key={output}
+                        onDoubleClick={() => void window.api.photoshop.openPath(output)}
+                        type="button"
+                      >
+                        <img alt="" className="h-full w-full object-cover" src={localImageUrl(output)} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="max-w-sm">
+              <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
+              <p className="mt-3 text-sm font-medium">暂无套版结果</p>
+              <p className="mt-1 text-xs text-muted-foreground">套版完成后显示输出缩略图。</p>
+            </div>
+          )}
         </div>
       </section>
+
+      <Dialog onOpenChange={setIsDebugLogOpen} open={isDebugLogOpen}>
+        <DialogContent className="max-w-5xl gap-0 p-0">
+          <DialogHeader className="border-b px-4 py-3 pr-12">
+            <div className="flex items-center justify-between gap-3">
+              <DialogTitle className="flex items-center gap-2 text-base">
+                <Terminal className="h-4 w-4 text-primary" />
+                PS 套版日志
+              </DialogTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  className="h-8 px-3"
+                  disabled={!batchResult?.log_path}
+                  onClick={() =>
+                    batchResult?.log_path && window.api.photoshop.openPath(batchResult.log_path)
+                  }
+                  type="button"
+                  variant="secondary"
+                >
+                  打开文件
+                </Button>
+                <Button
+                  className="h-8 px-3"
+                  disabled={!debugLogs.length}
+                  onClick={() => setDebugLogs([])}
+                  type="button"
+                  variant="secondary"
+                >
+                  清空
+                </Button>
+              </div>
+            </div>
+          </DialogHeader>
+          <div className="p-4">
+            <ScrollArea className="h-[min(70vh,620px)] rounded-md border bg-zinc-950">
+              <div className="space-y-1 p-3 font-mono text-[12px] leading-5">
+                {debugLogs.length ? (
+                  debugLogs.map((entry, index) => (
+                    <div
+                      className={photoshopDebugLogLevelClassName(entry.level)}
+                      key={`${entry.ts}-${index}`}
+                    >
+                      {formatPhotoshopDebugLogLine(entry)}
+                    </div>
+                  ))
+                ) : (
+                  <div className="text-zinc-500">暂无日志</div>
+                )}
+                <div ref={debugLogEndRef} />
+              </div>
+            </ScrollArea>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

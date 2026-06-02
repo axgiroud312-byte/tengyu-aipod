@@ -2,6 +2,7 @@ import type {
   PhotoshopClipMode,
   PhotoshopExportFormat,
   PhotoshopJob,
+  PhotoshopOutputLayout,
   PhotoshopPrintAsset,
   PhotoshopSoReplacement,
   PhotoshopTaskGroup,
@@ -17,6 +18,7 @@ export interface GroupPhotoshopTasksOptions {
   clipMode?: PhotoshopClipMode
   format?: PhotoshopExportFormat
   jpgQuality?: number
+  outputLayout?: PhotoshopOutputLayout
 }
 
 function splitNatural(value: string): Array<string | number> {
@@ -94,14 +96,17 @@ export function sanitizeTemplateName(psdPath: string): string {
 function buildJob(
   template: PsdTemplate,
   groupIndex: number,
+  skuFolder: string,
+  templateName: string,
   printAssets: PhotoshopPrintAsset[],
   options: Required<GroupPhotoshopTasksOptions>,
 ): PhotoshopJob {
   const clipAreas = template.clip_areas
   const extension = options.format === 'jpg' ? 'jpg' : 'png'
-  const outputFolder = `${options.outputRoot}/${sanitizeTemplateName(template.file_path)}/${
-    printAssets[0]?.id ?? 'group'
-  }`
+  const outputFolder =
+    options.outputLayout === 'sku_first'
+      ? `${options.outputRoot}/${skuFolder}/${templateName}`
+      : `${options.outputRoot}/${templateName}/${printAssets[0]?.id ?? 'group'}`
   const outputPaths = clipAreas.map(
     (_, clipIndex) => `${outputFolder}/${String(clipIndex + 1).padStart(2, '0')}.${extension}`,
   )
@@ -138,6 +143,17 @@ function selectSmartObjects(template: PsdTemplate, range: PhotoshopReplaceRange)
   return template.smart_objects
 }
 
+function skuFolderForGroup(
+  printAssets: PhotoshopPrintAsset[],
+  groupIndex: number,
+  outputLayout: PhotoshopOutputLayout,
+): string {
+  if (outputLayout === 'sku_first' && printAssets.length > 1) {
+    return `group-${String(groupIndex + 1).padStart(3, '0')}`
+  }
+  return printAssets[0]?.id ?? `group-${String(groupIndex + 1).padStart(3, '0')}`
+}
+
 export function groupTasks(
   printAssets: PhotoshopPrintAsset[],
   template: PsdTemplate,
@@ -148,6 +164,7 @@ export function groupTasks(
     clipMode: options.clipMode ?? 'auto',
     format: options.format ?? 'jpg',
     jpgQuality: options.jpgQuality ?? 12,
+    outputLayout: options.outputLayout ?? 'template_first',
     outputRoot: options.outputRoot,
     taskId: options.taskId,
   }
@@ -158,9 +175,15 @@ export function groupTasks(
   }
 
   const chunks = chunkPrintAssets(sortedPrintAssets, groupSize)
-  return chunks.map((chunk, index) => ({
-    group_index: index,
-    print_assets: chunk,
-    job: buildJob(template, index, chunk, resolvedOptions),
-  }))
+  const templateName = sanitizeTemplateName(template.file_path)
+  return chunks.map((chunk, index) => {
+    const skuFolder = skuFolderForGroup(chunk, index, resolvedOptions.outputLayout)
+    return {
+      group_index: index,
+      sku_folder: skuFolder,
+      template_name: templateName,
+      print_assets: chunk,
+      job: buildJob(template, index, skuFolder, templateName, chunk, resolvedOptions),
+    }
+  })
 }

@@ -1,14 +1,17 @@
 import { mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
+  PhotoshopBatchOutputGroup,
   PhotoshopBatchResult,
   PhotoshopBatchTemplateResult,
   PhotoshopClipMode,
   PhotoshopExportFormat,
   PhotoshopJobResult,
+  PhotoshopOutputLayout,
   PhotoshopPrintAsset,
   PhotoshopProgressInfo,
   PhotoshopProgressLogEntry,
+  PhotoshopTaskGroup,
   PsdTemplate,
 } from '@tengyu-aipod/shared'
 import {
@@ -30,13 +33,46 @@ export interface PhotoshopBatchConfig {
   clipMode?: PhotoshopClipMode
   skipCompleted?: boolean
   maxRetries?: number
+  outputLayout?: PhotoshopOutputLayout
+  cancelFilePath?: string
 }
 
 interface PhotoshopMultiBatchOptions {
   scanner?: Pick<PsdScanner, 'scanPsd'>
-  engine?: Pick<PhotoshopExecutionEngine, 'runJob'>
+  engine?: PhotoshopBatchEngine
   onProgress?: (progress: PhotoshopProgressInfo) => void | Promise<void>
+  onLog?: (entry: PhotoshopProgressLogEntry) => void | Promise<void>
   progressLogger?: Pick<PhotoshopProgressLogger, 'write'> | null
+}
+
+export interface PhotoshopTemplateBatchRunResult {
+  ok: boolean
+  outputs: string[]
+  groups: Array<{
+    group_index: number
+    sku_folder: string
+    outputs: string[]
+    skipped?: boolean
+  }>
+  cancelled?: boolean
+}
+
+interface PhotoshopBatchEngine {
+  runJob(
+    job: PhotoshopTaskGroup['job'],
+    maxRetries?: number,
+    options?: { skipCompleted?: boolean },
+  ): Promise<PhotoshopJobResult>
+  runTemplateBatch?(
+    template: PsdTemplate,
+    groups: PhotoshopTaskGroup[],
+    maxRetries: number,
+    options: {
+      skipCompleted?: boolean
+      cancelFilePath?: string
+      onLog?: (entry: PhotoshopProgressLogEntry) => void | Promise<void>
+    },
+  ): Promise<PhotoshopTemplateBatchRunResult>
 }
 
 export class PhotoshopProgressLogger {
@@ -71,16 +107,18 @@ export class PhotoshopProgressLogger {
 
 export class PhotoshopMultiBatchRunner {
   private readonly scanner: Pick<PsdScanner, 'scanPsd'>
-  private readonly engine: Pick<PhotoshopExecutionEngine, 'runJob'>
+  private readonly engine: PhotoshopBatchEngine
   private readonly onProgress:
     | ((progress: PhotoshopProgressInfo) => void | Promise<void>)
     | undefined
+  private readonly onLog: ((entry: PhotoshopProgressLogEntry) => void | Promise<void>) | undefined
   private readonly progressLogger: Pick<PhotoshopProgressLogger, 'write'> | null | undefined
 
   constructor(options: PhotoshopMultiBatchOptions = {}) {
     this.scanner = options.scanner ?? psdScanner
     this.engine = options.engine ?? photoshopExecutionEngine
     this.onProgress = options.onProgress
+    this.onLog = options.onLog
     this.progressLogger = options.progressLogger
   }
 
@@ -90,16 +128,23 @@ export class PhotoshopMultiBatchRunner {
     config: PhotoshopBatchConfig,
   ): Promise<PhotoshopBatchResult> {
     const templateResults: PhotoshopBatchTemplateResult[] = []
+    const resultGroups: PhotoshopBatchOutputGroup[] = []
     const allOutputs: string[] = []
     let groupsCompleted = 0
     let groupsTotal = 0
     let failed = 0
     let skipped = 0
     let verifiedOutputs = 0
+    let cancelled = false
     const logger =
       this.progressLogger === undefined
         ? await PhotoshopProgressLogger.create(config.taskId)
         : this.progressLogger
+    const outputLayout = config.outputLayout ?? 'template_first'
+    const logPath =
+      logger && 'logPath' in logger && typeof logger.logPath === 'string'
+        ? logger.logPath
+        : undefined
 
     logger?.write({ ts: Date.now(), level: 'info', stage: 'task_start' })
 
@@ -109,6 +154,7 @@ export class PhotoshopMultiBatchRunner {
       const groupOptions: GroupPhotoshopTasksOptions = {
         taskId: config.taskId,
         outputRoot: config.outputRoot,
+        outputLayout,
       }
       if (config.replaceRange !== undefined) {
         groupOptions.replaceRange = config.replaceRange
@@ -137,11 +183,112 @@ export class PhotoshopMultiBatchRunner {
       groupsTotal += groups.length
 
       const templateOutputs: string[] = []
+      if (this.engine.runTemplateBatch) {
+        await this.emitProgress({
+          task_id: config.taskId,
+          total_groups: groupsTotal,
+          completed: groupsCompleted - skipped,
+          failed,
+          skipped,
+          current_group: null,
+          current_stage: 'template_start',
+          verified_outputs: verifiedOutputs,
+          template_index: templateIndex,
+          template_total: templatePaths.length,
+          template_name: templateName,
+          group_total: groups.length,
+          groups_completed: groupsCompleted,
+        })
+        logger?.write({
+          ts: Date.now(),
+          level: 'info',
+          stage: 'template_start',
+          template_name: templateName,
+          message: `开始处理模板：${templateName}`,
+        })
+        const result = await this.engine.runTemplateBatch(
+          templateWithClipAreas,
+          groups,
+          config.maxRetries ?? 0,
+          {
+            skipCompleted: config.skipCompleted ?? true,
+            ...(config.cancelFilePath ? { cancelFilePath: config.cancelFilePath } : {}),
+            onLog: async (entry) => {
+              logger?.write(entry)
+              await this.emitLog(entry)
+            },
+          },
+        )
+        groupsCompleted += result.groups.length
+        skipped += result.groups.filter((group) => group.skipped).length
+        verifiedOutputs += result.outputs.length
+        templateOutputs.push(...result.outputs)
+        allOutputs.push(...result.outputs)
+        for (const groupResult of result.groups) {
+          const group = groups.find((item) => item.group_index === groupResult.group_index)
+          if (!group) {
+            continue
+          }
+          const groupOutputs = groupResult.outputs
+          resultGroups.push(batchOutputGroup(template, group, groupOutputs))
+          await this.emitProgress({
+            task_id: config.taskId,
+            total_groups: groupsTotal,
+            completed: groupsCompleted - skipped,
+            failed,
+            skipped,
+            current_group: group.group_index,
+            current_stage: 'group_complete',
+            verified_outputs: verifiedOutputs,
+            template_index: templateIndex,
+            template_total: templatePaths.length,
+            template_name: templateName,
+            group_index: group.group_index,
+            group_total: groups.length,
+            groups_completed: groupsCompleted,
+          })
+        }
+        templateResults.push({
+          template_id: template.id,
+          template_name: templateName,
+          groups_total: groups.length,
+          groups_completed: result.groups.length,
+          outputs: templateOutputs,
+        })
+        if (result.cancelled) {
+          cancelled = true
+          logger?.write({
+            ts: Date.now(),
+            level: 'warn',
+            stage: 'cancelled',
+            template_name: templateName,
+            message: '用户取消任务，当前模板批处理已在组边界停止',
+          })
+          await this.emitProgress({
+            task_id: config.taskId,
+            total_groups: groupsTotal,
+            completed: groupsCompleted - skipped,
+            failed,
+            skipped,
+            current_group: null,
+            current_stage: 'cancelled',
+            verified_outputs: verifiedOutputs,
+            template_index: templateIndex,
+            template_total: templatePaths.length,
+            template_name: templateName,
+            group_total: groups.length,
+            groups_completed: groupsCompleted,
+          })
+          break
+        }
+        continue
+      }
+
       for (const group of groups) {
         await this.emitProgress({
           task_id: config.taskId,
           total_groups: groupsTotal,
-          completed: groupsCompleted,
+          completed: groupsCompleted - skipped,
           failed,
           skipped,
           current_group: group.group_index,
@@ -186,6 +333,7 @@ export class PhotoshopMultiBatchRunner {
           verifiedOutputs += result.outputs.length
           templateOutputs.push(...result.outputs)
           allOutputs.push(...result.outputs)
+          resultGroups.push(batchOutputGroup(template, group, result.outputs))
           for (const output of result.outputs) {
             logger?.write({
               ts: Date.now(),
@@ -205,7 +353,7 @@ export class PhotoshopMultiBatchRunner {
           await this.emitProgress({
             task_id: config.taskId,
             total_groups: groupsTotal,
-            completed: groupsCompleted,
+            completed: groupsCompleted - skipped,
             failed,
             skipped,
             current_group: group.group_index,
@@ -242,18 +390,26 @@ export class PhotoshopMultiBatchRunner {
     }
 
     return {
-      ok: true,
+      ok: !cancelled,
       task_id: config.taskId,
+      output_layout: outputLayout,
+      ...(cancelled ? { cancelled: true } : {}),
+      ...(logPath ? { log_path: logPath } : {}),
       templates_total: templatePaths.length,
       groups_total: groupsTotal,
       groups_completed: groupsCompleted,
       outputs: allOutputs,
       templates: templateResults,
+      result_groups: resultGroups,
     }
   }
 
   private async emitProgress(progress: PhotoshopProgressInfo): Promise<void> {
     await this.onProgress?.(progress)
+  }
+
+  private async emitLog(entry: PhotoshopProgressLogEntry): Promise<void> {
+    await this.onLog?.(entry)
   }
 }
 
@@ -268,4 +424,19 @@ export async function runBatch(
 
 export function createCompletedJobResult(outputs: string[]): PhotoshopJobResult {
   return { ok: true, outputs, attempts: 1 }
+}
+
+function batchOutputGroup(
+  template: PsdTemplate,
+  group: PhotoshopTaskGroup,
+  outputs: string[],
+): PhotoshopBatchOutputGroup {
+  return {
+    template_id: template.id,
+    template_name: group.template_name,
+    group_index: group.group_index,
+    sku_folder: group.sku_folder,
+    print_ids: group.print_assets.map((asset) => asset.id),
+    outputs,
+  }
 }

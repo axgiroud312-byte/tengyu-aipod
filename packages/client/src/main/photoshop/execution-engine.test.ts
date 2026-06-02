@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { PhotoshopJob, PsdTemplate } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { openSqliteDatabase } from '../lib/sqlite'
 import { TempFileManager } from '../lib/temp-file-manager'
 import {
   PhotoshopExecutionEngine,
@@ -245,15 +246,230 @@ describe('PhotoshopExecutionEngine', () => {
     expect(calls).toEqual(['com'])
   })
 
-  it('persists workflow_steps rows through the sqlite recorder', async () => {
-    const rows: Array<{ sql: string; params: Record<string, unknown> }> = []
-    const db = {
-      exec: () => undefined,
-      prepare: (sql: string) => ({
-        run: (params: Record<string, unknown>) => {
-          rows.push({ sql, params })
+  it('runs template-level batches through one JSX call and emits runtime logs', async () => {
+    const resultPath = join(tempDir, 'batch-result.json')
+    const logPath = join(tempDir, 'batch.log')
+    const outputPath = join(tempDir, '01.jpg')
+    const logs: string[] = []
+    const calls: string[] = []
+    await writeFile(outputPath, 'fake image', 'utf8')
+    const template: PsdTemplate = {
+      id: 'tpl-1',
+      file_path: 'C:\\templates\\mockup.psd',
+      file_hash: 'hash',
+      doc_size: { w: 1000, h: 1000 },
+      smart_objects: [],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: 123,
+      layers: [],
+      text_layers: [],
+    }
+    const group = {
+      group_index: 0,
+      sku_folder: 'img2',
+      template_name: 'mockup',
+      print_assets: [{ id: 'img2', file_path: 'C:\\prints\\img2.png' }],
+      job: createJob({
+        output_paths: [outputPath],
+        mockup_path: template.file_path,
+      }),
+    }
+
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      writeTemplateBatchJsx: async () => ({
+        jsx_path: join(tempDir, 'batch.jsx'),
+        result_file_path: resultPath,
+        log_file_path: logPath,
+        cancel_file_path: join(tempDir, 'cancel.flag'),
+        content: '',
+      }),
+      comAdapter: {
+        runJsxFile: async (path) => {
+          calls.push(path)
+          await writeFile(
+            logPath,
+            `${JSON.stringify({ ts: 1, level: 'info', stage: 'group_start', group: 0 })}\n`,
+            'utf8',
+          )
+          await writeFile(
+            resultPath,
+            JSON.stringify({
+              ok: true,
+              outputs: [outputPath],
+              groups: [
+                {
+                  ok: true,
+                  group_index: 0,
+                  sku_folder: 'img2',
+                  outputs: [outputPath],
+                },
+              ],
+            }),
+            'utf8',
+          )
+        },
+      },
+      recorder: noopRecorder,
+      shouldSkipJob: async () => false,
+    })
+
+    await expect(
+      engine.runTemplateBatch(template, [group], 0, {
+        skipCompleted: true,
+        onLog: async (entry) => {
+          logs.push(`${entry.stage}:${entry.group}`)
         },
       }),
+    ).resolves.toMatchObject({
+      ok: true,
+      outputs: [outputPath],
+      groups: [{ group_index: 0, sku_folder: 'img2', outputs: [outputPath] }],
+    })
+    expect(calls).toEqual([join(tempDir, 'batch.jsx')])
+    expect(logs).toContain('group_start:0')
+  })
+
+  it('returns cancelled template batches without marking unprocessed groups completed', async () => {
+    const resultPath = join(tempDir, 'batch-result.json')
+    const logPath = join(tempDir, 'batch.log')
+    const firstOutputPath = join(tempDir, '01.jpg')
+    const secondOutputPath = join(tempDir, '02.jpg')
+    const events: string[] = []
+    await writeFile(firstOutputPath, 'fake image', 'utf8')
+    const template: PsdTemplate = {
+      id: 'tpl-cancel',
+      file_path: 'C:\\templates\\mockup.psd',
+      file_hash: 'hash',
+      doc_size: { w: 1000, h: 1000 },
+      smart_objects: [],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: 123,
+      layers: [],
+      text_layers: [],
+    }
+    const groups = [
+      {
+        group_index: 0,
+        sku_folder: 'img1',
+        template_name: 'mockup',
+        print_assets: [{ id: 'img1', file_path: 'C:\\prints\\img1.png' }],
+        job: createJob({
+          group_index: 0,
+          output_paths: [firstOutputPath],
+          mockup_path: template.file_path,
+        }),
+      },
+      {
+        group_index: 1,
+        sku_folder: 'img2',
+        template_name: 'mockup',
+        print_assets: [{ id: 'img2', file_path: 'C:\\prints\\img2.png' }],
+        job: createJob({
+          group_index: 1,
+          output_paths: [secondOutputPath],
+          mockup_path: template.file_path,
+        }),
+      },
+    ]
+
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      writeTemplateBatchJsx: async () => ({
+        jsx_path: join(tempDir, 'batch.jsx'),
+        result_file_path: resultPath,
+        log_file_path: logPath,
+        cancel_file_path: join(tempDir, 'cancel.flag'),
+        content: '',
+      }),
+      comAdapter: {
+        runJsxFile: async () => {
+          await writeFile(logPath, '', 'utf8')
+          await writeFile(
+            resultPath,
+            JSON.stringify({
+              ok: false,
+              cancelled: true,
+              outputs: [firstOutputPath],
+              groups: [
+                {
+                  ok: true,
+                  group_index: 0,
+                  sku_folder: 'img1',
+                  outputs: [firstOutputPath],
+                },
+              ],
+            }),
+            'utf8',
+          )
+        },
+      },
+      recorder: {
+        recordRunning: async (job) => {
+          events.push(`running:${job.group_index}`)
+        },
+        recordCompleted: async (job) => {
+          events.push(`completed:${job.group_index}`)
+        },
+        recordFailed: async (job) => {
+          events.push(`failed:${job.group_index}`)
+        },
+        recordCancelled: async (job) => {
+          events.push(`cancelled:${job.group_index}`)
+        },
+      },
+      shouldSkipJob: async () => false,
+    })
+
+    await expect(engine.runTemplateBatch(template, groups, 0)).resolves.toMatchObject({
+      ok: false,
+      cancelled: true,
+      outputs: [firstOutputPath],
+      groups: [{ group_index: 0, sku_folder: 'img1', outputs: [firstOutputPath] }],
+    })
+    expect(events).toEqual(['running:0', 'running:1', 'completed:0', 'cancelled:1'])
+  })
+
+  it('persists workflow_steps rows through the sqlite recorder', async () => {
+    const rows: Array<{ sql: string; params: Record<string, unknown> }> = []
+    const artifactColumns = [
+      'id',
+      'task_id',
+      'sku_code',
+      'print_id',
+      'step',
+      'provider',
+      'model_or_workflow',
+      'skill_id',
+      'skill_version',
+      'source_artifact_ids',
+      'file_path',
+      'file_size',
+      'file_hash',
+      'prompt_snapshot',
+      'params_snapshot',
+      'created_at',
+    ]
+    const db = {
+      exec: () => undefined,
+      prepare: (sql: string) => {
+        if (sql.includes('PRAGMA table_info(artifacts)')) {
+          return {
+            all: () => artifactColumns.map((name) => ({ name })),
+          }
+        }
+        return {
+          run: (params: Record<string, unknown>) => {
+            rows.push({ sql, params })
+          },
+        }
+      },
     }
     const recorder = new SqlitePhotoshopWorkflowStepRecorder({
       db: db as never,
@@ -285,59 +501,147 @@ describe('PhotoshopExecutionEngine', () => {
     })
     expect(rows[2]?.params).toMatchObject({
       task_id: 'task-1',
-      step_id: 'task-1:photoshop:0',
+      step: 'mockup',
       provider: 'photoshop',
+      model_or_workflow: 'mockup.psd',
       file_path: job.output_paths[0],
       file_hash: 'hash-01',
     })
   })
 
   it('returns true from shouldSkipJob only when DB, files, and hashes match', async () => {
+    const db = openSqliteDatabase(':memory:')
     const job = createJob({ output_paths: ['C:\\outputs\\01.jpg'] })
-    const rows = [
-      {
-        params_snapshot: JSON.stringify({
-          job_signature: createPhotoshopJobSignature(job),
-        }),
-      },
-    ]
-    const artifacts = [{ file_path: 'C:\\outputs\\01.jpg', file_hash: 'hash-01' }]
-    const db = {
-      prepare: (sql: string) => ({
-        all: (...params: unknown[]) => {
-          if (sql.includes('FROM workflow_steps')) {
-            expect(params).toEqual(['task-1'])
-            return rows
-          }
-          expect(params).toEqual(['C:\\outputs\\01.jpg'])
-          return artifacts
-        },
-      }),
-    }
+    try {
+      await new SqlitePhotoshopWorkflowStepRecorder({
+        db,
+        hashFile: async () => 'hash-01',
+      }).recordRunning(job, 0)
+      db.prepare(
+        `UPDATE workflow_steps
+         SET status = 'completed'
+         WHERE id = ?`,
+      ).run('task-1:photoshop:0')
+      db.prepare(
+        `INSERT INTO artifacts (
+          id,
+          task_id,
+          step,
+          provider,
+          model_or_workflow,
+          file_path,
+          file_hash,
+          params_snapshot,
+          created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'artifact-01',
+        job.task_id,
+        'mockup',
+        'photoshop',
+        'mockup.psd',
+        'C:\\outputs\\01.jpg',
+        'hash-01',
+        '{}',
+        Date.now(),
+      )
 
-    await expect(
-      shouldSkipJob(job, {
-        db: db as never,
-        accessFile: async () => undefined,
+      await expect(
+        shouldSkipJob(job, {
+          db,
+          accessFile: async () => undefined,
+          hashFile: async () => 'hash-01',
+        }),
+      ).resolves.toBe(true)
+      await expect(
+        shouldSkipJob(job, {
+          db,
+          accessFile: async () => undefined,
+          hashFile: async () => 'changed',
+        }),
+      ).resolves.toBe(false)
+      await expect(
+        shouldSkipJob(job, {
+          db,
+          accessFile: async () => {
+            throw new Error('missing')
+          },
+          hashFile: async () => 'hash-01',
+        }),
+      ).resolves.toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('returns false from shouldSkipJob when workflow tables do not exist yet', async () => {
+    const db = openSqliteDatabase(':memory:')
+    try {
+      await expect(shouldSkipJob(createJob(), { db })).resolves.toBe(false)
+    } finally {
+      db.close()
+    }
+  })
+
+  it('records Photoshop artifacts into an existing shared artifacts table', async () => {
+    const db = openSqliteDatabase(':memory:')
+    const outputPath = join(tempDir, '01.jpg')
+    await writeFile(outputPath, 'fake image', 'utf8')
+    try {
+      db.exec(`
+        CREATE TABLE artifacts (
+          id TEXT PRIMARY KEY,
+          task_id TEXT,
+          sku_code TEXT,
+          print_id TEXT,
+          step TEXT NOT NULL,
+          provider TEXT,
+          model_or_workflow TEXT,
+          skill_id TEXT,
+          skill_version TEXT,
+          source_artifact_ids TEXT,
+          file_path TEXT NOT NULL,
+          file_size INTEGER,
+          file_hash TEXT,
+          prompt_snapshot TEXT,
+          params_snapshot TEXT,
+          created_at INTEGER NOT NULL
+        );
+      `)
+      const recorder = new SqlitePhotoshopWorkflowStepRecorder({
+        db,
         hashFile: async () => 'hash-01',
-      }),
-    ).resolves.toBe(true)
-    await expect(
-      shouldSkipJob(job, {
-        db: db as never,
-        accessFile: async () => undefined,
-        hashFile: async () => 'changed',
-      }),
-    ).resolves.toBe(false)
-    await expect(
-      shouldSkipJob(job, {
-        db: db as never,
-        accessFile: async () => {
-          throw new Error('missing')
+      })
+      const job = createJob({ output_paths: [outputPath] })
+
+      await recorder.recordRunning(job, 0)
+      await expect(recorder.recordCompleted(job, 0, [outputPath])).resolves.toBeUndefined()
+
+      const artifactRows = db
+        .prepare(
+          `SELECT step, provider, model_or_workflow, file_path, file_hash
+           FROM artifacts
+           WHERE provider = 'photoshop'`,
+        )
+        .all() as Array<{
+          step: string
+          provider: string
+          model_or_workflow: string
+          file_path: string
+          file_hash: string
+        }>
+      expect(artifactRows).toEqual([
+        {
+          step: 'mockup',
+          provider: 'photoshop',
+          model_or_workflow: 'mockup.psd',
+          file_path: outputPath,
+          file_hash: 'hash-01',
         },
-        hashFile: async () => 'hash-01',
-      }),
-    ).resolves.toBe(false)
+      ])
+    } finally {
+      db.close()
+    }
   })
 
   it('runs a real Photoshop path A job when REAL_PS=1', async () => {

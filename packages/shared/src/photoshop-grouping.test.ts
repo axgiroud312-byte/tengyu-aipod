@@ -128,4 +128,59 @@ describe('groupTasks', () => {
       'C:\\Users\\niilo\\Desktop\\新建文件夹/钥匙扣x/img2/01.png',
     )
   })
+
+  it('writes single-print sku-first outputs under sku then template', () => {
+    const groups = groupTasks(
+      [{ id: 'img2', file_path: 'C:\\素材\\img2.png' }],
+      createTemplate({
+        representative_so_count: 1,
+        smart_objects: [
+          {
+            name: 'SO 1',
+            path: 'root/SO 1',
+            sort_order: 0,
+            is_top_level: true,
+            bounds: [0, 0, 100, 100],
+            shared_indicator: 'a',
+          },
+        ],
+      }),
+      {
+        taskId: 'task-1',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        outputLayout: 'sku_first',
+      },
+    )
+
+    expect(groups[0]?.sku_folder).toBe('img2')
+    expect(groups[0]?.template_name).toBe('钥匙扣x')
+    expect(groups[0]?.job.output_paths[0]).toBe(
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/img2/钥匙扣x/01.jpg',
+    )
+  })
+
+  it('uses stable group names for multi-print sku-first groups', () => {
+    const groups = groupTasks(
+      [
+        { id: 'img1', file_path: 'C:\\素材\\img1.png' },
+        { id: 'img2', file_path: 'C:\\素材\\img2.png' },
+        { id: 'img3', file_path: 'C:\\素材\\img3.png' },
+      ],
+      createTemplate(),
+      {
+        taskId: 'task-1',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        outputLayout: 'sku_first',
+      },
+    )
+
+    expect(groups[0]?.sku_folder).toBe('group-001')
+    expect(groups[1]?.sku_folder).toBe('img3')
+    expect(groups[0]?.job.output_paths[0]).toBe(
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/group-001/钥匙扣x/01.jpg',
+    )
+    expect(groups[1]?.job.output_paths[0]).toBe(
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/img3/钥匙扣x/01.jpg',
+    )
+  })
 })
