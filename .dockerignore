@@ -1,0 +1,12 @@
+.git
+.DS_Store
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+release
+output
+project-website
+*.log
+packages/client
