@@ -11,12 +11,14 @@ type CountPair = {
 }
 
 type DashboardStats = {
+  admins: CountPair
   customers: CountPair
   dbOk: boolean
   skills: CountPair
 }
 
 const emptyStats: DashboardStats = {
+  admins: { active: null, total: null },
   customers: { active: null, total: null },
   dbOk: false,
   skills: { active: null, total: null },
@@ -24,14 +26,18 @@ const emptyStats: DashboardStats = {
 
 async function getDashboardStats(): Promise<DashboardStats> {
   try {
-    const [totalSkills, enabledSkills, totalCustomers, activeCustomers] = await Promise.all([
-      db.skill.count(),
-      db.skill.count({ where: { enabled: true } }),
-      db.customerAccount.count(),
-      db.customerAccount.count({ where: { status: 'active' } }),
-    ])
+    const [totalSkills, enabledSkills, totalCustomers, activeCustomers, totalAdmins, activeAdmins] =
+      await Promise.all([
+        db.skill.count(),
+        db.skill.count({ where: { enabled: true } }),
+        db.customerAccount.count(),
+        db.customerAccount.count({ where: { status: 'active' } }),
+        db.admin.count(),
+        db.admin.count({ where: { is_active: true } }),
+      ])
 
     return {
+      admins: { active: activeAdmins, total: totalAdmins },
       customers: { active: activeCustomers, total: totalCustomers },
       dbOk: true,
       skills: { active: enabledSkills, total: totalSkills },
@@ -50,6 +56,14 @@ function formatPair(pair: CountPair, activeLabel: string) {
 }
 
 const moduleLinks = [
+  {
+    description: '创建和管理后台管理员账号，控制 Admin 登录状态。',
+    href: '/admin/admins',
+    label: '账号管理',
+    statKey: 'admins',
+    statLabel: '启用',
+    title: '管理员账号',
+  },
   {
     description: '维护生图、提取、侵权检测等固定业务 Skill 槽位，每个槽位只保存系统提示词。',
     href: '/admin/skills',
@@ -111,6 +125,7 @@ export default async function AdminHomePage() {
         </Card>
 
         {[
+          { label: '启用', pair: stats.admins, title: '管理员' },
           { label: '启用', pair: stats.skills, title: 'Skill' },
           { label: '已授权', pair: stats.customers, title: '客户账号' },
         ].map((item) => (
@@ -128,7 +143,7 @@ export default async function AdminHomePage() {
         ))}
       </section>
 
-      <section className="grid gap-4 md:grid-cols-2">
+      <section className="grid gap-4 md:grid-cols-3">
         {moduleLinks.map((item) => (
           <Card key={item.href} className="flex flex-col">
             <CardHeader>

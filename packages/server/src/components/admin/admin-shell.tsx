@@ -13,6 +13,7 @@ type AdminNavItem = {
 
 const adminNavItems: AdminNavItem[] = [
   { href: '/admin', label: '首页', description: '运营概览', marker: 'A' },
+  { href: '/admin/admins', label: '管理员', description: '账号管理', marker: 'M' },
   { href: '/admin/skills', label: 'Skill', description: '系统提示词', marker: 'S' },
   { href: '/admin/customers', label: '客户', description: '账号授权', marker: 'C' },
 ]
