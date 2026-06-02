@@ -31,19 +31,21 @@ COPY packages/server packages/server
 
 RUN pnpm -F @tengyu-aipod/server prisma:generate
 RUN pnpm -F @tengyu-aipod/server build
+RUN rm -f packages/server/.next/standalone/packages/server/.env
 
 FROM base AS runner
 
 ENV NODE_ENV="production"
 ENV NEXT_TELEMETRY_DISABLED="1"
+ENV HOSTNAME="0.0.0.0"
+ENV PORT="3100"
 
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/pnpm-lock.yaml ./pnpm-lock.yaml
-COPY --from=builder /app/pnpm-workspace.yaml ./pnpm-workspace.yaml
-COPY --from=builder /app/node_modules ./node_modules
-COPY --from=builder /app/packages/shared ./packages/shared
-COPY --from=builder /app/packages/server ./packages/server
+RUN npm install -g prisma@6.19.3 tsx@4.8.1
+
+COPY --from=builder /app/packages/server/.next/standalone ./
+COPY --from=builder /app/packages/server/.next/static ./packages/server/.next/static
+COPY --from=builder /app/packages/server/prisma ./packages/server/prisma
 
 EXPOSE 3100
 
-CMD ["pnpm", "-F", "@tengyu-aipod/server", "start"]
+CMD ["node", "packages/server/server.js"]

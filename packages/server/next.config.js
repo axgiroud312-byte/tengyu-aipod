@@ -5,6 +5,7 @@ const currentDir = dirname(fileURLToPath(import.meta.url))
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  output: 'standalone',
   outputFileTracingRoot: resolve(currentDir, '../..'),
   reactStrictMode: true,
 }

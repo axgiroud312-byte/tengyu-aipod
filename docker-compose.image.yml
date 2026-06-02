@@ -7,8 +7,8 @@
 #   # 修改 .env.server 里的 SERVER_IMAGE / 密码 / JWT
 #   docker compose --env-file .env.server -f docker-compose.image.yml pull server
 #   docker compose --env-file .env.server -f docker-compose.image.yml up -d postgres
-#   docker compose --env-file .env.server -f docker-compose.image.yml run --rm server pnpm -F @tengyu-aipod/server exec prisma migrate deploy
-#   docker compose --env-file .env.server -f docker-compose.image.yml run --rm server pnpm -F @tengyu-aipod/server prisma-seed
+#   docker compose --env-file .env.server -f docker-compose.image.yml run --rm server prisma migrate deploy --schema packages/server/prisma/schema.prisma
+#   docker compose --env-file .env.server -f docker-compose.image.yml run --rm server tsx packages/server/prisma/seed.ts
 #   docker compose --env-file .env.server -f docker-compose.image.yml up -d server
 
 services:

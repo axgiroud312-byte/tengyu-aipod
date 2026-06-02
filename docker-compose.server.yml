@@ -3,8 +3,8 @@
 # 使用：
 #   cp .env.server.example .env.server
 #   docker compose --env-file .env.server -f docker-compose.server.yml up -d postgres
-#   docker compose --env-file .env.server -f docker-compose.server.yml run --rm server pnpm -F @tengyu-aipod/server exec prisma migrate deploy
-#   docker compose --env-file .env.server -f docker-compose.server.yml run --rm server pnpm -F @tengyu-aipod/server prisma-seed
+#   docker compose --env-file .env.server -f docker-compose.server.yml run --rm server prisma migrate deploy --schema packages/server/prisma/schema.prisma
+#   docker compose --env-file .env.server -f docker-compose.server.yml run --rm server tsx packages/server/prisma/seed.ts
 #   docker compose --env-file .env.server -f docker-compose.server.yml up -d server
 
 services:
