@@ -182,7 +182,7 @@ UI 弹窗：
 | 生图 | 单图级 | 查 artifacts 表已完成的图，剩余的重新跑 |
 | 检测 | 单图级 | 查 detection_results 已完成的，剩余的跑 |
 | 套版 | 任务组级 | 已完成的组跳过，未完成的组从头跑 |
-| 标题 | 单货号级 | 查 titles.xlsx 已有的跳过 |
+| 标题 | 单货号级 | 查标题 xlsx 已有的跳过 |
 | 上架 | 单 listing 级 | 查 listing_status='success' 跳过 |
 
 ## 4. 失败传播（串联模板，v1.5）
@@ -423,7 +423,78 @@ autoUpdater.on('update-downloaded', () => {
 
 配置 electron-builder publish 用 GitHub Releases 或自托管。
 
-## 8. 首次启动引导
+## 8. 客户登录与首次启动
+
+### 8.1 启动门禁
+
+客户端启动顺序：
+
+1. App 启动。
+2. 主进程读取本地客户登录态 `uid + secret`。
+3. 没有登录态时显示客户登录页。
+4. 有登录态时调用 Next `POST /api/customer-auth/verify`。
+5. Next 内部调用旧 PHP `/user/user/info` 校验 `uid + secret + finger`。
+6. `pending / disabled / expired` 显示不可用提示。
+7. `active` 且未到期后，进入首次设置引导或 Workbench。
+
+Skill 同步必须在客户授权通过后启动。
+
+运行中每 5 分钟复查一次授权状态。发现 PHP 返回 `nologin: 1` 或 Next 返回授权失效后，客户端清空本地登录态并回登录页。
+
+### 8.2 客户登录 IPC
+
+渲染进程只通过 IPC 调用主进程，不能直接拿 PHP `secret`。
+
+```text
+customerAuth:getState
+customerAuth:getQrcode
+customerAuth:checkWechatLogin
+customerAuth:sendSms
+customerAuth:getSmsCountdown
+customerAuth:loginByPhone
+customerAuth:verify
+customerAuth:logout
+```
+
+### 8.3 微信扫码登录
+
+流程：
+
+1. 客户端主进程请求旧 PHP `/api/wxlogin/get_qrcode`，传 `finger`。
+2. 渲染进程展示二维码。
+3. 每 1 秒通过主进程轮询旧 PHP `/api/wxlogin/check_login`。
+4. 成功后主进程保存 `uid + secret`。
+5. 主进程调用 Next `/api/customer-auth/verify`。
+6. 授权通过后进入首次设置或 Workbench。
+
+二维码过期或登录失败时，结束轮询并提示用户重试。
+
+### 8.4 手机号验证码登录
+
+流程：
+
+1. 输入手机号。
+2. 主进程调用旧 PHP `/user/public/send_login_sms`。
+3. 输入验证码。
+4. 主进程调用旧 PHP `/user/public/login`，传 `method=phone` 和 `finger`。
+5. 成功后主进程保存 `uid + secret`。
+6. 主进程调用 Next `/api/customer-auth/verify`。
+7. 授权通过后进入首次设置或 Workbench。
+
+### 8.5 设备指纹
+
+旧 PHP 接口需要 `finger`。v1 使用最小硬件信息哈希：
+
+- `hostname`
+- `platform`
+- `arch`
+- Electron `userData` 路径
+
+不采集网卡 MAC。生成后本地持久化，保证同一机器稳定。
+
+### 8.6 首次设置引导
+
+客户授权通过后，如果本机还没有完成首次设置，展示 onboarding。
 
 ```tsx
 // renderer/pages/Onboarding.tsx
@@ -431,21 +502,20 @@ function Onboarding() {
   const [step, setStep] = useState(1)
   
   return (
-    <OnboardingLayout step={step} totalSteps={4}>
-      {step === 1 && <WechatLoginStep onNext={() => setStep(2)} />}
-      {step === 2 && <WorkbenchRootStep onNext={() => setStep(3)} />}
-      {step === 3 && <ApiKeysStep onNext={() => setStep(4)} onSkip={() => setStep(4)} />}
-      {step === 4 && <CompletionStep />}
+    <OnboardingLayout step={step} totalSteps={3}>
+      {step === 1 && <WorkbenchRootStep onNext={() => setStep(2)} />}
+      {step === 2 && <ApiKeysStep onNext={() => setStep(3)} onSkip={() => setStep(3)} />}
+      {step === 3 && <CompletionStep />}
     </OnboardingLayout>
   )
 }
 ```
 
-### 8.1 Step 1：工作区选择
+### 8.7 Step 1：工作区选择
 
 ```
 ┌─ 欢迎使用腾域 aipod ──────────────────────────┐
-│ Step 1/2 — 选择工作区                        │
+│ Step 1/3 — 选择工作区                        │
 │                                              │
 │ 请选择本机用于保存业务文件的工作区。          │
 │                                              │
@@ -453,7 +523,7 @@ function Onboarding() {
 └─────────────────────────────────────────────┘
 ```
 
-### 8.2 工作区选择（设置页）
+### 8.8 工作区选择（设置页）
 
 ```
 设置页 — 工作区
@@ -478,10 +548,10 @@ function Onboarding() {
 
 未选择工作区时，业务模块入口显示“请先选择工作区”并引导到设置页；设置页本身不被拦截。
 
-### 8.3 Step 2：API Keys
+### 8.9 Step 2：API Keys
 
 ```
-Step 2/2 — API Keys（可全跳过，后续模块面板补填）
+Step 2/3 — API Keys（可全跳过，后续模块面板补填）
 
 晨羽智云 API Key（用于 ComfyUI 生图）：
   [______]  [跳过]  [说明: 在 chenyu.cn 控制台创建]
@@ -499,10 +569,10 @@ Grsai API Key（用于付费生图）：
   [上一步]  [全部跳过]  [下一步]
 ```
 
-### 8.4 Step 4：完成
+### 8.10 Step 3：完成
 
 ```
-Step 4/4 — 完成
+Step 3/3 — 完成
 
 ✓ 软件已准备就绪
 
@@ -644,6 +714,12 @@ macOS：
 │   - /Users/.../腾域aipod工作区/
 │   - [更改]
 │
+├─ 客户账号
+│   - 昵称：TEST
+│   - 授权状态：已授权
+│   - 到期日：2026-12-31
+│   - [退出登录]
+│
 ├─ API Keys
 │   - 晨羽智云：●已设置 [更改]
 │   - Grsai：●已设置 [更改]
@@ -686,11 +762,12 @@ macOS：
 
 ```
 🟢 服务器已连接
+🟢 客户账号已授权
 🟡 使用本地 Skill 缓存
 🔴 外部服务连接失败
 ```
 
-状态入口只展示服务连接、Skill 缓存和外部服务配置，不展示授权信息。
+状态入口展示服务连接、客户账号授权、Skill 缓存和外部服务配置。授权状态失效时，主界面退出到客户登录页。
 
 ### 13.2 通知系统
 
@@ -711,5 +788,6 @@ OS 原生通知用于：
 - 日志自动清理
 - 崩溃日志生成
 - 错误上报队列在离线时落磁盘
+- 客户登录、pending/disabled/expired 门禁、运行中 5 分钟复查
 - 首次启动引导各 Step 跳过/继续
 - 自动更新检查

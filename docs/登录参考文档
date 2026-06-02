@@ -1,0 +1,477 @@
+# 统一登录对接文档（给 AI 开发使用）
+
+## 1. 目标
+
+为一个新项目接入现有登录体系，直接复用已有 PHP 后端用户系统。
+
+后端根地址固定为：
+
+`https://www.tengyuai.com/`
+
+本次接入采用当前现有机制，不改后端登录架构。
+
+## 2. 业务规则
+
+必须严格遵守以下规则：
+
+1. 新项目和当前项目共用同一批用户数据。
+2. 登录态是全局唯一的。
+3. 任意一端重新登录，另一端旧登录态立即失效。
+4. 不允许“当前项目”和“新项目”同时保持登录。
+5. 这正是当前后端现有行为，不需要为新项目额外设计多端会话。
+
+换句话说：
+
+- 新项目登录后，当前项目会掉线。
+- 当前项目重新登录后，新项目会掉线。
+
+## 3. 当前后端登录机制
+
+当前后端不是 Session/Cookie 登录，而是自定义令牌登录。
+
+登录成功后后端返回：
+
+```json
+{
+  "uid": 123,
+  "secret": "xxxxxxxx"
+}
+```
+
+后续所有需要登录的接口，都必须在请求体中携带：
+
+- `uid`
+- `secret`
+
+后端鉴权逻辑是：
+
+1. 按 `uid` 查询 `user` 表。
+2. 校验数据库中的 `secret` 是否等于请求里的 `secret`。
+3. 如果某次新登录覆盖了数据库里的 `secret`，旧客户端的登录态立即失效。
+
+因此，新项目必须完全接受这种“单点互踢”行为。
+
+## 4. 已确认的接口
+
+### 4.1 手机验证码发送
+
+`POST https://www.tengyuai.com/user/public/send_login_sms`
+
+请求体：
+
+```json
+{
+  "phone": "13800138000"
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "status": 1,
+  "info": "发送成功"
+}
+```
+
+失败响应示例：
+
+```json
+{
+  "status": 0,
+  "info": "手机号格式不正确"
+}
+```
+
+### 4.2 获取短信倒计时
+
+`POST https://www.tengyuai.com/user/public/get_sms_countdown`
+
+请求体：
+
+```json
+{}
+```
+
+成功响应示例：
+
+```json
+{
+  "status": 1,
+  "data": {
+    "countdown": 35
+  }
+}
+```
+
+### 4.3 手机验证码登录
+
+`POST https://www.tengyuai.com/user/public/login`
+
+请求体：
+
+```json
+{
+  "method": "phone",
+  "phone": "13800138000",
+  "code": "123456",
+  "finger": "device-fingerprint-string"
+}
+```
+
+说明：
+
+- `method` 固定传 `phone`
+- `finger` 为设备指纹，当前项目每次请求都会带
+- 如果手机号未注册，后端会自动注册并登录
+
+成功响应示例：
+
+```json
+{
+  "status": 1,
+  "info": "登录成功",
+  "data": {
+    "uid": 123,
+    "secret": "xxxxxxxx"
+  }
+}
+```
+
+失败响应示例：
+
+```json
+{
+  "status": 0,
+  "info": "验证码错误"
+}
+```
+
+### 4.4 微信扫码登录：获取二维码
+
+`POST https://www.tengyuai.com/api/wxlogin/get_qrcode`
+
+请求体：
+
+```json
+{
+  "finger": "device-fingerprint-string"
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "status": 1,
+  "info": "获取成功",
+  "data": {
+    "qrcode_url": "https://open.weixin.qq.com/...",
+    "token": "login-token"
+  }
+}
+```
+
+处理方式：
+
+1. 前端拿到 `qrcode_url`
+2. 打开二维码链接或展示给用户扫码
+3. 记录 `token`
+4. 进入轮询
+
+### 4.5 微信扫码登录：轮询登录结果
+
+`POST https://www.tengyuai.com/api/wxlogin/check_login`
+
+请求体：
+
+```json
+{
+  "token": "login-token",
+  "finger": "device-fingerprint-string"
+}
+```
+
+等待中响应示例：
+
+```json
+{
+  "status": 0,
+  "info": "等待扫码"
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "status": 1,
+  "info": "登录成功",
+  "data": {
+    "uid": 123,
+    "secret": "xxxxxxxx"
+  }
+}
+```
+
+失败/过期示例：
+
+```json
+{
+  "status": 0,
+  "info": "二维码已过期"
+}
+```
+
+### 4.6 获取当前登录用户信息
+
+`POST https://www.tengyuai.com/user/user/info`
+
+请求体：
+
+```json
+{
+  "uid": 123,
+  "secret": "xxxxxxxx",
+  "finger": "device-fingerprint-string"
+}
+```
+
+成功响应示例：
+
+```json
+{
+  "status": 1,
+  "info": "用户信息接口",
+  "data": {
+    "uid": 123,
+    "avatar": "https://www.tengyuai.com/Uploads/...",
+    "nickname": "TEST",
+    "account": "test001",
+    "tel": "13800138000",
+    "vip": 0,
+    "vip_expire": null,
+    "lev": 0,
+    "lev_expire": null
+  }
+}
+```
+
+### 4.7 退出登录
+
+`POST https://www.tengyuai.com/user/public/logout`
+
+请求体：
+
+```json
+{
+  "uid": 123
+}
+```
+
+说明：
+
+- 当前后端退出登录主要按 `uid` 清空数据库中的 `secret`
+- 清空后，其他端也会一起失效
+
+## 5. 登录态失效判断
+
+后端在登录失效时，会返回类似：
+
+```json
+{
+  "status": 0,
+  "info": "登录状态失效，请重新登录",
+  "nologin": 1
+}
+```
+
+或：
+
+```json
+{
+  "status": 0,
+  "info": "请先登录",
+  "nologin": 1
+}
+```
+
+新项目必须实现以下逻辑：
+
+1. 任意业务接口返回 `nologin: 1` 时，立即清除本地登录态。
+2. 清除后跳转登录页。
+3. 不能尝试自动恢复旧 `secret`。
+4. 因为另一端重新登录导致失效，这属于正常业务行为，不是异常。
+
+## 6. 新项目必须实现的完整流程
+
+### 6.1 手机验证码登录流程
+
+1. 输入手机号。
+2. 调用 `send_login_sms`。
+3. 用户输入验证码。
+4. 调用 `/user/public/login`，传 `method=phone`。
+5. 成功后保存 `uid` 和 `secret`。
+6. 立即调用 `/user/user/info` 拉取当前用户资料。
+7. 进入已登录状态。
+
+### 6.2 微信扫码登录流程
+
+1. 调用 `/api/wxlogin/get_qrcode`。
+2. 展示二维码或打开二维码链接。
+3. 每 1 秒轮询 `/api/wxlogin/check_login`。
+4. 轮询成功后保存 `uid` 和 `secret`。
+5. 再调用 `/user/user/info` 获取资料。
+6. 进入已登录状态。
+7. 超时或二维码过期时结束轮询并提示用户重试。
+
+## 7. 本地存储要求
+
+至少存以下字段：
+
+```json
+{
+  "uid": 123,
+  "secret": "xxxxxxxx"
+}
+```
+
+建议额外缓存：
+
+```json
+{
+  "uid": 123,
+  "secret": "xxxxxxxx",
+  "userInfo": {
+    "uid": 123,
+    "nickname": "TEST",
+    "avatar": "https://www.tengyuai.com/Uploads/..."
+  }
+}
+```
+
+注意：
+
+- `userInfo` 只是缓存
+- 实际鉴权只依赖 `uid + secret`
+- 每次启动应用时，建议直接调用 `/user/user/info` 校验登录态是否仍有效
+
+## 8. 设备指纹要求
+
+当前项目会在每次请求里附带 `finger`。
+
+新项目也应提供一个稳定的设备指纹字符串，并在以下请求中带上：
+
+- `/user/public/login`
+- `/api/wxlogin/get_qrcode`
+- `/api/wxlogin/check_login`
+- `/user/user/info`
+- 其他所有已登录接口
+
+如果新项目是桌面端，可参考当前项目思路，基于设备信息生成 hash。
+如果新项目是 Web 端，可先使用一个稳定的浏览器端指纹方案，或临时使用本地持久化生成的 UUID。
+
+## 9. 重要限制
+
+### 9.1 不要实现多设备并存
+
+不要为新项目增加“独立 session 池”或“按项目多端共存”的逻辑。
+当前需求已经明确：新项目登录后，老项目必须失效。
+
+### 9.2 不要假设手机号用户和微信用户一定是同一个 uid
+
+当前后端逻辑是：
+
+- 手机登录主要按 `tel` 查用户
+- 微信登录主要按 `openid` 查用户
+
+因此现阶段不能擅自假设：
+
+- 同一个手机号用户和同一个微信用户已经自动绑定
+- 同一个自然人在所有登录方式下必然是同一个 uid
+
+如果产品以后要求“手机号账号”和“微信账号”强制归一，再单独做账号绑定设计。
+
+### 9.3 不要改现有 PHP 后端登录机制
+
+本次新项目接入，目标是复用现有机制，不是重构认证系统。
+除非另有明确需求，不要改成 JWT、Cookie Session、OAuth Server、多端会话表等新方案。
+
+## 10. 推荐封装方式
+
+建议新项目封装一个统一请求器：
+
+1. 所有请求默认 base URL 为 `https://www.tengyuai.com/`
+2. 自动从本地读取 `uid`、`secret`
+3. 自动注入 `finger`
+4. 如果接口返回 `nologin: 1`，自动清空登录态并跳登录页
+
+伪代码：
+
+```ts
+async function appPost(path: string, body: Record<string, any> = {}) {
+  const loginData = readLoginData();
+  const finger = getDeviceFingerprint();
+
+  const payload = {
+    finger,
+    ...loginData,
+    ...body
+  };
+
+  const res = await fetch(`https://www.tengyuai.com${path}`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json"
+    },
+    body: JSON.stringify(payload)
+  }).then(r => r.json());
+
+  if (res?.nologin) {
+    clearLoginData();
+    redirectToLogin();
+  }
+
+  return res;
+}
+```
+
+## 11. AI 开发任务拆分
+
+如果你是另一个 AI 开发助手，请按下面顺序实现：
+
+1. 封装统一请求函数，base URL 固定为 `https://www.tengyuai.com/`
+2. 封装本地登录态存储：`uid + secret`
+3. 实现手机验证码发送
+4. 实现手机验证码登录
+5. 实现微信二维码登录和轮询
+6. 实现启动时登录态校验
+7. 实现 `nologin: 1` 的全局失效处理
+8. 实现退出登录
+9. 对接用户信息接口
+
+## 12. 已确认的现有代码参考
+
+当前项目前端参考：
+
+- `D:\work\dianxiaomi\src\modules\home\views\Login\login.js`
+- `D:\work\dianxiaomi\electron\controller\post.js`
+- `D:\work\dianxiaomi\src\App.vue`
+
+当前项目后端参考：
+
+- `D:\diamxiaomi\Application\User\Controller\PublicController.class.php`
+- `D:\diamxiaomi\Application\User\Controller\BaseController.class.php`
+- `D:\diamxiaomi\Application\User\Controller\UserController.class.php`
+- `D:\diamxiaomi\Application\Api\Controller\WxloginController.class.php`
+
+## 13. 最终结论
+
+新项目应直接复用现有后端接口和现有单点登录机制。
+
+最终行为必须是：
+
+1. 两个项目共用同一套用户体系。
+2. 任意一端登录，另一端旧登录态失效。
+3. 新项目不要实现多端共存。
+4. 新项目只需要正确实现现有接口对接和失效处理。

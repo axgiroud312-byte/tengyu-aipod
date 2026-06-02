@@ -74,7 +74,7 @@ graph TB
     API --> PG
 ```
 
-**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"客户记录与提示词控制台"（客户、Skill 系统提示词、公告、版本），不碰模型配置、图片和 Key。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
+**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"客户账号授权与提示词控制台"（客户授权、Skill 系统提示词、公告、版本），不碰模型配置、图片和 Key，也不保存 PHP `secret`。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
 
 ---
 
@@ -101,13 +101,13 @@ sequenceDiagram
 
 ## 4 个业务工作区（最重要的业务约定）
 
-代码反复围着这 4 个目录转。**只放业务图片，不放 json/csv/jsx**（唯一例外：上架批次里的 `titles.xlsx`）。
+代码反复围着这 4 个目录转。**只放业务图片，不放 json/csv/jsx**（唯一例外：上架批次里的标题 xlsx，当前优先 `标题.xlsx`，兼容旧 `titles.xlsx`）。
 
 ```
 ~/腾域aipod工作台/
 ├─ 01-采集工作区/      ← 比特浏览器采集回来，按平台和时间分任务目录
 ├─ 02-印花工作区/      ← 文生图/图生图/提取/抠图，按任务子目录保存出图
-├─ 03-检测工作区/      ← 百炼判定后按通过/复查/失败分类
+├─ 03-检测工作区/      ← 百炼判定后按无风险/疑似/高风险分类
 └─ 04-上架工作区/      ← PS 输出 + 标题 + 上架输入（上架唯一读取域）
 ```
 
@@ -188,13 +188,13 @@ ComfyUI 路径页面显示运行云机选择卡：运行状态、云机下拉框
 | **守护变量** | `REAL_LISTING=1` / `REAL_LISTING_MUTATE=1` |
 | **相关归档 task** | `listing-skill-import` / `profile-lock` / `types-port` / `runner-port` / `temu-*` / `shein-*` / `batch-loader` / `resume` / `evidence` / `module-ui` / `failure-retry` / `module-e2e` |
 
-### 7️⃣ 首次设置与云端 Skill — 工作区先行，本地保存密钥
+### 7️⃣ 客户登录、首次设置与云端 Skill — 授权先行，本地保存密钥
 
 | 部分 | 文件 |
 |---|---|
 | **主进程业务** | `packages/client/src/main/onboarding.ts` ← 首次设置 + 工作区/API Key 保存<br/>`packages/client/src/main/lib/onboarding-state.ts` ← setup 状态<br/>`keychain.ts` ← OS 钥匙串加密 |
-| **后台** | `packages/server/src/app/admin/customers/`（客户记录）<br/>`packages/server/src/app/admin/skills/`（Skill 系统提示词） |
-| **Spec** | `docs/adr/0002-no-client-auth-gate.md` |
+| **后台** | `packages/server/src/app/admin/customers/`（客户账号授权）<br/>`packages/server/src/app/api/customer-auth/`（客户授权校验）<br/>`packages/server/src/app/admin/skills/`（Skill 系统提示词） |
+| **Spec** | `docs/spec/08-server.md` + `docs/spec/09-cross-cutting.md` + `docs/adr/0011-customer-login-via-php-auth.md` |
 
 ### 公共基础设施（所有模块共用）
 
@@ -212,7 +212,8 @@ ComfyUI 路径页面显示运行云机选择卡：运行状态、云机下拉框
 
 | 路径 | 干什么 |
 |---|---|
-| `packages/server/src/app/admin/customers/` | 客户记录管理 |
+| `packages/server/src/app/admin/customers/` | 客户账号授权管理 |
+| `packages/server/src/app/api/customer-auth/` | 客户授权校验 |
 | `packages/server/src/app/admin/skills/` | 生图、提取、侵权检测固定 Skill 系统提示词槽位 |
 | `packages/server/src/app/api/skills/` | 客户端拉取 Skill 系统提示词 |
 | `packages/server/src/app/api/health/` | 服务健康检查 |
@@ -239,7 +240,7 @@ flowchart LR
 **5 个流转规则**（任意一条违反 = 出 bug）：
 1. 采集输出只进 `01-采集工作区/{platform}-{timestamp}/`
 2. 生图输出只进 `02-印花工作区/{能力}/{任务名}/`
-3. 检测输出只进 `03-检测工作区/{任务名}/{通过|复查|失败}/`
+3. 检测输出只进 `03-检测工作区/{任务名}/{无风险|疑似|高风险}/`
 4. `04-上架工作区/` 是 PS 输出、标题写入和上架读取的唯一业务域
 5. 服务端从不接触图片 / API Key（ADR-0003 红线）；同一比特浏览器 profile 同时刻最多 1 个模块占用
 
@@ -259,14 +260,15 @@ flowchart LR
 | `listing_task` / `listing_stage` | 上架任务 + 12 阶段状态 |
 | `ps_job` | PS 套版任务 |
 
-**服务端 Postgres（云端，只放客户记录、Skill、公告和版本）**：
+**服务端 Postgres（云端，只放客户账号授权、Skill、公告和版本）**：
 
 ```mermaid
 erDiagram
-    CUSTOMER {
+    CUSTOMER_ACCOUNT {
       string id
-      string phone
-      boolean is_active
+      int php_uid
+      string status
+      datetime expires_at
     }
     SKILL {
       string id

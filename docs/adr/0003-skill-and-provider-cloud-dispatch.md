@@ -17,7 +17,7 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 
 **采纳"云端轻配置，本地运行"的设计：**
 
-- ✅ 云端服务器**管理**：客户记录、Skill 系统提示词、公告、版本通知
+- ✅ 云端服务器**管理**：客户账号授权、Skill 系统提示词、公告、版本通知
 - ✅ 客户端本地**管理**：Provider / 模型清单 / API Key / ComfyUI Workflow
 - ❌ 云端服务器**不代理**：用户的图片、生图调用、LLM 调用、任务数据等业务数据
 - ❌ 云端服务器**不存储**：用户的 API Key、图片、提示词、生成内容和任务数据
@@ -26,9 +26,9 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 
 ```
 腾域服务器（你的）
-  ├─ 客户记录管理
+  ├─ 客户账号授权管理
   ├─ 派发 Skill 系统提示词 / Announcement / ClientVersion
-  └─ 不接触图片、API Key、模型配置、Workflow
+  └─ 不接触图片、API Key、模型配置、Workflow、PHP secret
         │
         ▼
 腾域客户端（用户的本机）
@@ -86,13 +86,14 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 
 云端 API（spec/08-server §4）：
 ```
+POST /api/customer-auth/verify
 GET /api/skills
 GET /api/skills/:id
 GET /api/announcements/active
 GET /api/client-version/check
 ```
 
-腾域客户端**只调这些**和 `/api/telemetry/error`。**不调任何生图/LLM 端点**。
+腾域客户端**只调这些**和 `/api/telemetry/error`。**不调任何生图/LLM 端点**。客户授权通过前，客户端不能启动 Skill 同步。
 
 ## 缓存策略
 

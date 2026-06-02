@@ -32,7 +32,7 @@
 | 框架 | Next.js 15 (App Router) |
 | 语言 | TypeScript 5+ |
 | 数据库 | Postgres 16 + Prisma ORM |
-| 认证 | 自实现 JWT（不用 Auth.js，需求简单）|
+| 认证 | Admin 自实现 JWT；客户登录复用旧 PHP `uid + secret` |
 | Admin UI | shadcn/ui dashboard 模板 |
 | API 验证 | zod schema |
 | 邮件（运营通知，可选）| Resend / 阿里云 DM |
@@ -111,7 +111,7 @@
 │   │   └─ src/
 │   │       ├─ app/
 │   │       │   ├─ api/                  ← /api/* REST 路由
-│   │       │   │   ├─ auth/wechat/
+│   │       │   │   ├─ customer-auth/
 │   │       │   │   ├─ status/
 │   │       │   │   ├─ skills/
 │   │       │   │   ├─ providers/
@@ -121,8 +121,7 @@
 │   │       │   │   └─ telemetry/
 │   │       │   ├─ admin/                ← /admin/* 管理后台
 │   │       │   │   ├─ login/
-│   │       │   │   ├─ codes/
-│   │       │   │   ├─ customers/
+│   │       │   │   ├─ customer-accounts/
 │   │       │   │   ├─ skills/
 │   │       │   │   ├─ providers/
 │   │       │   │   ├─ comfyui-workflows/
@@ -160,6 +159,7 @@
 - 文件系统操作（读写本地工作区）
 - SQLite 数据库
 - 所有 HTTP 调用（晨羽 / Grsai / 百炼 / 腾域服务器）
+- 客户登录态保存、PHP 登录接口调用、Next 授权校验
 - Playwright（采集 + 上架）
 - Photoshop COM 调用（Windows）
 - Sharp 图像处理（在 Worker Thread 里）
@@ -173,6 +173,7 @@
 - 不直接访问文件系统
 - 不直接调外部 API
 - 不持有 API Key 明文
+- 不直接持有 PHP `secret`
 
 ### IPC 协议
 
@@ -306,7 +307,7 @@ CREATE INDEX idx_workflow_steps_task ON workflow_steps(task_id);
 └─ {workflow_id}/{version}.json         ← 含完整 workflow JSON
 ```
 
-**缓存策略**：启动时拉 Skill；每 30 分钟后台静默刷新；用户进具体模块面板时若超 30 分钟立即刷新。Provider、模型清单、API Key 和 Workflow 均由客户端本地配置管理。
+**缓存策略**：客户授权通过后再拉 Skill；每 30 分钟后台静默刷新；用户进具体模块面板时若超 30 分钟立即刷新。Provider、模型清单、API Key 和 Workflow 均由客户端本地配置管理。
 
 ## 6. 临时文件（.workbench/tmp/）
 
@@ -389,10 +390,11 @@ export const ErrorCode = {
   HTTP_4XX: 'HTTP_4XX',
 
   // 认证
-  ACTIVATION_INVALID: 'ACTIVATION_INVALID',
-  ACTIVATION_EXPIRED: 'ACTIVATION_EXPIRED',
-  ACTIVATION_BANNED: 'ACTIVATION_BANNED',
-  AUTH_SEAT_LIMIT: 'AUTH_SEAT_LIMIT',
+  CUSTOMER_AUTH_REQUIRED: 'CUSTOMER_AUTH_REQUIRED',
+  CUSTOMER_AUTH_PENDING: 'CUSTOMER_AUTH_PENDING',
+  CUSTOMER_AUTH_EXPIRED: 'CUSTOMER_AUTH_EXPIRED',
+  CUSTOMER_AUTH_DISABLED: 'CUSTOMER_AUTH_DISABLED',
+  CUSTOMER_AUTH_NOLOGIN: 'CUSTOMER_AUTH_NOLOGIN',
 
   // 外部 API
   CHENYU_INSTANCE_DOWN: 'CHENYU_INSTANCE_DOWN',
@@ -435,14 +437,14 @@ export interface AppError {
 
 以下事实任何代码都不能违反：
 
-1. **4 个业务工作区目录下只放业务图片**（含子目录，`titles.xlsx` 只允许在上架批次目录），元数据全在 SQLite
+1. **4 个业务工作区目录下只放业务图片**（含子目录，标题 xlsx 只允许在上架批次目录；当前优先 `标题.xlsx`，兼容旧 `titles.xlsx`），元数据全在 SQLite
 2. **04-上架工作区 是上架域**，只有 PS 套版和标题模块写，上架模块读
 3. **套版候选清单在 SQLite**，侵权检测通过图加入清单时不复制、不移动源文件
 4. **同一货号同时刻最多 1 个进行中任务**
 5. **同一比特浏览器 profile 同时刻最多 1 个模块占用**
 6. **服务端不接触图片/API Key/任务数据**
 7. **客户端 API Key 永远 OS keychain 加密存储**
-8. **服务端只派发 Skill / 公告 / 版本，不做客户端授权拦截**
+8. **客户授权通过前不能进入 Workbench，不能启动 Skill 同步**
 9. **印花 ID 全局唯一**，跨 provider 共享同一 ID 空间
 10. **临时文件用完即删**，最长保留 24 小时
 
@@ -464,6 +466,8 @@ export interface AppError {
 - 比特浏览器必须本地安装并运行（默认 127.0.0.1:54345）
 - 用户必须自己注册晨羽智云/Grsai/阿里云百炼账号并购买额度
 - 用户必须自己在店小秘后台创建草稿模板
+- 客户必须先通过旧 PHP 登录并获得 Next 后台授权
+- v1 不做后台席位数或多机同时在线，沿用旧 PHP 单点登录机制
 - v1 不支持多语言 UI（仅中文）
 
 ## 13. 测试策略
@@ -472,7 +476,7 @@ export interface AppError {
 |---|---|---|
 | 单元测试 | 工具函数、解析器、状态机 | vitest |
 | 集成测试 | adapter 与 mock API | vitest + msw |
-| E2E 测试 | UI 关键路径 | playwright |
+| E2E 测试 | UI 关键路径、客户登录门禁 | playwright |
 | 真实页面验证 | 店小秘 / 各平台 | listing-automation-builder SKILL 流程 |
 
 ## 14. 部署
@@ -491,6 +495,8 @@ export interface AppError {
 - **CDN**：Cloudflare 免费档（含 DDoS 防护）
 - **监控**：UptimeRobot 免费档
 - **备份**：Neon 自动备份；自托管时 cron + rclone 到对象存储
+
+容量假设：v1 按 100-500 同时在线客户设计；500 在线客户每 5 分钟复查一次约 1.7 rps。超过 2000 同时在线后，再评估升配、拆分 Postgres 或调整复查间隔。
 
 ## 15. 演进路线（v1 → v1.5）
 
