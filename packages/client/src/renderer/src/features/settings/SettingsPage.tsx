@@ -18,6 +18,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   CheckCircle2,
   Cloud,
@@ -73,7 +74,8 @@ const defaultGenerationConfig: GenerationConfig = {
   bailian_text_model: 'qwen3.6-flash',
   bailian_vision_model: 'qwen3.6-flash',
   grsai_node: 'cn',
-  grsai_concurrency: 3,
+  default_concurrency: 20,
+  grsai_concurrency: 20,
   grsai_retries: 2,
 }
 
@@ -170,6 +172,7 @@ export function SettingsPage({
   const [destroyTarget, setDestroyTarget] = useState<ChenyuInstance | null>(null)
   const [destroyConfirm, setDestroyConfirm] = useState('')
   const [instanceUrlDrafts, setInstanceUrlDrafts] = useState<Record<string, string>>({})
+  const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'chenyu'>('general')
 
   const currentVersion = config.default_pod_tag ?? ''
   const currentGpuUuid = config.default_gpu_uuid ?? ''
@@ -643,88 +646,30 @@ export function SettingsPage({
   if (loading) {
     return (
       <div className="grid min-h-[420px] place-items-center rounded-md border bg-background text-sm text-muted-foreground">
-        正在读取晨羽设置...
+        正在读取设置...
       </div>
     )
   }
 
   return (
     <div className="space-y-6">
-      <Card>
-        <CardHeader>
-          <CardTitle>工作区</CardTitle>
-          <CardDescription>选择后会在本地自动创建采集、印花、检测和上架工作区。</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <label className="grid gap-2 text-sm font-medium" htmlFor="workspace-root">
-            <span>选择工作区</span>
-            <div className="flex gap-2">
-              <Input
-                className="min-w-0 flex-1"
-                id="workspace-root"
-                onChange={(event) => setWorkspaceDraft(event.target.value)}
-                placeholder="例如 /Users/you/Documents/腾域aipod工作区"
-                value={workspaceDraft}
-              />
-              <Button onClick={() => void chooseWorkspaceRoot()} type="button" variant="secondary">
-                <FolderOpen className="mr-2 h-4 w-4" />
-                浏览
-              </Button>
-              <Button
-                disabled={savingWorkspace || !workspaceDraft.trim()}
-                onClick={() => void saveWorkspaceRoot()}
-                type="button"
-              >
-                {savingWorkspace ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                )}
-                保存工作区
-              </Button>
-            </div>
-          </label>
-          <div className="grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-3">
-            {(workspace?.directories ?? []).map((directory) => (
-              <div className="rounded-md border bg-muted/40 px-3 py-2" key={directory}>
-                {directory}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h2 className="text-2xl font-semibold tracking-normal">晨羽智云设置</h2>
-          <p className="mt-1 text-sm text-muted-foreground">
-            管理连接、创建杭州慎思云机，并指定 ComfyUI 生图默认云机。
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button
-            disabled={refreshing || !apiKeyConfigured}
-            onClick={() => void refreshRemoteData()}
-            type="button"
-            variant="outline"
-          >
-            {refreshing ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            刷新
-          </Button>
-          <Button disabled={saving} onClick={() => void saveSettings()} type="button">
-            {saving ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <CheckCircle2 className="mr-2 h-4 w-4" />
-            )}
-            保存设置
-          </Button>
-        </div>
-      </div>
+      <Tabs
+        onValueChange={(value) => {
+          if (value === 'general' || value === 'chenyu') {
+            setActiveSettingsTab(value)
+          }
+        }}
+        value={activeSettingsTab}
+      >
+        <TabsList className="grid h-auto w-full max-w-md grid-cols-2 p-1">
+          <TabsTrigger className="h-10" value="general">
+            通用
+          </TabsTrigger>
+          <TabsTrigger className="h-10" value="chenyu">
+            晨羽智云
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
       {message ? (
         <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
@@ -737,190 +682,287 @@ export function SettingsPage({
         </div>
       ) : null}
 
-      <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+      {activeSettingsTab === 'general' ? (
         <div className="space-y-6">
-          <GenerationLocalSettingsCard
-            bailianApiKey={bailianApiKey}
-            config={generationConfig}
-            grsaiApiKey={grsaiApiKey}
-            saving={savingGenerationSettings}
-            settings={generationSettings}
-            onBailianApiKeyChange={setBailianApiKey}
-            onConfigChange={updateGenerationConfig}
-            onGrsaiApiKeyChange={setGrsaiApiKey}
-            onSave={() => void saveGenerationSettings()}
-          />
-
-          <SkillSyncCard
-            result={syncResult}
-            syncing={syncingConfig}
-            onSync={() => void syncBackendConfig()}
-          />
-
-          <LocalWorkflowCard
-            directoryPath={workflowDirectoryPath}
-            importing={importingWorkflow}
-            workflows={workflows}
-            onChooseDirectory={() => void chooseWorkflowDirectory()}
-            onDirectoryPathChange={setWorkflowDirectoryPath}
-            onImport={() => void importWorkflowDirectory()}
-            onRemove={(id) => void removeLocalWorkflow(id)}
-          />
-
-          <ConnectionCard
-            apiKey={apiKey}
-            apiKeyConfigured={apiKeyConfigured}
-            connectionError={connectionError}
-            connectionStatus={connectionStatus}
-            onApiKeyChange={setApiKey}
-          />
-
           <Card>
             <CardHeader>
-              <CardTitle>创建云机</CardTitle>
-              <CardDescription>创建固定杭州慎思 POD 的新实例。</CardDescription>
+              <CardTitle>工作区</CardTitle>
+              <CardDescription>
+                选择后会在本地自动创建采集、印花、检测和上架工作区。
+              </CardDescription>
             </CardHeader>
-            <CardContent>
-              <Accordion
-                collapsible
-                onValueChange={(value) => setCreateOpen(value === 'create')}
-                type="single"
-                value={createOpen ? 'create' : ''}
-              >
-                <AccordionItem className="rounded-md border px-4" value="create">
-                  <AccordionTrigger className="py-3">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Server className="h-4 w-4 shrink-0 text-primary" />
-                      <div className="min-w-0 text-left">
-                        <p className="font-medium">创建杭州慎思云机</p>
-                        <p className="truncate text-xs text-muted-foreground">
-                          {currentVersion || '未选版本'} · {effectiveGpuName || '未选 GPU'}
-                        </p>
-                      </div>
-                    </div>
-                  </AccordionTrigger>
-                  <AccordionContent className="space-y-4">
-                    <ReadOnlyField label="固定 POD UUID" value={config.pod_uuid ?? '未配置'} />
-                    <label
-                      className="block space-y-2 text-sm font-medium"
-                      htmlFor={fieldIds.podVersion}
-                    >
-                      <span>版本</span>
-                      {config.pod_tags?.length ? (
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                          id={fieldIds.podVersion}
-                          onChange={(event) =>
-                            updateConfig({ default_pod_tag: event.target.value })
-                          }
-                          value={currentVersion}
-                        >
-                          {config.pod_tags.map((tag) => (
-                            <option key={tag} value={tag}>
-                              {tag}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <Input
-                          id={fieldIds.podVersion}
-                          onChange={(event) =>
-                            updateConfig({ default_pod_tag: event.target.value })
-                          }
-                          placeholder="例如 4.64"
-                          value={currentVersion}
-                        />
-                      )}
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium" htmlFor={fieldIds.gpu}>
-                      <span>显卡</span>
-                      {gpus.length ? (
-                        <select
-                          className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-                          id={fieldIds.gpu}
-                          onChange={(event) => {
-                            const gpu = gpus.find((item) => item.gpu_uuid === event.target.value)
-                            updateConfig({
-                              default_gpu_uuid: event.target.value,
-                              default_gpu_name: gpu?.gpu_name,
-                            })
-                          }}
-                          value={effectiveGpuUuid}
-                        >
-                          {gpus.map((gpu) => (
-                            <option key={gpu.gpu_uuid} value={gpu.gpu_uuid}>
-                              {gpu.gpu_name}
-                            </option>
-                          ))}
-                        </select>
-                      ) : (
-                        <Input
-                          id={fieldIds.gpu}
-                          onChange={(event) =>
-                            updateConfig({ default_gpu_uuid: event.target.value })
-                          }
-                          placeholder="GPU UUID"
-                          value={effectiveGpuUuid}
-                        />
-                      )}
-                    </label>
-                    <Button
-                      className="w-full"
-                      disabled={creating || !apiKeyConfigured}
-                      onClick={() => void createInstance()}
-                      type="button"
-                    >
-                      {creating ? (
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                      ) : (
-                        <Cloud className="mr-2 h-4 w-4" />
-                      )}
-                      创建实例
-                    </Button>
-                  </AccordionContent>
-                </AccordionItem>
-              </Accordion>
+            <CardContent className="space-y-4">
+              <label className="grid gap-2 text-sm font-medium" htmlFor="workspace-root">
+                <span>选择工作区</span>
+                <div className="flex gap-2">
+                  <Input
+                    className="min-w-0 flex-1"
+                    id="workspace-root"
+                    onChange={(event) => setWorkspaceDraft(event.target.value)}
+                    placeholder="例如 /Users/you/Documents/腾域aipod工作区"
+                    value={workspaceDraft}
+                  />
+                  <Button
+                    onClick={() => void chooseWorkspaceRoot()}
+                    type="button"
+                    variant="secondary"
+                  >
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                    浏览
+                  </Button>
+                  <Button
+                    disabled={savingWorkspace || !workspaceDraft.trim()}
+                    onClick={() => void saveWorkspaceRoot()}
+                    type="button"
+                  >
+                    {savingWorkspace ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    )}
+                    保存工作区
+                  </Button>
+                </div>
+              </label>
+              <div className="grid gap-2 text-sm md:grid-cols-2 xl:grid-cols-3">
+                {(workspace?.directories ?? []).map((directory) => (
+                  <div className="rounded-md border bg-muted/40 px-3 py-2" key={directory}>
+                    {directory}
+                  </div>
+                ))}
+              </div>
             </CardContent>
           </Card>
 
-          <AdvancedSettings
-            busyInstance={busyInstance}
-            config={config}
-            destroyingInstanceUuid={destroyTarget?.instanceUuid ?? null}
-            discovering={discovering}
-            instances={instances}
-            onDestroy={(instance) => {
-              setDestroyTarget(instance)
-              setDestroyConfirm('')
-            }}
-            onDiscoverPod={() => void discoverPod()}
-            onRestart={(instance) => void runInstanceAction(instance, 'restart')}
-            onTagsTextChange={(value) => {
-              setTagsText(value)
-              const tags = parseTags(value)
-              updateConfig({
-                pod_tags: tags,
-                default_pod_tag: config.default_pod_tag || tags[0] || '',
-              })
-            }}
-            onUpdateConfig={updateConfig}
-            tagsText={tagsText}
-          />
-        </div>
+          <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+            <div className="space-y-6">
+              <GenerationLocalSettingsCard
+                bailianApiKey={bailianApiKey}
+                config={generationConfig}
+                grsaiApiKey={grsaiApiKey}
+                saving={savingGenerationSettings}
+                settings={generationSettings}
+                onBailianApiKeyChange={setBailianApiKey}
+                onConfigChange={updateGenerationConfig}
+                onGrsaiApiKeyChange={setGrsaiApiKey}
+                onSave={() => void saveGenerationSettings()}
+              />
 
-        <InstanceManagementCard
-          busyInstance={busyInstance}
-          instances={instances}
-          refreshing={refreshing}
-          statusOverrides={statusOverrides}
-          urlDrafts={instanceUrlDrafts}
-          onRefresh={() => void refreshRemoteData()}
-          onSetDefault={(instance) => void runInstanceAction(instance, 'active')}
-          onShutdown={(instance) => void runInstanceAction(instance, 'shutdown')}
-          onStartup={(instance) => void runInstanceAction(instance, 'startup')}
-          onUpdateUrl={updateInstanceUrlDraft}
-        />
-      </div>
+              <SkillSyncCard
+                result={syncResult}
+                syncing={syncingConfig}
+                onSync={() => void syncBackendConfig()}
+              />
+            </div>
+
+            <LocalWorkflowCard
+              directoryPath={workflowDirectoryPath}
+              importing={importingWorkflow}
+              workflows={workflows}
+              onChooseDirectory={() => void chooseWorkflowDirectory()}
+              onDirectoryPathChange={setWorkflowDirectoryPath}
+              onImport={() => void importWorkflowDirectory()}
+              onRemove={(id) => void removeLocalWorkflow(id)}
+            />
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-6">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <h2 className="text-2xl font-semibold tracking-normal">晨羽智云设置</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                管理连接、创建杭州慎思云机，并指定 ComfyUI 生图默认云机。
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                disabled={refreshing || !apiKeyConfigured}
+                onClick={() => void refreshRemoteData()}
+                type="button"
+                variant="outline"
+              >
+                {refreshing ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 h-4 w-4" />
+                )}
+                刷新
+              </Button>
+              <Button disabled={saving} onClick={() => void saveSettings()} type="button">
+                {saving ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <CheckCircle2 className="mr-2 h-4 w-4" />
+                )}
+                保存设置
+              </Button>
+            </div>
+          </div>
+
+          <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
+            <div className="space-y-6">
+              <ConnectionCard
+                apiKey={apiKey}
+                apiKeyConfigured={apiKeyConfigured}
+                connectionError={connectionError}
+                connectionStatus={connectionStatus}
+                onApiKeyChange={setApiKey}
+              />
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>创建云机</CardTitle>
+                  <CardDescription>创建固定杭州慎思 POD 的新实例。</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <Accordion
+                    collapsible
+                    onValueChange={(value) => setCreateOpen(value === 'create')}
+                    type="single"
+                    value={createOpen ? 'create' : ''}
+                  >
+                    <AccordionItem className="rounded-md border px-4" value="create">
+                      <AccordionTrigger className="py-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <Server className="h-4 w-4 shrink-0 text-primary" />
+                          <div className="min-w-0 text-left">
+                            <p className="font-medium">创建杭州慎思云机</p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {currentVersion || '未选版本'} · {effectiveGpuName || '未选 GPU'}
+                            </p>
+                          </div>
+                        </div>
+                      </AccordionTrigger>
+                      <AccordionContent className="space-y-4">
+                        <ReadOnlyField label="固定 POD UUID" value={config.pod_uuid ?? '未配置'} />
+                        <label
+                          className="block space-y-2 text-sm font-medium"
+                          htmlFor={fieldIds.podVersion}
+                        >
+                          <span>版本</span>
+                          {config.pod_tags?.length ? (
+                            <select
+                              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                              id={fieldIds.podVersion}
+                              onChange={(event) =>
+                                updateConfig({ default_pod_tag: event.target.value })
+                              }
+                              value={currentVersion}
+                            >
+                              {config.pod_tags.map((tag) => (
+                                <option key={tag} value={tag}>
+                                  {tag}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <Input
+                              id={fieldIds.podVersion}
+                              onChange={(event) =>
+                                updateConfig({ default_pod_tag: event.target.value })
+                              }
+                              placeholder="例如 4.64"
+                              value={currentVersion}
+                            />
+                          )}
+                        </label>
+                        <label
+                          className="block space-y-2 text-sm font-medium"
+                          htmlFor={fieldIds.gpu}
+                        >
+                          <span>显卡</span>
+                          {gpus.length ? (
+                            <select
+                              className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                              id={fieldIds.gpu}
+                              onChange={(event) => {
+                                const gpu = gpus.find(
+                                  (item) => item.gpu_uuid === event.target.value,
+                                )
+                                updateConfig({
+                                  default_gpu_uuid: event.target.value,
+                                  default_gpu_name: gpu?.gpu_name,
+                                })
+                              }}
+                              value={effectiveGpuUuid}
+                            >
+                              {gpus.map((gpu) => (
+                                <option key={gpu.gpu_uuid} value={gpu.gpu_uuid}>
+                                  {gpu.gpu_name}
+                                </option>
+                              ))}
+                            </select>
+                          ) : (
+                            <Input
+                              id={fieldIds.gpu}
+                              onChange={(event) =>
+                                updateConfig({ default_gpu_uuid: event.target.value })
+                              }
+                              placeholder="GPU UUID"
+                              value={effectiveGpuUuid}
+                            />
+                          )}
+                        </label>
+                        <Button
+                          className="w-full"
+                          disabled={creating || !apiKeyConfigured}
+                          onClick={() => void createInstance()}
+                          type="button"
+                        >
+                          {creating ? (
+                            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          ) : (
+                            <Cloud className="mr-2 h-4 w-4" />
+                          )}
+                          创建实例
+                        </Button>
+                      </AccordionContent>
+                    </AccordionItem>
+                  </Accordion>
+                </CardContent>
+              </Card>
+
+              <AdvancedSettings
+                busyInstance={busyInstance}
+                config={config}
+                destroyingInstanceUuid={destroyTarget?.instanceUuid ?? null}
+                discovering={discovering}
+                instances={instances}
+                onDestroy={(instance) => {
+                  setDestroyTarget(instance)
+                  setDestroyConfirm('')
+                }}
+                onDiscoverPod={() => void discoverPod()}
+                onRestart={(instance) => void runInstanceAction(instance, 'restart')}
+                onTagsTextChange={(value) => {
+                  setTagsText(value)
+                  const tags = parseTags(value)
+                  updateConfig({
+                    pod_tags: tags,
+                    default_pod_tag: config.default_pod_tag || tags[0] || '',
+                  })
+                }}
+                onUpdateConfig={updateConfig}
+                tagsText={tagsText}
+              />
+            </div>
+
+            <InstanceManagementCard
+              busyInstance={busyInstance}
+              instances={instances}
+              refreshing={refreshing}
+              statusOverrides={statusOverrides}
+              urlDrafts={instanceUrlDrafts}
+              onRefresh={() => void refreshRemoteData()}
+              onSetDefault={(instance) => void runInstanceAction(instance, 'active')}
+              onShutdown={(instance) => void runInstanceAction(instance, 'shutdown')}
+              onStartup={(instance) => void runInstanceAction(instance, 'startup')}
+              onUpdateUrl={updateInstanceUrlDraft}
+            />
+          </div>
+        </div>
+      )}
 
       <AlertDialog
         open={Boolean(destroyTarget)}
@@ -1030,12 +1072,12 @@ function GenerationLocalSettingsCard({
   onGrsaiApiKeyChange: (value: string) => void
   onSave: () => void
 }) {
-  const [concurrencyDraft, setConcurrencyDraft] = useState(String(config.grsai_concurrency))
+  const [concurrencyDraft, setConcurrencyDraft] = useState(String(config.default_concurrency))
   const [retriesDraft, setRetriesDraft] = useState(String(config.grsai_retries))
 
   useEffect(() => {
-    setConcurrencyDraft(String(config.grsai_concurrency))
-  }, [config.grsai_concurrency])
+    setConcurrencyDraft(String(config.default_concurrency))
+  }, [config.default_concurrency])
 
   useEffect(() => {
     setRetriesDraft(String(config.grsai_retries))
@@ -1115,18 +1157,18 @@ function GenerationLocalSettingsCard({
               <option value="global">全球节点</option>
             </select>
           </label>
-          <label className="block space-y-2 text-sm font-medium" htmlFor="grsai-concurrency">
-            <span>Grsai 默认并发</span>
+          <label className="block space-y-2 text-sm font-medium" htmlFor="default-concurrency">
+            <span>全局默认并发</span>
             <Input
-              id="grsai-concurrency"
+              id="default-concurrency"
               max={20}
               min={1}
-              onBlur={() => setConcurrencyDraft(String(config.grsai_concurrency))}
+              onBlur={() => setConcurrencyDraft(String(config.default_concurrency))}
               onChange={(event) => {
                 const value = event.target.value
                 setConcurrencyDraft(value)
                 updateNumberDraft(value, 1, 20, (nextValue) =>
-                  onConfigChange({ grsai_concurrency: nextValue }),
+                  onConfigChange({ default_concurrency: nextValue, grsai_concurrency: nextValue }),
                 )
               }}
               type="number"

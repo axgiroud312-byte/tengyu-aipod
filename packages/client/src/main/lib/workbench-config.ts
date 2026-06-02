@@ -39,6 +39,7 @@ export interface GenerationLocalConfig {
   bailian_text_model?: string
   bailian_vision_model?: string
   grsai_node?: 'cn' | 'global'
+  default_concurrency?: number
   grsai_concurrency?: number
   grsai_retries?: number
 }

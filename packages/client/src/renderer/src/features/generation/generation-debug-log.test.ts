@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import type { GenerationDebugLogEntry } from '../../../../main/lib/generation-service'
-import { formatGenerationDebugLogLine, generationDebugLogLevelCounts } from './generation-debug-log'
+import {
+  formatGenerationDebugLogLine,
+  generationDebugLogLevelCounts,
+  generationDebugRawResponse,
+} from './generation-debug-log'
 
 describe('generation debug log formatter', () => {
   it('formats progress details into one terminal line', () => {
@@ -73,6 +77,7 @@ describe('generation debug log formatter', () => {
         skillVersion: '1.0.0',
         expected: 2,
         actual: 0,
+        rawResponse: '{\n  "prompt": "missing array"\n}',
         rawResponsePreview: '{"prompt":"missing array"}',
         error: '模型返回 JSON 缺少 prompts 字符串数组',
       },
@@ -86,6 +91,8 @@ describe('generation debug log formatter', () => {
     expect(line).toContain('skillVersion=1.0.0')
     expect(line).toContain('期望 2 / 实际 0')
     expect(line).toContain('原始返回={"prompt":"missing array"}')
+    expect(line).not.toContain('\n  "prompt"')
+    expect(generationDebugRawResponse(entry)).toBe('{\n  "prompt": "missing array"\n}')
   })
 
   it('counts warning and error logs', () => {

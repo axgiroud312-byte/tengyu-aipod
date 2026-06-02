@@ -6,6 +6,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import {
   formatGenerationDebugLogLine,
   generationDebugLogLevelCounts,
+  generationDebugRawResponse,
 } from '@/features/generation/generation-debug-log'
 import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
@@ -1254,13 +1255,11 @@ function GrsaiPromptGenerationPanel({
   const [comfyuiTxt2imgWorkflowKey, setComfyuiTxt2imgWorkflowKey] = useState('')
   const [comfyuiTxt2imgWidth, setComfyuiTxt2imgWidth] = useState('1024')
   const [comfyuiTxt2imgHeight, setComfyuiTxt2imgHeight] = useState('1024')
-  const [comfyuiTxt2imgConcurrency, setComfyuiTxt2imgConcurrency] = useState('1')
   const [loadingComfyuiTxt2imgWorkflows, setLoadingComfyuiTxt2imgWorkflows] = useState(false)
   const [drafts, setDrafts] = useState<Txt2imgPromptDraft[]>([])
   const [draftsCollapsed, setDraftsCollapsed] = useState(true)
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
-  const [concurrency, setConcurrency] = useState('3')
   const [taskName, setTaskName] = useState('')
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -1291,8 +1290,7 @@ function GrsaiPromptGenerationPanel({
     [generationModel, generationModels],
   )
   const sizeOptions = grsaiSizes(selectedGenerationModel)
-  const maxConcurrency = 20
-  const defaultConcurrency = settings?.config.grsai_concurrency ?? 3
+  const defaultConcurrency = settings?.config.default_concurrency ?? 20
   const llmModels = useMemo(
     () => bailianModelsForUse(settings, usesPromptReference),
     [settings, usesPromptReference],
@@ -1427,6 +1425,10 @@ function GrsaiPromptGenerationPanel({
     setReferenceImages((current) => [...current, ...nextImages])
   }
 
+  function removeReferenceImage(id: string) {
+    setReferenceImages((current) => current.filter((image) => image.id !== id))
+  }
+
   async function parseManualText() {
     const prompts = await window.api.generation.parseManualPrompts(manualText)
     const nextDrafts = prompts.map((text) => ({
@@ -1493,7 +1495,7 @@ function GrsaiPromptGenerationPanel({
             : {}),
           width: clampNumber(comfyuiTxt2imgWidth, 256, 4096, 1024),
           height: clampNumber(comfyuiTxt2imgHeight, 256, 4096, 1024),
-          concurrency: clampNumber(comfyuiTxt2imgConcurrency, 1, 10, 1),
+          concurrency: defaultConcurrency,
           ...(comfyuiInstanceSelection.runTarget ?? {}),
         })
       } else {
@@ -1508,7 +1510,7 @@ function GrsaiPromptGenerationPanel({
                 referenceImages: promptReferenceImages(),
               }
             : {}),
-          concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
+          concurrency: defaultConcurrency,
         })
       }
       if (!taskEvents.activateTask(taskId)) {
@@ -1608,7 +1610,18 @@ function GrsaiPromptGenerationPanel({
                 {referenceImages.length ? (
                   <div className="mt-3 grid grid-cols-4 gap-2">
                     {referenceImages.map((image) => (
-                      <div className="rounded-md border bg-muted p-2 text-xs" key={image.id}>
+                      <div
+                        className="relative rounded-md border bg-muted p-2 text-xs"
+                        key={image.id}
+                      >
+                        <button
+                          aria-label={`删除参考图 ${image.name}`}
+                          className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-sm border bg-background/90 text-muted-foreground shadow-sm hover:text-red-600"
+                          onClick={() => removeReferenceImage(image.id)}
+                          type="button"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
                         <img
                           alt={image.name}
                           className="h-20 w-full rounded-sm object-cover"
@@ -1868,17 +1881,6 @@ function GrsaiPromptGenerationPanel({
                       </select>
                     </label>
                   </div>
-                  <label className="block space-y-2 text-sm font-medium">
-                    <span>并发</span>
-                    <input
-                      className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      max={maxConcurrency}
-                      min={1}
-                      onChange={(event) => setConcurrency(event.target.value)}
-                      type="number"
-                      value={concurrency}
-                    />
-                  </label>
                 </>
               ) : (
                 <>
@@ -1942,17 +1944,6 @@ function GrsaiPromptGenerationPanel({
                       />
                     </label>
                   </div>
-                  <label className="block space-y-2 text-sm font-medium">
-                    <span>并发</span>
-                    <input
-                      className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      max={10}
-                      min={1}
-                      onChange={(event) => setComfyuiTxt2imgConcurrency(event.target.value)}
-                      type="number"
-                      value={comfyuiTxt2imgConcurrency}
-                    />
-                  </label>
                 </>
               )}
               {capability === 'img2img' ? (
@@ -2065,10 +2056,8 @@ function GrsaiExtractPanel() {
   const { settings, error: settingsError } = useGenerationLocalSettings()
   const [sources, setSources] = useState<GenerationImageSource[]>([])
   const [sourceFolder, setSourceFolder] = useState('')
-  const [selectedPaths, setSelectedPaths] = useState<string[]>([])
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
-  const [concurrency, setConcurrency] = useState('3')
   const [taskName, setTaskName] = useState('')
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
@@ -2087,11 +2076,7 @@ function GrsaiExtractPanel() {
     setRunning,
   })
 
-  useEffect(() => {
-    void loadSources()
-  }, [])
-
-  const selectedCount = selectedPaths.length
+  const selectedCount = sources.length
   const percent = progressPercent(progress)
   const generationModels = useMemo(() => modelOptionsForCapability(settings, 'extract'), [settings])
   const selectedGenerationModel = useMemo(
@@ -2099,8 +2084,7 @@ function GrsaiExtractPanel() {
     [generationModel, generationModels],
   )
   const sizeOptions = grsaiSizes(selectedGenerationModel)
-  const maxConcurrency = 20
-  const defaultConcurrency = settings?.config.grsai_concurrency ?? 3
+  const defaultConcurrency = settings?.config.default_concurrency ?? 20
 
   useEffect(() => {
     const firstModel = generationModels[0]
@@ -2115,35 +2099,34 @@ function GrsaiExtractPanel() {
     }
   }, [aspectRatio, sizeOptions])
 
-  async function loadSources() {
+  async function chooseSourceFolder() {
+    setError(null)
+    const result = await window.api.generation.chooseImageFolder()
+    if (!result.ok) {
+      if (result.error.code !== 'CANCELLED') {
+        setError(result.error.message)
+      }
+      return
+    }
+    setSourceFolder(result.data.path)
+    setSources([])
+  }
+
+  async function scanSourceFolder() {
+    if (!sourceFolder) {
+      setError('请先选择图片文件夹')
+      return
+    }
     setLoadingSources(true)
     setError(null)
     try {
-      const nextSources = await window.api.generation.listExtractSources()
-      setSourceFolder(nextSources.folder)
-      setSources(nextSources.images)
-      setSelectedPaths((current) =>
-        current.filter((path) => nextSources.images.some((image) => image.path === path)),
-      )
+      const images = await window.api.generation.scanImageFolder({ folder: sourceFolder })
+      setSources(images)
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取采集源图失败')
+      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
     } finally {
       setLoadingSources(false)
     }
-  }
-
-  function toggleSource(path: string, checked: boolean) {
-    setSelectedPaths((current) =>
-      checked ? Array.from(new Set([...current, path])) : current.filter((item) => item !== path),
-    )
-  }
-
-  function selectAllSources() {
-    setSelectedPaths(sources.map((source) => source.path))
-  }
-
-  function clearSources() {
-    setSelectedPaths([])
   }
 
   async function startExtract() {
@@ -2152,8 +2135,8 @@ function GrsaiExtractPanel() {
       setError('请先在后台配置提取 Skill')
       return
     }
-    if (selectedPaths.length === 0) {
-      setError('请先选择采集工作区下的源图')
+    if (sources.length === 0) {
+      setError('请先检索图片文件夹')
       return
     }
 
@@ -2163,13 +2146,13 @@ function GrsaiExtractPanel() {
     taskEvents.beginTask()
     try {
       const taskId = await window.api.generation.runExtract({
-        sourceImagePaths: selectedPaths,
+        sourceImagePaths: sources.map((source) => source.path),
         skillId: selectedSkill.id,
         skillVersion: selectedSkill.version,
         variables: {},
         model: generationModel,
         aspectRatio,
-        concurrency: clampNumber(concurrency, 1, maxConcurrency, defaultConcurrency),
+        concurrency: defaultConcurrency,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
       })
       if (!taskEvents.activateTask(taskId)) {
@@ -2177,7 +2160,7 @@ function GrsaiExtractPanel() {
           task_id: taskId,
           capability: 'extract',
           processed: 0,
-          total: selectedPaths.length,
+          total: sources.length,
           succeeded: 0,
           failed: 0,
         })
@@ -2193,65 +2176,15 @@ function GrsaiExtractPanel() {
     <>
       <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <div className="space-y-5">
-          <div className="rounded-md border bg-background p-4">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <h4 className="font-semibold">采集源图</h4>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  {sourceFolder || '01-采集工作区'}
-                </p>
-              </div>
-              <div className="flex gap-2">
-                <Button onClick={() => void loadSources()} type="button" variant="secondary">
-                  {loadingSources ? (
-                    <Loader2 className="mr-2 h-4 w-4" />
-                  ) : (
-                    <ImagePlus className="mr-2 h-4 w-4" />
-                  )}
-                  刷新
-                </Button>
-                <Button onClick={selectAllSources} type="button" variant="secondary">
-                  全选
-                </Button>
-                <Button onClick={clearSources} type="button" variant="secondary">
-                  清空
-                </Button>
-              </div>
-            </div>
-
-            <div className="mt-4 grid max-h-[420px] gap-3 overflow-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
-              {sources.length ? (
-                sources.map((source) => (
-                  <label
-                    className="grid cursor-pointer grid-cols-[20px_minmax(0,1fr)] gap-2 rounded-md border bg-muted/30 p-2 text-sm"
-                    key={source.path}
-                  >
-                    <input
-                      checked={selectedPaths.includes(source.path)}
-                      className="mt-1"
-                      onChange={(event) => toggleSource(source.path, event.target.checked)}
-                      type="checkbox"
-                    />
-                    <span className="min-w-0">
-                      <img
-                        alt={source.name}
-                        className="h-28 w-full rounded-sm object-cover"
-                        src={localImageUrl(source.path)}
-                      />
-                      <span className="mt-2 block truncate font-medium">{source.name}</span>
-                      <span className="block truncate text-xs text-muted-foreground">
-                        {source.relativePath}
-                      </span>
-                    </span>
-                  </label>
-                ))
-              ) : (
-                <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground sm:col-span-2 lg:col-span-3">
-                  暂无采集源图
-                </div>
-              )}
-            </div>
-          </div>
+          <ImageFolderPickerPanel
+            emptyText="暂无可用于提取的图片"
+            folderPath={sourceFolder}
+            images={sources}
+            loading={loadingSources}
+            onChoose={() => void chooseSourceFolder()}
+            onScan={() => void scanSourceFolder()}
+            title="提取图片文件夹"
+          />
 
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">提取 Skill</h4>
@@ -2308,17 +2241,6 @@ function GrsaiExtractPanel() {
                   </select>
                 </label>
               </div>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>并发</span>
-                <input
-                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  max={maxConcurrency}
-                  min={1}
-                  onChange={(event) => setConcurrency(event.target.value)}
-                  type="number"
-                  value={concurrency}
-                />
-              </label>
               <TaskNameField
                 onChange={setTaskName}
                 placeholder="默认：提取-时间"
@@ -3567,6 +3489,7 @@ export function GenerationWorkbench() {
   const setProvider = useGenerationStore((state) => state.setProvider)
   const [debugLogs, setDebugLogs] = useState<GenerationDebugLogEntry[]>([])
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
+  const [expandedDebugLogId, setExpandedDebugLogId] = useState<string | null>(null)
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const activeProvider = tabs[activeCapability].provider
   const activeCapabilityMeta = generationCapabilities.find((item) => item.key === activeCapability)
@@ -3732,7 +3655,10 @@ export function GenerationWorkbench() {
               <Button
                 className="h-8 px-3"
                 disabled={!debugLogs.length}
-                onClick={() => setDebugLogs([])}
+                onClick={() => {
+                  setDebugLogs([])
+                  setExpandedDebugLogId(null)
+                }}
                 type="button"
                 variant="secondary"
               >
@@ -3744,11 +3670,35 @@ export function GenerationWorkbench() {
             <ScrollArea className="h-[min(70vh,620px)] rounded-md border bg-zinc-950">
               <div className="space-y-1 p-3 font-mono text-[12px] leading-5">
                 {debugLogs.length ? (
-                  debugLogs.map((entry) => (
-                    <div className={generationDebugLogLevelClassName(entry.level)} key={entry.id}>
-                      {formatGenerationDebugLogLine(entry)}
-                    </div>
-                  ))
+                  debugLogs.map((entry) => {
+                    const rawResponse = generationDebugRawResponse(entry)
+                    const expanded = expandedDebugLogId === entry.id
+                    return (
+                      <div className="space-y-2" key={entry.id}>
+                        <div className={generationDebugLogLevelClassName(entry.level)}>
+                          {formatGenerationDebugLogLine(entry)}
+                          {rawResponse !== null ? (
+                            <button
+                              className="ml-2 rounded-sm border border-zinc-700 px-1.5 py-0.5 text-[11px] text-zinc-200 hover:border-zinc-500 hover:bg-zinc-900"
+                              onClick={() =>
+                                setExpandedDebugLogId((current) =>
+                                  current === entry.id ? null : entry.id,
+                                )
+                              }
+                              type="button"
+                            >
+                              {expanded ? '收起原文' : '展开原文'}
+                            </button>
+                          ) : null}
+                        </div>
+                        {expanded && rawResponse !== null ? (
+                          <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap break-words rounded-md border border-zinc-800 bg-zinc-900 p-3 text-[12px] leading-5 text-zinc-100">
+                            {rawResponse || '(空字符串)'}
+                          </pre>
+                        ) : null}
+                      </div>
+                    )
+                  })
                 ) : (
                   <div className="text-zinc-500">暂无日志</div>
                 )}

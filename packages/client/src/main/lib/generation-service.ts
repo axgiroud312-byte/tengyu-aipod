@@ -130,7 +130,7 @@ export type GenerationDebugLogEntry = {
   message: string
   taskId?: string
   capability?: GenerationCapability
-  details?: Record<string, string | number | boolean | null>
+  details?: GenerationDebugLogDetails
 }
 
 export type GenerationImageSource = {
@@ -254,7 +254,7 @@ export type ChenyuWorkflowRunInput = {
 }
 
 type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
-type GenerationDebugLogDetails = Record<string, string | number | boolean | null | undefined>
+export type GenerationDebugLogDetails = Record<string, string | number | boolean | null | undefined>
 type GenerationDebugLogContext = {
   taskId?: string | undefined
   capability?: GenerationCapability | undefined
@@ -1169,6 +1169,7 @@ function promptGenerationErrorDetails(error: unknown): GenerationDebugLogDetails
   }
   const details = error.details
   return {
+    rawResponse: typeof details.rawResponse === 'string' ? details.rawResponse : undefined,
     rawResponsePreview:
       typeof details.rawResponsePreview === 'string' ? details.rawResponsePreview : undefined,
     responseModel: typeof details.responseModel === 'string' ? details.responseModel : undefined,
@@ -1530,6 +1531,16 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
         input.modeInstruction ??
         `生成 ${count} 条适合 Grsai ${capability === 'img2img' ? '图生图' : '文生图'}的英文印花提示词。`,
       responseFormat: 'json_object',
+      onRawResponse: (response) => {
+        debug('百炼原始返回', 'debug', {
+          operation: 'prompt',
+          expected: response.expected,
+          rawResponse: response.text,
+          rawResponsePreview: promptPreview(response.text, 800),
+          responseModel: response.model,
+          finishReason: response.finishReason,
+        })
+      },
     })
 
     debug('提示词生成完成', 'info', {
@@ -1619,7 +1630,7 @@ export async function runExtract(
     new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
   )
   if (sourceImagePaths.length === 0) {
-    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张采集源图', false)
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张源图', false)
   }
   if (!input.skillId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择提取 Skill', false)
@@ -1739,7 +1750,7 @@ export async function runComfyuiExtract(
     new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
   )
   if (sourceImagePaths.length === 0) {
-    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张采集源图', false)
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张源图', false)
   }
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
@@ -2053,7 +2064,7 @@ export async function runExtractBatch(
     new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
   )
   if (sourceImagePaths.length === 0) {
-    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张采集源图', false)
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张源图', false)
   }
   if (!input.skillId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择提取 Skill', false)
@@ -2195,7 +2206,7 @@ export async function runComfyuiExtractBatch(
     new Set(input.sourceImagePaths.map((imagePath) => imagePath.trim()).filter(Boolean)),
   )
   if (sourceImagePaths.length === 0) {
-    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张采集源图', false)
+    throw new AppErrorClass('HTTP_4XX', '请先选择至少一张源图', false)
   }
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
@@ -2813,7 +2824,7 @@ export async function runComfyuiTxt2imgBatch(
 
     try {
       ensureGenerationTables(db)
-      const concurrency = clampInt(input.concurrency ?? 1, 1, 10, 1)
+      const concurrency = clampInt(input.concurrency ?? 1, 1, 20, 1)
       const controller = new GenerationConcurrencyController({ workers: concurrency })
       const adapter = await createComfyuiAdapterForRun(
         input,

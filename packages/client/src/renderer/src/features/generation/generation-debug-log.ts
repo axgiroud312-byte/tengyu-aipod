@@ -26,6 +26,11 @@ export function formatGenerationDebugLogLine(entry: GenerationDebugLogEntry) {
   return detailText ? `${parts.join(' ')} · ${detailText}` : parts.join(' ')
 }
 
+export function generationDebugRawResponse(entry: GenerationDebugLogEntry) {
+  const rawResponse = entry.details?.rawResponse
+  return typeof rawResponse === 'string' ? rawResponse : null
+}
+
 function formatGenerationDebugTimestamp(timestamp: number) {
   const date = new Date(timestamp)
   const pad = (value: number, size = 2) => String(value).padStart(size, '0')

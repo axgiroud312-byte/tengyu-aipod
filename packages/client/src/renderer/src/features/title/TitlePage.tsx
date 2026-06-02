@@ -51,7 +51,6 @@ export type TitleFormState = {
   extraRequirement: string
   existingStrategy: TitleExistingStrategy
   maxRetries: string
-  concurrency: string
   compression: boolean
   maxSize: string
 }

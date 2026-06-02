@@ -117,7 +117,8 @@ export const DEFAULT_GENERATION_LOCAL_CONFIG: Required<GenerationLocalConfig> = 
   bailian_text_model: 'qwen3.6-flash',
   bailian_vision_model: 'qwen3.6-flash',
   grsai_node: 'cn',
-  grsai_concurrency: 3,
+  default_concurrency: 20,
+  grsai_concurrency: 20,
   grsai_retries: 2,
 }
 
@@ -141,11 +142,19 @@ export function normalizeGenerationLocalConfig(
     ? config.bailian_vision_model
     : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_vision_model
 
+  const defaultConcurrency = clampGenerationInt(
+    config.default_concurrency ?? config.grsai_concurrency,
+    1,
+    20,
+    DEFAULT_GENERATION_LOCAL_CONFIG.default_concurrency,
+  )
+
   return {
     bailian_text_model: textModel ?? DEFAULT_GENERATION_LOCAL_CONFIG.bailian_text_model,
     bailian_vision_model: visionModel ?? DEFAULT_GENERATION_LOCAL_CONFIG.bailian_vision_model,
     grsai_node: config.grsai_node === 'global' ? 'global' : 'cn',
-    grsai_concurrency: clampGenerationInt(config.grsai_concurrency, 1, 20, 3),
+    default_concurrency: defaultConcurrency,
+    grsai_concurrency: defaultConcurrency,
     grsai_retries: clampGenerationInt(config.grsai_retries, 0, 10, 2),
   }
 }

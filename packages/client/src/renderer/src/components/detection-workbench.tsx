@@ -27,7 +27,7 @@ const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_DETECTION_SKILL_ID = 'infringement-detection'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const DEFAULT_MAX_SIZE = 1024
-const DEFAULT_CONCURRENCY = 3
+const DEFAULT_CONCURRENCY = 20
 
 const RISK_LEVELS: RiskLevel[] = ['pass', 'review', 'block']
 
@@ -516,7 +516,7 @@ export function DetectionWorkbench() {
         succeeded: event.result.succeeded,
         failed: event.result.failed,
         skipped: event.result.skipped,
-        concurrency: DEFAULT_CONCURRENCY,
+        concurrency: current?.concurrency ?? DEFAULT_CONCURRENCY,
         ...(event.result.cancelled ? { status: 'cancelled' as const } : {}),
       }))
       setRunningTaskId(event.result.taskId)
@@ -622,6 +622,8 @@ export function DetectionWorkbench() {
     setResults([])
     setProgress(null)
     try {
+      const generationSettings = await window.api.generationSettings.get().catch(() => null)
+      const concurrency = generationSettings?.config.default_concurrency ?? DEFAULT_CONCURRENCY
       const taskId = await window.api.detection.run({
         imagePaths: sourceImages.map((image) => image.path),
         skillId: skill.id,
@@ -634,7 +636,7 @@ export function DetectionWorkbench() {
           maxSize: DEFAULT_MAX_SIZE,
           format: 'jpg',
         },
-        concurrency: DEFAULT_CONCURRENCY,
+        concurrency,
       })
       runningTaskIdRef.current = taskId
       setRunningTaskId(taskId)
@@ -645,7 +647,7 @@ export function DetectionWorkbench() {
         succeeded: 0,
         failed: 0,
         skipped: 0,
-        concurrency: DEFAULT_CONCURRENCY,
+        concurrency,
       })
     } catch (nextError) {
       runningTaskIdRef.current = null

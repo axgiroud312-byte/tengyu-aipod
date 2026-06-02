@@ -1208,7 +1208,7 @@ export class DetectionService {
 
       const adapter = resolved.createBailianAdapter?.(apiKey) ?? createDefaultBailianAdapter(apiKey)
       const maxRetries = clampInt(config.maxRetries, 0, 5, 1)
-      const concurrency = clampInt(config.concurrency, 1, 8, 3)
+      const concurrency = clampInt(config.concurrency, 1, 20, 20)
       const threshold = normalizeThreshold(config.threshold)
       const progress: DetectionProgress = {
         task_id: taskId,

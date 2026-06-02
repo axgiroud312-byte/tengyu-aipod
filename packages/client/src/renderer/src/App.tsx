@@ -227,7 +227,7 @@ function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
 function MainWorkbench() {
   const location = useLocation()
   const navigate = useNavigate()
-  const activeModule = moduleFromPath(location.pathname) ?? 'title'
+  const activeModule = moduleFromPath(location.pathname) ?? 'collection'
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
   const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(false)
   const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
@@ -245,7 +245,6 @@ function MainWorkbench() {
   const [extraRequirement, setExtraRequirement] = useState('')
   const [existingStrategy, setExistingStrategy] = useState<TitleExistingStrategy>('skip')
   const [maxRetries, setMaxRetries] = useState('2')
-  const [concurrency, setConcurrency] = useState('3')
   const [compression, setCompression] = useState(true)
   const [maxSize, setMaxSize] = useState('1024')
   const [scanResult, setScanResult] = useState<{
@@ -559,7 +558,6 @@ function MainWorkbench() {
     extraRequirement,
     existingStrategy,
     maxRetries,
-    concurrency,
     compression,
     maxSize,
     scanResult,
@@ -610,9 +608,6 @@ function MainWorkbench() {
       case 'maxRetries':
         if (typeof value === 'string') setMaxRetries(value)
         return
-      case 'concurrency':
-        if (typeof value === 'string') setConcurrency(value)
-        return
       case 'compression':
         setCompression(value === true)
         return
@@ -658,6 +653,7 @@ function MainWorkbench() {
     setIsRetryingFailed(false)
     setOpenMessage(null)
     setTitleError(null)
+    const generationSettings = await window.api.generationSettings.get().catch(() => null)
     const titleConfig: TitleBatchConfig = {
       batchDir: batchDir.trim(),
       titleFileName,
@@ -670,7 +666,7 @@ function MainWorkbench() {
       imageIndex: parsePositiveNumber(imageIndex, 1),
       existingStrategy,
       maxRetries: parseNonNegativeNumber(maxRetries, 2),
-      concurrency: parsePositiveNumber(concurrency, 3),
+      concurrency: generationSettings?.config.default_concurrency ?? 20,
       preprocess: {
         compression,
         maxSize: parsePositiveNumber(maxSize, 1024),

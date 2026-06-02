@@ -852,7 +852,7 @@ export class TitleService {
       }
       const adapter = resolved.createBailianAdapter?.(apiKey) ?? createDefaultBailianAdapter(apiKey)
       const maxRetries = clampInt(config.maxRetries, 0, 5, 2)
-      const concurrency = clampInt(config.concurrency, 1, 10, 3)
+      const concurrency = clampInt(config.concurrency, 1, 20, 20)
       const imageIndex = clampInt(config.imageIndex, 1, Number.MAX_SAFE_INTEGER, 1)
 
       await runWithConcurrency(

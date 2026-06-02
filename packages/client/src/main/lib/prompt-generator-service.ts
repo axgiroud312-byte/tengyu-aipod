@@ -22,6 +22,12 @@ export type GeneratePromptsInput = {
   model?: string
   userMessage?: string
   responseFormat?: 'json_object' | 'text'
+  onRawResponse?: (response: {
+    text: string
+    model: string
+    finishReason: string | null
+    expected: number
+  }) => void
 }
 
 const DEFAULT_BAILIAN_TIMEOUT_MS = 600_000
@@ -89,12 +95,20 @@ export class PromptGeneratorService {
                 ...(response_format ? { response_format } : {}),
               })
 
+          input.onRawResponse?.({
+            text: response.text,
+            model: response.model,
+            finishReason: response.finishReason ?? null,
+            expected: chunkCount,
+          })
+
           const prompts = parsePromptJsonStrict(response.text, chunkCount)
           if (prompts.length !== chunkCount) {
             throw new AppErrorClass('HTTP_5XX', '模型返回 JSON 缺少 prompts 字符串数组', true, {
               kind: 'llm_parse_failed',
               expected: chunkCount,
               actual: prompts.length,
+              rawResponse: response.text,
               rawResponsePreview: rawResponsePreview(response.text),
               responseModel: response.model,
               finishReason: response.finishReason ?? null,

@@ -27,13 +27,6 @@ export const workbenchModules: WorkbenchModuleMeta[] = [
     description: '扫描当前页面图池并选择下载图片',
   },
   {
-    key: 'title',
-    path: '/title',
-    label: '标题生成',
-    title: '标题生成模块',
-    description: '从货号成品图批量生成跨境标题',
-  },
-  {
     key: 'generation',
     path: '/generation',
     label: '生图',
@@ -48,18 +41,25 @@ export const workbenchModules: WorkbenchModuleMeta[] = [
     description: '批量检测印花风险并流转结果',
   },
   {
-    key: 'listing',
-    path: '/listing',
-    label: '上架',
-    title: '上架模块',
-    description: '批量操作店小秘草稿并保留真实页面证据',
-  },
-  {
     key: 'ps',
     path: '/photoshop',
     label: 'PS 套版',
     title: 'PS 套版模块',
     description: '扫描 PSD 模板并准备 Photoshop 套版执行',
+  },
+  {
+    key: 'title',
+    path: '/title',
+    label: '标题生成',
+    title: '标题生成模块',
+    description: '从货号成品图批量生成跨境标题',
+  },
+  {
+    key: 'listing',
+    path: '/listing',
+    label: '上架',
+    title: '上架模块',
+    description: '批量操作店小秘草稿并保留真实页面证据',
   },
 ]
 
@@ -71,13 +71,13 @@ export const settingsModule: WorkbenchModuleMeta = {
   description: '管理本机配置、接口密钥和晨羽云实例',
 }
 
-const defaultWorkbenchRoute = '/title'
+const defaultWorkbenchRoute = '/collection'
 const defaultWorkbenchModule: WorkbenchModuleMeta = {
-  key: 'title',
+  key: 'collection',
   path: defaultWorkbenchRoute,
-  label: '标题生成',
-  title: '标题生成模块',
-  description: '从货号成品图批量生成跨境标题',
+  label: '采集',
+  title: '采集模块',
+  description: '扫描当前页面图池并选择下载图片',
 }
 
 export function moduleFromPath(pathname: string) {
