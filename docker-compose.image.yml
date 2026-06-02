@@ -1,0 +1,54 @@
+# 腾域 aipod — 生产服务器镜像部署
+#
+# 用途：服务器不构建源码，只拉取已经推送到镜像仓库的 server 镜像。
+#
+# 使用：
+#   cp .env.server.example .env.server
+#   # 修改 .env.server 里的 SERVER_IMAGE / 密码 / JWT
+#   docker compose --env-file .env.server -f docker-compose.image.yml pull server
+#   docker compose --env-file .env.server -f docker-compose.image.yml up -d postgres
+#   docker compose --env-file .env.server -f docker-compose.image.yml run --rm server pnpm -F @tengyu-aipod/server exec prisma migrate deploy
+#   docker compose --env-file .env.server -f docker-compose.image.yml run --rm server pnpm -F @tengyu-aipod/server prisma-seed
+#   docker compose --env-file .env.server -f docker-compose.image.yml up -d server
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: tengyu-aipod-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-tengyu_aipod}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_USER: ${POSTGRES_USER:-tengyu}
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${POSTGRES_USER:-tengyu} -d ${POSTGRES_DB:-tengyu_aipod}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - tengyu-aipod-postgres-data:/var/lib/postgresql/data
+
+  server:
+    image: ${SERVER_IMAGE:?SERVER_IMAGE is required}
+    container_name: tengyu-aipod-server
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      ADMIN_INITIAL_EMAIL: ${ADMIN_INITIAL_EMAIL:-}
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-tengyu}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-tengyu_aipod}
+      JWT_SECRET_ADMIN: ${JWT_SECRET_ADMIN:?JWT_SECRET_ADMIN is required}
+      NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-腾域 aipod}
+      PHP_AUTH_BASE_URL: ${PHP_AUTH_BASE_URL:-https://www.tengyuai.com}
+    ports:
+      - "${SERVER_PORT:-3100}:3100"
+
+volumes:
+  tengyu-aipod-postgres-data:
+    name: tengyu-aipod-postgres-data
