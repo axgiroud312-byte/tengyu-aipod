@@ -4,7 +4,6 @@ import { arch, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { API_PATHS } from '@tengyu-aipod/shared'
 import { app, ipcMain } from 'electron'
-import { toDataURL } from 'qrcode'
 import { z } from 'zod'
 import { deleteSecret, getSecret, setSecret } from './keychain'
 import { serverUrl } from './server-base-url'
@@ -40,7 +39,6 @@ export type CustomerAuthState = {
 }
 
 export type CustomerAuthQrcode = {
-  qrcode_image_url: string
   qrcode_url: string
   token: string
 }
@@ -233,11 +231,6 @@ export class CustomerAuthService {
     }
 
     return {
-      qrcode_image_url: await toDataURL(data.data.qrcode_url, {
-        errorCorrectionLevel: 'M',
-        margin: 1,
-        width: 220,
-      }),
       qrcode_url: data.data.qrcode_url,
       token: data.data.token,
     }

@@ -15,8 +15,8 @@ describe('resolveServerBaseUrl', () => {
     )
   })
 
-  it('keeps localhost fallback only for unpackaged development', () => {
-    expect(resolveServerBaseUrl({ isPackaged: false })).toBe('http://127.0.0.1:3100')
+  it('uses the default remote server fallback for unpackaged development', () => {
+    expect(resolveServerBaseUrl({ isPackaged: false })).toBe('https://wechat.tengyuai.com')
   })
 
   it('fails clearly when packaged app has no server URL', () => {

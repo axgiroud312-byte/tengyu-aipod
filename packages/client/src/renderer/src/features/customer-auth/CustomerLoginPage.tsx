@@ -53,6 +53,10 @@ function authDisplayName(state: CustomerAuthState) {
   )
 }
 
+function isWechatTerminalMessage(message: string | null) {
+  return Boolean(message && /过期|失败|失效/.test(message))
+}
+
 export function CustomerLoginPage({
   checking,
   onRetryVerify,
@@ -61,7 +65,6 @@ export function CustomerLoginPage({
 }: CustomerLoginPageProps) {
   const [phone, setPhone] = useState('')
   const [code, setCode] = useState('')
-  const [invite, setInvite] = useState('')
   const [phoneMessage, setPhoneMessage] = useState<string | null>(null)
   const [phoneBusy, setPhoneBusy] = useState(false)
   const [smsRemaining, setSmsRemaining] = useState(0)
@@ -72,6 +75,8 @@ export function CustomerLoginPage({
   const pollingRef = useRef(false)
   const authName = authDisplayName(state)
   const statusMeta = STATUS_TEXT[state.status]
+  const shouldShowAuthNotice = state.status !== 'anonymous' || checking || Boolean(state.message)
+  const canRetryAuthorization = state.status !== 'anonymous' || Boolean(state.message)
 
   useEffect(() => {
     let active = true
@@ -118,6 +123,9 @@ export function CustomerLoginPage({
     try {
       const nextState = await window.api.customerAuth.checkWechatLogin({ token: qrcode.token })
       setWechatMessage(nextState.message ?? STATUS_TEXT[nextState.status].message)
+      if (nextState.status === 'anonymous' && isWechatTerminalMessage(nextState.message)) {
+        setPolling(false)
+      }
       applyLoginState(nextState)
     } catch (error) {
       setWechatMessage(error instanceof Error ? error.message : '微信登录状态查询失败')
@@ -173,7 +181,7 @@ export function CustomerLoginPage({
     setPhoneBusy(true)
     setPhoneMessage(null)
     try {
-      const nextState = await window.api.customerAuth.loginByPhone({ code, invite, phone })
+      const nextState = await window.api.customerAuth.loginByPhone({ code, invite: '', phone })
       setPhoneMessage(nextState.message ?? STATUS_TEXT[nextState.status].message)
       applyLoginState(nextState)
     } catch (error) {
@@ -193,20 +201,20 @@ export function CustomerLoginPage({
   }
 
   return (
-    <main className="min-h-dvh bg-background px-6 py-8 text-foreground">
-      <div className="mx-auto grid w-full max-w-6xl gap-6 lg:grid-cols-[0.85fr_1.15fr]">
-        <section className="flex flex-col justify-between rounded-md border bg-muted/20 p-6">
-          <div className="space-y-6">
-            <div className="flex items-center gap-3">
-              <div className="grid size-11 place-items-center rounded-sm bg-primary text-primary-foreground">
-                <ShieldCheck className="size-5" />
-              </div>
-              <div>
-                <h1 className="text-2xl font-semibold text-balance">腾域 aipod</h1>
-                <p className="text-sm text-muted-foreground text-pretty">客户登录与后台授权</p>
-              </div>
+    <main className="grid min-h-dvh place-items-center bg-background px-6 py-8 text-foreground">
+      <Card className="w-full max-w-xl">
+        <CardHeader className="space-y-5">
+          <div className="flex items-center gap-3">
+            <div className="grid size-11 place-items-center rounded-sm bg-primary text-primary-foreground">
+              <ShieldCheck className="size-5" />
             </div>
+            <div>
+              <CardTitle>腾域 aipod</CardTitle>
+              <CardDescription>登录后进入工作台。</CardDescription>
+            </div>
+          </div>
 
+          {shouldShowAuthNotice ? (
             <div className={statusClassName(state.status)}>
               <div className="mb-2 flex items-center gap-2">
                 <Badge variant={isBlockedStatus(state.status) ? 'outline' : 'secondary'}>
@@ -225,13 +233,15 @@ export function CustomerLoginPage({
                 <p className="text-xs tabular-nums">到期时间：{state.customer.expires_at}</p>
               ) : null}
             </div>
-          </div>
+          ) : null}
 
-          <div className="mt-8 flex flex-wrap gap-2">
-            <Button disabled={checking} onClick={() => void onRetryVerify()} variant="outline">
-              <RefreshCcw className="mr-2 size-4" />
-              重新校验
-            </Button>
+          <div className="flex flex-wrap gap-2">
+            {canRetryAuthorization ? (
+              <Button disabled={checking} onClick={() => void onRetryVerify()} variant="outline">
+                <RefreshCcw className="mr-2 size-4" />
+                重新校验
+              </Button>
+            ) : null}
             {state.status !== 'anonymous' ? (
               <Button onClick={() => void handleLogout()} variant="ghost">
                 <LogOut className="mr-2 size-4" />
@@ -239,142 +249,100 @@ export function CustomerLoginPage({
               </Button>
             ) : null}
           </div>
-        </section>
+        </CardHeader>
+        <CardContent>
+          <Tabs className="w-full" defaultValue="wechat">
+            <TabsList className="grid w-full grid-cols-2">
+              <TabsTrigger value="wechat">
+                <QrCode className="mr-2 size-4" />
+                微信扫码
+              </TabsTrigger>
+              <TabsTrigger value="phone">
+                <Smartphone className="mr-2 size-4" />
+                手机号
+              </TabsTrigger>
+            </TabsList>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>登录</CardTitle>
-            <CardDescription>使用旧官网账号登录，后台授权后进入工作台。</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Tabs className="w-full" defaultValue="wechat">
-              <TabsList className="grid w-full grid-cols-2">
-                <TabsTrigger value="wechat">
-                  <QrCode className="mr-2 size-4" />
-                  微信扫码
-                </TabsTrigger>
-                <TabsTrigger value="phone">
-                  <Smartphone className="mr-2 size-4" />
-                  手机号
-                </TabsTrigger>
-              </TabsList>
+            <TabsContent className="space-y-4 pt-4" value="wechat">
+              <div className="mx-auto grid h-96 w-full place-items-center overflow-hidden rounded-md border bg-muted/20">
+                {qrcode ? (
+                  <iframe
+                    className="size-full border-0"
+                    referrerPolicy="no-referrer"
+                    sandbox="allow-forms allow-popups allow-same-origin allow-scripts"
+                    src={qrcode.qrcode_url}
+                    title="微信登录二维码"
+                  />
+                ) : (
+                  <QrCode className="size-16 text-muted-foreground" />
+                )}
+              </div>
+              <Button
+                className="w-full"
+                disabled={wechatBusy}
+                onClick={() => void handleGetQrcode()}
+              >
+                {wechatBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                {qrcode ? '刷新二维码' : '获取二维码'}
+              </Button>
+              <p className="min-h-6 text-center text-sm text-muted-foreground text-pretty">
+                {wechatMessage ?? (polling ? '正在等待扫码确认。' : '获取二维码后扫码登录。')}
+              </p>
+            </TabsContent>
 
-              <TabsContent className="space-y-4 pt-4" value="wechat">
-                <div className="grid gap-4 md:grid-cols-[240px_1fr]">
-                  <div className="grid aspect-square w-full max-w-60 place-items-center rounded-md border bg-muted/20 p-3">
-                    {qrcode ? (
-                      <img
-                        alt="微信登录二维码"
-                        className="size-full object-contain"
-                        src={qrcode.qrcode_image_url}
-                      />
-                    ) : (
-                      <QrCode className="size-16 text-muted-foreground" />
-                    )}
-                  </div>
-                  <div className="space-y-3">
-                    <Button disabled={wechatBusy} onClick={() => void handleGetQrcode()}>
-                      {wechatBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                      获取二维码
+            <TabsContent className="pt-4" value="phone">
+              <form className="space-y-4" onSubmit={(event) => void handlePhoneLogin(event)}>
+                <div className="grid gap-4 md:grid-cols-[1fr_160px]">
+                  <label className="space-y-2" htmlFor="customer-phone">
+                    <span className="text-sm font-medium">手机号</span>
+                    <Input
+                      autoComplete="tel"
+                      id="customer-phone"
+                      inputMode="tel"
+                      onChange={(event) => setPhone(event.target.value)}
+                      placeholder="请输入手机号"
+                      value={phone}
+                    />
+                  </label>
+                  <div className="flex items-end">
+                    <Button
+                      className="w-full"
+                      disabled={phoneBusy || smsRemaining > 0}
+                      onClick={() => void handleSendSms()}
+                      type="button"
+                      variant="outline"
+                    >
+                      {phoneBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                      {smsRemaining > 0 ? `${smsRemaining}s` : '发送验证码'}
                     </Button>
-                    <div className="flex flex-wrap gap-2">
-                      <Button
-                        disabled={!qrcode?.token}
-                        onClick={() => void checkWechatOnce()}
-                        variant="outline"
-                      >
-                        手动查询
-                      </Button>
-                      <Button disabled={!polling} onClick={() => setPolling(false)} variant="ghost">
-                        停止轮询
-                      </Button>
-                    </div>
-                    {qrcode?.token ? (
-                      <p className="text-xs text-muted-foreground tabular-nums">
-                        token：{qrcode.token}
-                      </p>
-                    ) : null}
-                    {qrcode?.qrcode_url ? (
-                      <a
-                        className="text-sm text-primary underline-offset-4 hover:underline"
-                        href={qrcode.qrcode_url}
-                        rel="noreferrer"
-                        target="_blank"
-                      >
-                        打开授权链接
-                      </a>
-                    ) : null}
-                    <p className="min-h-6 text-sm text-muted-foreground text-pretty">
-                      {wechatMessage ?? (polling ? '正在等待扫码确认。' : '等待获取二维码。')}
-                    </p>
                   </div>
                 </div>
-              </TabsContent>
 
-              <TabsContent className="pt-4" value="phone">
-                <form className="space-y-4" onSubmit={(event) => void handlePhoneLogin(event)}>
-                  <div className="grid gap-4 md:grid-cols-[1fr_160px]">
-                    <label className="space-y-2" htmlFor="customer-phone">
-                      <span className="text-sm font-medium">手机号</span>
-                      <Input
-                        autoComplete="tel"
-                        id="customer-phone"
-                        inputMode="tel"
-                        onChange={(event) => setPhone(event.target.value)}
-                        placeholder="请输入手机号"
-                        value={phone}
-                      />
-                    </label>
-                    <div className="flex items-end">
-                      <Button
-                        className="w-full"
-                        disabled={phoneBusy || smsRemaining > 0}
-                        onClick={() => void handleSendSms()}
-                        type="button"
-                        variant="outline"
-                      >
-                        {phoneBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                        {smsRemaining > 0 ? `${smsRemaining}s` : '发送验证码'}
-                      </Button>
-                    </div>
-                  </div>
+                <label className="space-y-2" htmlFor="customer-code">
+                  <span className="text-sm font-medium">验证码</span>
+                  <Input
+                    autoComplete="one-time-code"
+                    id="customer-code"
+                    inputMode="numeric"
+                    onChange={(event) => setCode(event.target.value)}
+                    placeholder="请输入验证码"
+                    value={code}
+                  />
+                </label>
 
-                  <label className="space-y-2" htmlFor="customer-code">
-                    <span className="text-sm font-medium">验证码</span>
-                    <Input
-                      autoComplete="one-time-code"
-                      id="customer-code"
-                      inputMode="numeric"
-                      onChange={(event) => setCode(event.target.value)}
-                      placeholder="请输入验证码"
-                      value={code}
-                    />
-                  </label>
+                <Button disabled={phoneBusy} type="submit">
+                  {phoneBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
+                  验证码登录
+                </Button>
 
-                  <label className="space-y-2" htmlFor="customer-invite">
-                    <span className="text-sm font-medium">邀请码</span>
-                    <Input
-                      id="customer-invite"
-                      onChange={(event) => setInvite(event.target.value)}
-                      placeholder="可选"
-                      value={invite}
-                    />
-                  </label>
-
-                  <Button disabled={phoneBusy} type="submit">
-                    {phoneBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                    验证码登录
-                  </Button>
-
-                  <p className="min-h-6 text-sm text-muted-foreground text-pretty">
-                    {phoneMessage ?? '等待输入验证码。'}
-                  </p>
-                </form>
-              </TabsContent>
-            </Tabs>
-          </CardContent>
-        </Card>
-      </div>
+                <p className="min-h-6 text-sm text-muted-foreground text-pretty">
+                  {phoneMessage ?? '等待输入验证码。'}
+                </p>
+              </form>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
     </main>
   )
 }

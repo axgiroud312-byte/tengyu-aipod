@@ -1,6 +1,6 @@
 import { app } from 'electron'
 
-const DEV_SERVER_BASE_URL = 'http://127.0.0.1:3100'
+const DEV_SERVER_BASE_URL = 'https://wechat.tengyuai.com'
 
 export function resolveServerBaseUrl(input: {
   configuredUrl?: string | undefined

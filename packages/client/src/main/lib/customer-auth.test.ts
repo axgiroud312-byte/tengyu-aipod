@@ -70,6 +70,34 @@ describe('CustomerAuthService', () => {
     expect(resolvePhpAuthBaseUrl('')).toBe('https://tengyuai.com')
   })
 
+  it('returns the official WeChat QR page URL without generating a local QR image', async () => {
+    const secretStore = createSecretStore()
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({
+        data: {
+          qrcode_url: 'https://open.weixin.qq.com/connect/qrconnect?state=state-token',
+          token: 'wx-token',
+        },
+        status: 1,
+      }),
+    )
+    const service = new CustomerAuthService({
+      fetcher: fetch,
+      secretStore,
+    })
+
+    const result = await service.getQrcode()
+
+    expect(result).toEqual({
+      qrcode_url: 'https://open.weixin.qq.com/connect/qrconnect?state=state-token',
+      token: 'wx-token',
+    })
+    expect(JSON.stringify(result)).not.toContain('qrcode_image_url')
+    expect(fetch).toHaveBeenCalledWith('https://tengyuai.com/api/wxlogin/get_qrcode', {
+      method: 'GET',
+    })
+  })
+
   it('logs in by phone, verifies with Next, and does not write secret into state', async () => {
     const secretStore = createSecretStore()
     const requests: Array<{ body: unknown; url: string }> = []
@@ -122,7 +150,7 @@ describe('CustomerAuthService', () => {
         secret: 'php-secret',
         uid: 123,
       },
-      url: 'http://127.0.0.1:3100/api/customer-auth/verify',
+      url: 'https://wechat.tengyuai.com/api/customer-auth/verify',
     })
     expect(verifyRequest?.body).toHaveProperty(
       'finger',
@@ -177,7 +205,7 @@ describe('CustomerAuthService', () => {
         secret: 'wechat-secret',
         uid: 123,
       },
-      url: 'http://127.0.0.1:3100/api/customer-auth/verify',
+      url: 'https://wechat.tengyuai.com/api/customer-auth/verify',
     })
   })
 
