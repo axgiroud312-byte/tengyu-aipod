@@ -27,7 +27,9 @@ export type GeneratePromptsInput = {
     model: string
     finishReason: string | null
     expected: number
-  }) => void
+    chunkIndex: number
+    chunkTotal: number
+  }) => void | Promise<void>
 }
 
 const DEFAULT_BAILIAN_TIMEOUT_MS = 600_000
@@ -70,13 +72,19 @@ export class PromptGeneratorService {
     const wantsJson =
       input.responseFormat === 'json_object' || promptAsksForJson(skill.systemPrompt)
     const response_format = wantsJson ? { type: 'json_object' as const } : undefined
-    const chunks = chunkPromptCount(
+    const chunkCounts = chunkPromptCount(
       count,
       envInt('TENGYU_BAILIAN_PROMPT_CHUNK_SIZE', 1, 100, DEFAULT_PROMPT_CHUNK_SIZE),
     )
-    const promptChunks = await mapWithConcurrency(chunks, PROMPT_CHUNK_CONCURRENCY, (chunkCount) =>
+    const chunks = chunkCounts.map((chunkCount, index) => ({
+      chunkCount,
+      chunkIndex: index + 1,
+      chunkTotal: chunkCounts.length,
+    }))
+    const promptChunks = await mapWithConcurrency(chunks, PROMPT_CHUNK_CONCURRENCY, (chunk) =>
       retryPromptChunk(
         async () => {
+          const chunkCount = chunk.chunkCount
           const messages = createPromptMessages(
             skill,
             { ...input.variables, count: chunkCount },
@@ -95,11 +103,13 @@ export class PromptGeneratorService {
                 ...(response_format ? { response_format } : {}),
               })
 
-          input.onRawResponse?.({
+          await input.onRawResponse?.({
             text: response.text,
             model: response.model,
             finishReason: response.finishReason ?? null,
             expected: chunkCount,
+            chunkIndex: chunk.chunkIndex,
+            chunkTotal: chunk.chunkTotal,
           })
 
           const prompts = parsePromptJsonStrict(response.text, chunkCount)

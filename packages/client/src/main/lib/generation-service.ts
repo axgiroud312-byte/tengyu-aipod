@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -258,6 +258,18 @@ export type GenerationDebugLogDetails = Record<string, string | number | boolean
 type GenerationDebugLogContext = {
   taskId?: string | undefined
   capability?: GenerationCapability | undefined
+}
+type GenerationPromptRawLogWriter = {
+  path: string
+  promptRunId: string
+  append: (response: {
+    text: string
+    model: string
+    finishReason: string | null
+    expected: number
+    chunkIndex: number
+    chunkTotal: number
+  }) => Promise<void>
 }
 type Img2imgReference = {
   artifactId: string
@@ -561,6 +573,62 @@ function workbenchDbPath(workbenchRoot: string) {
 
 function openWorkbenchDatabase(workbenchRoot: string) {
   return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+}
+
+function generationPromptRawLogId() {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  return `prompt_${timestamp}_${randomUUID().slice(0, 8)}`
+}
+
+async function createGenerationPromptRawLogWriter(
+  input: GenerationPromptInput,
+): Promise<GenerationPromptRawLogWriter | null> {
+  const workbenchConfig = await readAppConfig()
+  if (!workbenchConfig.workbench_root) {
+    return null
+  }
+
+  const promptRunId = generationPromptRawLogId()
+  const logDir = join(workbenchConfig.workbench_root, '.workbench', 'logs', 'generation-prompts')
+  const logPath = join(logDir, `${promptRunId}.jsonl`)
+  await mkdir(logDir, { recursive: true })
+  await appendFile(
+    logPath,
+    `${JSON.stringify({
+      type: 'meta',
+      promptRunId,
+      createdAt: new Date().toISOString(),
+      capability: input.capability ?? 'txt2img',
+      count: input.count,
+      model: input.model ?? null,
+      skillId: input.skillId ?? null,
+      skillVersion: input.skillVersion ?? null,
+      printMode: input.printMode ?? 'local',
+      referenceImageCount: input.referenceImages?.length ?? 0,
+    })}\n`,
+    'utf8',
+  )
+
+  let appendQueue = Promise.resolve()
+  return {
+    path: logPath,
+    promptRunId,
+    append: (response) => {
+      const line = `${JSON.stringify({
+        type: 'llm_raw_response',
+        promptRunId,
+        receivedAt: new Date().toISOString(),
+        chunkIndex: response.chunkIndex,
+        chunkTotal: response.chunkTotal,
+        expected: response.expected,
+        model: response.model,
+        finishReason: response.finishReason,
+        text: response.text,
+      })}\n`
+      appendQueue = appendQueue.then(() => appendFile(logPath, line, 'utf8'))
+      return appendQueue
+    },
+  }
 }
 
 function ensureGenerationTables(db: Pick<SqliteDatabase, 'exec'>) {
@@ -1169,7 +1237,6 @@ function promptGenerationErrorDetails(error: unknown): GenerationDebugLogDetails
   }
   const details = error.details
   return {
-    rawResponse: typeof details.rawResponse === 'string' ? details.rawResponse : undefined,
     rawResponsePreview:
       typeof details.rawResponsePreview === 'string' ? details.rawResponsePreview : undefined,
     responseModel: typeof details.responseModel === 'string' ? details.responseModel : undefined,
@@ -1510,6 +1577,26 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
     printMode: input.printMode ?? 'local',
     requirement: input.requirement ? promptPreview(input.requirement, 240) : undefined,
   })
+  let rawPromptLog: GenerationPromptRawLogWriter | null = null
+  try {
+    rawPromptLog = await createGenerationPromptRawLogWriter({ ...input, count })
+    if (rawPromptLog) {
+      debug('LLM 原始提示词日志已创建', 'info', {
+        operation: 'prompt',
+        promptRunId: rawPromptLog.promptRunId,
+        savedPath: rawPromptLog.path,
+      })
+    } else {
+      debug('未写入 LLM 原始提示词日志：未设置工作区', 'warn', {
+        operation: 'prompt',
+      })
+    }
+  } catch (error) {
+    debug('LLM 原始提示词日志创建失败', 'warn', {
+      operation: 'prompt',
+      error: appErrorMessage(error),
+    })
+  }
   try {
     const prompts = await promptGeneratorService.generatePrompts({
       ...(selectedSkillId
@@ -1531,14 +1618,29 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
         input.modeInstruction ??
         `生成 ${count} 条适合 Grsai ${capability === 'img2img' ? '图生图' : '文生图'}的英文印花提示词。`,
       responseFormat: 'json_object',
-      onRawResponse: (response) => {
+      onRawResponse: async (response) => {
+        if (rawPromptLog) {
+          try {
+            await rawPromptLog.append(response)
+          } catch (error) {
+            debug('LLM 原始提示词日志写入失败', 'warn', {
+              operation: 'prompt',
+              promptRunId: rawPromptLog.promptRunId,
+              savedPath: rawPromptLog.path,
+              error: appErrorMessage(error),
+            })
+            rawPromptLog = null
+          }
+        }
         debug('百炼原始返回', 'debug', {
           operation: 'prompt',
           expected: response.expected,
-          rawResponse: response.text,
           rawResponsePreview: promptPreview(response.text, 800),
           responseModel: response.model,
           finishReason: response.finishReason,
+          chunkIndex: response.chunkIndex,
+          chunkTotal: response.chunkTotal,
+          savedPath: rawPromptLog?.path ?? null,
         })
       },
     })

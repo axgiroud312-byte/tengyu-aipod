@@ -70,6 +70,7 @@ describe('AliyunBailianAdapter', () => {
       model: 'qwen3.6-plus',
       messages: [{ role: 'user', content: 'Write a title' }],
       response_format: { type: 'json_object' },
+      enable_thinking: false,
     })
   })
 
@@ -99,10 +100,13 @@ describe('AliyunBailianAdapter', () => {
           ],
         },
       ],
+      response_format: { type: 'json_object' },
     })
 
     expect(requestBody).toMatchObject({
       model: 'qwen3-vl-plus',
+      response_format: { type: 'json_object' },
+      enable_thinking: false,
       messages: [
         {
           role: 'user',
@@ -139,7 +143,7 @@ describe('AliyunBailianAdapter', () => {
         messages: [{ role: 'user', content: 'Write a title' }],
       }),
     ).resolves.toMatchObject({ text: 'Vintage Floral T-Shirt' })
-    expect(requestBody).toMatchObject({ model: 'qwen3-vl-plus' })
+    expect(requestBody).toMatchObject({ model: 'qwen3-vl-plus', enable_thinking: false })
   })
 
   it('maps 401 errors to non-retryable AppError', async () => {

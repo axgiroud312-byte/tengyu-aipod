@@ -201,6 +201,7 @@ describe('PromptGeneratorService', () => {
   })
 
   it('chunks large prompt requests and injects each chunk count', async () => {
+    const rawResponses: Array<{ chunkIndex: number; chunkTotal: number; expected: number }> = []
     const chatCompletion = vi.fn(async (request) => {
       const systemMessage = request.messages[0]
       const content = typeof systemMessage.content === 'string' ? systemMessage.content : ''
@@ -222,6 +223,13 @@ describe('PromptGeneratorService', () => {
           skill: skill({ systemPrompt: 'Generate {{count}} JSON prompts for {requirement}.' }),
           variables: { requirement: '圣诞小熊' },
           count: 250,
+          onRawResponse: (response) => {
+            rawResponses.push({
+              chunkIndex: response.chunkIndex,
+              chunkTotal: response.chunkTotal,
+              expected: response.expected,
+            })
+          },
         },
         {
           getSecret: async () => 'sk-test',
@@ -241,6 +249,11 @@ describe('PromptGeneratorService', () => {
       'Generate 100 JSON prompts for 圣诞小熊.',
       'Generate 100 JSON prompts for 圣诞小熊.',
       'Generate 50 JSON prompts for 圣诞小熊.',
+    ])
+    expect(rawResponses.sort((a, b) => a.chunkIndex - b.chunkIndex)).toEqual([
+      { chunkIndex: 1, chunkTotal: 3, expected: 100 },
+      { chunkIndex: 2, chunkTotal: 3, expected: 100 },
+      { chunkIndex: 3, chunkTotal: 3, expected: 50 },
     ])
   })
 

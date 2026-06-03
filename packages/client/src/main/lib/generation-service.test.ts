@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
@@ -240,6 +240,92 @@ describe('generation prompt service entrypoint', () => {
         userMessage: expect.stringContaining('1000'),
       }),
     )
+  })
+
+  it('writes raw LLM prompt responses to a per-run jsonl file without trimming or truncating', async () => {
+    const formattedRawText = '  {\n  "prompts": ["Prompt B"]\n}\n'
+    vi.spyOn(promptGeneratorService, 'generatePrompts').mockImplementation(async (input) => {
+      await input.onRawResponse?.({
+        text: '',
+        model: 'qwen3.6-flash',
+        finishReason: null,
+        expected: 1,
+        chunkIndex: 1,
+        chunkTotal: 2,
+      })
+      await input.onRawResponse?.({
+        text: formattedRawText,
+        model: 'qwen3.6-flash',
+        finishReason: 'stop',
+        expected: 1,
+        chunkIndex: 2,
+        chunkTotal: 2,
+      })
+      return ['', 'Prompt B']
+    })
+
+    const result = await generateTxt2imgPrompts({
+      capability: 'txt2img',
+      skillId: 'txt2img-local-print',
+      skillVersion: '2.1.0',
+      requirement: 'debug empty prompt',
+      count: 2,
+      model: 'qwen3.6-flash',
+    })
+
+    expect(result.map((draft) => draft.text)).toEqual(['', 'Prompt B'])
+
+    const logDir = join(workbenchRoot, '.workbench', 'logs', 'generation-prompts')
+    const files = await readdir(logDir)
+    expect(files).toHaveLength(1)
+    const lines = (await readFile(join(logDir, files[0] ?? ''), 'utf8'))
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+
+    expect(lines[0]).toMatchObject({
+      type: 'meta',
+      count: 2,
+      model: 'qwen3.6-flash',
+      skillId: 'txt2img-local-print',
+    })
+    expect(lines[1]).toMatchObject({
+      type: 'llm_raw_response',
+      chunkIndex: 1,
+      chunkTotal: 2,
+      expected: 1,
+      text: '',
+    })
+    expect(lines[2]).toMatchObject({
+      type: 'llm_raw_response',
+      chunkIndex: 2,
+      chunkTotal: 2,
+      expected: 1,
+      text: formattedRawText,
+    })
+  })
+
+  it('keeps prompt generation working when no workbench root is available for raw logs', async () => {
+    workbenchRoot = ''
+    vi.spyOn(promptGeneratorService, 'generatePrompts').mockImplementation(async (input) => {
+      await input.onRawResponse?.({
+        text: '',
+        model: 'qwen3.6-flash',
+        finishReason: null,
+        expected: 1,
+        chunkIndex: 1,
+        chunkTotal: 1,
+      })
+      return ['Prompt A']
+    })
+
+    await expect(
+      generateTxt2imgPrompts({
+        capability: 'txt2img',
+        requirement: 'debug without workbench',
+        count: 1,
+      }),
+    ).resolves.toEqual([expect.objectContaining({ text: 'Prompt A' })])
   })
 
   it('falls back to the current combination category when no skill id is selected', async () => {

@@ -99,6 +99,9 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   if (typeof details.skillVersion === 'string') {
     parts.push(`skillVersion=${details.skillVersion}`)
   }
+  if (typeof details.promptRunId === 'string') {
+    parts.push(`run=${details.promptRunId}`)
+  }
   if (typeof details.workflowName === 'string') {
     parts.push(`workflow=${details.workflowName}`)
   }
@@ -130,6 +133,13 @@ function generationDebugDetailText(entry: GenerationDebugLogEntry) {
   }
   if (typeof details.promptIndex === 'number') {
     parts.push(`第 ${details.promptIndex} 条`)
+  }
+  if (typeof details.chunkIndex === 'number') {
+    parts.push(
+      typeof details.chunkTotal === 'number'
+        ? `chunk ${details.chunkIndex}/${details.chunkTotal}`
+        : `chunk ${details.chunkIndex}`,
+    )
   }
   if (typeof details.succeeded === 'number') {
     parts.push(`成功 ${details.succeeded}`)

@@ -1,0 +1,34 @@
+appId: com.tengyu.aipod
+productName: 腾域 aipod
+electronVersion: 42.2.0
+directories:
+  output: release/${version}
+  buildResources: resources
+files:
+  - out/**/*
+  - package.json
+asar: true
+asarUnpack:
+  - "**/*.node"
+extraResources:
+  - from: resources/icon.png
+    to: icon.png
+npmRebuild: false
+mac:
+  target:
+    - target: dmg
+    - target: zip
+  category: public.app-category.productivity
+  icon: resources/icon.icns
+  identity: null
+  artifactName: tengyu-aipod-${version}-mac-${arch}.${ext}
+win:
+  target:
+    - target: nsis
+  icon: resources/icon.ico
+  artifactName: tengyu-aipod-${version}-win-${arch}.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true

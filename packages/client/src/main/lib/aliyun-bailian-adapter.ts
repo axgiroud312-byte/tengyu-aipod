@@ -38,6 +38,10 @@ export type AliyunBailianAdapterOptions = {
   baseURL?: string
 }
 
+type BailianChatCompletionParams = ChatCompletionCreateParamsNonStreaming & {
+  enable_thinking?: false
+}
+
 const BAILIAN_BASE_URLS: Record<BailianRegion, string> = {
   cn: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
   sg: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
@@ -71,9 +75,10 @@ export class AliyunBailianAdapter {
 
   private async createCompletion(req: ChatRequest) {
     try {
-      const params: ChatCompletionCreateParamsNonStreaming = {
+      const params: BailianChatCompletionParams = {
         model: req.model,
         messages: req.messages,
+        enable_thinking: false,
       }
       if (req.response_format) {
         params.response_format = req.response_format
