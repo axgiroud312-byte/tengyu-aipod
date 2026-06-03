@@ -14,7 +14,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
-import { type WorkbenchModule, workbenchModules } from './navigation'
+import { type WorkbenchModule, tutorialModule, workbenchModules } from './navigation'
 
 const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>>> = {
   collection: Download,
@@ -24,6 +24,7 @@ const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>
   listing: Rocket,
   ps: Layers,
   settings: Settings2,
+  tutorial: HelpCircle,
 }
 
 interface SidebarProps {
@@ -98,17 +99,22 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
           <Settings2 className="h-4 w-4 shrink-0" />
           {collapsed ? null : <span>设置</span>}
         </NavLink>
-        <button
-          className={cn(
-            'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium text-muted-foreground transition-colors duration-100 hover:bg-accent hover:text-accent-foreground',
-            collapsed ? 'justify-center px-0' : null,
-          )}
+        <NavLink
+          className={({ isActive }) =>
+            cn(
+              'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
+              collapsed ? 'justify-center px-0' : null,
+              isActive
+                ? 'bg-primary text-primary-foreground shadow-xs'
+                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+            )
+          }
           title={collapsed ? '教程' : undefined}
-          type="button"
+          to={tutorialModule.path}
         >
           <HelpCircle className="h-4 w-4 shrink-0" />
           {collapsed ? null : <span>教程</span>}
-        </button>
+        </NavLink>
         <Button
           className={cn(
             'h-10 w-full justify-start gap-3 px-3',

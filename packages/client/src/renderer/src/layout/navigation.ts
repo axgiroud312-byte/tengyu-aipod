@@ -6,6 +6,7 @@ export type WorkbenchModule =
   | 'listing'
   | 'ps'
   | 'settings'
+  | 'tutorial'
 
 export interface WorkbenchModuleMeta {
   key: WorkbenchModule
@@ -71,6 +72,14 @@ export const settingsModule: WorkbenchModuleMeta = {
   description: '管理本机配置、接口密钥和晨羽云实例',
 }
 
+export const tutorialModule: WorkbenchModuleMeta = {
+  key: 'tutorial',
+  path: '/tutorial',
+  label: '教程',
+  title: '教程',
+  description: '采集、生图和 PS 套版操作手册',
+}
+
 const defaultWorkbenchRoute = '/collection'
 const defaultWorkbenchModule: WorkbenchModuleMeta = {
   key: 'collection',
@@ -84,6 +93,9 @@ export function moduleFromPath(pathname: string) {
   if (pathname === settingsModule.path) {
     return settingsModule.key
   }
+  if (pathname === tutorialModule.path) {
+    return tutorialModule.key
+  }
   return workbenchModules.find((module) => module.path === pathname)?.key ?? null
 }
 
@@ -91,12 +103,17 @@ export function moduleMetaFromPath(pathname: string) {
   if (pathname === settingsModule.path) {
     return settingsModule
   }
+  if (pathname === tutorialModule.path) {
+    return tutorialModule
+  }
   return workbenchModules.find((module) => module.path === pathname) ?? defaultWorkbenchModule
 }
 
 export function isWorkbenchRoute(pathname: string) {
   return (
-    pathname === settingsModule.path || workbenchModules.some((module) => module.path === pathname)
+    pathname === settingsModule.path ||
+    pathname === tutorialModule.path ||
+    workbenchModules.some((module) => module.path === pathname)
   )
 }
 

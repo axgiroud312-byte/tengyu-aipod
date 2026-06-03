@@ -26,6 +26,7 @@ interface OnboardingPageProps {
   onApiKeyChange: (key: OnboardingApiKey, value: string) => void
   onSaveApiKeys: () => void
   onComplete: () => void
+  onOpenTutorial: () => void
 }
 
 interface StepMeta {
@@ -136,6 +137,7 @@ export function OnboardingPage({
   onApiKeyChange,
   onSaveApiKeys,
   onComplete,
+  onOpenTutorial,
 }: OnboardingPageProps) {
   const meta = currentStepMeta(step)
 
@@ -291,11 +293,9 @@ export function OnboardingPage({
                   </div>
                 </div>
                 <div className="flex justify-center gap-2">
-                  <Button asChild variant="secondary">
-                    <a href="https://example.com/tutorial">
-                      <PlayCircle className="mr-2 h-4 w-4" />
-                      查看教程视频
-                    </a>
+                  <Button onClick={onOpenTutorial} type="button" variant="secondary">
+                    <PlayCircle className="mr-2 h-4 w-4" />
+                    查看操作教程
                   </Button>
                   <Button onClick={onComplete} type="button">
                     开始使用
