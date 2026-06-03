@@ -43,6 +43,24 @@ declare global {
       keychain: {
         has: (key: string) => Promise<boolean>
       }
+      customerAuth: {
+        getState: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
+        getQrcode: () => Promise<import('../../main/lib/customer-auth').CustomerAuthQrcode>
+        checkWechatLogin: (input: {
+          token: string
+        }) => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
+        sendSms: (input: {
+          phone: string
+        }) => Promise<import('../../main/lib/customer-auth').CustomerAuthSmsResult>
+        getSmsCountdown: () => Promise<{ remaining_seconds: number }>
+        loginByPhone: (input: {
+          code: string
+          invite?: string
+          phone: string
+        }) => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
+        verify: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
+        logout: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
+      }
       chenyu: {
         getSettings: () => Promise<
           import('../../main/lib/chenyu-instance-service').ChenyuSettingsSnapshot

@@ -5,10 +5,17 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 const mainServerUrlDefine = process.env.TENGYU_SERVER_URL
   ? { 'process.env.TENGYU_SERVER_URL': JSON.stringify(process.env.TENGYU_SERVER_URL) }
   : {}
+const mainPhpAuthBaseUrlDefine = process.env.TENGYU_PHP_AUTH_BASE_URL
+  ? { 'process.env.TENGYU_PHP_AUTH_BASE_URL': JSON.stringify(process.env.TENGYU_PHP_AUTH_BASE_URL) }
+  : {}
+const mainEnvDefine = {
+  ...mainServerUrlDefine,
+  ...mainPhpAuthBaseUrlDefine,
+}
 
 export default defineConfig({
   main: {
-    ...(Object.keys(mainServerUrlDefine).length ? { define: mainServerUrlDefine } : {}),
+    ...(Object.keys(mainEnvDefine).length ? { define: mainEnvDefine } : {}),
     plugins: [externalizeDepsPlugin({ exclude: ['@tengyu-aipod/shared'] })],
   },
   preload: {

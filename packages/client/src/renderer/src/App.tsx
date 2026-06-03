@@ -9,6 +9,7 @@ import {
   collectionImagePoolKey,
   mergeCollectionImagePoolItems,
 } from '@/features/collection/image-pool'
+import { CustomerLoginPage } from '@/features/customer-auth/CustomerLoginPage'
 import { DetectionPage } from '@/features/detection/DetectionPage'
 import { GenerationPage } from '@/features/generation/GenerationPage'
 import { ListingPage } from '@/features/listing/ListingPage'
@@ -62,6 +63,7 @@ import type {
 } from '../../main/lib/collection-session-manager'
 import type { CollectionSession } from '../../main/lib/collection-session-manager'
 import type { CollectionSessionEvent } from '../../main/lib/collection-session-manager'
+import type { CustomerAuthState } from '../../main/lib/customer-auth'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
@@ -85,6 +87,13 @@ const defaultCollectionPageState: CollectionPageState = {
 
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
 const COLLECTION_DEBUG_LOG_LIMIT = 1000
+const CUSTOMER_AUTH_RECHECK_MS = 5 * 60 * 1000
+
+const anonymousCustomerAuthState: CustomerAuthState = {
+  customer: null,
+  message: null,
+  status: 'anonymous',
+}
 
 type CollectionDebugDetails = Record<string, string | number | boolean | null | undefined>
 
@@ -1484,6 +1493,86 @@ function WorkbenchRoute() {
   return <MainWorkbench />
 }
 
+function CustomerAuthGate({ children }: { children: React.ReactNode }) {
+  const [authState, setAuthState] = useState<CustomerAuthState>(anonymousCustomerAuthState)
+  const [checking, setChecking] = useState(true)
+  const [initialChecked, setInitialChecked] = useState(false)
+
+  const verifyAuth = useCallback(async () => {
+    setChecking(true)
+    try {
+      const nextState = await window.api.customerAuth.verify()
+      setAuthState(nextState)
+    } catch (error) {
+      setAuthState({
+        customer: null,
+        message: error instanceof Error ? error.message : '客户授权校验失败',
+        status: 'anonymous',
+      })
+    } finally {
+      setChecking(false)
+      setInitialChecked(true)
+    }
+  }, [])
+
+  useEffect(() => {
+    let active = true
+
+    async function loadAuthState() {
+      try {
+        const snapshot = await window.api.customerAuth.getState()
+        if (active) {
+          setAuthState(snapshot)
+        }
+      } catch {
+        // First render still performs the required strong verification below.
+      }
+
+      if (active) {
+        await verifyAuth()
+      }
+    }
+
+    void loadAuthState()
+    return () => {
+      active = false
+    }
+  }, [verifyAuth])
+
+  useEffect(() => {
+    if (authState.status !== 'active') {
+      return
+    }
+
+    const timer = window.setInterval(() => {
+      void window.api.customerAuth
+        .verify()
+        .then(setAuthState)
+        .catch((error) => {
+          setAuthState({
+            customer: null,
+            message: error instanceof Error ? error.message : '客户授权校验失败',
+            status: 'anonymous',
+          })
+        })
+    }, CUSTOMER_AUTH_RECHECK_MS)
+    return () => window.clearInterval(timer)
+  }, [authState.status])
+
+  if (!initialChecked || authState.status !== 'active') {
+    return (
+      <CustomerLoginPage
+        checking={checking}
+        onRetryVerify={verifyAuth}
+        onStateChange={setAuthState}
+        state={authState}
+      />
+    )
+  }
+
+  return <>{children}</>
+}
+
 function AppRoutes() {
   return (
     <Routes>
@@ -1498,7 +1587,9 @@ function AppRoutes() {
 export function App() {
   return (
     <HashRouter>
-      <AppRoutes />
+      <CustomerAuthGate>
+        <AppRoutes />
+      </CustomerAuthGate>
     </HashRouter>
   )
 }

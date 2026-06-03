@@ -71,6 +71,11 @@ import type {
   ImportLocalComfyuiWorkflowDirectoryResult,
   ImportLocalComfyuiWorkflowInput,
 } from '../main/lib/comfyui-workflow-cache'
+import type {
+  CustomerAuthQrcode,
+  CustomerAuthSmsResult,
+  CustomerAuthState,
+} from '../main/lib/customer-auth'
 import type { DetectionConfig } from '../main/lib/detection-config'
 import type {
   ChooseDetectionInputFolderResult,
@@ -153,6 +158,20 @@ const api = {
   },
   keychain: {
     has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,
+  },
+  customerAuth: {
+    getState: () => ipcRenderer.invoke('customerAuth:getState') as Promise<CustomerAuthState>,
+    getQrcode: () => ipcRenderer.invoke('customerAuth:getQrcode') as Promise<CustomerAuthQrcode>,
+    checkWechatLogin: (input: { token: string }) =>
+      ipcRenderer.invoke('customerAuth:checkWechatLogin', input) as Promise<CustomerAuthState>,
+    sendSms: (input: { phone: string }) =>
+      ipcRenderer.invoke('customerAuth:sendSms', input) as Promise<CustomerAuthSmsResult>,
+    getSmsCountdown: () =>
+      ipcRenderer.invoke('customerAuth:getSmsCountdown') as Promise<{ remaining_seconds: number }>,
+    loginByPhone: (input: { code: string; invite?: string; phone: string }) =>
+      ipcRenderer.invoke('customerAuth:loginByPhone', input) as Promise<CustomerAuthState>,
+    verify: () => ipcRenderer.invoke('customerAuth:verify') as Promise<CustomerAuthState>,
+    logout: () => ipcRenderer.invoke('customerAuth:logout') as Promise<CustomerAuthState>,
   },
   chenyu: {
     getSettings: () => ipcRenderer.invoke('chenyu:get-settings') as Promise<ChenyuSettingsSnapshot>,

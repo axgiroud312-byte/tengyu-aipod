@@ -8,6 +8,7 @@ export const API_PATHS = {
   skills: '/api/skills',
   announcements: '/api/announcements',
   clientVersion: '/api/client-version',
+  customerAuthVerify: '/api/customer-auth/verify',
   telemetry: '/api/telemetry',
 } as const
 

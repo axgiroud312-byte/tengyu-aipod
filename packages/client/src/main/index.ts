@@ -9,6 +9,11 @@ import { registerCollectionConfigIpc } from './lib/collection-config'
 import { registerCollectionImageIndexIpc } from './lib/collection-image-index-service'
 import { registerCollectionSessionIpc } from './lib/collection-session-manager'
 import { registerComfyuiWorkflowCacheIpc } from './lib/comfyui-workflow-cache'
+import {
+  CustomerAuthService,
+  type CustomerAuthState,
+  registerCustomerAuthIpc,
+} from './lib/customer-auth'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
 import { registerGenerationLocalConfigIpc } from './lib/generation-local-config'
@@ -61,6 +66,15 @@ function createMainWindow(): void {
   void mainWindow.loadFile(join(currentDir, '../renderer/index.html'))
 }
 
+function syncSkillCacheWithCustomerAuth(state: CustomerAuthState) {
+  if (state.status === 'active') {
+    skillCacheManager.start()
+    return
+  }
+
+  skillCacheManager.stop()
+}
+
 app.whenReady().then(() => {
   try {
     runNativeSmoke()
@@ -70,6 +84,10 @@ app.whenReady().then(() => {
   }
 
   ipcMain.handle('app:ping', () => 'pong')
+  const customerAuthService = new CustomerAuthService({
+    onStateChanged: syncSkillCacheWithCustomerAuth,
+  })
+  registerCustomerAuthIpc(customerAuthService)
   registerOnboardingIpc()
   registerChenyuInstanceIpc()
   registerBrowserProfileLockIpc()
@@ -90,7 +108,7 @@ app.whenReady().then(() => {
   registerPhotoshopIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
   createMainWindow()
-  skillCacheManager.start()
+  void customerAuthService.verify().catch(() => null)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
