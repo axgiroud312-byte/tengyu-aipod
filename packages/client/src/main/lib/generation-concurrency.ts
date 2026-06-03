@@ -33,7 +33,7 @@ type QueueItem<T> = {
 
 const DEFAULT_WORKERS = 3
 const MIN_WORKERS = 1
-const MAX_WORKERS = 10
+const MAX_WORKERS = 20
 const DEFAULT_RETRY_DELAY_MS = 500
 
 export function clampGenerationWorkers(value: number | undefined, fallback = DEFAULT_WORKERS) {

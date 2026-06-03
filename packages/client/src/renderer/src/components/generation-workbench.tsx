@@ -145,6 +145,7 @@ const LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY = 'extract-comfyui-workflow'
 const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
 const COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-instance:'
 const PROMPT_SKILL_SELECTION_STORAGE_PREFIX = 'tengyu:generation-prompt-skill:'
+const GENERATION_SETTINGS_UPDATED_EVENT = 'tengyu:generation-settings-updated'
 const GENERATION_DEBUG_LOG_LIMIT = 1000
 const promptSkillCategories: Record<
   Extract<GenerationCapability, 'txt2img' | 'img2img'>,
@@ -689,22 +690,28 @@ function useGenerationLocalSettings() {
 
   useEffect(() => {
     let cancelled = false
-    window.api.generationSettings
-      .get()
-      .then((nextSettings) => {
-        if (!cancelled) {
-          setSettings(nextSettings)
-          setError(null)
-        }
-      })
-      .catch((nextError) => {
-        if (!cancelled) {
-          setError(nextError instanceof Error ? nextError.message : '读取本地生图设置失败')
-        }
-      })
+    const loadSettings = () => {
+      window.api.generationSettings
+        .get()
+        .then((nextSettings) => {
+          if (!cancelled) {
+            setSettings(nextSettings)
+            setError(null)
+          }
+        })
+        .catch((nextError) => {
+          if (!cancelled) {
+            setError(nextError instanceof Error ? nextError.message : '读取本地生图设置失败')
+          }
+        })
+    }
+
+    loadSettings()
+    window.addEventListener(GENERATION_SETTINGS_UPDATED_EVENT, loadSettings)
 
     return () => {
       cancelled = true
+      window.removeEventListener(GENERATION_SETTINGS_UPDATED_EVENT, loadSettings)
     }
   }, [])
 

@@ -19,7 +19,7 @@ function deferred<T>() {
 describe('AdaptiveRateLimiter', () => {
   it('clamps workers to the supported range', () => {
     expect(new AdaptiveRateLimiter({ workers: 0 }).currentWorkers).toBe(1)
-    expect(new AdaptiveRateLimiter({ workers: 99 }).currentWorkers).toBe(10)
+    expect(new AdaptiveRateLimiter({ workers: 99 }).currentWorkers).toBe(20)
     expect(new AdaptiveRateLimiter({ workers: 4.8 }).currentWorkers).toBe(4)
   })
 
@@ -84,6 +84,29 @@ describe('GenerationConcurrencyController', () => {
     second.resolve('done-2')
     await expect(results).resolves.toEqual(['done-1', 'done-2', 'done-3'])
     expect(controller.activeTaskIds).toEqual([])
+  })
+
+  it('allows twenty configured workers to start concurrently', async () => {
+    const controller = new GenerationConcurrencyController({ workers: 20 })
+    const gates = Array.from({ length: 21 }, () => deferred<string>())
+    const started: string[] = []
+
+    const results = Promise.all(
+      gates.map((gate, index) =>
+        controller.run(`task-${index + 1}`, async () => {
+          started.push(`task-${index + 1}`)
+          return gate.promise
+        }),
+      ),
+    )
+
+    await Promise.resolve()
+    expect(controller.currentWorkers).toBe(20)
+    expect(started).toHaveLength(20)
+    expect(started).not.toContain('task-21')
+
+    gates.forEach((gate, index) => gate.resolve(`done-${index + 1}`))
+    await expect(results).resolves.toHaveLength(21)
   })
 
   it('uses the lowered worker count after 429 adaptive throttling', async () => {

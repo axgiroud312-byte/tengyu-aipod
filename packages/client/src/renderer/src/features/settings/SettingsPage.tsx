@@ -78,6 +78,7 @@ const defaultGenerationConfig: GenerationConfig = {
   grsai_concurrency: 20,
   grsai_retries: 2,
 }
+const GENERATION_SETTINGS_UPDATED_EVENT = 'tengyu:generation-settings-updated'
 
 const workflowCategoryOptions: Array<{ key: LocalWorkflowSummary['capability']; label: string }> = [
   { key: 'txt2img', label: '文生图' },
@@ -338,6 +339,7 @@ export function SettingsPage({
       setGrsaiApiKey('')
       setBailianApiKey('')
       setMessage('本地生图设置已保存')
+      window.dispatchEvent(new Event(GENERATION_SETTINGS_UPDATED_EVENT))
     } catch (nextError) {
       setError(errorMessage(nextError, '保存本地生图设置失败'))
     } finally {
