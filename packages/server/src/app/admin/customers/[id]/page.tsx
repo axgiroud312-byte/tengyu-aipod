@@ -97,16 +97,21 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
 
   const loadAccount = useCallback(async (id: string) => {
     setIsLoading(true)
-    const response = await fetch(`/admin/api/customer-accounts/${id}`)
-    const result = (await response.json()) as CustomerResponse
-    setIsLoading(false)
-    if (!result.ok) {
-      setMessage(result.error?.message ?? '客户账号不存在')
-      return
+    try {
+      const response = await fetch(`/admin/api/customer-accounts/${id}`)
+      const result = (await response.json().catch(() => null)) as CustomerResponse | null
+      if (!result?.ok) {
+        setMessage(result?.error?.message ?? '客户账号不存在')
+        return
+      }
+      setAccount(result.data.customer)
+      setExpiresAt(dateInputValue(result.data.customer.expires_at))
+      setNotes(result.data.customer.notes ?? '')
+    } catch {
+      setMessage('客户账号不存在')
+    } finally {
+      setIsLoading(false)
     }
-    setAccount(result.data.customer)
-    setExpiresAt(dateInputValue(result.data.customer.expires_at))
-    setNotes(result.data.customer.notes ?? '')
   }, [])
 
   useEffect(() => {
@@ -114,19 +119,24 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
   }, [accountId, loadAccount])
 
   async function submitJson(url: string, init: RequestInit) {
-    const response = await fetch(url, {
-      ...init,
-      headers: { 'content-type': 'application/json' },
-    })
-    const result = (await response.json()) as {
-      error?: { message: string }
-      ok: boolean
-    }
-    if (!result.ok) {
-      setMessage(result.error?.message ?? '操作失败')
+    try {
+      const response = await fetch(url, {
+        ...init,
+        headers: { 'content-type': 'application/json' },
+      })
+      const result = (await response.json().catch(() => null)) as {
+        error?: { message: string }
+        ok?: boolean
+      } | null
+      if (!result?.ok) {
+        setMessage(result?.error?.message ?? '操作失败')
+        return false
+      }
+      return true
+    } catch {
+      setMessage('操作失败')
       return false
     }
-    return true
   }
 
   function actionPayload() {

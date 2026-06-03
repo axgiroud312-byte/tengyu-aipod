@@ -35,7 +35,7 @@ import {
   moduleFromPath,
   workbenchModules,
 } from '@/layout/navigation'
-import { AlertTriangle } from 'lucide-react'
+import { AlertTriangle, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   HashRouter,
@@ -1453,6 +1453,17 @@ function Onboarding() {
   )
 }
 
+function EnteringWorkbench() {
+  return (
+    <main className="grid min-h-screen place-items-center bg-background text-foreground">
+      <div className="flex items-center gap-3 text-sm text-muted-foreground">
+        <Loader2 className="size-4 animate-spin" />
+        正在进入工作台...
+      </div>
+    </main>
+  )
+}
+
 function WorkbenchRoute() {
   const navigate = useNavigate()
   const location = useLocation()
@@ -1471,11 +1482,7 @@ function WorkbenchRoute() {
   }, [navigate])
 
   if (needsOnboarding === null) {
-    return (
-      <main className="grid min-h-screen place-items-center bg-background text-sm text-muted-foreground">
-        正在读取启动状态...
-      </main>
-    )
+    return <EnteringWorkbench />
   }
 
   if (needsOnboarding) {
@@ -1558,6 +1565,10 @@ function CustomerAuthGate({ children }: { children: React.ReactNode }) {
     }, CUSTOMER_AUTH_RECHECK_MS)
     return () => window.clearInterval(timer)
   }, [authState.status])
+
+  if (!initialChecked && authState.status === 'active') {
+    return <EnteringWorkbench />
+  }
 
   if (!initialChecked || authState.status !== 'active') {
     return (

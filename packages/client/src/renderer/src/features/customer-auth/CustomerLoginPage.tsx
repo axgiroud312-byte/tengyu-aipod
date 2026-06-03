@@ -42,6 +42,7 @@ const PLATFORM_LOGOS: PlatformLogo[] = [
 ]
 
 const FLOW_STEPS = ['采集', '生图', '检测', '套版', '标题', '上架']
+const WECHAT_POLL_INTERVAL_MS = 1500
 
 const STATUS_TEXT: Record<CustomerAuthStatus, { label: string; message: string }> = {
   active: { label: '已授权', message: '账号已授权，可以进入工作台。' },
@@ -147,8 +148,17 @@ export function CustomerLoginPage({
     pollingRef.current = true
     try {
       const nextState = await window.api.customerAuth.checkWechatLogin({ token: qrcode.token })
-      setWechatMessage(nextState.message ?? STATUS_TEXT[nextState.status].message)
-      if (nextState.status === 'anonymous' && isWechatTerminalMessage(nextState.message)) {
+      if (nextState.status === 'active') {
+        setWechatMessage('登录成功，正在进入工作台...')
+      } else {
+        setWechatMessage(nextState.message ?? STATUS_TEXT[nextState.status].message)
+      }
+
+      if (nextState.status === 'anonymous' && !isWechatTerminalMessage(nextState.message)) {
+        return
+      }
+
+      if (nextState.status === 'anonymous') {
         setPolling(false)
       }
       applyLoginState(nextState)
@@ -164,9 +174,10 @@ export function CustomerLoginPage({
       return
     }
 
+    void checkWechatOnce()
     const timer = window.setInterval(() => {
       void checkWechatOnce()
-    }, 3000)
+    }, WECHAT_POLL_INTERVAL_MS)
     return () => window.clearInterval(timer)
   }, [checkWechatOnce, polling, qrcode?.token])
 
@@ -207,7 +218,11 @@ export function CustomerLoginPage({
     setPhoneMessage(null)
     try {
       const nextState = await window.api.customerAuth.loginByPhone({ code, invite: '', phone })
-      setPhoneMessage(nextState.message ?? STATUS_TEXT[nextState.status].message)
+      setPhoneMessage(
+        nextState.status === 'active'
+          ? '登录成功，正在进入工作台...'
+          : (nextState.message ?? STATUS_TEXT[nextState.status].message),
+      )
       applyLoginState(nextState)
     } catch (error) {
       setPhoneMessage(error instanceof Error ? error.message : '手机号登录失败')
@@ -228,7 +243,7 @@ export function CustomerLoginPage({
   return (
     <main className="min-h-dvh bg-[#f3f7fc] text-foreground">
       <div className="grid min-h-dvh lg:grid-cols-[minmax(420px,0.95fr)_minmax(0,1.05fr)]">
-        <section className="flex min-h-dvh flex-col justify-between bg-card px-6 py-8 sm:px-10 lg:px-12 lg:py-10">
+        <section className="flex flex-col justify-between bg-card px-6 py-8 sm:px-10 lg:min-h-dvh lg:px-12 lg:py-10">
           <div className="space-y-10">
             <div className="flex items-center gap-4">
               <img
@@ -376,7 +391,7 @@ export function CustomerLoginPage({
           </div>
         </section>
 
-        <section className="flex min-h-dvh items-center px-6 py-8 sm:px-10 sm:py-10">
+        <section className="flex items-center px-6 py-8 sm:px-10 sm:py-10 lg:min-h-dvh">
           <div className="w-full space-y-5">
             <div className="overflow-hidden rounded-md border bg-card shadow-lg">
               <img

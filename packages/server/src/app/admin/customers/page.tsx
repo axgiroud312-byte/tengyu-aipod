@@ -126,17 +126,22 @@ export default function AdminCustomersPage() {
 
   const loadAccounts = useCallback(async () => {
     setIsLoading(true)
-    const response = await fetch(`/admin/api/customer-accounts?${query.toString()}`)
-    const result = (await response.json()) as CustomerAccountsResponse
-    setIsLoading(false)
-    if (!result.ok) {
-      setMessage(result.error?.message ?? '客户账号加载失败')
-      return
+    try {
+      const response = await fetch(`/admin/api/customer-accounts?${query.toString()}`)
+      const result = (await response.json().catch(() => null)) as CustomerAccountsResponse | null
+      if (!result?.ok) {
+        setMessage(result?.error?.message ?? '客户账号加载失败')
+        return
+      }
+      setAccounts(result.data.items)
+      setEdits(
+        Object.fromEntries(result.data.items.map((account) => [account.id, accountEdit(account)])),
+      )
+    } catch {
+      setMessage('客户账号加载失败')
+    } finally {
+      setIsLoading(false)
     }
-    setAccounts(result.data.items)
-    setEdits(
-      Object.fromEntries(result.data.items.map((account) => [account.id, accountEdit(account)])),
-    )
   }, [query])
 
   useEffect(() => {
@@ -144,19 +149,24 @@ export default function AdminCustomersPage() {
   }, [loadAccounts])
 
   async function submitJson(url: string, init: RequestInit) {
-    const response = await fetch(url, {
-      ...init,
-      headers: { 'content-type': 'application/json' },
-    })
-    const result = (await response.json()) as {
-      error?: { message: string }
-      ok: boolean
-    }
-    if (!result.ok) {
-      setMessage(result.error?.message ?? '操作失败')
+    try {
+      const response = await fetch(url, {
+        ...init,
+        headers: { 'content-type': 'application/json' },
+      })
+      const result = (await response.json().catch(() => null)) as {
+        error?: { message: string }
+        ok?: boolean
+      } | null
+      if (!result?.ok) {
+        setMessage(result?.error?.message ?? '操作失败')
+        return false
+      }
+      return true
+    } catch {
+      setMessage('操作失败')
       return false
     }
-    return true
   }
 
   function currentEdit(account: CustomerAccount) {
