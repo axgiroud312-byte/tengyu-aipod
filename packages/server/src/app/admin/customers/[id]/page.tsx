@@ -76,22 +76,23 @@ function localDateEndIso(value: string) {
   ).toISOString()
 }
 
-function promptExpiresAt(defaultValue: string | null) {
-  const value = window.prompt('到期日（YYYY-MM-DD）', dateInputValue(defaultValue))
-  if (value === null) {
-    return null
-  }
+function payloadFromForm(expiresAt: string, notes: string) {
+  const value = expiresAt.trim()
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    window.alert('请填写 YYYY-MM-DD 格式的到期日')
     return null
   }
-  return localDateEndIso(value)
+  return {
+    expires_at: localDateEndIso(value),
+    notes,
+  }
 }
 
 export default function AdminCustomerDetailPage({ params }: { params: Promise<{ id: string }> }) {
   const { id: accountId } = use(params)
   const [account, setAccount] = useState<CustomerAccount | null>(null)
+  const [expiresAt, setExpiresAt] = useState('')
   const [message, setMessage] = useState<string | null>(null)
+  const [notes, setNotes] = useState('')
   const [isLoading, setIsLoading] = useState(true)
 
   const loadAccount = useCallback(async (id: string) => {
@@ -104,6 +105,8 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
       return
     }
     setAccount(result.data.customer)
+    setExpiresAt(dateInputValue(result.data.customer.expires_at))
+    setNotes(result.data.customer.notes ?? '')
   }, [])
 
   useEffect(() => {
@@ -126,17 +129,24 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
     return true
   }
 
+  function actionPayload() {
+    const payload = payloadFromForm(expiresAt, notes)
+    if (!payload) {
+      setMessage('请填写 YYYY-MM-DD 格式的到期日')
+    }
+    return payload
+  }
+
   async function approve() {
     if (!account) {
       return
     }
-    const expires_at = promptExpiresAt(account.expires_at)
-    if (!expires_at) {
+    const payload = actionPayload()
+    if (!payload) {
       return
     }
-    const notes = window.prompt('备注', account.notes ?? '') ?? account.notes ?? ''
     const ok = await submitJson(`/admin/api/customer-accounts/${account.id}/approve`, {
-      body: JSON.stringify({ expires_at, notes }),
+      body: JSON.stringify(payload),
       method: 'POST',
     })
     if (ok) {
@@ -149,13 +159,12 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
     if (!account) {
       return
     }
-    const expires_at = promptExpiresAt(account.expires_at)
-    if (!expires_at) {
+    const payload = actionPayload()
+    if (!payload) {
       return
     }
-    const notes = window.prompt('备注', account.notes ?? '') ?? account.notes ?? ''
     const ok = await submitJson(`/admin/api/customer-accounts/${account.id}`, {
-      body: JSON.stringify({ expires_at, notes }),
+      body: JSON.stringify(payload),
       method: 'PATCH',
     })
     if (ok) {
@@ -182,13 +191,12 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
     if (!account) {
       return
     }
-    const expires_at = promptExpiresAt(account.expires_at)
-    if (!expires_at) {
+    const payload = actionPayload()
+    if (!payload) {
       return
     }
-    const notes = window.prompt('备注', account.notes ?? '') ?? account.notes ?? ''
     const ok = await submitJson(`/admin/api/customer-accounts/${account.id}/enable`, {
-      body: JSON.stringify({ expires_at, notes }),
+      body: JSON.stringify(payload),
       method: 'POST',
     })
     if (ok) {
@@ -276,27 +284,55 @@ export default function AdminCustomerDetailPage({ params }: { params: Promise<{ 
               <div>{account.notes ?? '-'}</div>
             </div>
           </div>
-          <div className="mt-4 flex flex-wrap gap-2">
-            {account.status === 'pending' ? (
-              <Button onClick={() => void approve()} type="button">
-                授权
-              </Button>
+
+          <div className="mt-6 rounded-md border bg-muted/20 p-4">
+            <div className="grid gap-4 md:grid-cols-[180px_minmax(0,1fr)]">
+              <label className="space-y-2 text-sm font-medium" htmlFor="customer-expires-at">
+                <span>到期日</span>
+                <input
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  id="customer-expires-at"
+                  onChange={(event) => setExpiresAt(event.target.value)}
+                  type="date"
+                  value={expiresAt}
+                />
+              </label>
+              <label className="space-y-2 text-sm font-medium" htmlFor="customer-notes">
+                <span>备注</span>
+                <textarea
+                  className="min-h-24 w-full rounded-md border bg-background px-3 py-2 text-sm"
+                  id="customer-notes"
+                  onChange={(event) => setNotes(event.target.value)}
+                  placeholder="授权备注"
+                  value={notes}
+                />
+              </label>
+            </div>
+            {!/^\d{4}-\d{2}-\d{2}$/.test(expiresAt) ? (
+              <p className="mt-2 text-sm text-amber-700">授权、修改或重新启用前必须填写到期日。</p>
             ) : null}
-            {account.status === 'active' || account.status === 'expired' ? (
-              <Button onClick={() => void updateAccount()} type="button" variant="secondary">
-                修改到期日和备注
-              </Button>
-            ) : null}
-            {account.status === 'disabled' ? (
-              <Button onClick={() => void enable()} type="button" variant="secondary">
-                重新启用
-              </Button>
-            ) : null}
-            {account.database_status !== 'disabled' ? (
-              <Button onClick={() => void disable()} type="button" variant="secondary">
-                禁用账号
-              </Button>
-            ) : null}
+            <div className="mt-4 flex flex-wrap gap-2">
+              {account.status === 'pending' ? (
+                <Button onClick={() => void approve()} type="button">
+                  授权
+                </Button>
+              ) : null}
+              {account.status === 'active' || account.status === 'expired' ? (
+                <Button onClick={() => void updateAccount()} type="button" variant="secondary">
+                  修改到期日和备注
+                </Button>
+              ) : null}
+              {account.status === 'disabled' ? (
+                <Button onClick={() => void enable()} type="button" variant="secondary">
+                  重新启用
+                </Button>
+              ) : null}
+              {account.database_status !== 'disabled' ? (
+                <Button onClick={() => void disable()} type="button" variant="secondary">
+                  禁用账号
+                </Button>
+              ) : null}
+            </div>
           </div>
         </CardContent>
       </Card>

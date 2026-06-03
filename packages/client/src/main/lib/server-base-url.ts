@@ -1,6 +1,6 @@
 import { app } from 'electron'
 
-const DEV_SERVER_BASE_URL = 'https://wechat.tengyuai.com'
+const DEFAULT_SERVER_BASE_URL = 'https://wechat.tengyuai.com'
 
 export function resolveServerBaseUrl(input: {
   configuredUrl?: string | undefined
@@ -11,11 +11,7 @@ export function resolveServerBaseUrl(input: {
     return configuredUrl.replace(/\/+$/, '')
   }
 
-  if (input.isPackaged) {
-    throw new Error('TENGYU_SERVER_URL is required for packaged app')
-  }
-
-  return DEV_SERVER_BASE_URL
+  return DEFAULT_SERVER_BASE_URL
 }
 
 export function getServerBaseUrl() {

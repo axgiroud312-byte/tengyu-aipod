@@ -19,9 +19,7 @@ describe('resolveServerBaseUrl', () => {
     expect(resolveServerBaseUrl({ isPackaged: false })).toBe('https://wechat.tengyuai.com')
   })
 
-  it('fails clearly when packaged app has no server URL', () => {
-    expect(() => resolveServerBaseUrl({ isPackaged: true })).toThrow(
-      'TENGYU_SERVER_URL is required for packaged app',
-    )
+  it('uses the default remote server fallback for packaged app', () => {
+    expect(resolveServerBaseUrl({ isPackaged: true })).toBe('https://wechat.tengyuai.com')
   })
 })

@@ -49,9 +49,19 @@ function createSecretStore(initial: Record<string, string> = {}) {
     deleteSecret: vi.fn(async (key: string) => {
       values.delete(key)
     }),
+    deleteSecrets: vi.fn(async (keys: string[]) => {
+      for (const key of keys) {
+        values.delete(key)
+      }
+    }),
     getSecret: vi.fn(async (key: string) => values.get(key) ?? null),
     setSecret: vi.fn(async (key: string, value: string) => {
       values.set(key, value)
+    }),
+    setSecrets: vi.fn(async (entries: Record<string, string>) => {
+      for (const [key, value] of Object.entries(entries)) {
+        values.set(key, value)
+      }
     }),
     values,
   }
@@ -286,6 +296,25 @@ describe('CustomerAuthService', () => {
       message: '登录状态失效',
       status: 'nologin',
     })
+    expect(secretStore.values.has('customer-auth.php-secret')).toBe(false)
+    expect(secretStore.values.has('customer-auth.php-uid')).toBe(false)
+  })
+
+  it('clears partial credentials and returns a clear relogin state', async () => {
+    const secretStore = createSecretStore({
+      'customer-auth.php-uid': '123',
+    })
+    const service = new CustomerAuthService({
+      fetcher: fetch,
+      secretStore,
+    })
+
+    await expect(service.verify()).resolves.toMatchObject({
+      customer: null,
+      message: '登录状态异常，请重新登录',
+      status: 'nologin',
+    })
+    expect(fetch).not.toHaveBeenCalled()
     expect(secretStore.values.has('customer-auth.php-secret')).toBe(false)
     expect(secretStore.values.has('customer-auth.php-uid')).toBe(false)
   })

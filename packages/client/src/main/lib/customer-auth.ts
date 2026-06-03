@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path'
 import { API_PATHS } from '@tengyu-aipod/shared'
 import { app, ipcMain, shell } from 'electron'
 import { z } from 'zod'
-import { deleteSecret, getSecret, setSecret } from './keychain'
+import { deleteSecret, deleteSecrets, getSecret, setSecret, setSecrets } from './keychain'
 import { serverUrl } from './server-base-url'
 
 const DEFAULT_PHP_AUTH_BASE_URL = 'https://tengyuai.com'
@@ -53,8 +53,10 @@ type Fetcher = typeof fetch
 
 type SecretStore = {
   deleteSecret: typeof deleteSecret
+  deleteSecrets: typeof deleteSecrets
   getSecret: typeof getSecret
   setSecret: typeof setSecret
+  setSecrets: typeof setSecrets
 }
 
 type CustomerAuthStateFile = {
@@ -70,6 +72,16 @@ type LoginCredentials = {
   secret: string
   uid: number
 }
+
+type CredentialsReadResult =
+  | {
+      credentials: LoginCredentials
+      invalid: false
+    }
+  | {
+      credentials: null
+      invalid: boolean
+    }
 
 const customerSchema = z.object({
   account: z.string().nullable(),
@@ -217,14 +229,20 @@ export class CustomerAuthService {
     this.fetcher = options.fetcher ?? fetch
     this.now = options.now ?? Date.now
     this.phpAuthBaseUrl = resolvePhpAuthBaseUrl(options.phpAuthBaseUrl)
-    this.secretStore = options.secretStore ?? { deleteSecret, getSecret, setSecret }
+    this.secretStore = options.secretStore ?? {
+      deleteSecret,
+      deleteSecrets,
+      getSecret,
+      setSecret,
+      setSecrets,
+    }
     this.onStateChanged = options.onStateChanged
   }
 
   async getState(): Promise<CustomerAuthState> {
-    const credentials = await this.readCredentials()
-    if (!credentials) {
-      return anonymousState()
+    const result = await this.readCredentials()
+    if (!result.credentials) {
+      return result.invalid ? nologinState('登录状态异常，请重新登录') : anonymousState()
     }
 
     const snapshot = await this.readStateFile()
@@ -327,9 +345,11 @@ export class CustomerAuthService {
   }
 
   async verify(): Promise<CustomerAuthState> {
-    const credentials = await this.readCredentials()
-    if (!credentials) {
-      return this.commitState(anonymousState())
+    const result = await this.readCredentials()
+    if (!result.credentials) {
+      return this.commitState(
+        result.invalid ? nologinState('登录状态异常，请重新登录') : anonymousState(),
+      )
     }
 
     try {
@@ -337,8 +357,8 @@ export class CustomerAuthService {
       const response = await this.fetcher(serverUrl(API_PATHS.customerAuthVerify), {
         body: JSON.stringify({
           finger,
-          secret: credentials.secret,
-          uid: credentials.uid,
+          secret: result.credentials.secret,
+          uid: result.credentials.uid,
         }),
         headers: { 'content-type': 'application/json' },
         method: 'POST',
@@ -423,29 +443,30 @@ export class CustomerAuthService {
   }
 
   private async saveCredentials(credentials: LoginCredentials) {
-    await Promise.all([
-      this.secretStore.setSecret(CUSTOMER_UID_KEY, String(credentials.uid)),
-      this.secretStore.setSecret(CUSTOMER_SECRET_KEY, credentials.secret),
-    ])
+    await this.secretStore.setSecrets({
+      [CUSTOMER_SECRET_KEY]: credentials.secret,
+      [CUSTOMER_UID_KEY]: String(credentials.uid),
+    })
   }
 
-  private async readCredentials(): Promise<LoginCredentials | null> {
+  private async readCredentials(): Promise<CredentialsReadResult> {
     const [uid, secret] = await Promise.all([
       this.secretStore.getSecret(CUSTOMER_UID_KEY),
       this.secretStore.getSecret(CUSTOMER_SECRET_KEY),
     ])
     const parsedUid = Number(uid)
     if (!Number.isInteger(parsedUid) || parsedUid <= 0 || !secret) {
-      return null
+      if (uid || secret) {
+        await this.clearCredentials()
+        return { credentials: null, invalid: true }
+      }
+      return { credentials: null, invalid: false }
     }
-    return { secret, uid: parsedUid }
+    return { credentials: { secret, uid: parsedUid }, invalid: false }
   }
 
   private async clearCredentials() {
-    await Promise.all([
-      this.secretStore.deleteSecret(CUSTOMER_UID_KEY),
-      this.secretStore.deleteSecret(CUSTOMER_SECRET_KEY),
-    ])
+    await this.secretStore.deleteSecrets([CUSTOMER_UID_KEY, CUSTOMER_SECRET_KEY])
   }
 
   private async getOrCreateFinger() {

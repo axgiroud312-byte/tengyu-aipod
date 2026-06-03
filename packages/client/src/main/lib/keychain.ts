@@ -5,6 +5,7 @@ import { app, safeStorage } from 'electron'
 const SECRETS_FILE_NAME = 'secrets.json'
 const PLAIN_PREFIX = 'plain:'
 const ENCRYPTED_PREFIX = 'safe:'
+let storeWriteQueue = Promise.resolve()
 
 function secretsPath() {
   return join(app.getPath('userData'), SECRETS_FILE_NAME)
@@ -21,6 +22,19 @@ async function readStore(): Promise<Record<string, string>> {
 async function writeStore(store: Record<string, string>) {
   await mkdir(dirname(secretsPath()), { recursive: true })
   await writeFile(secretsPath(), JSON.stringify(store, null, 2), 'utf8')
+}
+
+function enqueueStoreWrite(operation: (store: Record<string, string>) => void) {
+  const next = storeWriteQueue.then(async () => {
+    const store = await readStore()
+    operation(store)
+    await writeStore(store)
+  })
+  storeWriteQueue = next.then(
+    () => undefined,
+    () => undefined,
+  )
+  return next
 }
 
 function encryptionAvailable() {
@@ -57,12 +71,21 @@ function decodeSecret(value: string) {
 }
 
 export async function setSecret(key: string, value: string) {
-  const store = await readStore()
-  store[key] = encodeSecret(value)
-  await writeStore(store)
+  await enqueueStoreWrite((store) => {
+    store[key] = encodeSecret(value)
+  })
+}
+
+export async function setSecrets(entries: Record<string, string>) {
+  await enqueueStoreWrite((store) => {
+    for (const [key, value] of Object.entries(entries)) {
+      store[key] = encodeSecret(value)
+    }
+  })
 }
 
 export async function getSecret(key: string) {
+  await storeWriteQueue
   const store = await readStore()
   const value = store[key]
   if (!value) {
@@ -73,12 +96,21 @@ export async function getSecret(key: string) {
 }
 
 export async function deleteSecret(key: string) {
-  const store = await readStore()
-  delete store[key]
-  await writeStore(store)
+  await enqueueStoreWrite((store) => {
+    delete store[key]
+  })
+}
+
+export async function deleteSecrets(keys: string[]) {
+  await enqueueStoreWrite((store) => {
+    for (const key of keys) {
+      delete store[key]
+    }
+  })
 }
 
 export async function hasSecret(key: string) {
+  await storeWriteQueue
   const store = await readStore()
   return Boolean(store[key])
 }
