@@ -43,10 +43,21 @@ if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.TENGYU_ELECTRON_USER_DATA_DIR)
 }
 
-function createMainWindow(): void {
-  const appIconPath = app.isPackaged
+function resolveAppIconPath(): string {
+  return app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
     : join(app.getAppPath(), 'resources/icon.png')
+}
+
+function applyAppIcon(): string {
+  const appIconPath = resolveAppIconPath()
+  if (process.platform === 'darwin') {
+    app.dock?.setIcon(appIconPath)
+  }
+  return appIconPath
+}
+
+function createMainWindow(appIconPath = resolveAppIconPath()): void {
   const mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
@@ -131,12 +142,13 @@ app.whenReady().then(() => {
   void tempFileManager.cleanupOrphans().catch(() => null)
   void cleanupDiagnosticLogs().catch(() => null)
   diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
-  createMainWindow()
+  const appIconPath = applyAppIcon()
+  createMainWindow(appIconPath)
   void customerAuthService.verify().catch(() => null)
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow()
+      createMainWindow(appIconPath)
     }
   })
 })
