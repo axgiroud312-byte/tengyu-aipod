@@ -46,6 +46,7 @@ declare global {
       customerAuth: {
         getState: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
         getQrcode: () => Promise<import('../../main/lib/customer-auth').CustomerAuthQrcode>
+        startWechatLogin: () => Promise<import('../../main/lib/customer-auth').CustomerAuthQrcode>
         checkWechatLogin: (input: {
           token: string
         }) => Promise<import('../../main/lib/customer-auth').CustomerAuthState>

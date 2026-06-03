@@ -162,6 +162,8 @@ const api = {
   customerAuth: {
     getState: () => ipcRenderer.invoke('customerAuth:getState') as Promise<CustomerAuthState>,
     getQrcode: () => ipcRenderer.invoke('customerAuth:getQrcode') as Promise<CustomerAuthQrcode>,
+    startWechatLogin: () =>
+      ipcRenderer.invoke('customerAuth:startWechatLogin') as Promise<CustomerAuthQrcode>,
     checkWechatLogin: (input: { token: string }) =>
       ipcRenderer.invoke('customerAuth:checkWechatLogin', input) as Promise<CustomerAuthState>,
     sendSms: (input: { phone: string }) =>

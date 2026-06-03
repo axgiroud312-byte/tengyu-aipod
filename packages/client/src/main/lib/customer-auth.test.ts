@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let userDataDir = ''
+const openExternalMock = vi.hoisted(() => vi.fn())
 
 vi.mock('electron', () => ({
   app: {
@@ -17,6 +18,9 @@ vi.mock('electron', () => ({
   },
   ipcMain: {
     handle: vi.fn(),
+  },
+  shell: {
+    openExternal: openExternalMock,
   },
 }))
 
@@ -56,6 +60,7 @@ function createSecretStore(initial: Record<string, string> = {}) {
 beforeEach(async () => {
   userDataDir = await mkdtemp(join(tmpdir(), 'tengyu-customer-auth-'))
   vi.stubGlobal('fetch', vi.fn())
+  openExternalMock.mockResolvedValue(undefined)
 })
 
 afterEach(async () => {
@@ -96,6 +101,31 @@ describe('CustomerAuthService', () => {
     expect(fetch).toHaveBeenCalledWith('https://tengyuai.com/api/wxlogin/get_qrcode', {
       method: 'GET',
     })
+  })
+
+  it('opens the official WeChat login page externally and returns the polling token', async () => {
+    const secretStore = createSecretStore()
+    vi.mocked(fetch).mockResolvedValue(
+      jsonResponse({
+        data: {
+          qrcode_url: 'https://open.weixin.qq.com/connect/qrconnect?state=state-token',
+          token: 'wx-token',
+        },
+        status: 1,
+      }),
+    )
+    const service = new CustomerAuthService({
+      fetcher: fetch,
+      secretStore,
+    })
+
+    await expect(service.startWechatLogin()).resolves.toEqual({
+      qrcode_url: 'https://open.weixin.qq.com/connect/qrconnect?state=state-token',
+      token: 'wx-token',
+    })
+    expect(openExternalMock).toHaveBeenCalledWith(
+      'https://open.weixin.qq.com/connect/qrconnect?state=state-token',
+    )
   })
 
   it('logs in by phone, verifies with Next, and does not write secret into state', async () => {

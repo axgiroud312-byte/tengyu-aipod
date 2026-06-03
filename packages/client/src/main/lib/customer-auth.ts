@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { arch, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
 import { API_PATHS } from '@tengyu-aipod/shared'
-import { app, ipcMain } from 'electron'
+import { app, ipcMain, shell } from 'electron'
 import { z } from 'zod'
 import { deleteSecret, getSecret, setSecret } from './keychain'
 import { serverUrl } from './server-base-url'
@@ -186,6 +186,18 @@ function makeFinger(userDataPath: string) {
   return `desktop_${createHash('sha256').update(seed).digest('hex').slice(0, 32)}`
 }
 
+function parseExternalLoginUrl(value: string) {
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') {
+      throw new Error('unsupported protocol')
+    }
+    return url.toString()
+  } catch {
+    throw new Error('微信登录页地址不正确')
+  }
+}
+
 export class CustomerAuthService {
   private readonly fetcher: Fetcher
   private readonly now: () => number
@@ -234,6 +246,12 @@ export class CustomerAuthService {
       qrcode_url: data.data.qrcode_url,
       token: data.data.token,
     }
+  }
+
+  async startWechatLogin(): Promise<CustomerAuthQrcode> {
+    const qrcode = await this.getQrcode()
+    await shell.openExternal(parseExternalLoginUrl(qrcode.qrcode_url))
+    return qrcode
   }
 
   async checkWechatLogin(input: z.infer<typeof checkWechatLoginInputSchema>) {
@@ -465,6 +483,7 @@ export class CustomerAuthService {
 export function registerCustomerAuthIpc(service = new CustomerAuthService()) {
   ipcMain.handle('customerAuth:getState', () => service.getState())
   ipcMain.handle('customerAuth:getQrcode', () => service.getQrcode())
+  ipcMain.handle('customerAuth:startWechatLogin', () => service.startWechatLogin())
   ipcMain.handle('customerAuth:checkWechatLogin', (_event, input: unknown) =>
     service.checkWechatLogin(checkWechatLoginInputSchema.parse(input)),
   )
