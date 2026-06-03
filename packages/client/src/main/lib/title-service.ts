@@ -13,6 +13,12 @@ import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { readAppConfig } from '../onboarding'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
+import {
+  type DiagnosticLogWriter,
+  createOptionalDiagnosticLogWriter,
+  errorForDiagnosticLog,
+  fileDiagnosticMetadata,
+} from './diagnostic-log-service'
 import { BAILIAN_VISION_MODELS } from './generation-local-config'
 import { getSecret } from './keychain'
 import {
@@ -57,6 +63,7 @@ export type TitleProgress = {
   succeeded: number
   failed: number
   skipped: number
+  diagnosticsLogPath?: string
   status?: 'running' | 'cancelled'
 }
 
@@ -90,6 +97,7 @@ export type TitleBatchResult = {
   skipped: number
   results: TitleSkuResult[]
   cancelled?: boolean
+  diagnosticsLogPath?: string
 }
 
 export type TitleTaskEvent =
@@ -488,6 +496,13 @@ function appErrorMessage(error: unknown) {
   return String(error)
 }
 
+async function appendDiagnosticLog(
+  diagnostics: DiagnosticLogWriter | null,
+  event: Parameters<DiagnosticLogWriter['append']>[0],
+) {
+  await diagnostics?.append(event).catch(() => null)
+}
+
 function canRetry(error: unknown) {
   if (error instanceof AppErrorClass) {
     return error.retryable
@@ -765,6 +780,7 @@ export class TitleService {
     const ownsPool = !dependencies.preprocessPool
     let tempDirCreated = false
     let keepFailedTemp = false
+    let diagnostics: DiagnosticLogWriter | null = null
     const resolved = {
       skillCache: dependencies.skillCache ?? skillCacheManager,
       createBailianAdapter: dependencies.createBailianAdapter,
@@ -780,6 +796,24 @@ export class TitleService {
       if (!workbenchConfig.workbench_root) {
         throw new Error('workbench_root is required before title generation can run')
       }
+      const workbenchRoot = workbenchConfig.workbench_root
+      diagnostics = await createOptionalDiagnosticLogWriter({
+        module: 'title',
+        taskId,
+        workbenchRoot,
+        meta: {
+          batchDir: config.batchDir,
+          titleFileName: config.titleFileName ?? null,
+          platform: config.platform,
+          language: config.language,
+          model: config.model || DEFAULT_MODEL,
+          imageIndex: config.imageIndex ?? 1,
+          existingStrategy: config.existingStrategy ?? 'skip',
+          maxRetries: config.maxRetries ?? null,
+          concurrency: config.concurrency ?? null,
+          preprocess: config.preprocess ?? null,
+        },
+      })
 
       await resolved.tempFileManager.createTaskDir('title', taskId)
       tempDirCreated = true
@@ -800,7 +834,6 @@ export class TitleService {
       const total = skuFolders.length
       const results: TitleSkuResult[] = []
       const generatedTitles = new Map<string, string>()
-      const workbenchRoot = workbenchConfig.workbench_root
       const progress: TitleProgress = {
         task_id: taskId,
         processed: 0,
@@ -808,6 +841,7 @@ export class TitleService {
         succeeded: 0,
         failed: 0,
         skipped: 0,
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
         status: 'running',
       }
       const emitProgress = () => dependencies.emitProgress?.({ ...progress })
@@ -817,6 +851,15 @@ export class TitleService {
       for (const skuFolder of skuFolders) {
         const existing = existingTitles.get(skuFolder.skuCode)
         if (existingStrategy === 'skip' && existing) {
+          await appendDiagnosticLog(diagnostics, {
+            type: 'decision',
+            operation: 'skip_existing_title',
+            itemKey: skuFolder.skuCode,
+            data: {
+              reason: 'existingStrategy=skip and title already exists',
+              title: existing,
+            },
+          })
           results.push({ skuCode: skuFolder.skuCode, status: 'skipped', title: existing })
           progress.skipped += 1
           progress.processed += 1
@@ -832,7 +875,7 @@ export class TitleService {
         progress.status = cancelled ? 'cancelled' : 'running'
         emitProgress()
         await writeTitlesXlsx(xlsxPath, generatedTitles, existingTitles)
-        return {
+        const emptyResult: TitleBatchResult = {
           taskId,
           xlsxPath,
           total,
@@ -841,7 +884,14 @@ export class TitleService {
           skipped: progress.skipped,
           results: results.sort((left, right) => naturalCompare(left.skuCode, right.skuCode)),
           ...(cancelled ? { cancelled } : {}),
+          ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
         }
+        await appendDiagnosticLog(diagnostics, {
+          type: 'task_completed',
+          operation: 'batch',
+          data: emptyResult,
+        })
+        return emptyResult
       }
 
       const skill = await selectTitleSkill(resolved.skillCache, config.platform, config.language)
@@ -854,6 +904,27 @@ export class TitleService {
       const maxRetries = clampInt(config.maxRetries, 0, 5, 2)
       const concurrency = clampInt(config.concurrency, 1, 20, 20)
       const imageIndex = clampInt(config.imageIndex, 1, Number.MAX_SAFE_INTEGER, 1)
+      await appendDiagnosticLog(diagnostics, {
+        type: 'config_resolved',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        data: {
+          model,
+          skill: {
+            id: skill.id,
+            version: skill.version,
+            recommendedModel: skill.recommendedModel ?? null,
+            platform: skill.platform ?? null,
+            language: skill.language ?? null,
+            systemPrompt: skill.systemPrompt,
+            variables: skill.variables,
+          },
+          maxRetries,
+          concurrency,
+          imageIndex,
+          pendingCount: pending.length,
+        },
+      })
 
       await runWithConcurrency(
         pending,
@@ -870,6 +941,7 @@ export class TitleService {
             imageIndex,
             workbenchRoot,
             preprocessPool: resolved.preprocessPool,
+            diagnostics,
           })
 
           results.push(result)
@@ -915,7 +987,7 @@ export class TitleService {
         }
       }
 
-      return {
+      const finalResult: TitleBatchResult = {
         taskId,
         xlsxPath,
         total,
@@ -924,7 +996,30 @@ export class TitleService {
         skipped: progress.skipped,
         results: results.sort((left, right) => naturalCompare(left.skuCode, right.skuCode)),
         ...(cancelled ? { cancelled } : {}),
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
       }
+      await appendDiagnosticLog(diagnostics, {
+        type: 'task_completed',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        data: {
+          total: finalResult.total,
+          succeeded: finalResult.succeeded,
+          failed: finalResult.failed,
+          skipped: finalResult.skipped,
+          cancelled: finalResult.cancelled ?? false,
+          xlsxPath,
+        },
+      })
+      return finalResult
+    } catch (error) {
+      await appendDiagnosticLog(diagnostics, {
+        type: 'task_failed',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        error: errorForDiagnosticLog(error),
+      })
+      throw error
     } finally {
       if (ownsPool && 'close' in resolved.preprocessPool) {
         await resolved.preprocessPool.close()
@@ -951,9 +1046,20 @@ export class TitleService {
     imageIndex: number
     workbenchRoot: string
     preprocessPool: Pick<SharpPreprocessPool, 'process'>
+    diagnostics: DiagnosticLogWriter | null
   }): Promise<TitleSkuResult> {
     const selection = await getNthImageFromSkuFolder(input.skuFolder.path, input.imageIndex)
     if (!selection.imagePath) {
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_failed',
+        provider: 'aliyun-bailian',
+        operation: 'title',
+        itemKey: input.skuFolder.skuCode,
+        error: {
+          code: 'NO_IMAGE',
+          message: '货号文件夹没有可用图片',
+        },
+      })
       return {
         skuCode: input.skuFolder.skuCode,
         status: 'failed',
@@ -962,7 +1068,24 @@ export class TitleService {
     }
 
     try {
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_started',
+        provider: 'aliyun-bailian',
+        operation: 'title',
+        itemKey: input.skuFolder.skuCode,
+        data: {
+          skuFolder: input.skuFolder.path,
+          imageIndex: input.imageIndex,
+          warning: selection.warning ?? null,
+          selectedImage: await fileDiagnosticMetadata(selection.imagePath).catch(() => ({
+            path: selection.imagePath,
+            name: basename(selection.imagePath),
+          })),
+        },
+      })
+      let attempt = 0
       const title = await withRetries(input.maxRetries, async () => {
+        attempt += 1
         const preprocessOptions: PreprocessOptions = {
           module: 'title',
           taskId: input.taskId,
@@ -980,33 +1103,115 @@ export class TitleService {
             ? { quality: input.config.preprocess.quality }
             : {}),
         }
-        const preprocessed = await input.preprocessPool.process(preprocessOptions)
-        let response: VisionResponse
         try {
-          response = await input.adapter.visionCompletion({
-            model: input.model,
-            messages: createVisionMessages(
-              input.skill,
-              preprocessed.dataUrl,
-              input.config.platform,
-              input.config.language,
-              input.config.extraRequirement,
-            ),
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'preprocess_request',
+            provider: 'aliyun-bailian',
+            operation: 'title',
+            itemKey: input.skuFolder.skuCode,
+            attempt,
+            data: { options: preprocessOptions },
           })
-        } finally {
-          await rm(preprocessed.outputPath, { force: true }).catch(() => null)
-        }
+          const preprocessed = await input.preprocessPool.process(preprocessOptions)
+          const messages = createVisionMessages(
+            input.skill,
+            preprocessed.dataUrl,
+            input.config.platform,
+            input.config.language,
+            input.config.extraRequirement,
+          )
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'request',
+            provider: 'aliyun-bailian',
+            operation: 'title',
+            itemKey: input.skuFolder.skuCode,
+            attempt,
+            data: {
+              model: input.model,
+              messages,
+              preprocess: {
+                output: await fileDiagnosticMetadata(preprocessed.outputPath).catch(() => ({
+                  path: preprocessed.outputPath,
+                  name: basename(preprocessed.outputPath),
+                })),
+                mimeType: preprocessed.mimeType,
+                dataUrl: preprocessed.dataUrl,
+              },
+            },
+          })
+          let response: VisionResponse
+          try {
+            response = await input.adapter.visionCompletion({
+              model: input.model,
+              messages,
+            })
+          } finally {
+            await rm(preprocessed.outputPath, { force: true }).catch(() => null)
+          }
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'response',
+            provider: 'aliyun-bailian',
+            operation: 'title',
+            itemKey: input.skuFolder.skuCode,
+            attempt,
+            data: {
+              raw: response,
+            },
+          })
 
-        const title = joinTitleParts(
-          input.config.titlePrefix,
-          parseTitle(response.text, input.config.language, input.config.platform),
-          input.config.titleSuffix,
-          input.config.titleSeparator,
-        )
-        if (!title) {
-          throw new AppErrorClass('HTTP_5XX', '模型返回空标题', true)
+          const title = joinTitleParts(
+            input.config.titlePrefix,
+            parseTitle(response.text, input.config.language, input.config.platform),
+            input.config.titleSuffix,
+            input.config.titleSeparator,
+          )
+          if (!title) {
+            await appendDiagnosticLog(input.diagnostics, {
+              type: 'parse_failed',
+              provider: 'aliyun-bailian',
+              operation: 'title',
+              itemKey: input.skuFolder.skuCode,
+              attempt,
+              data: {
+                rawText: response.text,
+              },
+            })
+            throw new AppErrorClass('HTTP_5XX', '模型返回空标题', true)
+          }
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'parse_result',
+            provider: 'aliyun-bailian',
+            operation: 'title',
+            itemKey: input.skuFolder.skuCode,
+            attempt,
+            data: {
+              rawText: response.text,
+              title,
+            },
+          })
+          return title
+        } catch (error) {
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'attempt_failed',
+            provider: 'aliyun-bailian',
+            operation: 'title',
+            itemKey: input.skuFolder.skuCode,
+            attempt,
+            error: errorForDiagnosticLog(error),
+          })
+          throw error
         }
-        return title
+      })
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_completed',
+        provider: 'aliyun-bailian',
+        operation: 'title',
+        itemKey: input.skuFolder.skuCode,
+        data: {
+          title,
+          imagePath: selection.imagePath,
+          warning: selection.warning ?? null,
+        },
       })
 
       return {
@@ -1017,6 +1222,13 @@ export class TitleService {
         ...(selection.warning ? { warning: selection.warning } : {}),
       }
     } catch (error) {
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_failed',
+        provider: 'aliyun-bailian',
+        operation: 'title',
+        itemKey: input.skuFolder.skuCode,
+        error: errorForDiagnosticLog(error),
+      })
       return {
         skuCode: input.skuFolder.skuCode,
         status: 'failed',

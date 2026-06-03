@@ -1,6 +1,7 @@
 import { AppErrorClass, type GenerationCapability, type Skill } from '@tengyu-aipod/shared'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
-import { AliyunBailianAdapter } from './aliyun-bailian-adapter'
+import { AliyunBailianAdapter, type ChatResponse } from './aliyun-bailian-adapter'
+import { type DiagnosticLogWriter, errorForDiagnosticLog } from './diagnostic-log-service'
 import { normalizeGenerationLocalConfig } from './generation-local-config'
 import { getSecret } from './keychain'
 import { skillCacheManager } from './skill-cache'
@@ -22,6 +23,7 @@ export type GeneratePromptsInput = {
   model?: string
   userMessage?: string
   responseFormat?: 'json_object' | 'text'
+  diagnostics?: DiagnosticLogWriter
   onRawResponse?: (response: {
     text: string
     model: string
@@ -91,17 +93,39 @@ export class PromptGeneratorService {
             input.refImages,
             input.userMessage,
           )
-          const response = hasReferenceImages
-            ? await adapter.visionCompletion({
-                model,
-                messages,
-                ...(response_format ? { response_format } : {}),
-              })
-            : await adapter.chatCompletion({
-                model,
-                messages,
-                ...(response_format ? { response_format } : {}),
-              })
+          const request = {
+            model,
+            messages,
+            ...(response_format ? { response_format } : {}),
+          }
+          const operation = hasReferenceImages ? 'visionCompletion' : 'chatCompletion'
+          await input.diagnostics?.append({
+            type: 'request',
+            provider: 'aliyun-bailian',
+            operation,
+            itemKey: `chunk-${chunk.chunkIndex}`,
+            data: {
+              chunkIndex: chunk.chunkIndex,
+              chunkTotal: chunk.chunkTotal,
+              expected: chunkCount,
+              request,
+            },
+          })
+          let response: ChatResponse
+          try {
+            response = hasReferenceImages
+              ? await adapter.visionCompletion(request)
+              : await adapter.chatCompletion(request)
+          } catch (error) {
+            await input.diagnostics?.append({
+              type: 'error',
+              provider: 'aliyun-bailian',
+              operation,
+              itemKey: `chunk-${chunk.chunkIndex}`,
+              error: errorForDiagnosticLog(error),
+            })
+            throw error
+          }
 
           await input.onRawResponse?.({
             text: response.text,
@@ -110,6 +134,22 @@ export class PromptGeneratorService {
             expected: chunkCount,
             chunkIndex: chunk.chunkIndex,
             chunkTotal: chunk.chunkTotal,
+          })
+          await input.diagnostics?.append({
+            type: 'response',
+            provider: 'aliyun-bailian',
+            operation,
+            itemKey: `chunk-${chunk.chunkIndex}`,
+            data: {
+              chunkIndex: chunk.chunkIndex,
+              chunkTotal: chunk.chunkTotal,
+              expected: chunkCount,
+              text: response.text,
+              model: response.model,
+              finishReason: response.finishReason ?? null,
+              usage: response.usage ?? null,
+              raw: response.raw,
+            },
           })
 
           const prompts = parsePromptJsonStrict(response.text, chunkCount)
@@ -124,6 +164,17 @@ export class PromptGeneratorService {
               finishReason: response.finishReason ?? null,
             })
           }
+          await input.diagnostics?.append({
+            type: 'parse',
+            provider: 'aliyun-bailian',
+            operation,
+            itemKey: `chunk-${chunk.chunkIndex}`,
+            data: {
+              chunkIndex: chunk.chunkIndex,
+              expected: chunkCount,
+              parsed: prompts.length,
+            },
+          })
           return prompts
         },
         envInt('TENGYU_BAILIAN_PROMPT_CHUNK_RETRIES', 0, 5, DEFAULT_PROMPT_CHUNK_RETRIES),

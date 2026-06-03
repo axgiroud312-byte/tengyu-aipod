@@ -10,6 +10,12 @@ declare global {
   interface Window {
     api: {
       ping: () => Promise<string>
+      logs: {
+        deleteAll: () => Promise<
+          | { ok: true; data: { path: string; deletedFiles: number; deletedBytes: number } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+      }
       onboarding: {
         getState: () => Promise<{
           needs_onboarding: boolean

@@ -517,6 +517,9 @@ export function DetectionWorkbench() {
         failed: event.result.failed,
         skipped: event.result.skipped,
         concurrency: current?.concurrency ?? DEFAULT_CONCURRENCY,
+        ...(event.result.diagnosticsLogPath
+          ? { diagnosticsLogPath: event.result.diagnosticsLogPath }
+          : {}),
         ...(event.result.cancelled ? { status: 'cancelled' as const } : {}),
       }))
       setRunningTaskId(event.result.taskId)
@@ -728,6 +731,11 @@ export function DetectionWorkbench() {
               无风险 {resultsByRisk.pass.length}，疑似 {resultsByRisk.review.length}，高风险{' '}
               {resultsByRisk.block.length}
             </p>
+            {progress?.diagnosticsLogPath ? (
+              <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                诊断日志：{progress.diagnosticsLogPath}
+              </p>
+            ) : null}
           </div>
         </div>
         <div className="mt-4 grid gap-4 xl:grid-cols-3">

@@ -89,8 +89,12 @@ _Avoid_: Pipeline、Graph
 _Avoid_: 活跃实例（代码里可保留 current/active 命名，UI 用默认云机或运行云机）
 
 **生图运行期日志 / Generation Runtime Log**：
-生图页内存日志，只用于当场排查提示词生成、任务提交、模型调用进度、完成/失败和保存路径。最多保留最近 `1000` 条，应用重启后消失；不包含 API Key 或 base64 图片。提示词生成的 LLM 原始返回会额外写入 `.workbench/logs/generation-prompts/` 排障文件，用于查看未截断、未清洗的原始提示词返回。
-_Avoid_: 审计日志（常规运行期日志不是长期审计；LLM 原始返回排障文件只限提示词生成排障）
+生图页内存日志，只用于当场排查提示词生成、任务提交、模型调用进度、完成/失败和保存路径。最多保留最近 `1000` 条，应用重启后消失；不包含 API Key 或 base64 图片。
+_Avoid_: 审计日志（常规运行期日志不是长期审计）
+
+**诊断日志 / Diagnostic Log**：
+生图、侵权检测、标题生成共用的落盘排障 JSONL。写在 `.workbench/logs/diagnostics/{generation|detection|title}/{taskIdOrRunId}.jsonl`，默认开启，用于查看本次发送给 LLM / provider 的完整参数、原始返回、轮询/重试次数、解析失败和跳过决策。API Key、authorization、token、secret、password 永远脱敏；base64 / data URL / Buffer 图片内容只记录 mime、字节数、sha256、长度等元信息。默认保留 7 天，总量上限 1GB，启动和每 24 小时自动清理。
+_Avoid_: 审计日志、业务产物、长期用户数据备份
 
 ### 编排
 

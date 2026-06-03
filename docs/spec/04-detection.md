@@ -305,6 +305,19 @@ class AliyunBailianAdapter {
 - 仅对可重试错误继续重试；不可重试错误直接结束该图
 - 当前 spec 不承诺单独的 429 UI 提示或单张 30 秒超时策略，相关行为以 adapter 和运行时实现为准
 
+### 5.3 诊断日志
+
+每次检测任务默认写 `.workbench/logs/diagnostics/detection/{taskId}.jsonl`，结果区展示 `diagnosticsLogPath`。
+
+记录内容：
+- 任务配置快照：图片数量、skill、模型、阈值、预处理设置、并发、maxRetries、forceRetest。
+- 每张图的原图元信息：path/name、bytes、sha256、artifactId、printId。
+- 缓存跳过决策：命中的 artifact / model / skill / threshold。
+- 每次 attempt 的预处理参数、百炼请求 messages、`response_format`、原始 `VisionResponse`、解析结果。
+- 解析失败和模型空/异常返回必须先记录原始 response，再记录 `parse_failed` / `attempt_failed`。
+
+安全边界：不记录百炼 API Key；不记录 data URL/base64 图片原文，只记录 mime、bytes、sha256、dataUrl length 等元信息。
+
 ## 6. UI 设计
 
 ```
@@ -493,8 +506,8 @@ CREATE TABLE detection_config (
 'detection:delete-result'             → { artifact_id } → number
 
 // 事件
-'detection:progress'                  → { task_id, processed, total, succeeded, failed, skipped, current_image?, status? }
-'detection:completed'                 → { ok: true, result } | { ok: false, taskId, error }
+'detection:progress'                  → { task_id, processed, total, succeeded, failed, skipped, diagnosticsLogPath?, current_image?, status? }
+'detection:completed'                 → { ok: true, result: DetectionBatchResult & { diagnosticsLogPath?: string } } | { ok: false, taskId, error }
 ```
 
 检测 Skill 列表不走专用 `detection:list-skills` IPC，而是复用通用 Skill 接口：

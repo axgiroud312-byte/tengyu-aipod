@@ -14,6 +14,7 @@ import type {
   ChenyuWorkflowMarketParams,
   ChenyuWorkflowRunSubmitResult,
 } from './chenyu-cloud-client'
+import type { DiagnosticLogWriter } from './diagnostic-log-service'
 import type { SqliteDatabase } from './sqlite'
 
 type WorkflowRunnerDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -30,6 +31,7 @@ export type ChenyuWorkflowRunnerOptions = {
   sleep?: (ms: number) => Promise<void>
   pollIntervalMs?: number
   pollTimeoutMs?: number
+  diagnostics?: DiagnosticLogWriter
 }
 
 export type ChenyuRunImageWorkflowInput = {
@@ -95,7 +97,19 @@ export class ChenyuWorkflowRunner {
         ? { accept_external_cost_risk: input.acceptExternalCostRisk }
         : {}),
     }
+    await this.log({
+      type: 'request',
+      provider: 'comfyui-chenyu-workflow',
+      operation: 'submitWorkflowRun',
+      data: { payload: submitPayload },
+    })
     const submit = await this.options.chenyu.submitWorkflowRun(submitPayload)
+    await this.log({
+      type: 'response',
+      provider: 'comfyui-chenyu-workflow',
+      operation: 'submitWorkflowRun',
+      data: { raw: submit },
+    })
     const execution = await this.pollExecution(submit.run_order_id)
     if (execution.status !== 'succeeded') {
       throw workflowExecutionError(execution)
@@ -121,8 +135,20 @@ export class ChenyuWorkflowRunner {
 
   private async pollExecution(runOrderId: string) {
     const deadline = this.now() + this.pollTimeoutMs
+    let pollCount = 0
     while (true) {
+      pollCount += 1
       const execution = await this.options.chenyu.getWorkflowRunExecution(runOrderId)
+      await this.log({
+        type: 'poll',
+        provider: 'comfyui-chenyu-workflow',
+        operation: 'getWorkflowRunExecution',
+        data: {
+          runOrderId,
+          pollCount,
+          raw: execution,
+        },
+      })
       if (TERMINAL_STATUSES.has(execution.status)) {
         return execution
       }
@@ -135,6 +161,10 @@ export class ChenyuWorkflowRunner {
       }
       await this.sleep(this.pollIntervalMs)
     }
+  }
+
+  private async log(event: Parameters<DiagnosticLogWriter['append']>[0]) {
+    await this.options.diagnostics?.append(event).catch(() => null)
   }
 
   private async downloadAndPersistImages(input: {

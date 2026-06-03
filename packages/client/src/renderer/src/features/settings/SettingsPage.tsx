@@ -172,6 +172,8 @@ export function SettingsPage({
   const [createOpen, setCreateOpen] = useState(false)
   const [destroyTarget, setDestroyTarget] = useState<ChenyuInstance | null>(null)
   const [destroyConfirm, setDestroyConfirm] = useState('')
+  const [deleteLogsOpen, setDeleteLogsOpen] = useState(false)
+  const [deletingLogs, setDeletingLogs] = useState(false)
   const [instanceUrlDrafts, setInstanceUrlDrafts] = useState<Record<string, string>>({})
   const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'chenyu'>('general')
 
@@ -415,6 +417,29 @@ export function SettingsPage({
       setError(errorMessage(nextError, '保存工作区失败'))
     } finally {
       setSavingWorkspace(false)
+    }
+  }
+
+  async function deleteAllLogs() {
+    setDeletingLogs(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await window.api.logs.deleteAll()
+      if (!result.ok) {
+        setError(result.error.message)
+        return
+      }
+      setDeleteLogsOpen(false)
+      setMessage(
+        `日志已清理：删除 ${result.data.deletedFiles} 个文件，释放 ${formatLogBytes(
+          result.data.deletedBytes,
+        )}`,
+      )
+    } catch (nextError) {
+      setError(errorMessage(nextError, '删除日志失败'))
+    } finally {
+      setDeletingLogs(false)
     }
   }
 
@@ -736,6 +761,35 @@ export function SettingsPage({
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle>日志</CardTitle>
+              <CardDescription>
+                清理当前工作区 `.workbench/logs/` 下的运行日志、诊断日志和崩溃日志。
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="min-w-0 text-sm text-muted-foreground">
+                <p className="break-all">
+                  {workspace?.root ? `${workspace.root}/.workbench/logs` : '请先选择工作区'}
+                </p>
+              </div>
+              <Button
+                disabled={deletingLogs || !workspace?.root}
+                onClick={() => setDeleteLogsOpen(true)}
+                type="button"
+                variant="destructive"
+              >
+                {deletingLogs ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="mr-2 h-4 w-4" />
+                )}
+                删除所有日志
+              </Button>
+            </CardContent>
+          </Card>
+
           <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
             <div className="space-y-6">
               <GenerationLocalSettingsCard
@@ -965,6 +1019,26 @@ export function SettingsPage({
           </div>
         </div>
       )}
+
+      <AlertDialog onOpenChange={setDeleteLogsOpen} open={deleteLogsOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>删除所有日志</AlertDialogTitle>
+            <AlertDialogDescription>
+              将清空当前工作区 `.workbench/logs/`
+              下的运行日志、诊断日志和崩溃日志。此操作不可恢复，不会删除业务图片、数据库、临时文件或
+              API Key。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deletingLogs}>取消</AlertDialogCancel>
+            <AlertDialogAction disabled={deletingLogs} onClick={() => void deleteAllLogs()}>
+              {deletingLogs ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              确认删除
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog
         open={Boolean(destroyTarget)}
@@ -1792,6 +1866,16 @@ function parseTags(value: string) {
 
 function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback
+}
+
+function formatLogBytes(bytes: number) {
+  if (bytes < 1024) {
+    return `${bytes} B`
+  }
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(1)} KB`
+  }
+  return `${(bytes / 1024 / 1024).toFixed(1)} MB`
 }
 
 function delay(ms: number) {

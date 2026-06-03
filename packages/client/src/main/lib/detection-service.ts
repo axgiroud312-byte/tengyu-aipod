@@ -13,6 +13,12 @@ import {
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
+import {
+  type DiagnosticLogWriter,
+  createOptionalDiagnosticLogWriter,
+  errorForDiagnosticLog,
+  fileDiagnosticMetadata,
+} from './diagnostic-log-service'
 import { BAILIAN_VISION_MODELS } from './generation-local-config'
 import {
   PreprocessError,
@@ -55,6 +61,7 @@ export type DetectionProgress = {
   succeeded: number
   failed: number
   skipped: number
+  diagnosticsLogPath?: string
   concurrency?: number
   current_image?: string
   status?: 'running' | 'cancelled'
@@ -155,6 +162,7 @@ export type DetectionBatchResult = {
   skipped: number
   results: DetectionImageResult[]
   cancelled?: boolean
+  diagnosticsLogPath?: string
 }
 
 export type DetectionTaskEvent =
@@ -442,6 +450,13 @@ function appErrorMessage(error: unknown) {
     return error.message
   }
   return String(error)
+}
+
+async function appendDiagnosticLog(
+  diagnostics: DiagnosticLogWriter | null,
+  event: Parameters<DiagnosticLogWriter['append']>[0],
+) {
+  await diagnostics?.append(event).catch(() => null)
 }
 
 function canRetry(error: unknown) {
@@ -1168,6 +1183,7 @@ export class DetectionService {
     const ownsPool = !dependencies.preprocessPool
     let tempDirCreated = false
     let keepFailedTemp = false
+    let diagnostics: DiagnosticLogWriter | null = null
     const resolved = {
       skillCache: dependencies.skillCache ?? skillCacheManager,
       createBailianAdapter: dependencies.createBailianAdapter,
@@ -1184,16 +1200,39 @@ export class DetectionService {
         throw new Error('请先在设置里选择工作区')
       }
       const workbenchRoot = workbenchConfig.workbench_root
+      diagnostics = await createOptionalDiagnosticLogWriter({
+        module: 'detection',
+        taskId,
+        workbenchRoot,
+        meta: {
+          imageCount: config.imagePaths.length,
+          skillId: config.skillId,
+          skillVersion: config.skillVersion ?? null,
+          model: config.model || DEFAULT_MODEL,
+          threshold: normalizeThreshold(config.threshold),
+          preprocess: config.preprocess ?? null,
+          maxRetries: config.maxRetries ?? null,
+          concurrency: config.concurrency ?? null,
+          forceRetest: config.forceRetest ?? false,
+        },
+      })
 
       if (config.imagePaths.length === 0) {
-        return {
+        const emptyResult: DetectionBatchResult = {
           taskId,
           total: 0,
           succeeded: 0,
           failed: 0,
           skipped: 0,
           results: [],
+          ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
         }
+        await appendDiagnosticLog(diagnostics, {
+          type: 'task_completed',
+          operation: 'batch',
+          data: emptyResult,
+        })
+        return emptyResult
       }
 
       await resolved.tempFileManager.createTaskDir('detection', taskId)
@@ -1210,6 +1249,24 @@ export class DetectionService {
       const maxRetries = clampInt(config.maxRetries, 0, 5, 1)
       const concurrency = clampInt(config.concurrency, 1, 20, 20)
       const threshold = normalizeThreshold(config.threshold)
+      await appendDiagnosticLog(diagnostics, {
+        type: 'config_resolved',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        data: {
+          model,
+          skill: {
+            id: skill.id,
+            version: skill.version,
+            recommendedModel: skill.recommendedModel ?? null,
+            systemPrompt: skill.systemPrompt,
+            variables: skill.variables,
+          },
+          threshold,
+          maxRetries,
+          concurrency,
+        },
+      })
       const progress: DetectionProgress = {
         task_id: taskId,
         processed: 0,
@@ -1217,6 +1274,7 @@ export class DetectionService {
         succeeded: 0,
         failed: 0,
         skipped: 0,
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
         concurrency,
         status: 'running',
       }
@@ -1249,6 +1307,7 @@ export class DetectionService {
             workbenchRoot,
             preprocessPool: resolved.preprocessPool,
             openDatabase: resolved.openDatabase,
+            diagnostics,
           })
           results[item.index] = result
           progress.processed += 1
@@ -1270,7 +1329,7 @@ export class DetectionService {
       if (cancelled) {
         emitProgress()
       }
-      return {
+      const finalResult: DetectionBatchResult = {
         taskId,
         total: progress.total,
         succeeded: progress.succeeded,
@@ -1278,7 +1337,29 @@ export class DetectionService {
         skipped: progress.skipped,
         results: results.filter((item): item is DetectionImageResult => Boolean(item)),
         ...(cancelled ? { cancelled } : {}),
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
       }
+      await appendDiagnosticLog(diagnostics, {
+        type: 'task_completed',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        data: {
+          total: finalResult.total,
+          succeeded: finalResult.succeeded,
+          failed: finalResult.failed,
+          skipped: finalResult.skipped,
+          cancelled: finalResult.cancelled ?? false,
+        },
+      })
+      return finalResult
+    } catch (error) {
+      await appendDiagnosticLog(diagnostics, {
+        type: 'task_failed',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        error: errorForDiagnosticLog(error),
+      })
+      throw error
     } finally {
       if (ownsPool && 'close' in resolved.preprocessPool) {
         await resolved.preprocessPool.close()
@@ -1323,11 +1404,34 @@ export class DetectionService {
     workbenchRoot: string
     preprocessPool: Pick<SharpPreprocessPool, 'process'>
     openDatabase: (workbenchRoot: string) => Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
+    diagnostics: DiagnosticLogWriter | null
   }): Promise<DetectionImageResult> {
     let identity: ImageIdentity
+    const itemKey = basename(input.item.imagePath)
     try {
       identity = await imageIdentity(input.item.imagePath)
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_started',
+        provider: 'aliyun-bailian',
+        operation: 'detection',
+        itemKey,
+        data: {
+          index: input.item.index,
+          image: await fileDiagnosticMetadata(input.item.imagePath).catch(() => ({
+            path: input.item.imagePath,
+            name: itemKey,
+          })),
+          identity,
+        },
+      })
     } catch (error) {
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_failed',
+        provider: 'aliyun-bailian',
+        operation: 'detection',
+        itemKey,
+        error: errorForDiagnosticLog(error),
+      })
       return {
         imagePath: input.item.imagePath,
         thumbnailUrl: fileUrl(input.item.imagePath),
@@ -1354,6 +1458,16 @@ export class DetectionService {
           threshold: input.threshold,
         })
         if (cached) {
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'decision',
+            provider: 'aliyun-bailian',
+            operation: 'skip_cached',
+            itemKey,
+            data: {
+              reason: 'same artifact/model/skill/threshold already detected',
+              cached,
+            },
+          })
           return {
             imagePath: input.item.imagePath,
             thumbnailUrl: fileUrl(input.item.imagePath),
@@ -1369,7 +1483,9 @@ export class DetectionService {
         }
       }
 
+      let attempt = 0
       const parsed = await withRetries(input.maxRetries, async () => {
+        attempt += 1
         const preprocessOptions: PreprocessOptions = {
           module: 'detection',
           taskId: input.taskId,
@@ -1387,29 +1503,98 @@ export class DetectionService {
             ? { quality: input.config.preprocess.quality }
             : {}),
         }
-        const preprocessed = await input.preprocessPool.process(preprocessOptions)
-        let response: VisionResponse
         try {
-          response = await input.adapter.visionCompletion({
-            model: input.model,
-            messages: createDetectionMessages(
-              input.skill,
-              preprocessed.dataUrl,
-              input.config.variables,
-            ),
-            response_format: { type: 'json_object' },
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'preprocess_request',
+            provider: 'aliyun-bailian',
+            operation: 'detection',
+            itemKey,
+            attempt,
+            data: { options: preprocessOptions },
           })
-        } finally {
-          await rm(preprocessed.outputPath, { force: true }).catch(() => null)
-        }
+          const preprocessed = await input.preprocessPool.process(preprocessOptions)
+          const messages = createDetectionMessages(
+            input.skill,
+            preprocessed.dataUrl,
+            input.config.variables,
+          )
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'request',
+            provider: 'aliyun-bailian',
+            operation: 'detection',
+            itemKey,
+            attempt,
+            data: {
+              model: input.model,
+              messages,
+              response_format: { type: 'json_object' },
+              preprocess: {
+                output: await fileDiagnosticMetadata(preprocessed.outputPath).catch(() => ({
+                  path: preprocessed.outputPath,
+                  name: basename(preprocessed.outputPath),
+                })),
+                mimeType: preprocessed.mimeType,
+                dataUrl: preprocessed.dataUrl,
+              },
+            },
+          })
+          let response: VisionResponse
+          try {
+            response = await input.adapter.visionCompletion({
+              model: input.model,
+              messages,
+              response_format: { type: 'json_object' },
+            })
+          } finally {
+            await rm(preprocessed.outputPath, { force: true }).catch(() => null)
+          }
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'response',
+            provider: 'aliyun-bailian',
+            operation: 'detection',
+            itemKey,
+            attempt,
+            data: {
+              raw: response,
+            },
+          })
 
-        const parsed = parseDetectionResponse(response.text)
-        if (!parsed) {
-          throw new AppErrorClass('HTTP_5XX', '模型返回无法解析的检测结果', true, {
-            kind: 'llm_parse_failed',
+          const parsed = parseDetectionResponse(response.text)
+          if (!parsed) {
+            await appendDiagnosticLog(input.diagnostics, {
+              type: 'parse_failed',
+              provider: 'aliyun-bailian',
+              operation: 'detection',
+              itemKey,
+              attempt,
+              data: {
+                rawText: response.text,
+              },
+            })
+            throw new AppErrorClass('HTTP_5XX', '模型返回无法解析的检测结果', true, {
+              kind: 'llm_parse_failed',
+            })
+          }
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'parse_result',
+            provider: 'aliyun-bailian',
+            operation: 'detection',
+            itemKey,
+            attempt,
+            data: parsed,
           })
+          return parsed
+        } catch (error) {
+          await appendDiagnosticLog(input.diagnostics, {
+            type: 'attempt_failed',
+            provider: 'aliyun-bailian',
+            operation: 'detection',
+            itemKey,
+            attempt,
+            error: errorForDiagnosticLog(error),
+          })
+          throw error
         }
-        return parsed
       })
 
       const riskLevel = parsed.riskLevel ?? classifyRisk(parsed.score, input.threshold)
@@ -1442,6 +1627,20 @@ export class DetectionService {
         outputPath,
         createdAt: Date.now(),
       })
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_completed',
+        provider: 'aliyun-bailian',
+        operation: 'detection',
+        itemKey,
+        data: {
+          artifactId: identity.artifactId,
+          printId: identity.printId,
+          riskScore: parsed.score,
+          riskLevel,
+          reason: parsed.reason,
+          outputPath,
+        },
+      })
 
       return {
         imagePath: input.item.imagePath,
@@ -1456,6 +1655,13 @@ export class DetectionService {
         cached: false,
       }
     } catch (error) {
+      await appendDiagnosticLog(input.diagnostics, {
+        type: 'item_failed',
+        provider: 'aliyun-bailian',
+        operation: 'detection',
+        itemKey,
+        error: errorForDiagnosticLog(error),
+      })
       return {
         imagePath: input.item.imagePath,
         thumbnailUrl: fileUrl(input.item.imagePath),

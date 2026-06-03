@@ -343,6 +343,10 @@ CREATE INDEX idx_workflow_steps_task ON workflow_steps(task_id);
 ├─ main.log                             ← 主进程日志
 ├─ renderer.log                         ← 渲染进程日志
 ├─ {module}-{taskId}.log                 ← 模块任务日志
+├─ diagnostics/                          ← 生图 / 检测 / 标题排障 JSONL
+│   ├─ generation/{taskIdOrRunId}.jsonl
+│   ├─ detection/{taskId}.jsonl
+│   └─ title/{taskId}.jsonl
 ├─ crash/                                ← 崩溃日志
 │   └─ crash-{timestamp}.json
 └─ telemetry-queue.jsonl                ← 待上报错误队列
@@ -350,9 +354,11 @@ CREATE INDEX idx_workflow_steps_task ON workflow_steps(task_id);
 
 **格式**：pino JSON 每行一条
 **保留**：30 天，超过自动清理
-**用户操作**：设置面板可"导出压缩包"、"立即清理"
+**用户操作**：设置面板可"导出压缩包"、"立即清理"、"删除所有日志"
 
 **运行期日志例外**：采集页和生图页的命令行式日志弹窗只保存在前端内存中，最多保留最近 `1000` 条，用于当场排查图池扫描/下载、点击采集、提示词生成、生图任务提交和模型调用进度；不写入 `.workbench/logs/`。
+
+**诊断日志**：生图、侵权检测、标题生成会额外写 `.workbench/logs/diagnostics/`，用于排查 LLM / provider 调用。记录完整请求参数、原始响应、轮询/重试次数、解析失败、缓存/跳过决策和结构化错误；不记录 API Key / token / authorization / password / secret，不记录 base64 / data URL / Buffer 图片原文，只记录图片元信息。默认保留 7 天，总量上限 1GB，启动和每 24 小时自动清理。
 
 ## 8. 全局并发与队列
 

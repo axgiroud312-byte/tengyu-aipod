@@ -242,9 +242,20 @@ describe('generation prompt service entrypoint', () => {
     )
   })
 
-  it('writes raw LLM prompt responses to a per-run jsonl file without trimming or truncating', async () => {
+  it('writes raw LLM prompt responses to the unified diagnostics jsonl without trimming', async () => {
     const formattedRawText = '  {\n  "prompts": ["Prompt B"]\n}\n'
     vi.spyOn(promptGeneratorService, 'generatePrompts').mockImplementation(async (input) => {
+      await input.diagnostics?.append({
+        type: 'response',
+        provider: 'aliyun-bailian',
+        operation: 'prompt_generation',
+        data: {
+          chunkIndex: 1,
+          chunkTotal: 2,
+          expected: 1,
+          raw: { text: '' },
+        },
+      })
       await input.onRawResponse?.({
         text: '',
         model: 'qwen3.6-flash',
@@ -252,6 +263,17 @@ describe('generation prompt service entrypoint', () => {
         expected: 1,
         chunkIndex: 1,
         chunkTotal: 2,
+      })
+      await input.diagnostics?.append({
+        type: 'response',
+        provider: 'aliyun-bailian',
+        operation: 'prompt_generation',
+        data: {
+          chunkIndex: 2,
+          chunkTotal: 2,
+          expected: 1,
+          raw: { text: formattedRawText },
+        },
       })
       await input.onRawResponse?.({
         text: formattedRawText,
@@ -275,7 +297,7 @@ describe('generation prompt service entrypoint', () => {
 
     expect(result.map((draft) => draft.text)).toEqual(['', 'Prompt B'])
 
-    const logDir = join(workbenchRoot, '.workbench', 'logs', 'generation-prompts')
+    const logDir = join(workbenchRoot, '.workbench', 'logs', 'diagnostics', 'generation')
     const files = await readdir(logDir)
     expect(files).toHaveLength(1)
     const lines = (await readFile(join(logDir, files[0] ?? ''), 'utf8'))
@@ -284,24 +306,31 @@ describe('generation prompt service entrypoint', () => {
       .map((line) => JSON.parse(line) as Record<string, unknown>)
 
     expect(lines[0]).toMatchObject({
-      type: 'meta',
-      count: 2,
-      model: 'qwen3.6-flash',
-      skillId: 'txt2img-local-print',
+      type: 'task_started',
+      data: {
+        operation: 'prompt_generation',
+        count: 2,
+        model: 'qwen3.6-flash',
+        skillId: 'txt2img-local-print',
+      },
     })
     expect(lines[1]).toMatchObject({
-      type: 'llm_raw_response',
-      chunkIndex: 1,
-      chunkTotal: 2,
-      expected: 1,
-      text: '',
+      type: 'response',
+      data: {
+        chunkIndex: 1,
+        chunkTotal: 2,
+        expected: 1,
+        raw: { text: '' },
+      },
     })
     expect(lines[2]).toMatchObject({
-      type: 'llm_raw_response',
-      chunkIndex: 2,
-      chunkTotal: 2,
-      expected: 1,
-      text: formattedRawText,
+      type: 'response',
+      data: {
+        chunkIndex: 2,
+        chunkTotal: 2,
+        expected: 1,
+        raw: { text: formattedRawText },
+      },
     })
   })
 

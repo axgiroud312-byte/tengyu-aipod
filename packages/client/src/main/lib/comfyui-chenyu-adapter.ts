@@ -10,6 +10,7 @@ import {
 import type { ComfyHistoryEntry, ComfyHttpClient, ComfyViewImageInput } from './comfy-http-client'
 import type { ComfyuiInstanceSummary } from './comfyui-instance-manager'
 import type { CachedComfyuiWorkflow, ComfyuiWorkflowCategory } from './comfyui-workflow-cache'
+import type { DiagnosticLogWriter } from './diagnostic-log-service'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
 import type { SqliteDatabase } from './sqlite'
 
@@ -38,6 +39,7 @@ export type ComfyuiChenyuAdapterOptions = {
   workbenchRoot: string
   openDatabase: (workbenchRoot: string) => ComfyuiExecutionDatabase
   now?: () => number
+  diagnostics?: DiagnosticLogWriter
 }
 
 type ComfyImageOutput = {
@@ -92,8 +94,43 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     const injectedWorkflow = injectComfyuiInputs(workflow.workflowJson, workflow.inputSlots, req, {
       uploadedImages,
     })
+    await this.log({
+      type: 'request',
+      provider: 'comfyui-chenyu',
+      operation: 'queuePrompt',
+      data: {
+        instance: {
+          uuid: instance.instanceUuid,
+          status: instance.status,
+          comfyuiUrl: instance.comfyuiUrl,
+        },
+        workflow: {
+          id: workflow.id,
+          version: workflow.version,
+          capability: workflow.capability,
+        },
+        request: req,
+        injectedWorkflow,
+      },
+    })
     const promptId = await comfyHttp.queuePrompt(injectedWorkflow)
+    await this.log({
+      type: 'response',
+      provider: 'comfyui-chenyu',
+      operation: 'queuePrompt',
+      data: { promptId },
+    })
     const history = await comfyHttp.getHistory(promptId)
+    await this.log({
+      type: 'poll',
+      provider: 'comfyui-chenyu',
+      operation: 'history',
+      data: {
+        promptId,
+        pollCount: 1,
+        history,
+      },
+    })
     const outputs = outputsFromHistory(history, workflow.outputSlots)
     const images = await this.downloadAndPersistOutputs({
       req,
@@ -121,6 +158,10 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       })
     }
     return client
+  }
+
+  private async log(event: Parameters<DiagnosticLogWriter['append']>[0]) {
+    await this.options.diagnostics?.append(event).catch(() => null)
   }
 
   private async uploadReferenceImages(

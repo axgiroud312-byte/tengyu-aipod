@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
@@ -80,6 +80,14 @@ async function createWorkbook(path: string, rows: Array<[string, string]>) {
     sheet.addRow(row)
   }
   await workbook.xlsx.writeFile(path)
+}
+
+async function readJsonl(path: string) {
+  return (await readFile(path, 'utf8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 async function createSku(batchDir: string, skuCode: string, files: string[]) {
@@ -281,6 +289,20 @@ describe('TitleService', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'task-title', processed: 2, succeeded: 1, skipped: 1 }),
     )
+    expect(result.diagnosticsLogPath).toContain(join('.workbench', 'logs', 'diagnostics', 'title'))
+    const diagnosticEvents = await readJsonl(result.diagnosticsLogPath ?? '')
+    expect(diagnosticEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'task_started' }),
+        expect.objectContaining({ type: 'decision', operation: 'skip_existing_title' }),
+        expect.objectContaining({ type: 'request', operation: 'title' }),
+        expect.objectContaining({ type: 'response', operation: 'title' }),
+        expect.objectContaining({ type: 'parse_failed', operation: 'title' }),
+        expect.objectContaining({ type: 'parse_result', operation: 'title' }),
+        expect.objectContaining({ type: 'task_completed' }),
+      ]),
+    )
+    expect(JSON.stringify(diagnosticEvents)).not.toContain('cHJvY2Vzc2Vk')
     await expect(
       stat(join(workbenchRoot, '.workbench', 'tmp', 'title', 'task-title')),
     ).rejects.toThrow()

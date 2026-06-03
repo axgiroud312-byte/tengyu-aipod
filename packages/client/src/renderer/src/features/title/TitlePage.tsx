@@ -472,6 +472,11 @@ export function TitlePage({
                   成功 {batchResult.succeeded} 个，失败 {batchResult.failed} 个，跳过{' '}
                   {batchResult.skipped} 个
                 </p>
+                {batchResult.diagnosticsLogPath ? (
+                  <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                    诊断日志：{batchResult.diagnosticsLogPath}
+                  </p>
+                ) : null}
               </div>
               <div className="flex flex-wrap gap-2">
                 <Button

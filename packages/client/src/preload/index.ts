@@ -118,6 +118,13 @@ import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runn
 
 const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
+  logs: {
+    deleteAll: () =>
+      ipcRenderer.invoke('logs:delete-all') as Promise<
+        | { ok: true; data: { path: string; deletedFiles: number; deletedBytes: number } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+  },
   onboarding: {
     getState: () =>
       ipcRenderer.invoke('onboarding:get-state') as Promise<{

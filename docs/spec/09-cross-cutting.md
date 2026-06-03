@@ -216,6 +216,10 @@ v1 没有编排引擎，不涉及。每个模块独立运行只有"成功/失败
 ├─ main.log                    ← 主进程日志（pino）
 ├─ renderer.log                ← 渲染进程日志
 ├─ {module}-{taskId}.log        ← 单个任务日志
+├─ diagnostics/                 ← LLM / provider 调用排障 JSONL
+│   ├─ generation/{taskIdOrRunId}.jsonl
+│   ├─ detection/{taskId}.jsonl
+│   └─ title/{taskId}.jsonl
 ├─ crash/
 │   └─ crash-{timestamp}.json
 └─ telemetry-queue.jsonl       ← 待上报错误队列
@@ -246,23 +250,53 @@ level：10=trace, 20=debug, 30=info, 40=warn, 50=error, 60=fatal
 - 数据来源：采集为 `collection:event` / `debug-log`；生图为 `generation:debug-log`。
 - 保留策略：前端内存最多最近 `1000` 条，应用重启后清空。
 - 采集使用场景：当场判断图池扫描进度、逐张下载耗时、下载失败原因、点击采集脚本诊断。
-- 生图使用场景：当场判断提示词生成、任务提交、模型调用进度、完成/失败和保存路径；提示词生成会额外写 LLM 原始返回排障文件。
+- 生图使用场景：当场判断提示词生成、任务提交、模型调用进度、完成/失败和保存路径。
 - 安全边界：不记录 API Key 或 base64 图片内容；弹窗内只展示短预览。
 
-这类日志不是审计日志。唯一例外是生图提示词生成的 LLM 原始返回，会写入 `.workbench/logs/generation-prompts/{promptRunId}.jsonl` 供事后排查。
+这类日志不是审计日志，也不落盘。
 
-### 5.5 用户操作
+### 5.5 诊断日志
+
+生图、侵权检测、标题生成共用落盘诊断日志，默认开启：
+
+```
+.workbench/logs/diagnostics/
+├─ generation/{taskIdOrRunId}.jsonl
+├─ detection/{taskId}.jsonl
+└─ title/{taskId}.jsonl
+```
+
+记录内容：
+- 发送给 LLM / provider 的完整请求参数：system prompt、user prompt、变量、模型、输出选项、工作流参数。
+- provider 原始返回：文本、usage、finish reason、URL、task id、prompt id、history / execution 等。
+- 重试和轮询：attempt、pollCount、重试错误、最终状态。
+- 解析与决策：parse result、parse failed、缓存跳过、已有标题跳过。
+- 错误：只保存结构化 code / message / retryable / status / details / stack preview。
+
+安全边界：
+- 不记录 API Key、authorization、token、secret、password。
+- 不记录 base64、data URL、Buffer 图片原文；只记录 path/name（如可用）、mime、bytes、sha256、dataUrl length、预处理参数。
+- 预处理图片仍走 `.workbench/tmp/`，任务完成后按 TempFileManager 清理，不因诊断日志额外保存图片。
+
+保留策略：
+- 默认保留 7 天。
+- 总量上限 1GB，超过后按最旧文件优先删除。
+- 启动时清理一次，此后每 24 小时清理一次。
+
+### 5.6 用户操作
 
 ```
 设置 → 日志：
   当前占用：256 MB
   保留时长：[30 天 ▼]
   
-  [立即清理] [导出最近 N 天 (zip)]
+  [立即清理] [删除所有日志] [导出最近 N 天 (zip)]
   [打开日志目录]
 ```
 
-### 5.6 崩溃日志
+`删除所有日志` 清空当前工作区 `.workbench/logs/` 并重建空目录，只删除运行日志、诊断日志、崩溃日志和待上报日志；不删除 4 个业务工作区、`.workbench/tmp/`、SQLite 数据库、缓存、API Key。
+
+### 5.7 崩溃日志
 
 ```ts
 // 主进程

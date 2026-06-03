@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
-import { appendFile, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -24,6 +24,11 @@ import {
   comfyuiUrlCandidates,
 } from './comfyui-instance-manager'
 import { type ComfyuiWorkflowSummary, comfyuiWorkflowCacheManager } from './comfyui-workflow-cache'
+import {
+  type DiagnosticLogWriter,
+  createOptionalDiagnosticLogWriter,
+  errorForDiagnosticLog,
+} from './diagnostic-log-service'
 import { GenerationConcurrencyController } from './generation-concurrency'
 import { normalizeGenerationLocalConfig } from './generation-local-config'
 import {
@@ -115,6 +120,7 @@ export type GenerationRunResult = {
   images: GenerationRunImage[]
   failures: Array<{ prompt: string; error: string; sourcePath?: string }>
   cancelled?: boolean
+  diagnosticsLogPath?: string
 }
 
 export type GenerationTaskEvent =
@@ -259,18 +265,6 @@ type GenerationDebugLogContext = {
   taskId?: string | undefined
   capability?: GenerationCapability | undefined
 }
-type GenerationPromptRawLogWriter = {
-  path: string
-  promptRunId: string
-  append: (response: {
-    text: string
-    model: string
-    finishReason: string | null
-    expected: number
-    chunkIndex: number
-    chunkTotal: number
-  }) => Promise<void>
-}
 type Img2imgReference = {
   artifactId: string
   printId: string
@@ -292,6 +286,7 @@ type GenerationServiceDependencies = {
     apiKey: string
     workbenchRoot: string
     instance?: ComfyuiInstanceSummary
+    diagnostics?: DiagnosticLogWriter
   }) => Pick<ComfyuiChenyuAdapter, 'generate'>
   getChenyuInstanceInfo?: (input: {
     apiKey: string
@@ -300,6 +295,7 @@ type GenerationServiceDependencies = {
   createChenyuWorkflowRunner?: (input: {
     apiKey: string
     workbenchRoot: string
+    diagnostics?: DiagnosticLogWriter
   }) => Pick<ChenyuWorkflowRunner, 'listWorkflows' | 'getWorkflowInfo' | 'runImageWorkflow'>
   downloadImage?: (url: string) => Promise<Buffer>
   emitProgress?: (progress: GenerationProgress) => void
@@ -512,6 +508,7 @@ async function createComfyuiAdapterForRun(
   workbenchRoot: string,
   db: Pick<SqliteDatabase, 'prepare'>,
   dependencies: GenerationServiceDependencies,
+  diagnostics?: DiagnosticLogWriter | null,
 ) {
   const instance = await selectedComfyuiInstance(input, apiKey, dependencies)
   return (
@@ -519,6 +516,7 @@ async function createComfyuiAdapterForRun(
       apiKey,
       workbenchRoot,
       ...(instance ? { instance } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
     }) ??
     new ComfyuiChenyuAdapter({
       ...(instance ? { selectedInstance: instance } : {}),
@@ -530,6 +528,7 @@ async function createComfyuiAdapterForRun(
       workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
       workbenchRoot,
       openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      ...(diagnostics ? { diagnostics } : {}),
     })
   )
 }
@@ -575,60 +574,40 @@ function openWorkbenchDatabase(workbenchRoot: string) {
   return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-function generationPromptRawLogId() {
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-  return `prompt_${timestamp}_${randomUUID().slice(0, 8)}`
+function createGenerationDiagnostics(
+  workbenchRoot: string,
+  taskId: string,
+  meta: Record<string, unknown>,
+) {
+  return createOptionalDiagnosticLogWriter({
+    module: 'generation',
+    taskId,
+    workbenchRoot,
+    meta,
+  })
 }
 
-async function createGenerationPromptRawLogWriter(
-  input: GenerationPromptInput,
-): Promise<GenerationPromptRawLogWriter | null> {
-  const workbenchConfig = await readAppConfig()
-  if (!workbenchConfig.workbench_root) {
-    return null
-  }
-
-  const promptRunId = generationPromptRawLogId()
-  const logDir = join(workbenchConfig.workbench_root, '.workbench', 'logs', 'generation-prompts')
-  const logPath = join(logDir, `${promptRunId}.jsonl`)
-  await mkdir(logDir, { recursive: true })
-  await appendFile(
-    logPath,
-    `${JSON.stringify({
-      type: 'meta',
-      promptRunId,
-      createdAt: new Date().toISOString(),
-      capability: input.capability ?? 'txt2img',
-      count: input.count,
-      model: input.model ?? null,
-      skillId: input.skillId ?? null,
-      skillVersion: input.skillVersion ?? null,
-      printMode: input.printMode ?? 'local',
-      referenceImageCount: input.referenceImages?.length ?? 0,
-    })}\n`,
-    'utf8',
-  )
-
-  let appendQueue = Promise.resolve()
-  return {
-    path: logPath,
-    promptRunId,
-    append: (response) => {
-      const line = `${JSON.stringify({
-        type: 'llm_raw_response',
-        promptRunId,
-        receivedAt: new Date().toISOString(),
-        chunkIndex: response.chunkIndex,
-        chunkTotal: response.chunkTotal,
-        expected: response.expected,
-        model: response.model,
-        finishReason: response.finishReason,
-        text: response.text,
-      })}\n`
-      appendQueue = appendQueue.then(() => appendFile(logPath, line, 'utf8'))
-      return appendQueue
-    },
-  }
+async function finishGenerationResultWithDiagnostics(
+  diagnostics: DiagnosticLogWriter | null,
+  result: GenerationRunResult,
+  provider: string,
+  operation: string,
+) {
+  const finalResult = markGenerationResultCancelled(result)
+  await diagnostics
+    ?.append({
+      type: 'task_completed',
+      provider,
+      operation,
+      data: {
+        total: finalResult.total,
+        succeeded: finalResult.succeeded,
+        failed: finalResult.failed,
+        cancelled: finalResult.cancelled ?? false,
+      },
+    })
+    .catch(() => null)
+  return finalResult
 }
 
 function ensureGenerationTables(db: Pick<SqliteDatabase, 'exec'>) {
@@ -1577,22 +1556,38 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
     printMode: input.printMode ?? 'local',
     requirement: input.requirement ? promptPreview(input.requirement, 240) : undefined,
   })
-  let rawPromptLog: GenerationPromptRawLogWriter | null = null
+  let diagnostics: DiagnosticLogWriter | null = null
   try {
-    rawPromptLog = await createGenerationPromptRawLogWriter({ ...input, count })
-    if (rawPromptLog) {
-      debug('LLM 原始提示词日志已创建', 'info', {
+    const workbenchConfig = await readAppConfig()
+    diagnostics = await createOptionalDiagnosticLogWriter({
+      module: 'generation',
+      runId: `prompt_${Date.now()}`,
+      workbenchRoot: workbenchConfig.workbench_root,
+      meta: {
+        operation: 'prompt_generation',
+        capability,
+        count,
+        model: input.model ?? null,
+        skillId: selectedSkillId || null,
+        skillVersion: selectedSkillVersion || null,
+        skillCategory: selectedSkillId ? null : promptCategory,
+        printMode: input.printMode ?? 'local',
+        referenceImageCount: input.referenceImages?.length ?? 0,
+      },
+    })
+    if (diagnostics) {
+      debug('诊断日志已创建', 'info', {
         operation: 'prompt',
-        promptRunId: rawPromptLog.promptRunId,
-        savedPath: rawPromptLog.path,
+        promptRunId: diagnostics.runId,
+        savedPath: diagnostics.path,
       })
     } else {
-      debug('未写入 LLM 原始提示词日志：未设置工作区', 'warn', {
+      debug('未写入诊断日志：未设置工作区', 'warn', {
         operation: 'prompt',
       })
     }
   } catch (error) {
-    debug('LLM 原始提示词日志创建失败', 'warn', {
+    debug('诊断日志创建失败', 'warn', {
       operation: 'prompt',
       error: appErrorMessage(error),
     })
@@ -1612,6 +1607,7 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
         modeInstruction: input.modeInstruction ?? '',
       },
       count,
+      ...(diagnostics ? { diagnostics } : {}),
       ...(input.model ? { model: input.model } : {}),
       ...(input.referenceImages?.length ? { refImages: input.referenceImages } : {}),
       userMessage:
@@ -1619,19 +1615,6 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
         `生成 ${count} 条适合 Grsai ${capability === 'img2img' ? '图生图' : '文生图'}的英文印花提示词。`,
       responseFormat: 'json_object',
       onRawResponse: async (response) => {
-        if (rawPromptLog) {
-          try {
-            await rawPromptLog.append(response)
-          } catch (error) {
-            debug('LLM 原始提示词日志写入失败', 'warn', {
-              operation: 'prompt',
-              promptRunId: rawPromptLog.promptRunId,
-              savedPath: rawPromptLog.path,
-              error: appErrorMessage(error),
-            })
-            rawPromptLog = null
-          }
-        }
         debug('百炼原始返回', 'debug', {
           operation: 'prompt',
           expected: response.expected,
@@ -1640,7 +1623,7 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
           finishReason: response.finishReason,
           chunkIndex: response.chunkIndex,
           chunkTotal: response.chunkTotal,
-          savedPath: rawPromptLog?.path ?? null,
+          savedPath: diagnostics?.path ?? null,
         })
       },
     })
@@ -1663,6 +1646,12 @@ export async function generateTxt2imgPrompts(input: GenerationPromptInput) {
       selected: true,
     })) satisfies Txt2imgPromptDraft[]
   } catch (error) {
+    await diagnostics?.append({
+      type: 'error',
+      provider: 'aliyun-bailian',
+      operation: 'prompt_generation',
+      error: errorForDiagnosticLog(error),
+    })
     debug('提示词生成失败', 'error', {
       operation: 'prompt',
       error: appErrorMessage(error),
@@ -2038,12 +2027,29 @@ async function runTxt2imgTask(
   }
   const workbenchRoot = workbenchConfig.workbench_root
   const settings = normalizeGenerationLocalConfig(workbenchConfig.generation)
+  const diagnostics = await createOptionalDiagnosticLogWriter({
+    module: 'generation',
+    taskId,
+    workbenchRoot,
+    meta: {
+      provider: 'grsai',
+      capability,
+      promptCount: prompts.length,
+      model: input.model,
+      aspectRatio: input.aspectRatio,
+      imageSize: input.imageSize ?? null,
+      referenceImageCount: input.referenceImages?.length ?? 0,
+    },
+  })
   const controller = new GenerationConcurrencyController({
     workers: clampInt(input.concurrency, 1, 20, settings.grsai_concurrency),
   })
   const adapter =
     dependencies.createGrsaiAdapter?.(apiKey) ??
-    new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
+    new GrsaiAdapter(apiKey, settings.grsai_node, {
+      retries: settings.grsai_retries,
+      ...(diagnostics ? { diagnostics } : {}),
+    })
   const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
   const model = normalizeModel(input.model)
   const outputFolder = generationTaskOutputFolder(workbenchRoot, capability, taskId)
@@ -2056,6 +2062,7 @@ async function runTxt2imgTask(
     failed: 0,
     images: [],
     failures: [],
+    ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
   }
 
   try {
@@ -2135,6 +2142,13 @@ async function runTxt2imgTask(
             }
           } catch (error) {
             observeGenerationError(controller, error)
+            await diagnostics?.append({
+              type: 'error',
+              provider: 'grsai',
+              operation: capability,
+              itemKey: `prompt-${index + 1}`,
+              error: errorForDiagnosticLog(error),
+            })
             result.failed += 1
             result.failures.push({ prompt, error: appErrorMessage(error) })
           } finally {
@@ -2152,7 +2166,19 @@ async function runTxt2imgTask(
         }),
       ),
     )
-    return markGenerationResultCancelled(result)
+    const finalResult = markGenerationResultCancelled(result)
+    await diagnostics?.append({
+      type: 'task_completed',
+      provider: 'grsai',
+      operation: capability,
+      data: {
+        total: finalResult.total,
+        succeeded: finalResult.succeeded,
+        failed: finalResult.failed,
+        cancelled: finalResult.cancelled ?? false,
+      },
+    })
+    return finalResult
   } finally {
     db.close()
   }
@@ -2187,6 +2213,7 @@ export async function runExtractBatch(
     failures: [],
   }
   let db: GenerationDatabase | null = null
+  let diagnostics: DiagnosticLogWriter | null = null
   const emit = createGenerationProgressEmitter(dependencies)
 
   try {
@@ -2194,12 +2221,27 @@ export async function runExtractBatch(
     const concurrency = clampInt(input.concurrency, 1, 20, settings.grsai_concurrency)
     const model = normalizeModel(input.model)
     const controller = new GenerationConcurrencyController({ workers: concurrency })
-    const adapter =
-      dependencies.createGrsaiAdapter?.(apiKey) ??
-      new GrsaiAdapter(apiKey, settings.grsai_node, { retries: settings.grsai_retries })
     const skillCache = dependencies.skillCache ?? skillCacheManager
     const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'grsai',
+      capability: 'extract',
+      sourceCount: sourceImagePaths.length,
+      model,
+      aspectRatio: input.aspectRatio,
+      skillId: input.skillId,
+      skillVersion: input.skillVersion ?? null,
+    })
+    if (diagnostics) {
+      result.diagnosticsLogPath = diagnostics.path
+    }
+    const adapter =
+      dependencies.createGrsaiAdapter?.(apiKey) ??
+      new GrsaiAdapter(apiKey, settings.grsai_node, {
+        retries: settings.grsai_retries,
+        ...(diagnostics ? { diagnostics } : {}),
+      })
     const sourceFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
     const outputFolder = generationTaskOutputFolder(workbenchRoot, 'extract', taskId)
     db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
@@ -2282,6 +2324,15 @@ export async function runExtractBatch(
             }
           } catch (error) {
             observeGenerationError(controller, error)
+            await diagnostics
+              ?.append({
+                type: 'error',
+                provider: 'grsai',
+                operation: 'extract',
+                itemKey: basename(sourceImagePath),
+                error: errorForDiagnosticLog(error),
+              })
+              .catch(() => null)
             result.failed += 1
             result.failures.push({
               prompt,
@@ -2294,7 +2345,17 @@ export async function runExtractBatch(
         }),
       ),
     )
-    return markGenerationResultCancelled(result)
+    return await finishGenerationResultWithDiagnostics(diagnostics, result, 'grsai', 'extract')
+  } catch (error) {
+    await diagnostics
+      ?.append({
+        type: 'task_failed',
+        provider: 'grsai',
+        operation: 'extract',
+        error: errorForDiagnosticLog(error),
+      })
+      .catch(() => null)
+    throw error
   } finally {
     db?.close()
   }
@@ -2342,6 +2403,18 @@ export async function runComfyuiExtractBatch(
       'Extract the print from the source product image.'
     const sizePx = comfyuiSizePx(input)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'comfyui-chenyu',
+      capability: 'extract',
+      workflowId: input.workflowId,
+      workflowName: input.workflowName ?? null,
+      sourceCount: sourceImagePaths.length,
+      width: sizePx.width,
+      height: sizePx.height,
+    })
+    if (diagnostics) {
+      result.diagnosticsLogPath = diagnostics.path
+    }
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
@@ -2352,6 +2425,7 @@ export async function runComfyuiExtractBatch(
         workbenchRoot,
         db,
         dependencies,
+        diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
 
@@ -2406,6 +2480,15 @@ export async function runComfyuiExtractBatch(
             })),
           )
         } catch (error) {
+          await diagnostics
+            ?.append({
+              type: 'error',
+              provider: 'comfyui-chenyu',
+              operation: 'extract',
+              itemKey: basename(sourceImagePath),
+              error: errorForDiagnosticLog(error),
+            })
+            .catch(() => null)
           result.failed += 1
           result.failures.push({
             prompt,
@@ -2417,7 +2500,12 @@ export async function runComfyuiExtractBatch(
         }
       }
 
-      return markGenerationResultCancelled(result)
+      return await finishGenerationResultWithDiagnostics(
+        diagnostics,
+        result,
+        'comfyui-chenyu',
+        'extract',
+      )
     } finally {
       db.close()
     }
@@ -2470,6 +2558,19 @@ export async function runComfyuiExtractMattingBatch(
     const mattingPrompt = 'Remove the background and output transparent PNG.'
     const sizePx = comfyuiSizePx(input)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'comfyui-chenyu',
+      capability: 'matting',
+      operation: 'extract-matting',
+      extractWorkflowId: input.extractWorkflowId,
+      mattingWorkflowId: input.mattingWorkflowId,
+      sourceCount: sourceImagePaths.length,
+      width: sizePx.width,
+      height: sizePx.height,
+    })
+    if (diagnostics) {
+      result.diagnosticsLogPath = diagnostics.path
+    }
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     const tempFiles = dependencies.tempFiles ?? tempFileManager
     let createdTempDir = false
@@ -2484,6 +2585,7 @@ export async function runComfyuiExtractMattingBatch(
         workbenchRoot,
         db,
         dependencies,
+        diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
@@ -2585,6 +2687,15 @@ export async function runComfyuiExtractMattingBatch(
             printId: sourceIdentity.printId,
           })
         } catch (error) {
+          await diagnostics
+            ?.append({
+              type: 'error',
+              provider: 'comfyui-chenyu',
+              operation: 'extract-matting',
+              itemKey: basename(sourceImagePath),
+              error: errorForDiagnosticLog(error),
+            })
+            .catch(() => null)
           result.failed += 1
           result.failures.push({
             prompt: extractPrompt,
@@ -2596,7 +2707,12 @@ export async function runComfyuiExtractMattingBatch(
         }
       }
 
-      return markGenerationResultCancelled(result)
+      return await finishGenerationResultWithDiagnostics(
+        diagnostics,
+        result,
+        'comfyui-chenyu',
+        'extract-matting',
+      )
     } finally {
       db.close()
       if (createdTempDir) {
@@ -2628,6 +2744,12 @@ export async function runComfyuiMattingBatch(
   return comfyuiInstanceLocks.run(input, taskId, async () => {
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'comfyui-chenyu',
+      capability: 'matting',
+      workflowId: input.workflowId,
+      sourceCount: requestedComfyuiSourceCount(input),
+    })
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
@@ -2640,6 +2762,7 @@ export async function runComfyuiMattingBatch(
         failed: 0,
         images: [],
         failures: [],
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
       }
       const sizePx = comfyuiOptionalSizePx(input)
       const adapter = await createComfyuiAdapterForRun(
@@ -2648,6 +2771,7 @@ export async function runComfyuiMattingBatch(
         workbenchRoot,
         db,
         dependencies,
+        diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
@@ -2696,6 +2820,15 @@ export async function runComfyuiMattingBatch(
             })),
           )
         } catch (error) {
+          await diagnostics
+            ?.append({
+              type: 'error',
+              provider: 'comfyui-chenyu',
+              operation: 'matting',
+              itemKey: artifactId,
+              error: errorForDiagnosticLog(error),
+            })
+            .catch(() => null)
           result.failed += 1
           result.failures.push({
             prompt: input.prompt?.trim() ?? '',
@@ -2707,7 +2840,12 @@ export async function runComfyuiMattingBatch(
         }
       }
 
-      return markGenerationResultCancelled(result)
+      return await finishGenerationResultWithDiagnostics(
+        diagnostics,
+        result,
+        'comfyui-chenyu',
+        'matting',
+      )
     } finally {
       db.close()
     }
@@ -2739,6 +2877,12 @@ export async function runMixedMattingBatch(
   return comfyuiInstanceLocks.run(input, taskId, async () => {
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'grsai+comfyui-mask',
+      capability: 'matting',
+      workflowId: input.workflowId,
+      sourceCount: requestedComfyuiSourceCount(input),
+    })
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     const tempFiles = dependencies.tempFiles ?? tempFileManager
     let createdTempDir = false
@@ -2753,6 +2897,7 @@ export async function runMixedMattingBatch(
         failed: 0,
         images: [],
         failures: [],
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
       }
       const sizePx = comfyuiOptionalSizePx(input)
       await tempFiles.createTaskDir('matting', taskId)
@@ -2764,7 +2909,10 @@ export async function runMixedMattingBatch(
       const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
       const grsai =
         dependencies.createGrsaiAdapter?.(grsaiKey) ??
-        new GrsaiAdapter(grsaiKey, settings.grsai_node, { retries: settings.grsai_retries })
+        new GrsaiAdapter(grsaiKey, settings.grsai_node, {
+          retries: settings.grsai_retries,
+          ...(diagnostics ? { diagnostics } : {}),
+        })
       const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
       const comfyui = await createComfyuiAdapterForRun(
         input,
@@ -2772,6 +2920,7 @@ export async function runMixedMattingBatch(
         workbenchRoot,
         db,
         dependencies,
+        diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
 
@@ -2867,6 +3016,15 @@ export async function runMixedMattingBatch(
             })),
           )
         } catch (error) {
+          await diagnostics
+            ?.append({
+              type: 'error',
+              provider: 'grsai+comfyui-mask',
+              operation: 'matting',
+              itemKey: artifactId,
+              error: errorForDiagnosticLog(error),
+            })
+            .catch(() => null)
           result.failed += 1
           result.failures.push({
             prompt: input.prompt?.trim() ?? '',
@@ -2881,7 +3039,12 @@ export async function runMixedMattingBatch(
         }
       }
 
-      return markGenerationResultCancelled(result)
+      return await finishGenerationResultWithDiagnostics(
+        diagnostics,
+        result,
+        'grsai+comfyui-mask',
+        'matting',
+      )
     } finally {
       db.close()
       if (createdTempDir) {
@@ -2922,6 +3085,17 @@ export async function runComfyuiTxt2imgBatch(
     }
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'comfyui-chenyu',
+      capability: 'txt2img',
+      workflowId: input.workflowId,
+      promptCount: prompts.length,
+      width: input.width ?? 1024,
+      height: input.height ?? 1024,
+    })
+    if (diagnostics) {
+      result.diagnosticsLogPath = diagnostics.path
+    }
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
@@ -2934,6 +3108,7 @@ export async function runComfyuiTxt2imgBatch(
         workbenchRoot,
         db,
         dependencies,
+        diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
       const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
@@ -2985,6 +3160,15 @@ export async function runComfyuiTxt2imgBatch(
                 })),
               )
             } catch (error) {
+              await diagnostics
+                ?.append({
+                  type: 'error',
+                  provider: 'comfyui-chenyu',
+                  operation: 'txt2img',
+                  itemKey: `prompt-${index + 1}`,
+                  error: errorForDiagnosticLog(error),
+                })
+                .catch(() => null)
               result.failed += 1
               result.failures.push({ prompt, error: appErrorMessage(error) })
             } finally {
@@ -2994,7 +3178,12 @@ export async function runComfyuiTxt2imgBatch(
         ),
       )
 
-      return markGenerationResultCancelled(result)
+      return await finishGenerationResultWithDiagnostics(
+        diagnostics,
+        result,
+        'comfyui-chenyu',
+        'txt2img',
+      )
     } finally {
       db.close()
     }
@@ -3023,6 +3212,14 @@ export async function runComfyuiImg2imgBatch(
   return comfyuiInstanceLocks.run(input, taskId, async () => {
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
+    const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+      provider: 'comfyui-chenyu',
+      capability: 'img2img',
+      workflowId: input.workflowId,
+      sourceCount: requestedComfyuiSourceCount(input),
+      width: input.width ?? 1024,
+      height: input.height ?? 1024,
+    })
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
@@ -3035,6 +3232,7 @@ export async function runComfyuiImg2imgBatch(
         failed: 0,
         images: [],
         failures: [],
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
       }
       const sizePx = comfyuiSizePx(input)
       const adapter = await createComfyuiAdapterForRun(
@@ -3043,6 +3241,7 @@ export async function runComfyuiImg2imgBatch(
         workbenchRoot,
         db,
         dependencies,
+        diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
 
@@ -3094,6 +3293,15 @@ export async function runComfyuiImg2imgBatch(
             })),
           )
         } catch (error) {
+          await diagnostics
+            ?.append({
+              type: 'error',
+              provider: 'comfyui-chenyu',
+              operation: 'img2img',
+              itemKey: artifactId,
+              error: errorForDiagnosticLog(error),
+            })
+            .catch(() => null)
           result.failed += 1
           result.failures.push({
             prompt: input.prompt?.trim() ?? '',
@@ -3105,7 +3313,12 @@ export async function runComfyuiImg2imgBatch(
         }
       }
 
-      return markGenerationResultCancelled(result)
+      return await finishGenerationResultWithDiagnostics(
+        diagnostics,
+        result,
+        'comfyui-chenyu',
+        'img2img',
+      )
     } finally {
       db.close()
     }
@@ -3233,6 +3446,13 @@ async function runChenyuWorkflowTask(
 ): Promise<GenerationRunResult> {
   const emit = createGenerationProgressEmitter(dependencies)
   const taskId = generationTaskId(input.taskId, input.capability)
+  const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
+    provider: 'comfyui-chenyu-workflow',
+    capability: input.capability,
+    workflowId: input.workflowId,
+    revisionId: input.revisionId ?? null,
+    hasInputs: Boolean(input.inputs),
+  })
   emit({
     task_id: taskId,
     capability: input.capability,
@@ -3243,7 +3463,7 @@ async function runChenyuWorkflowTask(
     ...(input.prompt ? { current_prompt: input.prompt } : {}),
   })
   if (isGenerationCancelled(taskId)) {
-    return {
+    const cancelledResult: GenerationRunResult = {
       taskId,
       total: 1,
       succeeded: 0,
@@ -3251,28 +3471,83 @@ async function runChenyuWorkflowTask(
       images: [],
       failures: [],
       cancelled: true,
+      ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
     }
+    await diagnostics?.append({
+      type: 'task_completed',
+      provider: 'comfyui-chenyu-workflow',
+      operation: input.capability,
+      data: {
+        total: cancelledResult.total,
+        succeeded: cancelledResult.succeeded,
+        failed: cancelledResult.failed,
+        cancelled: true,
+      },
+    })
+    return cancelledResult
   }
   const runner =
-    dependencies.createChenyuWorkflowRunner?.({ apiKey, workbenchRoot }) ??
+    dependencies.createChenyuWorkflowRunner?.({
+      apiKey,
+      workbenchRoot,
+      ...(diagnostics ? { diagnostics } : {}),
+    }) ??
     new ChenyuWorkflowRunner({
       chenyu: new ChenyuCloudClient(apiKey),
       workbenchRoot,
       openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      ...(diagnostics ? { diagnostics } : {}),
     })
-  const response = await runner.runImageWorkflow(input)
-  const result = chenyuWorkflowRunResult(input, response)
-  emit({
-    task_id: result.taskId,
-    capability: input.capability,
-    processed: 1,
-    total: 1,
-    succeeded: result.succeeded,
-    failed: result.failed,
-    images: result.images,
-    ...(input.prompt ? { current_prompt: input.prompt } : {}),
-  })
-  return markGenerationResultCancelled(result)
+  try {
+    await diagnostics?.append({
+      type: 'request',
+      provider: 'comfyui-chenyu-workflow',
+      operation: 'runImageWorkflow',
+      data: { input },
+    })
+    const response = await runner.runImageWorkflow(input)
+    await diagnostics?.append({
+      type: 'response',
+      provider: 'comfyui-chenyu-workflow',
+      operation: 'runImageWorkflow',
+      data: { raw: response },
+    })
+    const result = chenyuWorkflowRunResult(input, response)
+    if (diagnostics) {
+      result.diagnosticsLogPath = diagnostics.path
+    }
+    const finalResult = markGenerationResultCancelled(result)
+    await diagnostics?.append({
+      type: 'task_completed',
+      provider: 'comfyui-chenyu-workflow',
+      operation: input.capability,
+      data: {
+        total: finalResult.total,
+        succeeded: finalResult.succeeded,
+        failed: finalResult.failed,
+        cancelled: finalResult.cancelled ?? false,
+      },
+    })
+    emit({
+      task_id: finalResult.taskId,
+      capability: input.capability,
+      processed: 1,
+      total: 1,
+      succeeded: finalResult.succeeded,
+      failed: finalResult.failed,
+      images: finalResult.images,
+      ...(input.prompt ? { current_prompt: input.prompt } : {}),
+    })
+    return finalResult
+  } catch (error) {
+    await diagnostics?.append({
+      type: 'task_failed',
+      provider: 'comfyui-chenyu-workflow',
+      operation: input.capability,
+      error: errorForDiagnosticLog(error),
+    })
+    throw error
+  }
 }
 
 function chenyuWorkflowRunResult(

@@ -970,6 +970,11 @@ function GenerationFeedback({
       {result ? (
         <div className="rounded-md bg-muted px-3 py-2 text-sm">
           {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败 {result.failed}
+          {result.diagnosticsLogPath ? (
+            <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+              诊断日志：{result.diagnosticsLogPath}
+            </p>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -2048,6 +2053,11 @@ function GrsaiPromptGenerationPanel({
                 <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
                   {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败{' '}
                   {result.failed}
+                  {result.diagnosticsLogPath ? (
+                    <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                      诊断日志：{result.diagnosticsLogPath}
+                    </p>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -2301,6 +2311,11 @@ function GrsaiExtractPanel() {
               <div className="mt-3 rounded-md bg-muted px-3 py-2 text-sm">
                 {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败{' '}
                 {result.failed}
+                {result.diagnosticsLogPath ? (
+                  <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                    诊断日志：{result.diagnosticsLogPath}
+                  </p>
+                ) : null}
               </div>
             ) : null}
           </div>

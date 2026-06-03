@@ -302,6 +302,19 @@ async function writeTitlesXlsxWithRetry(xlsxPath: string, ...) {
 UI 上若失败：提示关闭标题 xlsx 后重试。
 注：当前实现会把 `EBUSY` / `EPERM` / `EACCES` 统一映射为 `XLSX_LOCKED`。
 
+### 4.6 诊断日志
+
+每次标题任务默认写 `.workbench/logs/diagnostics/title/{taskId}.jsonl`，结果区展示 `diagnosticsLogPath`。
+
+记录内容：
+- 任务配置快照：批次目录、标题文件名、平台、语言、模型、取图序号、已有标题策略、预处理、maxRetries、并发。
+- 已有标题跳过决策：SKU、已有标题、跳过原因。
+- 每个 SKU 的选图结果：skuFolder、imageIndex、实际选中图片 path/name、bytes、sha256，取图越界 warning。
+- 每次 attempt 的预处理参数、百炼请求 messages、原始 `VisionResponse`、解析后的标题。
+- 空字符串、格式异常、请求失败要记录 `parse_failed` / `attempt_failed`，并保留原始 `response.text`。
+
+安全边界：不记录百炼 API Key；不记录 data URL/base64 图片原文，只记录 mime、bytes、sha256、dataUrl length 等元信息。
+
 ## 5. UI
 
 ```
@@ -428,8 +441,8 @@ CREATE TABLE skus (
 'title:open-path'                     → { path } → { ok: true } | { ok: false, error }
 
 // 事件
-'title:progress'                      → { task_id, processed, total, succeeded, failed, skipped, status? }
-'title:completed'                     → { ok: true, result } | { ok: false, taskId, error }
+'title:progress'                      → { task_id, processed, total, succeeded, failed, skipped, diagnosticsLogPath?, status? }
+'title:completed'                     → { ok: true, result: TitleBatchResult & { diagnosticsLogPath?: string } } | { ok: false, taskId, error }
 ```
 
 ## 10. 平台字数约束（参考，本地调整）

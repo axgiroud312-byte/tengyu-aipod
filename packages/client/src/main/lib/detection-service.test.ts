@@ -1,4 +1,4 @@
-import { mkdir, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import type { Skill } from '@tengyu-aipod/shared'
@@ -143,6 +143,14 @@ function createFakeDb() {
     artifacts,
     openDatabase: () => db as unknown as TestDatabase,
   }
+}
+
+async function readJsonl(path: string) {
+  return (await readFile(path, 'utf8'))
+    .trim()
+    .split('\n')
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as Record<string, unknown>)
 }
 
 async function createImage(path: string, content: string) {
@@ -429,6 +437,20 @@ describe('DetectionService', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'task-detection', processed: 3, succeeded: 3 }),
     )
+    expect(result.diagnosticsLogPath).toContain(
+      join('.workbench', 'logs', 'diagnostics', 'detection'),
+    )
+    const diagnosticEvents = await readJsonl(result.diagnosticsLogPath ?? '')
+    expect(diagnosticEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'task_started' }),
+        expect.objectContaining({ type: 'request', operation: 'detection' }),
+        expect.objectContaining({ type: 'response', operation: 'detection' }),
+        expect.objectContaining({ type: 'parse_result', operation: 'detection' }),
+        expect.objectContaining({ type: 'task_completed' }),
+      ]),
+    )
+    expect(JSON.stringify(diagnosticEvents)).not.toContain('cHJvY2Vzc2Vk')
     await expect(
       stat(join(workbenchRoot, '.workbench', 'tmp', 'detection', 'task-detection')),
     ).rejects.toThrow()

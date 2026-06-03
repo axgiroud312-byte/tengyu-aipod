@@ -1,4 +1,9 @@
 import { type AppError, AppErrorClass } from '@tengyu-aipod/shared'
+import {
+  type DiagnosticLogWriter,
+  errorForDiagnosticLog,
+  sanitizeDiagnosticValue,
+} from './diagnostic-log-service'
 import { GRSAI_IMAGE_MODELS } from './generation-local-config'
 
 export type GrsaiNode = 'cn' | 'global'
@@ -40,6 +45,7 @@ export type GrsaiAdapterOptions = {
   pollIntervalMs?: number
   pollTimeoutMs?: number
   retries?: number
+  diagnostics?: DiagnosticLogWriter
 }
 
 type GrsaiApiStatus = 'running' | 'violation' | 'succeeded' | 'failed'
@@ -135,6 +141,7 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
   private readonly pollIntervalMs: number
   private readonly pollTimeoutMs: number
   private readonly retries: number
+  private readonly diagnostics: DiagnosticLogWriter | undefined
 
   constructor(
     private readonly apiKey: string,
@@ -145,33 +152,44 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
     this.pollIntervalMs = options.pollIntervalMs ?? DEFAULT_POLL_INTERVAL_MS
     this.pollTimeoutMs = options.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS
     this.retries = clampInt(options.retries ?? 2, 0, 10, 2)
+    this.diagnostics = options.diagnostics
   }
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
     let attempt = 0
     while (true) {
       try {
-        return await this.generateWithFallback(req)
+        return await this.generateWithFallback(req, attempt + 1)
       } catch (error) {
         const appError = toGrsaiAppError(error)
         if (attempt >= this.retries || !isRetryableGrsaiError(appError)) {
           throw appError
         }
+        await this.log({
+          type: 'retry',
+          provider: 'grsai',
+          operation: 'generate',
+          attempt: attempt + 1,
+          error: errorForDiagnosticLog(appError),
+        })
         await sleep(retryDelayMs(attempt))
         attempt += 1
       }
     }
   }
 
-  private async generateWithFallback(req: GenerateRequest): Promise<GenerateResponse> {
+  private async generateWithFallback(
+    req: GenerateRequest,
+    attempt: number,
+  ): Promise<GenerateResponse> {
     try {
-      const primary = await this.generateOnNode(this.node, req)
+      const primary = await this.generateOnNode(this.node, req, attempt)
       if (!shouldFallbackResponse(primary)) {
         return primary
       }
 
       try {
-        return await this.generateOnNode(otherNode(this.node), req)
+        return await this.generateOnNode(otherNode(this.node), req, attempt)
       } catch (error) {
         const fallbackError = toGrsaiAppError(error)
         if (isRetryableNodeFailure(fallbackError)) {
@@ -186,31 +204,68 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
       }
 
       try {
-        return await this.generateOnNode(otherNode(this.node), req)
+        return await this.generateOnNode(otherNode(this.node), req, attempt)
       } catch (fallbackError) {
         throw toGrsaiAppError(fallbackError)
       }
     }
   }
 
-  private async generateOnNode(node: GrsaiNode, req: GenerateRequest) {
+  private async generateOnNode(node: GrsaiNode, req: GenerateRequest, attempt: number) {
     const replyType = replyTypeFromRequest(req)
 
     if (replyType === 'async') {
-      return this.generateAsync(node, req)
+      return this.generateAsync(node, req, attempt)
     }
 
     const payload = buildGeneratePayload(req, replyType)
+    await this.log({
+      type: 'request',
+      provider: 'grsai',
+      operation: 'generate',
+      attempt,
+      data: {
+        node,
+        replyType,
+        payload: diagnosticGrsaiPayload(payload),
+      },
+    })
     const raw =
       replyType === 'stream'
         ? await this.postGenerateStream(node, payload)
         : await this.postGenerateJson(node, payload)
+    await this.log({
+      type: 'response',
+      provider: 'grsai',
+      operation: 'generate',
+      attempt,
+      data: { node, replyType, raw },
+    })
 
     return responseFromRaw(raw, node)
   }
 
-  private async generateAsync(node: GrsaiNode, req: GenerateRequest) {
-    const initial = await this.postGenerateJson(node, buildGeneratePayload(req, 'async'))
+  private async generateAsync(node: GrsaiNode, req: GenerateRequest, attempt: number) {
+    const payload = buildGeneratePayload(req, 'async')
+    await this.log({
+      type: 'request',
+      provider: 'grsai',
+      operation: 'generate',
+      attempt,
+      data: {
+        node,
+        replyType: 'async',
+        payload: diagnosticGrsaiPayload(payload),
+      },
+    })
+    const initial = await this.postGenerateJson(node, payload)
+    await this.log({
+      type: 'response',
+      provider: 'grsai',
+      operation: 'generate',
+      attempt,
+      data: { node, replyType: 'async', raw: initial },
+    })
     const initialStatus = statusFromRaw(initial)
 
     if (initialStatus && initialStatus !== 'running') {
@@ -223,9 +278,23 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
     }
 
     const startedAt = Date.now()
+    let pollCount = 0
     while (Date.now() - startedAt <= this.pollTimeoutMs) {
       await sleep(this.pollIntervalMs)
+      pollCount += 1
       const latest = await this.getResult(node, taskId)
+      await this.log({
+        type: 'poll',
+        provider: 'grsai',
+        operation: 'result',
+        attempt,
+        data: {
+          node,
+          taskId,
+          pollCount,
+          raw: latest,
+        },
+      })
       if (statusFromRaw(latest) !== 'running') {
         return responseFromRaw(latest, node)
       }
@@ -237,6 +306,10 @@ export class GrsaiAdapter implements ImageGenerationAdapter {
       provider: 'grsai',
       taskId,
     })
+  }
+
+  private async log(event: Parameters<DiagnosticLogWriter['append']>[0]) {
+    await this.diagnostics?.append(event).catch(() => null)
   }
 
   private async postGenerateJson(node: GrsaiNode, payload: GrsaiGeneratePayload) {
@@ -314,6 +387,13 @@ function buildGeneratePayload(
     images: (req.reference_images ?? []).map((image) => stripDataUrlPrefix(image.base64)),
     aspectRatio,
     replyType,
+  }
+}
+
+function diagnosticGrsaiPayload(payload: GrsaiGeneratePayload) {
+  return {
+    ...payload,
+    images: payload.images.map((image) => sanitizeDiagnosticValue(image, 'base64')),
   }
 }
 

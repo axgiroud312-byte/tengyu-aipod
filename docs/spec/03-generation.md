@@ -740,10 +740,11 @@ Grsai 自动重试次数在设置页“本地生图设置”里配置，范围 `
 
 安全边界：
 - 常规运行期日志不写入 `.workbench/logs/`，不是长期审计日志。
-- 提示词生成的 LLM 原始返回额外写入 `.workbench/logs/generation-prompts/{promptRunId}.jsonl`，用于排查空字符、JSON 格式错误和解析失败。
+- 生图提示词生成和实际生图调用会额外写入 `.workbench/logs/diagnostics/generation/{taskIdOrRunId}.jsonl`，用于排查空字符、JSON 格式错误、解析失败、provider 原始响应、轮询/重试次数。
 - 不记录 API Key。
-- 不记录 base64 图片内容。
-- 弹窗里的提示词只展示短预览，避免长文本刷屏；完整原始返回以排障文件为准。
+- 不记录 base64 / data URL / Buffer 图片原文，只记录图片路径、mime、字节数、sha256、data URL 长度等元信息。
+- 弹窗里的提示词只展示短预览，避免长文本刷屏；完整请求和原始返回以诊断日志为准。
+- 每次任务完成后，结果区域展示本次 `diagnosticsLogPath`，方便用户直接定位文件。
 
 ## 9. ComfyUI 云机管理
 
@@ -1035,6 +1036,9 @@ CREATE TABLE comfyui_instances (
                                           prompt?,
                                           instanceUuid?,
                                         } → TaskId
+
+// 完成事件 result 带 diagnosticsLogPath，可在 UI 结果区展示
+'generation:completed'                → { ok: true, result: GenerationRunResult & { diagnosticsLogPath?: string } }
 
 // 运行期日志事件（主进程推送，preload 暴露 onDebugLog）
 'generation:debug-log'                → {

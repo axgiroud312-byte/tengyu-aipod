@@ -27,6 +27,7 @@ import {
   TitlePage,
   type TitlePageState,
 } from '@/features/title/TitlePage'
+import { TutorialPage } from '@/features/tutorial/TutorialPage'
 import { Shell } from '@/layout/Shell'
 import {
   type WorkbenchModule,
@@ -540,6 +541,9 @@ function MainWorkbench() {
           succeeded: event.result.succeeded,
           failed: event.result.failed,
           skipped: event.result.skipped,
+          ...(event.result.diagnosticsLogPath
+            ? { diagnosticsLogPath: event.result.diagnosticsLogPath }
+            : {}),
           ...(event.result.cancelled ? { status: 'cancelled' as const } : {}),
         }))
         setTitleError(null)
@@ -1230,7 +1234,7 @@ function MainWorkbench() {
       <div className="space-y-6">
         {!isWorkspaceLoaded ? (
           <div className="mt-20 text-sm text-muted-foreground">正在读取工作区...</div>
-        ) : activeModule !== 'settings' && !workspaceRoot ? (
+        ) : activeModule !== 'settings' && activeModule !== 'tutorial' && !workspaceRoot ? (
           <WorkspaceRequired onOpenSettings={() => navigate('/settings')} />
         ) : (
           <div className="space-y-6">
@@ -1326,6 +1330,9 @@ function MainWorkbench() {
             ) : null}
             <div hidden={activeModule !== 'settings'}>
               <SettingsPage onWorkspaceSaved={setWorkspaceRoot} />
+            </div>
+            <div hidden={activeModule !== 'tutorial'}>
+              <TutorialPage />
             </div>
           </div>
         )}
@@ -1430,6 +1437,12 @@ function Onboarding() {
     navigate(getStoredWorkbenchRoute(), { replace: true })
   }
 
+  async function openTutorial() {
+    await window.api.onboarding.complete()
+    setReady(true)
+    navigate('/tutorial', { replace: true })
+  }
+
   if (ready) {
     return <MainWorkbench />
   }
@@ -1447,6 +1460,7 @@ function Onboarding() {
       apiKeys={apiKeys}
       onApiKeyChange={updateApiKey}
       onComplete={() => void complete()}
+      onOpenTutorial={() => void openTutorial()}
       onSaveApiKeys={() => void saveApiKeys()}
       step={step}
     />

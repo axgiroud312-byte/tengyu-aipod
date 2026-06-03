@@ -16,6 +16,11 @@ import {
 } from './lib/customer-auth'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
+import {
+  cleanupDiagnosticLogs,
+  deleteAllWorkbenchLogFiles,
+  startDiagnosticLogCleanupTimer,
+} from './lib/diagnostic-log-service'
 import { registerGenerationLocalConfigIpc } from './lib/generation-local-config'
 import { registerGenerationIpc } from './lib/generation-service'
 import {
@@ -30,6 +35,7 @@ import { registerOnboardingIpc } from './onboarding'
 import { registerPhotoshopIpc } from './photoshop/ipc'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
+let diagnosticLogCleanupTimer: ReturnType<typeof setInterval> | null = null
 
 registerLocalImageProtocolScheme()
 
@@ -84,6 +90,22 @@ app.whenReady().then(() => {
   }
 
   ipcMain.handle('app:ping', () => 'pong')
+  ipcMain.handle('logs:delete-all', async () => {
+    try {
+      return {
+        ok: true,
+        data: await deleteAllWorkbenchLogFiles(),
+      }
+    } catch (error) {
+      return {
+        ok: false,
+        error: {
+          code: 'DELETE_LOGS_FAILED',
+          message: error instanceof Error ? error.message : String(error),
+        },
+      }
+    }
+  })
   const customerAuthService = new CustomerAuthService({
     onStateChanged: syncSkillCacheWithCustomerAuth,
   })
@@ -107,6 +129,8 @@ app.whenReady().then(() => {
   registerListingRunnerIpc()
   registerPhotoshopIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)
+  void cleanupDiagnosticLogs().catch(() => null)
+  diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
   createMainWindow()
   void customerAuthService.verify().catch(() => null)
 
@@ -128,4 +152,8 @@ app.on('before-quit', () => {
   browserProfileLocks.clear()
   void tempFileManager.cleanupSession().catch(() => null)
   tempFileManager.clearTimers()
+  if (diagnosticLogCleanupTimer) {
+    clearInterval(diagnosticLogCleanupTimer)
+    diagnosticLogCleanupTimer = null
+  }
 })
