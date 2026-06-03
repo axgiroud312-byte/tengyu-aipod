@@ -340,7 +340,7 @@ function sortAlphaNum(a: string, b: string): number {
 │   │   ├─ 02.jpg                  ← 多裁切区域时多张
 │   │   └─ ...
 │   ├─ {印花2名}/
-│   └─ titles.xlsx                  ← 标题模块写入
+│   └─ 标题.xlsx                    ← 标题模块写入（上架兼容旧 titles.xlsx）
 ├─ {模板2名}/
 │   ├─ {印花1名}/
 │   └─ ...

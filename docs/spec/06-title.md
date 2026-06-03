@@ -1,6 +1,6 @@
 # Spec 06 — 标题生成模块
 
-> 扫描套版完成的货号文件夹，取第 N 张图调阿里云百炼 VL 模型生成跨境电商标题，写入批次目录的 titles.xlsx。
+> 扫描套版完成的货号文件夹，取第 N 张图调阿里云百炼 VL 模型生成跨境电商标题，写入批次目录的标题 xlsx。当前默认文件名是 `标题.xlsx`，也支持用户自定义文件名。
 
 ## 1. 输入和输出
 
@@ -12,17 +12,19 @@
 |---|---|---|---|---|
 | 货号批次目录 | 路径 | ✅ | - | 如 `04-上架工作区/模板1_白T正面/` |
 | 平台 | select | ✅ | Temu | 本地拉支持列表 |
-| 语言 | select | ✅ | English | 本地拉支持列表 |
+| 语言 | select | ✅ | 英语 | 本地拉支持列表 |
 | 模型 | select | ✅ | qwen3.6-flash | 用户可换其他可用视觉模型 |
+| 标题文件名 | text | ✅ | 标题 | 写入 `{标题文件名}.xlsx`，用户可自定义 |
 | 取第几张图 | number | ✅ | 1 | 默认第 1 张 |
 | 标题额外要求 | textarea | ❌ | - | "强调原创设计，含 vintage 关键词" |
+| 标题前缀 / 后缀 / 分隔符 | text | ❌ | - | 生成标题后拼接，用于批量加固定词 |
 | 已有标题策略 | radio | ✅ | 跳过 | 跳过 / 重新生成 |
 | 失败重试次数 | number | ✅ | 2 | 0-5 |
 
 ### 1.2 输出
 
 ```
-{批次目录}/titles.xlsx     ← A 列：货号  B 列：标题（仅 2 列）
+{批次目录}/{标题文件名}.xlsx     ← 默认 标题.xlsx；A 列：货号  B 列：标题（仅 2 列）
 
 数据库 skus 表：
   code, title, language, platform, ...
@@ -32,8 +34,7 @@
 
 ```ts
 const TITLE_PLATFORMS = [
-  { key: 'temu_pop', label: 'Temu PopTemu' },
-  { key: 'temu_full', label: 'Temu Full' },
+  { key: 'temu', label: 'Temu' },
   { key: 'shein', label: 'Shein' },
   { key: 'tiktok', label: 'TikTok Shop' },
   { key: 'shopee', label: 'Shopee' },
@@ -43,16 +44,16 @@ const TITLE_PLATFORMS = [
 ]
 
 const TITLE_LANGUAGES = [
-  { key: 'en', label: 'English' },
+  { key: 'en', label: '英语' },
   { key: 'zh', label: '中文' },
-  { key: 'es', label: 'Español' },
-  { key: 'pt', label: 'Português' },
-  { key: 'de', label: 'Deutsch' },
-  { key: 'fr', label: 'Français' },
-  { key: 'ja', label: '日本語' },
-  { key: 'ko', label: '한국어' },
-  { key: 'ru', label: 'Русский' },
-  { key: 'ar', label: 'العربية' },
+  { key: 'es', label: '西班牙语' },
+  { key: 'pt', label: '葡萄牙语' },
+  { key: 'de', label: '德语' },
+  { key: 'fr', label: '法语' },
+  { key: 'ja', label: '日语' },
+  { key: 'ko', label: '韩语' },
+  { key: 'ru', label: '俄语' },
+  { key: 'ar', label: '阿拉伯语' },
 ]
 ```
 
@@ -68,11 +69,11 @@ const TITLE_LANGUAGES = [
 精确匹配优先 → fallback 到通用 skill
 
 例：
-  GET /api/skills?module=title&platform=temu_pop&language=en
+  GET /api/skills?module=title&platform=temu&language=en
     → 返回最适合 Temu English 的 skill
   
-  如果没有 temu_pop+en 的专门 skill → fallback 到 generic+en
-  最后 fallback 到 generic+generic
+  客户端传 platform='temu' 时，会依次尝试 temu / temu_pop / temu_full。
+  服务端 Skill 查询本身还支持 title 的 generic fallback。
 ```
 
 ### 3.2 Skill 数据结构
@@ -81,7 +82,7 @@ const TITLE_LANGUAGES = [
 interface TitleSkill {
   id: string                          // "title-temu-en-v2"
   module: 'title'
-  platform: string                    // 'temu_pop' | 'generic'
+  platform: string                    // 'temu' | 'temu_pop' | 'temu_full' | 'generic'
   language: string                    // 'en' | 'generic'
   version: string
   system_prompt: string               // 含输出格式约束（建议直接输出标题字符串）
@@ -138,7 +139,7 @@ function parseTitle(text: string, language: string): string {
   ↓
 扫描 {批次目录}/ 下所有一级子目录（货号文件夹）
   ↓
-读已有 titles.xlsx（如存在）
+读已有 `{标题文件名}.xlsx`（默认 `标题.xlsx`，如存在）
   ↓
 对每个货号：
   ├─ "跳过模式" + 已有标题 → 跳过
@@ -154,10 +155,10 @@ function parseTitle(text: string, language: string): string {
   ④ 拉 skill（按 platform+language 匹配）
   ⑤ 注入用户的 extraRequirement → user message
   ⑥ 调阿里云百炼 chat.completions
-  ⑦ 解析标题 → 验证长度合规 → 保存
+  ⑦ 解析标题 → 截断到平台长度 → 拼接前缀/后缀 → 保存
   ⑧ 失败 → 重试
   ↓
-全部完成 → 写 titles.xlsx
+全部完成 → 写 `{标题文件名}.xlsx`
   ↓
 UI 显示 ✅ N 成功 / ⚠️ M 失败
 ```
@@ -186,7 +187,7 @@ function getNthImageFromSkuFolder(folder: string, n: number): string | null {
 ```ts
 async function processTitleBatch(config: TitleConfig) {
   const skuFolders = await scanSkuFolders(config.batchDir)
-  const xlsxPath = path.join(config.batchDir, 'titles.xlsx')
+  const xlsxPath = titleXlsxPath(config.batchDir, config.titleFileName)
   const existingTitles = await readExistingTitles(xlsxPath)
   
   const tasks = []
@@ -298,7 +299,8 @@ async function writeTitlesXlsxWithRetry(xlsxPath: string, ...) {
 }
 ```
 
-UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
+UI 上若失败：提示关闭标题 xlsx 后重试。
+注：当前实现会把 `EBUSY` / `EPERM` / `EACCES` 统一映射为 `XLSX_LOCKED`。
 
 ## 5. UI
 
@@ -309,10 +311,10 @@ UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
 │    [选择...]                                           │
 │    /Users/.../04-上架工作区/模板1_白T正面/              │
 │    扫描结果：30 个货号文件夹                            │
-│    ⚠️ 检测到 titles.xlsx 中已有 5 个标题                │
+│    ⚠️ 检测到 标题.xlsx 中已有 5 个标题                  │
 │                                                       │
-│ ② 平台：[Temu PopTemu ▼]                              │
-│ ③ 语言：[English ▼]                                   │
+│ ② 平台：[Temu ▼]                                      │
+│ ③ 语言：[英语 ▼]                                      │
 │ ④ 模型：[qwen3.6-flash ▼]                            │
 │                                                       │
 │ ⑤ 标题额外要求：                                       │
@@ -320,6 +322,8 @@ UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
 │    例：强调原创设计、节日主题、含关键词 "vintage"        │
 │                                                       │
 │ ⑥ 取第几张图：[1] (默认 1)                             │
+│ 标题名称：[标题]                                       │
+│ 前缀：[可选]  后缀：[可选]  分隔符：[空格]               │
 │                                                       │
 │ 已有标题策略：● 跳过  ○ 重新生成                        │
 │ 失败重试：[2] 次                                       │
@@ -330,8 +334,6 @@ UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
 │ ☑ 压缩图片节省 token                                   │
 │   最大边长：[1024 ▼]                                   │
 │                                                       │
-│ 预估：25 张图 × qwen3.6-flash ≈ ¥0.08                 │
-│                                                       │
 │ [开始生成标题]                                          │
 └──────────────────────────────────────────────────────┘
 
@@ -339,15 +341,14 @@ UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
 进度：15 / 25（60%）
 跳过：5 / 30
 失败重试中：1
-预计剩余：1 分钟
-[暂停] [取消]
+[取消任务]
 
 [完成]
 ✅ 24 成功
 ⚠️ 1 失败（货号 SKU007，[查看错误] [重试]）
 
-已写入：04-上架工作区/模板1_白T正面/titles.xlsx
-[打开 xlsx]  [打开批次目录]
+已写入：04-上架工作区/模板1_白T正面/标题.xlsx
+[打开表格]  [打开批次目录]
 ```
 
 ## 6. 边界情况
@@ -356,11 +357,11 @@ UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
 |---|---|
 | 货号文件夹为空（没图）| 跳过 + UI 警告 |
 | 第 N 张图不存在 | 用最后一张 + UI 提示"货号 X 只有 K 张图，已用第 K 张" |
-| LLM 返回空标题 | 重试 1 次 → 仍空 → 标记失败 |
-| LLM 返回过长标题 | 截断到平台 max len + UI 警告 |
+| LLM 返回空标题 | 按 `maxRetries` 重试；仍空 → 标记失败 |
+| LLM 返回过长标题 | 截断到平台 max len |
 | 网络异常 | 自动重试，超过 max_retries 标失败 |
-| 余额不足 | 启动前可选 ping `/balance/info`（百炼无此 API 时跳过预检）；运行时收到 401/insufficient 错误立即停 |
-| titles.xlsx 被 Excel 占用 | 写入失败 → 弹窗"请关闭后重试" |
+| 用户取消 | 停止后续 SKU 处理，已完成标题仍写入 xlsx，结果带 `cancelled` |
+| 标题 xlsx 被 Excel 占用 | 写入失败 → 返回 `XLSX_LOCKED`，UI 提示关闭后重试 |
 | 模型/skill 不存在 | UI 提示选别的 |
 
 ## 7. 临时文件
@@ -370,9 +371,10 @@ UI 上若失败：弹窗"请关闭 titles.xlsx 后点重试"。
   └─ {图片hash}_preprocessed.jpg  ← 预处理后临时图（同 detection 策略）
 
 策略：
-  调 API 成功 → 立即删除
-  失败保留 1 小时
-  任务完成 → 删整个 {taskId}/
+  单张调 API 完成后 → 删除该张预处理临时图
+  任务成功完成 → 删整个 {taskId}/
+  有失败项 → 保留任务目录一段时间用于排查
+  任务取消 → 删整个 {taskId}/
 ```
 
 ## 8. 数据库
@@ -391,13 +393,8 @@ CREATE TABLE skus (
   created_at      INTEGER NOT NULL
 );
 
--- title 生成的 artifacts 行
--- step = 'title'
--- provider = 'aliyun-bailian'
--- model_or_workflow = 'qwen3-vl-plus'
--- prompt_snapshot = systemPrompt + 用户额外要求
--- source_artifact_ids = JSON [图片 artifact id]
--- file_path = ... titles.xlsx（指向同一文件，多 sku 共享）
+-- 当前实现只登记 skus 表，不登记 title artifact 行。
+-- E2E 可通过 TENGYU_SKIP_TITLE_DB_REGISTER=1 跳过数据库登记。
 ```
 
 ## 9. IPC 接口
@@ -406,34 +403,40 @@ CREATE TABLE skus (
 'title:list-platforms'                → PlatformOption[]
 'title:list-languages'                → LanguageOption[]
 'title:list-models'                   → ModelOption[]
-'title:scan-batch-dir'                → { batchDir } → { skuCount, existingTitles: Map<string, string> }
+'title:choose-batch-dir'              → { ok: true, data: { path } } | { ok: false, error }
+'title:scan-batch-dir'                → { batchDir, titleFileName? } → { skuCount, existingTitles: Record<string, string> }
 'title:run'                            → {
                                           batchDir: string,
+                                          titleFileName?: string,
                                           platform: string,
                                           language: string,
                                           model: string,
                                           imageIndex: number,
                                           extraRequirement?: string,
+                                          titlePrefix?: string,
+                                          titleSuffix?: string,
+                                          titleSeparator?: string,
                                           existingStrategy: 'skip' | 'regenerate',
                                           maxRetries: number,
                                           concurrency: number,
                                           preprocess: PreprocessOptions,
                                         } → TaskId
 
+'title:cancel'                        → { task_id } → { ok: boolean }
 'title:retry-failed'                  → { task_id } → TaskId
 'title:get-result'                    → { sku_code, batch_dir } → TitleResult | null
+'title:open-path'                     → { path } → { ok: true } | { ok: false, error }
 
 // 事件
-'title:progress'                      → { task_id, processed, total, succeeded, failed, skipped }
-'title:warning'                       → { task_id, sku_code, message }
+'title:progress'                      → { task_id, processed, total, succeeded, failed, skipped, status? }
+'title:completed'                     → { ok: true, result } | { ok: false, taskId, error }
 ```
 
 ## 10. 平台字数约束（参考，本地调整）
 
 ```ts
 const PLATFORM_TITLE_MAX_LEN = {
-  temu_pop: 150,      // 字符
-  temu_full: 130,
+  temu: 150,          // 字符
   shein: 200,
   tiktok: 250,
   shopee: 120,        // 不同区域不一样，按最严
@@ -469,11 +472,15 @@ function estimateTitleCost(
 }
 ```
 
+这是近似估算思路。当前代码里已有标题成本相关逻辑，但 spec 不把某个固定 UI 费用展示或价格表当作稳定契约。
+
 ## 12. 测试
 
-- 各平台/语言组合的 skill 索引 fallback
+- 各平台/语言组合的 skill 索引 fallback，尤其是 `temu` → `temu_pop` / `temu_full`
 - 取第 N 张图的边界（n=0, n>len, n=负数）
 - xlsx 读取/写入的合并逻辑
 - xlsx 被锁时的错误处理
 - 通用解析器对 LLM 各种输出的兜底
 - 长标题截断
+- 自定义标题文件名、前缀、后缀、分隔符
+- 取消任务和重试失败 SKU

@@ -1,7 +1,7 @@
 # Spec 08 — 服务端与 Admin 后台
 
 > 当前版本：v1
-> 最后更新：2026-06-02
+> 最后更新：2026-06-03
 
 ## 1. 职责边界
 
@@ -44,8 +44,15 @@ http://127.0.0.1:3100
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d
-pnpm -F @tengyu-aipod/server exec prisma db push
+pnpm -F @tengyu-aipod/server prisma:generate
+pnpm -F @tengyu-aipod/server exec prisma migrate deploy --schema prisma/schema.prisma
 ```
+
+补充：
+
+- server 本地开发仍监听 `http://127.0.0.1:3100`
+- 客户端开发环境未显式配置 `TENGYU_SERVER_URL` 时，默认会连 `https://wechat.tengyuai.com`
+- 如需联调本地 server，启动客户端前显式设置 `TENGYU_SERVER_URL=http://127.0.0.1:3100`
 
 健康检查：
 
@@ -69,13 +76,17 @@ https://www.tengyuai.com/
 
 | PHP 接口 | 用途 |
 |---|---|
-| `POST /api/wxlogin/get_qrcode` | 获取微信扫码登录二维码 |
+| `GET /api/wxlogin/get_qrcode` | 获取微信官方二维码页面 URL 和轮询 token |
 | `POST /api/wxlogin/check_login` | 轮询微信扫码登录结果 |
 | `POST /user/public/send_login_sms` | 发送手机号验证码 |
-| `POST /user/public/get_sms_countdown` | 获取短信倒计时 |
 | `POST /user/public/login` | 手机号验证码登录 |
 | `POST /user/user/info` | 校验 `uid + secret + finger` 并返回用户资料 |
-| `POST /user/public/logout` | 退出登录 |
+
+当前客户端实现说明：
+
+- 微信扫码入口直接展示 PHP 返回的微信官方 `qrcode_url`
+- 短信倒计时当前由客户端本地维护 60 秒，不再依赖 PHP 倒计时接口
+- 客户退出登录当前只清理本地 `uid + secret`，不额外调用 PHP 退出接口
 
 旧 PHP 登录成功返回：
 
@@ -221,6 +232,9 @@ Admin API 由后台页面调用，使用管理员 JWT。
 |---|---|
 | `POST /admin/api/login` | 管理员登录 |
 | `POST /admin/api/logout` | 管理员退出 |
+| `GET /admin/api/admins` | 管理员账号列表 |
+| `POST /admin/api/admins` | 创建管理员账号 |
+| `PATCH /admin/api/admins/:id` | 更新管理员名称、角色、启用状态 |
 | `GET /admin/api/customer-accounts` | 客户账号列表 |
 | `GET /admin/api/customer-accounts/:id` | 客户账号详情 |
 | `POST /admin/api/customer-accounts/:id/approve` | 授权客户账号，必须填写到期日 |
@@ -241,10 +255,19 @@ Admin API 由后台页面调用，使用管理员 JWT。
 ```text
 /admin                 首页统计
 /admin/login           管理员登录
+/admin/admins          管理员账号管理
 /admin/customers       客户账号授权管理
 /admin/customers/:id   客户账号详情
 /admin/skills          Skill 管理
 ```
+
+`/admin/admins` 页面能力：
+
+- 创建管理员账号
+- 查看管理员邮箱、名称、角色、启用状态、最后登录时间
+- 编辑管理员名称和角色
+- 启用 / 禁用管理员账号
+- 不允许禁用当前登录的管理员自己
 
 `/admin/customers` 页面展示：
 
@@ -297,7 +320,35 @@ ADMIN_INITIAL_PASSWORD=...
 `ADMIN_INITIAL_EMAIL` / `ADMIN_INITIAL_PASSWORD` 只用于执行 `pnpm -F @tengyu-aipod/server prisma-seed`
 时创建或重置初始管理员，不是 Admin 登录接口的运行期校验变量。
 
-## 10. 容量假设
+## 10. 生产部署
+
+当前仓库提供两套生产 Compose：
+
+- `docker-compose.server.yml`：服务器拉源码，本机构建 `packages/server/Dockerfile`
+- `docker-compose.image.yml`：服务器只拉镜像，不在服务器上构建源码
+
+镜像部署依赖 `.env.server`，模板见 `.env.server.example`。其中 `SERVER_IMAGE` 由镜像方案使用。
+
+镜像部署最小流程：
+
+```bash
+docker compose --env-file .env.server -f docker-compose.image.yml pull server
+docker compose --env-file .env.server -f docker-compose.image.yml up -d postgres
+docker compose --env-file .env.server -f docker-compose.image.yml run --rm server prisma migrate deploy --schema packages/server/prisma/schema.prisma
+docker compose --env-file .env.server -f docker-compose.image.yml run --rm server tsx packages/server/prisma/seed.ts
+docker compose --env-file .env.server -f docker-compose.image.yml up -d server
+```
+
+源码构建部署最小流程：
+
+```bash
+docker compose --env-file .env.server -f docker-compose.server.yml up -d postgres
+docker compose --env-file .env.server -f docker-compose.server.yml run --rm server prisma migrate deploy --schema packages/server/prisma/schema.prisma
+docker compose --env-file .env.server -f docker-compose.server.yml run --rm server tsx packages/server/prisma/seed.ts
+docker compose --env-file .env.server -f docker-compose.server.yml up -d server
+```
+
+## 11. 容量假设
 
 v1 按以下规模设计：
 
@@ -314,7 +365,7 @@ v1 按以下规模设计：
 - 调整复查间隔
 - 优化连接池
 
-## 11. 验收标准
+## 12. 验收标准
 
 - `/api/health` 返回 `{ ok: true, db_ok: true }`
 - `POST /api/customer-auth/verify` 会调用 PHP `/user/user/info` 校验登录态
@@ -327,6 +378,7 @@ v1 按以下规模设计：
 - 到期客户不能进入 Workbench
 - 同一账号在另一台机器登录后，旧机器 5 分钟内发现失效并回登录页
 - Admin 邮箱密码登录不受客户登录影响
+- Admin 可直接在后台创建新的管理员账号
 - Skill 同步不会在客户授权前启动
 - Next 数据库不保存 PHP `secret`
 - 服务端不接触图片、API Key、任务数据

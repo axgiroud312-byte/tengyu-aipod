@@ -425,6 +425,13 @@ autoUpdater.on('update-downloaded', () => {
 
 ## 8. 客户登录与首次启动
 
+开发环境后端地址规则：
+
+- 未显式配置 `TENGYU_SERVER_URL` 时，客户端开发态默认连接 `https://wechat.tengyuai.com`
+- 打包环境默认也连接 `https://wechat.tengyuai.com`，仍允许用 `TENGYU_SERVER_URL` 覆盖
+- 如需改到其他 PHP 登录环境，可额外配置 `TENGYU_PHP_AUTH_BASE_URL`
+- 当前真实后端域名是 `https://wechat.tengyuai.com`，开发态默认值固定使用这个域名而不是裸 IP
+
 ### 8.1 启动门禁
 
 客户端启动顺序：
@@ -448,6 +455,7 @@ Skill 同步必须在客户授权通过后启动。
 ```text
 customerAuth:getState
 customerAuth:getQrcode
+customerAuth:startWechatLogin
 customerAuth:checkWechatLogin
 customerAuth:sendSms
 customerAuth:getSmsCountdown
@@ -460,12 +468,13 @@ customerAuth:logout
 
 流程：
 
-1. 客户端主进程请求旧 PHP `/api/wxlogin/get_qrcode`，传 `finger`。
-2. 渲染进程展示二维码。
-3. 每 1 秒通过主进程轮询旧 PHP `/api/wxlogin/check_login`。
-4. 成功后主进程保存 `uid + secret`。
-5. 主进程调用 Next `/api/customer-auth/verify`。
-6. 授权通过后进入首次设置或 Workbench。
+1. 客户端主进程请求旧 PHP `GET /api/wxlogin/get_qrcode`。
+2. 旧 PHP 返回微信官方 `qrcode_url + token`，客户端不在本地生成二维码图片。
+3. 渲染进程调用 `customerAuth:startWechatLogin`，由主进程在默认浏览器打开微信官方登录页，当前窗口继续等待结果。
+4. 每 1.5 秒通过主进程轮询旧 PHP `/api/wxlogin/check_login`，请求里携带 `token + finger`；开始轮询后会立即先检查一次。
+5. 成功后主进程保存 `uid + secret`。
+6. 主进程调用 Next `/api/customer-auth/verify`。
+7. 授权通过后进入首次设置或 Workbench。
 
 二维码过期或登录失败时，结束轮询并提示用户重试。
 
@@ -475,11 +484,12 @@ customerAuth:logout
 
 1. 输入手机号。
 2. 主进程调用旧 PHP `/user/public/send_login_sms`。
-3. 输入验证码。
-4. 主进程调用旧 PHP `/user/public/login`，传 `method=phone` 和 `finger`。
-5. 成功后主进程保存 `uid + secret`。
-6. 主进程调用 Next `/api/customer-auth/verify`。
-7. 授权通过后进入首次设置或 Workbench。
+3. 主进程在本地启动 60 秒倒计时，防止重复发送。
+4. 输入验证码。
+5. 主进程调用旧 PHP `/user/public/login`，传 `method=phone`、`finger` 和可选 `invite`。
+6. 成功后主进程保存 `uid + secret`。
+7. 主进程调用 Next `/api/customer-auth/verify`。
+8. 授权通过后进入首次设置或 Workbench。
 
 ### 8.5 设备指纹
 

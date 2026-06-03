@@ -268,9 +268,8 @@ async function loadBatchAsListingItems(
 ): Promise<{ items: ListingItem[]; warnings: string[] }> {
   const warnings: string[] = []
   
-  // 1. 读 titles.xlsx
-  const titlesPath = path.join(batchDir, 'titles.xlsx')
-  const titles = await readExistingTitles(titlesPath)
+  // 1. 读标题表，优先 标题.xlsx，兼容旧 titles.xlsx
+  const { fileName, titles } = await readListingTitles(batchDir)
   
   // 2. 扫一级子目录（货号文件夹）
   const skuFolders = await fs.readdir(batchDir, { withFileTypes: true })
@@ -282,7 +281,7 @@ async function loadBatchAsListingItems(
     const skuCode = folder.name
     const title = titles.get(skuCode)
     if (!title) {
-      warnings.push(`货号 ${skuCode} 在 titles.xlsx 中无标题，跳过`)
+      warnings.push(`货号 ${skuCode} 在 ${fileName} 中无标题，跳过`)
       continue
     }
     
@@ -318,7 +317,7 @@ async function loadBatchAsListingItems(
 │    [选择...]                                        │
 │    /Users/.../04-上架工作区/模板1_白T正面/           │
 │    扫描结果：30 个货号                               │
-│    ✅ titles.xlsx 中 28 个有标题                     │
+│    ✅ 标题表中 28 个有标题                           │
 │    ⚠️ 2 个货号无标题 [去标题模块补全]                │
 │                                                    │
 │ ② 平台                                              │
@@ -337,7 +336,7 @@ async function loadBatchAsListingItems(
 │                                                    │
 │ ⑤ SKU 编码                                          │
 │    ● 自动生成（程序按规则）                          │
-│    ○ 用 titles.xlsx 中的 SKU 列（如有）             │
+│    ○ 用标题表中的 SKU 列（如有）                     │
 │    ○ 手动统一前缀：[POD-]                          │
 │                                                    │
 │ ⑥ 提交方式                                          │

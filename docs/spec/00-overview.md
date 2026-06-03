@@ -490,11 +490,30 @@ export interface AppError {
 ### 服务端
 
 - **运行**：2 核 2G 云服务器（阿里云 Lighthouse / 腾讯云 Lighthouse）
-- **数据库**：Neon Postgres 免费档（或自托管 Postgres）
+- **数据库**：自托管 Postgres（当前主路径），也兼容外部托管 Postgres
 - **反代**：Caddy 自动 SSL
 - **CDN**：Cloudflare 免费档（含 DDoS 防护）
 - **监控**：UptimeRobot 免费档
-- **备份**：Neon 自动备份；自托管时 cron + rclone 到对象存储
+- **备份**：自托管时 cron + rclone 到对象存储；如使用托管 Postgres，按云厂商能力备份
+
+当前支持两条生产部署路径：
+
+- **源码构建部署**：服务器拉源码，使用 `docker-compose.server.yml`
+- **镜像拉取部署**：服务器直接拉预构建镜像，使用 `docker-compose.image.yml`
+
+两条路径都要求先执行 Prisma migration，再 seed 初始管理员：
+
+```bash
+docker compose --env-file .env.server -f docker-compose.server.yml run --rm server prisma migrate deploy --schema packages/server/prisma/schema.prisma
+docker compose --env-file .env.server -f docker-compose.server.yml run --rm server tsx packages/server/prisma/seed.ts
+```
+
+或：
+
+```bash
+docker compose --env-file .env.server -f docker-compose.image.yml run --rm server prisma migrate deploy --schema packages/server/prisma/schema.prisma
+docker compose --env-file .env.server -f docker-compose.image.yml run --rm server tsx packages/server/prisma/seed.ts
+```
 
 容量假设：v1 按 100-500 同时在线客户设计；500 在线客户每 5 分钟复查一次约 1.7 rps。超过 2000 同时在线后，再评估升配、拆分 Postgres 或调整复查间隔。
 

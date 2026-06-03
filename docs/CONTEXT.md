@@ -206,7 +206,7 @@ _Avoid_: 后端、Cloud
 _Avoid_: Provider Registry、云端服务商配置
 
 **Admin 后台 / Admin**：
-管理员浏览器界面（Next.js 中的 /admin），用于管理客户账号授权、Skill 系统提示词、公告、版本。Admin 登录使用邮箱密码和管理员 JWT，不接微信登录。
+管理员浏览器界面（Next.js 中的 /admin），用于管理管理员账号、客户账号授权、Skill 系统提示词、公告、版本。Admin 登录使用邮箱密码和管理员 JWT，不接微信登录。
 _Avoid_: Dashboard、CMS
 
 ### 文件与目录

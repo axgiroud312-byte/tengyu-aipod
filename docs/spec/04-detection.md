@@ -13,17 +13,17 @@
 
 ### 1.2 输出
 
-- 物理：图复制到 `03-检测工作区/{taskId}/{通过|复查|失败}/` 的对应子目录
+- 物理：图复制到 `03-检测工作区/{taskId}/{无风险|疑似|高风险}/` 的对应子目录
 - 数据库：每张图一条 `detection_results` 记录，含风险值、依据、模型版本、skill 版本
 - UI：列表展示每张图的判决结果
 
 ```
 03-检测工作区/{taskId}/
-├─ 通过/                           ← 风险值 0-39，risk_level = pass
+├─ 无风险/                         ← 风险值 0-39，risk_level = pass
 │   └─ {印花ID}.jpg
-├─ 复查/                           ← 风险值 40-69（需人工复核），risk_level = review
+├─ 疑似/                           ← 风险值 40-69（需人工复核），risk_level = review
 │   └─ {印花ID}.jpg
-└─ 失败/                           ← 风险值 70-100（高风险拦截），risk_level = block
+└─ 高风险/                         ← 风险值 70-100（高风险拦截），risk_level = block
     └─ {印花ID}.jpg
 ```
 
@@ -299,11 +299,11 @@ class AliyunBailianAdapter {
 }
 ```
 
-### 5.2 重试和限流
+### 5.2 重试
 
-- OpenAI SDK 自带重试（默认 2 次）
-- 429 退避重试 + 触发用户提示
-- 单张超时 30 秒，跳过该图标记失败
+- 由客户端显式控制重试次数（`maxRetries`）
+- 仅对可重试错误继续重试；不可重试错误直接结束该图
+- 当前 spec 不承诺单独的 429 UI 提示或单张 30 秒超时策略，相关行为以 adapter 和运行时实现为准
 
 ## 6. UI 设计
 
@@ -338,9 +338,8 @@ class AliyunBailianAdapter {
 
 [检测中]
 进度：21 / 42（50%）
-预计剩余：1 分钟
 当前并发：3
-[暂停] [取消]
+[取消]
 
 [完成]
 结果统计：
@@ -359,7 +358,6 @@ class AliyunBailianAdapter {
 └──────────────────────────────────────────────────┘
 
 [加入套版清单] 把通过图登记到本地套版候选清单
-[导出报告 CSV]
 ```
 
 ## 7. 加入套版清单
@@ -376,7 +374,7 @@ class AliyunBailianAdapter {
     insert/update matting_candidates(artifact_id, task_id, print_id, source_path)
 ```
 
-**注意**：加入套版清单不复制、不移动文件；源图仍保留在 `03-检测工作区/{taskId}/通过/`。PS 套版模块从候选清单读取可套版印花。
+**注意**：加入套版清单不复制、不移动文件；源图仍保留在 `03-检测工作区/{taskId}/无风险/`。PS 套版模块从候选清单读取可套版印花。
 
 ## 8. 重复检测策略
 
@@ -405,7 +403,7 @@ async function shouldSkipDetection(
 }
 ```
 
-用户在 UI 上点"重测"按钮 → 强制覆盖历史结果。
+用户在 UI 上点"重测"按钮，或本次运行显式传 `forceRetest`，会强制覆盖历史结果。
 
 ## 9. 临时文件管理
 
@@ -418,8 +416,8 @@ async function shouldSkipDetection(
 生命周期：
   任务启动 → 创建 {taskId}/ 目录
   预处理写文件 → {hash}_preprocessed.{ext}
-  调 API 成功 → 立即删除该张临时文件
-  调 API 失败 → 保留 1 小时（重试可复用）
+  调 API 成功 → 任务成功完成后删整个 {taskId}/
+  调 API 失败 → 保留任务目录一段时间，供排查和重试复用
   任务完成 → 删整个 {taskId}/
   任务取消 → 删整个 {taskId}/
   启动时清理超 24 小时的孤儿目录
@@ -439,7 +437,7 @@ CREATE TABLE detection_results (
   skill_id        TEXT NOT NULL,
   skill_version   TEXT NOT NULL,
   threshold_snapshot TEXT NOT NULL,                -- JSON: { pass_max, review_max }
-  output_path     TEXT NOT NULL,                   -- 03-检测工作区/{taskId}/{通过|复查|失败}/{...}
+  output_path     TEXT NOT NULL,                   -- 03-检测工作区/{taskId}/{无风险|疑似|高风险}/{...}
   created_at      INTEGER NOT NULL
 );
 
@@ -473,7 +471,6 @@ CREATE TABLE detection_config (
 'detection:save-config'              → DetectionConfig → DetectionConfig
 'detection:list-input-sources'        → { dirs: string[], counts: Record<string, number> }
 'detection:scan-folder'               → { folder } → ImageInfo[]
-'detection:list-skills'               → DetectionSkill[]
 'detection:list-models'               → string[]
 'detection:run'                       → { 
                                           image_paths: string[],
@@ -481,18 +478,29 @@ CREATE TABLE detection_config (
                                           skill_id,
                                           variables,
                                           threshold,
-                                          preprocess: { compress, max_size, format },
+                                          preprocess: { compress, max_size, format, quality? },
                                           concurrency,
+                                          max_retries?,
+                                          force_retest?,
                                         } → TaskId
 
+'detection:cancel'                    → { task_id } → { ok: boolean }
 'detection:get-result'                → { artifact_id } → DetectionResult | null
 'detection:list-results'              → { task_id, risk_level? } → DetectionResult[]
 'detection:retest'                    → { artifact_ids } → TaskId
 'detection:promote-to-matting'        → { artifact_ids, mode: 'copy' | 'move' } → number
+'detection:list-matting-candidates'   → MattingCandidate[]
 'detection:delete-result'             → { artifact_id } → number
 
 // 事件
-'detection:progress'                  → { task_id, processed, total, current_image }
+'detection:progress'                  → { task_id, processed, total, succeeded, failed, skipped, current_image?, status? }
+'detection:completed'                 → { ok: true, result } | { ok: false, taskId, error }
+```
+
+检测 Skill 列表不走专用 `detection:list-skills` IPC，而是复用通用 Skill 接口：
+
+```ts
+'skill:list' → { module: 'detection' } → SkillSummary[]
 ```
 
 ### 11.1 输入源补充字段
@@ -544,18 +552,16 @@ function estimateDetectionCost(
 }
 ```
 
-UI 上"预估费用"按这个公式即时计算。
+这是近似估算思路。当前代码里已有检测成本相关逻辑，但 spec 不把某个固定 UI 展示或价格表当作稳定契约。
 
 ## 13. 错误处理
 
 | 错误 | 处理 |
 |---|---|
-| 模型返回非 JSON | 通用解析器兜底；解析失败 → 重试 1 次；仍失败 → 标"待人工" |
-| 网络超时 | OpenAI SDK 自带重试 |
-| 限流 429 | 退避重试，UI 提示 |
-| 内容违规（模型拒答）| 标"高风险（70+）"或单独 review 分类（按 skill 设计）|
-| 余额不足 | 启动前调 /balance/info 提示；运行时收到错误立即停 |
-| 单张超时（> 30 秒）| 跳过该图，标失败，继续其他 |
+| 模型返回非 JSON | 通用解析器兜底；仍无法解析时标记失败 |
+| 网络或模型调用失败 | 若错误可重试且未超过 `maxRetries` 则重试，否则标失败 |
+| 内容违规（模型拒答）| 由模型返回内容决定；当前实现没有单独硬编码成固定风险等级 |
+| 用户取消 | 停止后续图片处理，当前已完成的结果保留，并返回 `cancelled` |
 | 透明底处理失败 | 跳过该图，标"预处理失败" |
 
 ## 14. 测试

@@ -121,7 +121,7 @@ POST  /admin/api/customer-accounts/:id/disable
 POST  /admin/api/customer-accounts/:id/enable
 ```
 
-Admin 登录继续使用邮箱密码和管理员 JWT，不接微信、不接 PHP 登录。
+Admin 登录继续使用邮箱密码和管理员 JWT，不接微信、不接 PHP 登录；后台管理员账号由 `/admin/admins` 独立管理。
 
 ## 设备指纹
 
