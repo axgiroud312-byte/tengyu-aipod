@@ -19,7 +19,7 @@ import {
   collectionImageIndexSearchSeeMoreClicks,
   collectionImageIndexShouldRetryTemuSearchSeeMore,
   collectionImageIndexTemuSearchSeeMoreMissRecovery,
-  collectionImageIndexTemuShopPageMotionKey,
+  collectionImageIndexTemuSeeMoreProgress,
   collectionImageIndexUpgradeTemuImageUrl,
   downloadCollectionImageIndexItems,
 } from './collection-image-index-service'
@@ -196,6 +196,27 @@ describe('collection image index Temu See more chooser', () => {
     expect(index).toBe(1)
   })
 
+  it('prefers exact See more text when aria-label is missing', () => {
+    const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
+      {
+        label: 'See more details',
+        text: 'See more details',
+        ariaLabel: '',
+        area: 1_600,
+        visible: true,
+      },
+      {
+        label: 'See more',
+        text: 'See more',
+        ariaLabel: '',
+        area: 800,
+        visible: true,
+      },
+    ])
+
+    expect(index).toBe(1)
+  })
+
   it('uses the smallest visible text candidate when aria-label is missing', () => {
     const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
       {
@@ -240,25 +261,31 @@ describe('collection image index Temu See more chooser', () => {
 })
 
 describe('collection image index Temu shop page SSR parser', () => {
-  it('keeps the Temu shop scan stability key sensitive to image growth', () => {
+  it('only treats unique count growth as progress even if scrollHeight changes', () => {
     expect(
-      collectionImageIndexTemuShopPageMotionKey(
-        { imageCount: 315 },
-        { productImageCount: 100, scrollHeight: 12_000 },
+      collectionImageIndexTemuSeeMoreProgress(
+        { uniqueCount: 100, scrollHeight: 12_000 },
+        { uniqueCount: 100, scrollHeight: 14_239 },
       ),
-    ).toBe('315:100:12000')
+    ).toEqual({
+      before: { uniqueCount: 100, scrollHeight: 12_000 },
+      after: { uniqueCount: 100, scrollHeight: 14_239 },
+      deltaUniqueCount: 0,
+      deltaScrollHeight: 2_239,
+      grew: false,
+    })
     expect(
-      collectionImageIndexTemuShopPageMotionKey(
-        { imageCount: 316 },
-        { productImageCount: 100, scrollHeight: 12_000 },
+      collectionImageIndexTemuSeeMoreProgress(
+        { uniqueCount: 100, scrollHeight: 12_000 },
+        { uniqueCount: 160, scrollHeight: 14_239 },
       ),
-    ).toBe('316:100:12000')
-    expect(
-      collectionImageIndexTemuShopPageMotionKey(
-        { imageCount: 316 },
-        { productImageCount: 101, scrollHeight: 12_000 },
-      ),
-    ).toBe('316:101:12000')
+    ).toEqual({
+      before: { uniqueCount: 100, scrollHeight: 12_000 },
+      after: { uniqueCount: 160, scrollHeight: 14_239 },
+      deltaUniqueCount: 60,
+      deltaScrollHeight: 2_239,
+      grew: true,
+    })
   })
 
   it('detects Temu shop URLs', () => {
