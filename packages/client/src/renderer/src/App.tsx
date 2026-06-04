@@ -128,7 +128,7 @@ function searchSeeMoreClicks(value: number) {
   if (!Number.isFinite(value)) {
     return 1
   }
-  return Math.min(10, Math.max(0, Math.floor(value)))
+  return Math.min(50, Math.max(0, Math.floor(value)))
 }
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {

@@ -184,7 +184,7 @@ function clampSearchSeeMoreClicks(value: number) {
   if (!Number.isFinite(value)) {
     return 0
   }
-  return Math.min(10, Math.max(0, Math.floor(value)))
+  return Math.min(50, Math.max(0, Math.floor(value)))
 }
 
 function profileLabel(profileId: string, profiles: CollectionProfileOption[]) {
@@ -371,7 +371,7 @@ export function CollectionPage({
                 <Input
                   className="h-8 w-16 px-2"
                   id="collection-see-more-clicks"
-                  max={10}
+                  max={50}
                   min={0}
                   onChange={(event) =>
                     onStateChange(
