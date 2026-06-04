@@ -204,7 +204,15 @@ function isTemuVerificationPageUrl(value: string | null | undefined) {
   }
   try {
     const url = new URL(value)
-    return /(\.|^)temu\.com$/i.test(url.hostname) && url.pathname.includes('/bgn_verification.html')
+    if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
+      return false
+    }
+    const pathname = url.pathname.toLowerCase()
+    const referPageName = url.searchParams.get('refer_page_name')?.toLowerCase()
+    return (
+      pathname.includes('/bgn_verification.html') ||
+      (pathname.includes('/login.html') && referPageName === 'bgn_verification')
+    )
   } catch {
     return false
   }

@@ -228,8 +228,8 @@ const SHOP_SCAN_STABLE_ROUNDS = 3
 const SHOP_SEE_MORE_MAX_CLICKS = 50
 const SEARCH_SEE_MORE_MAX_CLICKS = 50
 const SEARCH_SEE_MORE_REVEAL_MAX_SCROLLS = 30
-const SEARCH_SEE_MORE_RETRY_MISS_LIMIT = 2
-const SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS = 4
+const SEARCH_SEE_MORE_RETRY_MISS_LIMIT = 4
+const SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS = 6
 const SEE_MORE_CLICK_WAIT_MS = 2_500
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
@@ -650,7 +650,15 @@ export function collectionImageIndexIsTemuVerificationPageUrl(value: string | nu
   }
   try {
     const url = new URL(value)
-    return /(\.|^)temu\.com$/i.test(url.hostname) && url.pathname.includes('/bgn_verification.html')
+    if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
+      return false
+    }
+    const pathname = url.pathname.toLowerCase()
+    const referPageName = url.searchParams.get('refer_page_name')?.toLowerCase()
+    return (
+      pathname.includes('/bgn_verification.html') ||
+      (pathname.includes('/login.html') && referPageName === 'bgn_verification')
+    )
   } catch {
     return false
   }

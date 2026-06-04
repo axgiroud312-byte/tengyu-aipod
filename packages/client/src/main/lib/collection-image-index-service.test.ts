@@ -149,10 +149,12 @@ describe('collection image index Temu See more chooser', () => {
     expect(collectionImageIndexSearchSeeMoreClicks(99)).toBe(50)
   })
 
-  it('retries one failed Temu search see more miss before giving up', () => {
+  it('keeps retrying several Temu search see more misses before giving up', () => {
     expect(collectionImageIndexShouldRetryTemuSearchSeeMore(0)).toBe(true)
     expect(collectionImageIndexShouldRetryTemuSearchSeeMore(1)).toBe(true)
-    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(2)).toBe(false)
+    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(2)).toBe(true)
+    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(3)).toBe(true)
+    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(4)).toBe(false)
   })
 
   it('nudges the Temu search page once after a miss before retrying', async () => {
@@ -266,6 +268,16 @@ describe('collection image index Temu shop page SSR parser', () => {
         'https://www.temu.com/bgn_verification.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html',
       ),
     ).toBe(true)
+    expect(
+      collectionImageIndexIsTemuVerificationPageUrl(
+        'https://www.temu.com/login.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html&login_scene=2&refer_page_name=bgn_verification',
+      ),
+    ).toBe(true)
+    expect(
+      collectionImageIndexIsTemuVerificationPageUrl(
+        'https://www.temu.com/login.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html&login_scene=2&refer_page_name=search_result',
+      ),
+    ).toBe(false)
     expect(
       collectionImageIndexIsTemuVerificationPageUrl(
         'https://www.temu.com/mall.html?mall_id=634418228197396',

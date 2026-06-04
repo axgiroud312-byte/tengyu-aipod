@@ -209,7 +209,7 @@ function currentPageKindLabel(currentPage: CollectionCurrentPageResult | null) {
   if (!currentPage?.pageUrl) {
     return '等待页面'
   }
-  if (currentPage.pageUrl.includes('/bgn_verification.html')) {
+  if (isTemuVerificationPageUrl(currentPage.pageUrl)) {
     return '安全验证页'
   }
   if (isTemuShopPageUrl(currentPage.pageUrl)) {
@@ -232,6 +232,23 @@ function isTemuShopPageUrl(value: string) {
       pathname.endsWith('/mall.html') ||
       /-m-\d+\.html$/i.test(pathname) ||
       url.searchParams.has('mall_id')
+    )
+  } catch {
+    return false
+  }
+}
+
+function isTemuVerificationPageUrl(value: string) {
+  try {
+    const url = new URL(value)
+    if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
+      return false
+    }
+    const pathname = url.pathname.toLowerCase()
+    const referPageName = url.searchParams.get('refer_page_name')?.toLowerCase()
+    return (
+      pathname.includes('/bgn_verification.html') ||
+      (pathname.includes('/login.html') && referPageName === 'bgn_verification')
     )
   } catch {
     return false
