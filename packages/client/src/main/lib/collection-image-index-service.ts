@@ -229,8 +229,9 @@ const SHOP_SEE_MORE_MAX_CLICKS = 50
 const SEARCH_SEE_MORE_MAX_CLICKS = 50
 const SEARCH_SEE_MORE_REVEAL_MAX_SCROLLS = 30
 const SEARCH_SEE_MORE_RETRY_MISS_LIMIT = 4
-const SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS = 6
+const SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS = 8
 const SEE_MORE_CLICK_WAIT_MS = 2_500
+const TEMU_SEE_MORE_ELEMENT_WINDOW = 10_000
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
 let collectionImageIndexDebugSequence = 0
@@ -1572,8 +1573,7 @@ async function temuPageMetrics(page: Page): Promise<CollectionImageIndexTemuPage
 }
 
 function temuSeeMoreCandidatesOnPage(): CollectionImageIndexSeeMoreCandidate[] {
-  const selector = '[aria-label],button,[role="button"],a,div,span'
-  const elements = Array.from(document.querySelectorAll(selector)).slice(0, 10_000)
+  const elements = temuSeeMoreElementsOnPage()
   return elements.map((element) => {
     const htmlElement = element as HTMLElement
     const rect = htmlElement.getBoundingClientRect()
@@ -1602,8 +1602,7 @@ function temuSeeMoreCandidatesOnPage(): CollectionImageIndexSeeMoreCandidate[] {
 async function temuSeeMoreClickTargetOnPage(
   candidateIndex: number,
 ): Promise<CollectionImageIndexSeeMoreClickTarget | null> {
-  const selector = '[aria-label],button,[role="button"],a,div,span'
-  const element = Array.from(document.querySelectorAll(selector)).slice(0, 10_000)[candidateIndex]
+  const element = temuSeeMoreElementsOnPage()[candidateIndex]
   if (!element) {
     return null
   }
@@ -1639,6 +1638,15 @@ async function temuSeeMoreClickTargetOnPage(
     width: Math.round(rect.width),
     height: Math.round(rect.height),
   }
+}
+
+function temuSeeMoreElementsOnPage() {
+  const selector = '[aria-label],button,[role="button"],a,div,span'
+  const elements = Array.from(document.querySelectorAll(selector))
+  if (elements.length <= TEMU_SEE_MORE_ELEMENT_WINDOW) {
+    return elements
+  }
+  return elements.slice(-TEMU_SEE_MORE_ELEMENT_WINDOW)
 }
 
 function currentPageCacheKey(input: CurrentPageInput) {
