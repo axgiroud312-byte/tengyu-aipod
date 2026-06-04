@@ -136,9 +136,11 @@ const fallbackGrsaiSizes = ['1024x1024', '1536x1024', '1024x1536']
 
 const fallbackBailianTextModels: LocalModelOption[] = [
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'text' },
+  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'text' },
 ]
 const fallbackBailianVisionModels: LocalModelOption[] = [
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'vision' },
+  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'vision' },
 ]
 const EXTRACT_SKILL_CATEGORY = 'extract-paid-model'
 const LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY = 'extract-comfyui-workflow'

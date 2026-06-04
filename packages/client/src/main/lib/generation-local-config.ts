@@ -107,10 +107,12 @@ export const GRSAI_IMAGE_MODELS: GrsaiImageModelOption[] = [
 
 export const BAILIAN_TEXT_MODELS: LocalModelOption[] = [
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'text' },
+  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'text' },
 ]
 
 export const BAILIAN_VISION_MODELS: LocalModelOption[] = [
   { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'vision' },
+  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'vision' },
 ]
 
 export const DEFAULT_GENERATION_LOCAL_CONFIG: Required<GenerationLocalConfig> = {

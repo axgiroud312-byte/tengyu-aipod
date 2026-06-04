@@ -17,6 +17,18 @@ describe('normalizeGenerationLocalConfig', () => {
     expect(normalizeGenerationLocalConfig({ grsai_retries: 99 }).grsai_retries).toBe(10)
   })
 
+  it('keeps qwen3-vl-flash as a valid local model option', () => {
+    expect(
+      normalizeGenerationLocalConfig({
+        bailian_text_model: 'qwen3-vl-flash',
+        bailian_vision_model: 'qwen3-vl-flash',
+      }),
+    ).toMatchObject({
+      bailian_text_model: 'qwen3-vl-flash',
+      bailian_vision_model: 'qwen3-vl-flash',
+    })
+  })
+
   it('defaults global concurrency to twenty', () => {
     expect(normalizeGenerationLocalConfig({}).default_concurrency).toBe(20)
   })

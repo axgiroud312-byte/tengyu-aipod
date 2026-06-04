@@ -23,6 +23,7 @@ export const WORKBENCH_DIRECTORIES = {
 
 export const VISION_MODEL_PRICES = {
   'qwen3.6-flash': { input: 1.2, output: 7.2 },
+  'qwen3-vl-flash': { input: 0.15, output: 1.5 },
 } as const
 
 export type VisionModelKey = keyof typeof VISION_MODEL_PRICES
@@ -42,6 +43,13 @@ const VISION_MODEL_OPTIONS: VisionModelOption[] = [
     inputPrice: VISION_MODEL_PRICES['qwen3.6-flash'].input,
     outputPrice: VISION_MODEL_PRICES['qwen3.6-flash'].output,
     recommendedFor: 'general',
+  },
+  {
+    key: 'qwen3-vl-flash',
+    label: 'qwen3-vl-flash',
+    inputPrice: VISION_MODEL_PRICES['qwen3-vl-flash'].input,
+    outputPrice: VISION_MODEL_PRICES['qwen3-vl-flash'].output,
+    recommendedFor: 'detection',
   },
 ]
 
