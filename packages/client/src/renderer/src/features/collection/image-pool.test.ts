@@ -113,18 +113,16 @@ describe('collection image pool merge', () => {
     expect(grouped.productGroups[0]?.items).toHaveLength(2)
   })
 
-  it('keeps Temu shop preview images in product groups', () => {
+  it('keeps Temu shop preview images as loose items', () => {
     const shopScan = scanResult('https://www.temu.com/mall.html?mall_id=634418228197396')
     const result = mergeCollectionImagePoolItems(
       [],
       [
         shopImageItem(
           'https://img.kwcdn.com/product/open/a.jpg?imageView2/2/w/1300/q/90/format/webp',
-          'temu-g-606533735830828',
         ),
         shopImageItem(
           'https://img.kwcdn.com/product/open/b.jpg?imageView2/2/w/1300/q/90/format/webp',
-          'temu-g-606533735830828',
         ),
       ],
       shopScan,
@@ -132,10 +130,8 @@ describe('collection image pool merge', () => {
     )
     const grouped = groupCollectionImagePoolItems(result.items)
 
-    expect(grouped.looseItems).toHaveLength(0)
-    expect(grouped.productGroups).toHaveLength(1)
-    expect(grouped.productGroups[0]?.key).toBe('temu-g-606533735830828')
-    expect(grouped.productGroups[0]?.items).toHaveLength(2)
+    expect(grouped.looseItems).toHaveLength(2)
+    expect(grouped.productGroups).toHaveLength(0)
   })
 })
 
@@ -162,15 +158,15 @@ function productImageItem(originalUrl: string): CollectionImageIndexItem {
   })
 }
 
-function shopImageItem(originalUrl: string, groupKey: string): CollectionImageIndexItem {
+function shopImageItem(originalUrl: string): CollectionImageIndexItem {
   return imageItem(originalUrl, {
-    bucket: 'product',
+    bucket: 'loose',
     pageKind: 'shop',
     source: 'ssr',
     goodsLink: 'https://www.temu.com/ca/example-g-606533735830828.html',
-    groupKey,
-    groupTitle: 'Temu shop item',
-    coverUrl: originalUrl,
+    groupKey: null,
+    groupTitle: null,
+    coverUrl: null,
   })
 }
 

@@ -2414,11 +2414,12 @@ function scanImageIndexOnPage(
       return
     }
     const itemBucket = entry.bucket ?? bucket
-    const itemGroupKey = entry.groupKey ?? (itemBucket === 'product' ? groupKey : null)
-    const itemGroupTitle = entry.groupTitle ?? (itemBucket === 'product' ? groupTitle : null)
-    if (isTemuShopPage && (!productRe.test(originalUrl) || !itemGroupKey)) {
+    const candidateGroupKey = entry.groupKey ?? (itemBucket === 'product' ? groupKey : null)
+    if (isTemuShopPage && (!productRe.test(originalUrl) || !candidateGroupKey)) {
       return
     }
+    const itemGroupKey = itemBucket === 'product' ? candidateGroupKey : null
+    const itemGroupTitle = itemBucket === 'product' ? (entry.groupTitle ?? groupTitle) : null
     rawItems.push({
       bucket: itemBucket,
       pageKind,
@@ -2453,10 +2454,7 @@ function scanImageIndexOnPage(
         naturalWidth: candidate.naturalWidth,
         naturalHeight: candidate.naturalHeight,
         goodsLink: candidate.goodsLink,
-        bucket: 'product',
         groupKey: group ?? productGroupKeyFromGoodsLink(candidate.goodsLink),
-        groupTitle: candidate.groupTitle,
-        coverUrl: candidate.displayUrl,
         tag: 'temu-shop-ssr',
       })
     }
@@ -2487,9 +2485,7 @@ function scanImageIndexOnPage(
         goodsLink,
         ...(isTemuShopPage
           ? {
-              bucket: 'product' as const,
               groupKey: shopGroupKey,
-              groupTitle: img.alt || null,
             }
           : {}),
         tag: img.className || img.getAttribute('data-js-main-img') || '',
@@ -2507,7 +2503,6 @@ function scanImageIndexOnPage(
         goodsLink: nearestGoodsLink(source),
         ...(isTemuShopPage
           ? {
-              bucket: 'product' as const,
               groupKey: productGroupKeyFromGoodsLink(nearestGoodsLink(source)),
             }
           : {}),
@@ -2529,7 +2524,6 @@ function scanImageIndexOnPage(
         goodsLink: nearestGoodsLink(element),
         ...(isTemuShopPage
           ? {
-              bucket: 'product' as const,
               groupKey: productGroupKeyFromGoodsLink(nearestGoodsLink(element)),
             }
           : {}),
