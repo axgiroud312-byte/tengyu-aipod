@@ -79,7 +79,8 @@
 │   │   │   │   │   ├─ photoshop/
 │   │   │   │   │   ├─ title/
 │   │   │   │   │   ├─ listing/
-│   │   │   │   │   └─ orchestration/    ← v1.5
+│   │   │   │   │   ├─ pipeline/          ← 完整任务最初版
+│   │   │   │   │   └─ orchestration/     ← v1.5 通用编排引擎
 │   │   │   │   ├─ db/                   ← SQLite 模式 + 迁移
 │   │   │   │   ├─ cache/                ← Skill 缓存
 │   │   │   │   ├─ local-workflows/      ← 用户导入的 ComfyUI Workflow
@@ -219,6 +220,36 @@ CREATE TABLE workflow_steps (
   error_json    TEXT,
   started_at    INTEGER,
   completed_at  INTEGER
+);
+
+-- 完整任务最初版运行记录（v1 固定流程）
+CREATE TABLE pipeline_runs (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  source_mode   TEXT NOT NULL,
+  status        TEXT NOT NULL,                       -- "running" | "completed" | "failed" | "cancelled"
+  config_json   TEXT NOT NULL,
+  stats_json    TEXT NOT NULL,
+  error_summary TEXT,
+  created_at    INTEGER NOT NULL,
+  started_at    INTEGER,
+  completed_at  INTEGER
+);
+
+CREATE TABLE pipeline_steps (
+  id            TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL,
+  step_key      TEXT NOT NULL,                       -- "source" | "extract" | "matting" | "detection" | "photoshop" | "title"
+  module        TEXT NOT NULL,
+  label         TEXT NOT NULL,
+  status        TEXT NOT NULL,
+  input_count   INTEGER NOT NULL DEFAULT 0,
+  output_count  INTEGER NOT NULL DEFAULT 0,
+  output_json   TEXT,
+  error_json    TEXT,
+  started_at    INTEGER,
+  completed_at  INTEGER,
+  updated_at    INTEGER NOT NULL
 );
 
 -- 产物追踪（核心血缘表）
@@ -469,6 +500,7 @@ export interface AppError {
 ## 12. 已知约束
 
 - macOS 上 PS 套版不可用（仅 Windows）
+- 完整任务最初版包含 PS 套版，因此也只能在 Windows 启动
 - 比特浏览器必须本地安装并运行（默认 127.0.0.1:54345）
 - 用户必须自己注册晨羽智云/Grsai/阿里云百炼账号并购买额度
 - 用户必须自己在店小秘后台创建草稿模板

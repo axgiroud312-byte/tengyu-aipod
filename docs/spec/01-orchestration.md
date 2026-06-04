@@ -1,7 +1,7 @@
 # Spec 01 — 任务货号编排
 
-> 本文规定**任务/货号两层模型**和**编排引擎**的完整设计。
-> v1 只实现轻量任务追踪和资源互斥；编排引擎和流程模板留 v1.5。
+> 本文规定**任务/货号两层模型**、v1 **完整任务最初版**和 v1.5 **通用编排引擎**的设计边界。
+> v1 已实现一个内置固定完整任务服务；通用多模板编排引擎仍留 v1.5。
 
 ## 1. 核心抽象
 
@@ -53,9 +53,9 @@ type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 | 类型 | 何时创建 | 步骤数 | sku_code | 编排引擎介入 |
 |---|---|---|---|---|
 | **lightweight** | 单模块面板"开始"按钮 | 1 个步骤 | 可有可无 | 否 |
-| **full** | 编排引擎按模板创建（v1.5）| 多步 | 必须有 | 是 |
+| **full** | 完整任务页面启动，或未来编排引擎按模板创建 | 多步 | 套版后产生 | v1 为内置固定服务，v1.5 为通用编排引擎 |
 
-## 2. v1 任务管理（无编排引擎）
+## 2. v1 任务管理（轻量任务 + 完整任务最初版）
 
 ### 2.1 任务生命周期
 
@@ -115,6 +115,45 @@ function canStartTask(skuCode: string | null): { ok: boolean; reason?: string } 
 }
 ```
 
+### 2.4 完整任务最初版
+
+v1 已实现一个固定流程完整任务，不是自由流程编辑器，也不包含上架：
+
+```
+来源准备
+  ├─ collection：用户先完成采集，完整任务从采集目录读取原图并提取
+  ├─ txt2img：文生图直接产生印花
+  ├─ img2img：图生图产生印花
+  └─ existing_prints：从已有印花文件夹开始
+  ↓
+可选抠图
+  ↓
+可选侵权检测
+  ↓
+PS 套版
+  ↓
+标题生成
+```
+
+首版策略：
+
+- 局部印花默认启用抠图，满印默认关闭抠图。
+- 侵权检测可选；开启时 `block` 拦截，`pass` 和 `review` 放行，`review` 单独计数。
+- PS 套版和标题生成是固定后续流程，不可跳过。
+- 因为包含 PS 套版，完整任务只能在 Windows 启动；macOS 入口提示不可用。
+- 取消是尽力取消：检测、PS、标题可向底层 runner 传取消信号；生图批处理主要在 step 边界停止。
+- 首版不支持暂停 / 恢复 / 断点续跑。
+
+实现上，完整任务复用各模块 runner：
+
+- 生图：`generation-service`
+- 检测：`detection-service`
+- PS：`photoshop/multi-batch`
+- 标题：`title-service`
+
+运行记录暂存独立表 `pipeline_runs` / `pipeline_steps`。这避免在通用任务模型完全落地前，
+把固定流程的状态模型提前塞进 `tasks` / `workflow_steps`。
+
 ## 3. 全局任务队列
 
 ### 3.1 队列设计
@@ -134,7 +173,7 @@ class TaskQueue {
 
 interface QueuedTask {
   task_id: string
-  priority: 1 | 2 | 3                  // 1=user, 2=orchestrator(v1.5), 3=retry
+  priority: 1 | 2 | 3                  // 1=user, 2=完整任务/未来通用编排, 3=retry
   resource_locks_needed: ResourceLock[]
   execute: () => Promise<TaskResult>
 }
@@ -299,11 +338,12 @@ UI 切换为"已暂停"状态
 | 标题 | 单货号级 | 已生成的跳过 |
 | 上架 | 单 listing 级 | listing_status 表查 success 的跳过 |
 
-## 6. 编排引擎（v1.5）
+## 6. 通用编排引擎（v1.5）
 
 ### 6.1 流程模板
 
-v1.5 内置 6 个模板，每个模板是一组有序的步骤定义：
+v1.5 在完整任务最初版基础上升级为通用编排引擎。届时内置多个模板，
+每个模板是一组有序的步骤定义：
 
 ```ts
 interface PipelineTemplate {
@@ -330,7 +370,7 @@ const TEMPLATES: PipelineTemplate[] = [
     { module: 'detection', required: true, ... },
     { module: 'photoshop', required: true, ... },
     { module: 'title', required: true, ... },
-    { module: 'listing', required: true, ... },
+    { module: 'listing', required: true, ... },      // v1.5 后续模板才包含上架
   ]},
   { id: 'from-print', name: '从印花开始', steps: [...] },
   { id: 'mockup-only', name: '只套版', steps: [...] },
@@ -379,7 +419,7 @@ interface FullTaskConfig {
 ### 6.4 货号在编排中的流转
 
 ```
-完整链路示例（采集图不是 sku，sku 在套版/上架前产生）：
+v1 完整任务示例（采集图不是 sku，sku 在套版前产生）：
 
 采集 step → 图池扫描/点击采集 → 得到产品图
   ↓
@@ -394,9 +434,9 @@ interface FullTaskConfig {
 套版 step → 输出到 04-上架工作区/{batch}/{sku}/
   ↓
 标题 step → 写入 04-上架工作区/{batch}/标题.xlsx
-  ↓
-上架 step → listing_status 表记录
 ```
+
+上架 step 仍由上架模块独立执行。v1.5 的通用编排模板可以把上架接到标题后面。
 
 `Task.sku_code` 在第一个有 SKU 概念的 step 之后设置；采集图池和商品页分组只提供产品图来源，不直接生成 sku。
 
@@ -423,6 +463,38 @@ interface FullTaskConfig {
 ## 8. 数据库 schema
 
 ```sql
+-- v1 完整任务最初版运行记录
+CREATE TABLE pipeline_runs (
+  id            TEXT PRIMARY KEY,
+  name          TEXT NOT NULL,
+  source_mode   TEXT NOT NULL,
+  status        TEXT NOT NULL,                       -- "running" | "completed" | "failed" | "cancelled"
+  config_json   TEXT NOT NULL,
+  stats_json    TEXT NOT NULL,
+  error_summary TEXT,
+  created_at    INTEGER NOT NULL,
+  started_at    INTEGER,
+  completed_at  INTEGER
+);
+
+CREATE TABLE pipeline_steps (
+  id            TEXT PRIMARY KEY,
+  run_id        TEXT NOT NULL,
+  step_key      TEXT NOT NULL,                       -- "source" | "extract" | "matting" | "detection" | "photoshop" | "title"
+  module        TEXT NOT NULL,
+  label         TEXT NOT NULL,
+  status        TEXT NOT NULL,                       -- "pending" | "running" | "completed" | "failed" | "skipped"
+  input_count   INTEGER NOT NULL DEFAULT 0,
+  output_count  INTEGER NOT NULL DEFAULT 0,
+  output_json   TEXT,
+  error_json    TEXT,
+  started_at    INTEGER,
+  completed_at  INTEGER,
+  updated_at    INTEGER NOT NULL,
+  UNIQUE(run_id, step_key)
+);
+
+-- v1.5 通用任务模型
 CREATE TABLE tasks (
   id              TEXT PRIMARY KEY,
   type            TEXT NOT NULL CHECK (type IN ('lightweight', 'full')),
