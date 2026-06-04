@@ -1183,7 +1183,7 @@ async function scanScrollableShopPageImageIndex(
     mergedPayload = mergedPayload ? mergePageIndexPayloads(mergedPayload, payload) : payload
 
     const metrics = await temuPageMetrics(page)
-    const currentKey = `${mergedPayload.items.length}:${metrics.scrollHeight}`
+    const currentKey = collectionImageIndexTemuShopPageMotionKey(payload, metrics)
     const atBottom =
       metrics.scrollTop + metrics.viewportHeight >= Math.max(0, metrics.scrollHeight - 8)
     const clickResult =
@@ -1244,6 +1244,13 @@ async function scanScrollableShopPageImageIndex(
     items: limit > 0 ? payload.items.slice(0, limit) : payload.items,
     collectableCount: payload.items.length,
   })
+}
+
+export function collectionImageIndexTemuShopPageMotionKey(
+  payload: Pick<PageIndexPayload, 'imageCount'>,
+  metrics: Pick<CollectionImageIndexTemuPageMetrics, 'productImageCount' | 'scrollHeight'>,
+) {
+  return `${payload.imageCount}:${metrics.productImageCount}:${metrics.scrollHeight}`
 }
 
 function scanResultFromPageIndexPayload(payload: PageIndexPayload): CollectionImageIndexScanResult {
@@ -1643,10 +1650,19 @@ async function temuSeeMoreClickTargetOnPage(
 function temuSeeMoreElementsOnPage() {
   const selector = '[aria-label],button,[role="button"],a,div,span'
   const elements = Array.from(document.querySelectorAll(selector))
-  if (elements.length <= TEMU_SEE_MORE_ELEMENT_WINDOW) {
+  if (elements.length <= TEMU_SEE_MORE_ELEMENT_WINDOW * 2) {
     return elements
   }
-  return elements.slice(-TEMU_SEE_MORE_ELEMENT_WINDOW)
+  const head = elements.slice(0, TEMU_SEE_MORE_ELEMENT_WINDOW)
+  const tail = elements.slice(-TEMU_SEE_MORE_ELEMENT_WINDOW)
+  const seen = new Set(head)
+  const merged = [...head]
+  for (const element of tail) {
+    if (!seen.has(element)) {
+      merged.push(element)
+    }
+  }
+  return merged
 }
 
 function currentPageCacheKey(input: CurrentPageInput) {

@@ -19,6 +19,7 @@ import {
   collectionImageIndexSearchSeeMoreClicks,
   collectionImageIndexShouldRetryTemuSearchSeeMore,
   collectionImageIndexTemuSearchSeeMoreMissRecovery,
+  collectionImageIndexTemuShopPageMotionKey,
   collectionImageIndexUpgradeTemuImageUrl,
   downloadCollectionImageIndexItems,
 } from './collection-image-index-service'
@@ -239,6 +240,27 @@ describe('collection image index Temu See more chooser', () => {
 })
 
 describe('collection image index Temu shop page SSR parser', () => {
+  it('keeps the Temu shop scan stability key sensitive to image growth', () => {
+    expect(
+      collectionImageIndexTemuShopPageMotionKey(
+        { imageCount: 315 },
+        { productImageCount: 100, scrollHeight: 12_000 },
+      ),
+    ).toBe('315:100:12000')
+    expect(
+      collectionImageIndexTemuShopPageMotionKey(
+        { imageCount: 316 },
+        { productImageCount: 100, scrollHeight: 12_000 },
+      ),
+    ).toBe('316:100:12000')
+    expect(
+      collectionImageIndexTemuShopPageMotionKey(
+        { imageCount: 316 },
+        { productImageCount: 101, scrollHeight: 12_000 },
+      ),
+    ).toBe('316:101:12000')
+  })
+
   it('detects Temu shop URLs', () => {
     expect(
       collectionImageIndexIsTemuShopPageUrl(
