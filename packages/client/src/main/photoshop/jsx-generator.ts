@@ -705,7 +705,8 @@ export async function writePhotoshopTemplateBatchJsx(
   const writeTextFile = options.writeTextFile ?? writeFile
   const taskDir = await tempFiles.createTaskDir('photoshop', input.task_id)
   const jsxPath = join(taskDir, `template-${input.template_name}.jsx`)
-  const resultFilePath = input.result_file_path ?? join(taskDir, `template-${input.template_name}-result.json`)
+  const resultFilePath =
+    input.result_file_path ?? join(taskDir, `template-${input.template_name}-result.json`)
   const logFilePath = input.log_file_path ?? join(taskDir, `template-${input.template_name}.jsonl`)
   const content = generateTemplateBatchJsx({
     ...input,

@@ -20,6 +20,7 @@ import {
   type OnboardingStep,
 } from '@/features/onboarding/OnboardingPage'
 import { PhotoshopPage } from '@/features/photoshop/PhotoshopPage'
+import { FullTaskPage } from '@/features/pipeline/FullTaskPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
 import {
   type TitleExistingStrategy,
@@ -1316,6 +1317,9 @@ function MainWorkbench() {
                 </div>
                 <div hidden={activeModule !== 'generation'}>
                   <GenerationPage />
+                </div>
+                <div hidden={activeModule !== 'pipeline'}>
+                  <FullTaskPage />
                 </div>
                 <div hidden={activeModule !== 'listing'}>
                   <ListingPage />

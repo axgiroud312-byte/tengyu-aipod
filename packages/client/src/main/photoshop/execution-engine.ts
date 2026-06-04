@@ -1,7 +1,6 @@
 import { createHash } from 'node:crypto'
 import { createReadStream } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
-import { basename } from 'node:path'
 import {
   AppErrorClass,
   type PhotoshopJob,
@@ -60,6 +59,10 @@ interface RawJsxResult {
 }
 
 const MAX_RETRIES = 5
+
+function pathBasename(filePath: string) {
+  return filePath.split(/[\\/]/).pop() ?? filePath
+}
 
 class PromiseMutex {
   private current = Promise.resolve()
@@ -412,7 +415,7 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
         task_id: job.task_id,
         step: 'mockup',
         provider: 'photoshop',
-        model_or_workflow: basename(job.mockup_path),
+        model_or_workflow: pathBasename(job.mockup_path),
         file_path: output,
         file_hash: fileHash,
         params_snapshot: JSON.stringify({
@@ -607,7 +610,7 @@ export class PhotoshopExecutionEngine {
         writePhotoshopTemplateBatchJsx({
           task_id: groups[0]?.job.task_id ?? 'photoshop-batch',
           mockup_path: template.file_path,
-          template_name: groups[0]?.template_name ?? basename(template.file_path),
+          template_name: groups[0]?.template_name ?? pathBasename(template.file_path),
           cancel_file_path: cancelFilePath,
           groups: groups.map((group) => ({
             group_index: group.group_index,
@@ -735,7 +738,7 @@ export class PhotoshopExecutionEngine {
               ts: Date.now(),
               level: 'info',
               stage: 'output_verify',
-              template_name: groups[0]?.template_name ?? basename(template.file_path),
+              template_name: groups[0]?.template_name ?? pathBasename(template.file_path),
               group: groupResult.group_index,
               sku_folder: groupResult.sku_folder,
               output_file: output,

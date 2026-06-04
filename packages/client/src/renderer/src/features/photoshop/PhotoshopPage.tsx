@@ -21,10 +21,7 @@ import {
 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { PhotoshopPrintFolderScan } from '../../../../main/photoshop/print-folder'
-import {
-  formatPhotoshopDebugLogLine,
-  photoshopDebugLogLevelCounts,
-} from './photoshop-debug-log'
+import { formatPhotoshopDebugLogLine, photoshopDebugLogLevelCounts } from './photoshop-debug-log'
 
 function statusLabel(status: PhotoshopStatus | null) {
   if (!status) {
@@ -489,7 +486,9 @@ export function PhotoshopPage() {
                 </div>
               )}
               {printAssets.length > 6 ? (
-                <p className="text-xs text-muted-foreground">还有 {printAssets.length - 6} 张未显示</p>
+                <p className="text-xs text-muted-foreground">
+                  还有 {printAssets.length - 6} 张未显示
+                </p>
               ) : null}
             </div>
           </div>
@@ -770,7 +769,9 @@ export function PhotoshopPage() {
                     </div>
                     <Button
                       className="h-8 px-2"
-                      onClick={() => void window.api.photoshop.openPath(group.outputs[0] ?? outputDir)}
+                      onClick={() =>
+                        void window.api.photoshop.openPath(group.outputs[0] ?? outputDir)
+                      }
                       type="button"
                       variant="secondary"
                     >
@@ -785,7 +786,11 @@ export function PhotoshopPage() {
                         onDoubleClick={() => void window.api.photoshop.openPath(output)}
                         type="button"
                       >
-                        <img alt="" className="h-full w-full object-cover" src={localImageUrl(output)} />
+                        <img
+                          alt=""
+                          className="h-full w-full object-cover"
+                          src={localImageUrl(output)}
+                        />
                       </button>
                     ))}
                   </div>

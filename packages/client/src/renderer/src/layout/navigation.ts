@@ -1,5 +1,6 @@
 export type WorkbenchModule =
   | 'collection'
+  | 'pipeline'
   | 'title'
   | 'generation'
   | 'detection'
@@ -26,6 +27,13 @@ export const workbenchModules: WorkbenchModuleMeta[] = [
     label: '采集',
     title: '采集模块',
     description: '扫描当前页面图池并选择下载图片',
+  },
+  {
+    key: 'pipeline',
+    path: '/pipeline',
+    label: '完整任务',
+    title: '完整任务',
+    description: '按来源、抠图、检测、套版和标题顺序执行',
   },
   {
     key: 'generation',

@@ -28,6 +28,7 @@ import {
   registerLocalImageProtocolScheme,
 } from './lib/local-image-protocol'
 import { runNativeSmoke } from './lib/native-smoke'
+import { registerPipelineIpc } from './lib/pipeline-service'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
 import { registerTitleIpc } from './lib/title-service'
@@ -137,6 +138,7 @@ app.whenReady().then(() => {
   registerDetectionConfigIpc()
   registerDetectionIpc()
   registerGenerationIpc()
+  registerPipelineIpc()
   registerListingRunnerIpc()
   registerPhotoshopIpc()
   void tempFileManager.cleanupOrphans().catch(() => null)

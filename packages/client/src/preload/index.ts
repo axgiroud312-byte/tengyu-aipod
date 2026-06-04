@@ -16,6 +16,11 @@ import type {
   PhotoshopProgressLogEntry,
   PhotoshopScanTemplateRequest,
   PhotoshopStatus,
+  PipelineProgress,
+  PipelineRunConfig,
+  PipelineRunDetail,
+  PipelineRunRecord,
+  PipelineTaskEvent,
   PsdTemplate,
   Skill,
   SkillSummary,
@@ -583,6 +588,34 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('title:completed', listener)
+      }
+    },
+  },
+  pipeline: {
+    run: (input: PipelineRunConfig) => ipcRenderer.invoke('pipeline:run', input) as Promise<string>,
+    cancel: (input: { run_id: string }) =>
+      ipcRenderer.invoke('pipeline:cancel', input) as Promise<{ ok: boolean }>,
+    listRuns: () => ipcRenderer.invoke('pipeline:list-runs') as Promise<PipelineRunRecord[]>,
+    getRun: (input: { run_id: string }) =>
+      ipcRenderer.invoke('pipeline:get-run', input) as Promise<PipelineRunDetail | null>,
+    onProgress: (callback: (progress: PipelineProgress) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: PipelineProgress) => {
+        callback(progress)
+      }
+      ipcRenderer.on('pipeline:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('pipeline:progress', listener)
+      }
+    },
+    onCompleted: (callback: (event: PipelineTaskEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: PipelineTaskEvent) => {
+        callback(event)
+      }
+      ipcRenderer.on('pipeline:completed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('pipeline:completed', listener)
       }
     },
   },

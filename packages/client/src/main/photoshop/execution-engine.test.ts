@@ -624,12 +624,12 @@ describe('PhotoshopExecutionEngine', () => {
            WHERE provider = 'photoshop'`,
         )
         .all() as Array<{
-          step: string
-          provider: string
-          model_or_workflow: string
-          file_path: string
-          file_hash: string
-        }>
+        step: string
+        provider: string
+        model_or_workflow: string
+        file_path: string
+        file_hash: string
+      }>
       expect(artifactRows).toEqual([
         {
           step: 'mockup',

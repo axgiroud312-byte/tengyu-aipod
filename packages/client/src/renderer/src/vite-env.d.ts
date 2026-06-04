@@ -415,6 +415,20 @@ declare global {
           callback: (event: import('../../main/lib/title-service').TitleTaskEvent) => void,
         ) => () => void
       }
+      pipeline: {
+        run: (input: import('@tengyu-aipod/shared').PipelineRunConfig) => Promise<string>
+        cancel: (input: { run_id: string }) => Promise<{ ok: boolean }>
+        listRuns: () => Promise<import('@tengyu-aipod/shared').PipelineRunRecord[]>
+        getRun: (input: { run_id: string }) => Promise<
+          import('@tengyu-aipod/shared').PipelineRunDetail | null
+        >
+        onProgress: (
+          callback: (progress: import('@tengyu-aipod/shared').PipelineProgress) => void,
+        ) => () => void
+        onCompleted: (
+          callback: (event: import('@tengyu-aipod/shared').PipelineTaskEvent) => void,
+        ) => () => void
+      }
       listing: {
         listTemplates: () => Promise<import('@tengyu-aipod/shared').ListingTemplateConfig[]>
         listProfiles: () => Promise<import('../../main/lib/bit-browser-client').BitBrowserProfile[]>

@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
   Type,
+  Workflow,
 } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
@@ -18,6 +19,7 @@ import { type WorkbenchModule, tutorialModule, workbenchModules } from './naviga
 
 const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>>> = {
   collection: Download,
+  pipeline: Workflow,
   title: Type,
   generation: Sparkles,
   detection: ShieldCheck,
