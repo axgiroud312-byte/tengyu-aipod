@@ -221,6 +221,7 @@ type CollectionImageIndexDebug = (
 
 const DEFAULT_ITEM_LIMIT = 60
 const DEFAULT_DOWNLOAD_LIMIT = 5
+const MAX_DOWNLOAD_ITEM_COUNT = 5_000
 const CLICK_PROBE_TIMEOUT_MS = 30_000
 const SCAN_PAGE_STABILIZE_MS = 1_500
 const SHOP_SCAN_MAX_SCROLLS = 30
@@ -1945,8 +1946,12 @@ const ImageIndexInputSchema = z.object({
   page_url: z.string().optional(),
   limit: z.number().int().min(0).max(500).optional(),
   see_more_clicks: z.number().int().min(0).max(10).optional(),
-  items: z.array(ImageIndexItemSchema).max(1000).optional(),
+  items: z.array(ImageIndexItemSchema).max(MAX_DOWNLOAD_ITEM_COUNT).optional(),
 })
+
+export function safeParseCollectionImageIndexInput(input: unknown) {
+  return ImageIndexInputSchema.safeParse(input)
+}
 
 const CurrentPageInputSchema = z.object({
   platform: z.string().min(1),

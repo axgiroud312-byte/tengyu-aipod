@@ -17,6 +17,7 @@ import {
   collectionImageIndexRectCenterInside,
   collectionImageIndexUpgradeTemuImageUrl,
   downloadCollectionImageIndexItems,
+  safeParseCollectionImageIndexInput,
 } from './collection-image-index-service'
 
 let mockWorkbenchRoot = ''
@@ -503,6 +504,20 @@ describe('collection current page chooser', () => {
 })
 
 describe('collection image index download logs', () => {
+  it('accepts a large selected image pool for download IPC validation', () => {
+    const items = Array.from({ length: 1593 }, (_, index) =>
+      downloadItem(`item-${index}`, `https://img.kwcdn.com/product/${index}.jpg`),
+    )
+
+    const parsed = safeParseCollectionImageIndexInput({
+      platform: 'temu',
+      profile_id: 'profile-1',
+      items,
+    })
+
+    expect(parsed.success).toBe(true)
+  })
+
   it('emits per-image success logs with bytes and duration', async () => {
     const workbenchRoot = await mkdtemp(join(tmpdir(), 'collection-debug-success-'))
     mockWorkbenchRoot = workbenchRoot
