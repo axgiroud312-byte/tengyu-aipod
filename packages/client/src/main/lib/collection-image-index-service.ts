@@ -229,7 +229,7 @@ const SHOP_SCAN_STABLE_ROUNDS = 3
 const SHOP_SEE_MORE_MAX_CLICKS = 50
 const SEARCH_SEE_MORE_MAX_CLICKS = 10
 const SEARCH_SEE_MORE_REVEAL_MAX_SCROLLS = 30
-const SEE_MORE_CLICK_WAIT_MS = 2_500
+const SEE_MORE_CLICK_WAIT_MS = 10_000
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
 let collectionImageIndexDebugSequence = 0
@@ -1471,15 +1471,14 @@ async function waitForTemuSeeMoreSettle(page: Page, before: CollectionImageIndex
     const changedFromLatest =
       next.productImageCount !== latest.productImageCount ||
       next.scrollHeight !== latest.scrollHeight
-    const changedFromBefore =
-      next.productImageCount !== before.productImageCount ||
-      next.scrollHeight !== before.scrollHeight
+    const loadedMoreContent =
+      next.productImageCount > before.productImageCount || next.scrollHeight > before.scrollHeight
     latest = next
     if (changedFromLatest) {
       stableChangedRounds = 0
       continue
     }
-    if (changedFromBefore) {
+    if (loadedMoreContent) {
       stableChangedRounds += 1
       if (stableChangedRounds >= 2) {
         break

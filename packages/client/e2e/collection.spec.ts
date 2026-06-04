@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type Browser, type Page, chromium, expect, test } from '@playwright/test'
 import { BrowserProfileLockManager } from '../src/main/lib/browser-profile-lock'
-import { CDPClient, type CollectionBindingPayload } from '../src/main/lib/cdp-client'
+import { CDPClient, type CollectionBindingPayload, cdpClient } from '../src/main/lib/cdp-client'
 import { CollectionClickService } from '../src/main/lib/collection-click-service'
+import { scanCollectionImageIndex } from '../src/main/lib/collection-image-index-service'
 import {
   type CollectionPlatformRule,
   createCollectionInjectedScript,
@@ -158,6 +159,59 @@ function sendPng(response: ServerResponse, body: Buffer) {
 function sendText(response: ServerResponse, body: string, status = 200) {
   response.writeHead(status, { 'content-type': 'text/plain; charset=utf-8' })
   response.end(body)
+}
+
+function temuSearchPageWithDelayedSeeMore(input: { delayMs: number; maxClicks: number }) {
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Temu delayed See more</title>
+    <style>
+      body { margin: 0; font-family: sans-serif; }
+      .grid { display: grid; grid-template-columns: repeat(2, 260px); gap: 24px; padding: 32px; }
+      a { display: block; color: inherit; text-decoration: none; }
+      img { display: block; width: 240px; height: 240px; object-fit: cover; background: #ddd; }
+      button { display: block; width: 220px; height: 48px; margin: 28px auto 64px; }
+    </style>
+  </head>
+  <body>
+    <main class="grid" id="products"></main>
+    <button aria-label="See more items" id="see-more" type="button">See more</button>
+    <script>
+      window.__seeMoreClicks = 0;
+      let productIndex = 0;
+      const products = document.getElementById('products');
+      const button = document.getElementById('see-more');
+      function addProduct() {
+        productIndex += 1;
+        const link = document.createElement('a');
+        link.href = '/ca/mock-product-g-' + (600000000000000 + productIndex) + '.html';
+        const image = document.createElement('img');
+        image.alt = 'Mock product ' + productIndex;
+        image.width = 240;
+        image.height = 240;
+        image.src = 'https://img.kwcdn.com/product/open/mock-' + productIndex + '.jpg';
+        link.appendChild(image);
+        products.appendChild(link);
+      }
+      for (let index = 0; index < 2; index += 1) {
+        addProduct();
+      }
+      button.addEventListener('click', () => {
+        window.__seeMoreClicks += 1;
+        button.remove();
+        window.setTimeout(() => {
+          addProduct();
+          addProduct();
+          if (window.__seeMoreClicks < ${JSON.stringify(input.maxClicks)}) {
+            document.body.appendChild(button);
+          }
+        }, ${JSON.stringify(input.delayMs)});
+      });
+    </script>
+  </body>
+</html>`
 }
 
 function platformRule(baseUrl: string): CollectionPlatformRule {
@@ -427,6 +481,45 @@ test.describe('collection module E2E', () => {
       savedPath: expect.stringContaining(runtime.outputDir),
     })
     expect(mockServer.imageHits.get('/images/flaky_original.png')).toBe(2)
+  })
+
+  test('clicks delayed Temu search See more up to the requested count', async () => {
+    const browser = await chromium.launch({ headless: true, channel: 'chrome' })
+    browsers.push(browser)
+    const context = await browser.newContext()
+    await context.route('https://www.temu.com/search_result.html?**', async (route) => {
+      await route.fulfill({
+        contentType: 'text/html; charset=utf-8',
+        body: temuSearchPageWithDelayedSeeMore({ delayMs: 4_000, maxClicks: 3 }),
+      })
+    })
+    await context.route('https://img.kwcdn.com/**', async (route) => {
+      await route.fulfill({
+        contentType: 'image/png',
+        body: png,
+      })
+    })
+    const page = await context.newPage()
+    const pageUrl = 'https://www.temu.com/search_result.html?search_key=mock'
+    await page.goto(pageUrl)
+    await expect.poll(() => page.evaluate(() => window.__seeMoreClicks)).toBe(0)
+
+    const originalConnectToProfile = cdpClient.connectToProfile
+    cdpClient.connectToProfile = async () => browser
+    try {
+      const result = await scanCollectionImageIndex({
+        platform: 'temu',
+        profileId: 'profile-see-more',
+        pageUrl,
+        limit: 0,
+        seeMoreClicks: 3,
+      })
+
+      await expect.poll(() => page.evaluate(() => window.__seeMoreClicks)).toBe(3)
+      expect(result.collectableCount).toBeGreaterThanOrEqual(8)
+    } finally {
+      cdpClient.connectToProfile = originalConnectToProfile
+    }
   })
 
   test('starts a session, keeps the current page, injects script, and receives binding payloads', async () => {
