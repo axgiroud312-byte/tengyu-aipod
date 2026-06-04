@@ -173,22 +173,9 @@ type CollectionImageIndexTemuPageMetrics = {
   viewportHeight: number
 }
 
-export type CollectionImageIndexTemuSeeMoreProgressInput = {
-  uniqueCount: number
-  scrollHeight: number
-}
-
-export type CollectionImageIndexTemuSeeMoreProgress = {
-  before: CollectionImageIndexTemuSeeMoreProgressInput
-  after: CollectionImageIndexTemuSeeMoreProgressInput
-  deltaUniqueCount: number
-  deltaScrollHeight: number
-  grew: boolean
-}
-
 type CollectionImageIndexSeeMoreClickResult = {
   clicked: boolean
-  reason: 'clicked' | 'not_found' | 'target_missing'
+  reason: 'clicked' | 'not_found' | 'target_missing' | 'click_failed'
   candidateCount: number
   target: CollectionImageIndexSeeMoreClickTarget | null
   before: CollectionImageIndexTemuPageMetrics
@@ -239,12 +226,9 @@ const SCAN_PAGE_STABILIZE_MS = 1_500
 const SHOP_SCAN_MAX_SCROLLS = 30
 const SHOP_SCAN_STABLE_ROUNDS = 3
 const SHOP_SEE_MORE_MAX_CLICKS = 50
-const SEARCH_SEE_MORE_MAX_CLICKS = 50
+const SEARCH_SEE_MORE_MAX_CLICKS = 10
 const SEARCH_SEE_MORE_REVEAL_MAX_SCROLLS = 30
-const SEARCH_SEE_MORE_RETRY_MISS_LIMIT = 4
-const SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS = 8
 const SEE_MORE_CLICK_WAIT_MS = 2_500
-const TEMU_SEE_MORE_ELEMENT_WINDOW = 10_000
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
 let collectionImageIndexDebugSequence = 0
@@ -664,15 +648,7 @@ export function collectionImageIndexIsTemuVerificationPageUrl(value: string | nu
   }
   try {
     const url = new URL(value)
-    if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
-      return false
-    }
-    const pathname = url.pathname.toLowerCase()
-    const referPageName = url.searchParams.get('refer_page_name')?.toLowerCase()
-    return (
-      pathname.includes('/bgn_verification.html') ||
-      (pathname.includes('/login.html') && referPageName === 'bgn_verification')
-    )
+    return /(\.|^)temu\.com$/i.test(url.hostname) && url.pathname.includes('/bgn_verification.html')
   } catch {
     return false
   }
@@ -1093,39 +1069,11 @@ async function scanPageImageIndex(
   return scanResultFromPageIndexPayload(payload)
 }
 
-export function collectionImageIndexSearchSeeMoreClicks(value: number | undefined) {
+function collectionImageIndexSearchSeeMoreClicks(value: number | undefined) {
   if (!Number.isFinite(value)) {
     return 0
   }
   return Math.min(SEARCH_SEE_MORE_MAX_CLICKS, Math.max(0, Math.floor(value ?? 0)))
-}
-
-export function collectionImageIndexTemuSeeMoreProgress(
-  before: CollectionImageIndexTemuSeeMoreProgressInput,
-  after: CollectionImageIndexTemuSeeMoreProgressInput,
-): CollectionImageIndexTemuSeeMoreProgress {
-  return {
-    before,
-    after,
-    deltaUniqueCount: after.uniqueCount - before.uniqueCount,
-    deltaScrollHeight: after.scrollHeight - before.scrollHeight,
-    grew: after.uniqueCount > before.uniqueCount,
-  }
-}
-
-export function collectionImageIndexShouldRetryTemuSearchSeeMore(missStreak: number) {
-  return missStreak < SEARCH_SEE_MORE_RETRY_MISS_LIMIT
-}
-
-export async function collectionImageIndexTemuSearchSeeMoreMissRecovery(
-  page: Pick<Page, 'evaluate' | 'waitForTimeout'>,
-) {
-  await page
-    .evaluate(() => {
-      window.scrollBy(0, Math.max(window.innerHeight * 1.5, 900))
-    })
-    .catch(() => null)
-  await page.waitForTimeout(650).catch(() => null)
 }
 
 async function scanSearchPageImageIndexWithSeeMore(
@@ -1137,7 +1085,6 @@ async function scanSearchPageImageIndexWithSeeMore(
 ): Promise<CollectionImageIndexScanResult> {
   throwIfTemuVerificationPage(page.url())
   let mergedPayload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
-  let missStreak = 0
 
   for (let index = 0; index < seeMoreClicks; index += 1) {
     throwIfTemuVerificationPage(page.url())
@@ -1149,90 +1096,25 @@ async function scanSearchPageImageIndexWithSeeMore(
           revealResult.metrics,
           revealResult.candidateCount,
         )
-    const beforeCollectableCount = mergedPayload.collectableCount
-    const beforeScrollHeight = clickResult.before.scrollHeight
-    let afterCollectableCount = beforeCollectableCount
-    let afterScrollHeight = clickResult.after.scrollHeight
-    let progress: CollectionImageIndexTemuSeeMoreProgress | null = null
-    let reason: string = clickResult.reason
-    if (!clickResult.clicked) {
-      await collectionImageIndexTemuSearchSeeMoreMissRecovery(page)
-      missStreak += 1
-      debug?.('搜索页 See more 点击结果', 'debug', {
-        operation: 'scan',
-        stage: 'progress',
-        round: index + 1,
-        requestedClicks: seeMoreClicks,
-        clickedSeeMore: clickResult.clicked,
-        reason: clickResult.reason,
-        missStreak,
-        missRecoveryScrolls: 1,
-        candidateCount: clickResult.candidateCount,
-        revealScrollRounds: revealResult.scrollRounds,
-        revealStableRounds: revealResult.stableRounds,
-        beforeCollectableCount,
-        afterCollectableCount,
-        deltaCollectableCount: 0,
-        beforeScrollHeight,
-        afterScrollHeight,
-        deltaScrollHeight: 0,
-        productImageCount: clickResult.after.productImageCount,
-        pageUrl: page.url(),
-      })
-      if (!collectionImageIndexShouldRetryTemuSearchSeeMore(missStreak)) {
-        break
-      }
-      await page.waitForTimeout(1_000).catch(() => null)
-      continue
-    }
-    const payload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
-    const nextMergedPayload = mergePageIndexPayloads(mergedPayload, payload)
-    const nextMetrics = await temuPageMetrics(page)
-    progress = collectionImageIndexTemuSeeMoreProgress(
-      {
-        uniqueCount: beforeCollectableCount,
-        scrollHeight: beforeScrollHeight,
-      },
-      {
-        uniqueCount: nextMergedPayload.collectableCount,
-        scrollHeight: nextMetrics.scrollHeight,
-      },
-    )
-    afterCollectableCount = nextMergedPayload.collectableCount
-    afterScrollHeight = nextMetrics.scrollHeight
-    reason = progress.grew ? 'clicked' : 'clicked_no_growth'
-    if (progress.grew) {
-      mergedPayload = nextMergedPayload
-      missStreak = 0
-    } else {
-      await collectionImageIndexTemuSearchSeeMoreMissRecovery(page)
-      missStreak += 1
-      await page.waitForTimeout(1_000).catch(() => null)
-    }
-    debug?.('搜索页 See more 点击结果', 'debug', {
+    debug?.('搜索页 See more 点击进度', 'debug', {
       operation: 'scan',
       stage: 'progress',
       round: index + 1,
       requestedClicks: seeMoreClicks,
       clickedSeeMore: clickResult.clicked,
-      reason,
-      missStreak,
-      missRecoveryScrolls: progress?.grew ? 0 : 1,
+      reason: clickResult.reason,
       candidateCount: clickResult.candidateCount,
       revealScrollRounds: revealResult.scrollRounds,
       revealStableRounds: revealResult.stableRounds,
-      beforeCollectableCount,
-      afterCollectableCount,
-      deltaCollectableCount: progress?.deltaUniqueCount ?? 0,
-      beforeScrollHeight,
-      afterScrollHeight,
-      deltaScrollHeight: progress?.deltaScrollHeight ?? 0,
       productImageCount: clickResult.after.productImageCount,
+      scrollHeight: clickResult.after.scrollHeight,
       pageUrl: page.url(),
     })
-    if (!collectionImageIndexShouldRetryTemuSearchSeeMore(missStreak)) {
+    if (!clickResult.clicked) {
       break
     }
+    const payload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
+    mergedPayload = mergePageIndexPayloads(mergedPayload, payload)
   }
 
   throwIfTemuVerificationPage(page.url())
@@ -1254,7 +1136,7 @@ async function scanScrollableShopPageImageIndex(
 ): Promise<CollectionImageIndexScanResult> {
   let mergedPayload: PageIndexPayload | null = null
   let stableRounds = 0
-  let previousCollectableCount = 0
+  let previousKey = ''
   let seeMoreClicks = 0
   let scrollRounds = 0
   const maxLoops = SHOP_SCAN_MAX_SCROLLS + SHOP_SEE_MORE_MAX_CLICKS + SHOP_SCAN_STABLE_ROUNDS
@@ -1265,50 +1147,19 @@ async function scanScrollableShopPageImageIndex(
     mergedPayload = mergedPayload ? mergePageIndexPayloads(mergedPayload, payload) : payload
 
     const metrics = await temuPageMetrics(page)
-    const beforeCollectableCount = mergedPayload.collectableCount
+    const currentKey = `${mergedPayload.items.length}:${metrics.scrollHeight}`
     const atBottom =
       metrics.scrollTop + metrics.viewportHeight >= Math.max(0, metrics.scrollHeight - 8)
     const clickResult =
       atBottom && seeMoreClicks < SHOP_SEE_MORE_MAX_CLICKS
         ? await clickTemuSeeMore(page)
         : collectionImageIndexSeeMoreClickMiss('not_found', metrics, 0)
-    let afterCollectableCount = beforeCollectableCount
-    let afterScrollHeight = metrics.scrollHeight
-    let progress: CollectionImageIndexTemuSeeMoreProgress | null = null
-    let reason: string = clickResult.reason
-    let roundGrew = beforeCollectableCount > previousCollectableCount
     if (clickResult.clicked) {
       seeMoreClicks += 1
-      const nextPayload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
-      const nextMergedPayload = mergePageIndexPayloads(mergedPayload, nextPayload)
-      const nextMetrics = await temuPageMetrics(page)
-      progress = collectionImageIndexTemuSeeMoreProgress(
-        {
-          uniqueCount: beforeCollectableCount,
-          scrollHeight: metrics.scrollHeight,
-        },
-        {
-          uniqueCount: nextMergedPayload.collectableCount,
-          scrollHeight: nextMetrics.scrollHeight,
-        },
-      )
-      afterCollectableCount = nextMergedPayload.collectableCount
-      afterScrollHeight = nextMetrics.scrollHeight
-      reason = progress.grew ? 'clicked' : 'clicked_no_growth'
-      roundGrew = roundGrew || progress.grew
-      if (progress.grew) {
-        mergedPayload = nextMergedPayload
-        previousCollectableCount = nextMergedPayload.collectableCount
-      } else {
-        await collectionImageIndexTemuSearchSeeMoreMissRecovery(page)
-        previousCollectableCount = beforeCollectableCount
-      }
-    } else {
-      previousCollectableCount = beforeCollectableCount
     }
-    if (roundGrew) {
+    if (clickResult.clicked) {
       stableRounds = 0
-    } else if (atBottom) {
+    } else if (currentKey === previousKey && atBottom) {
       stableRounds += 1
     } else {
       stableRounds = 0
@@ -1321,13 +1172,6 @@ async function scanScrollableShopPageImageIndex(
       clickedSeeMore: clickResult.clicked,
       seeMoreClicks,
       scrollRounds,
-      reason,
-      beforeCollectableCount,
-      afterCollectableCount,
-      deltaCollectableCount: progress?.deltaUniqueCount ?? 0,
-      beforeScrollHeight: metrics.scrollHeight,
-      afterScrollHeight,
-      deltaScrollHeight: progress?.deltaScrollHeight ?? 0,
       imageCount: payload.imageCount,
       indexedCount: mergedPayload.indexedCount,
       collectableCount: mergedPayload.items.length,
@@ -1336,9 +1180,10 @@ async function scanScrollableShopPageImageIndex(
       scrollHeight: clickResult.after.scrollHeight || metrics.scrollHeight,
       pageUrl: payload.href,
     })
-    if (stableRounds >= SHOP_SCAN_STABLE_ROUNDS) {
+    if (!clickResult.clicked && stableRounds >= SHOP_SCAN_STABLE_ROUNDS) {
       break
     }
+    previousKey = currentKey
     if (clickResult.clicked) {
       continue
     }
@@ -1543,7 +1388,7 @@ async function revealTemuSeeMore(
     } else {
       stableRounds = 0
     }
-    if (stableRounds >= SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS || round >= maxScrolls) {
+    if (stableRounds >= 2 || round >= maxScrolls) {
       break
     }
     previousKey = currentKey
@@ -1586,6 +1431,18 @@ async function clickTemuSeeMore(page: Page): Promise<CollectionImageIndexSeeMore
       reason: 'target_missing',
       candidateCount: candidates.length,
       target: null,
+      before,
+      after: before,
+    }
+  }
+  try {
+    await page.mouse.click(target.x, target.y)
+  } catch {
+    return {
+      clicked: false,
+      reason: 'click_failed',
+      candidateCount: candidates.length,
+      target,
       before,
       after: before,
     }
@@ -1680,7 +1537,8 @@ async function temuPageMetrics(page: Page): Promise<CollectionImageIndexTemuPage
 }
 
 function temuSeeMoreCandidatesOnPage(): CollectionImageIndexSeeMoreCandidate[] {
-  const elements = temuSeeMoreElementsOnPage()
+  const selector = '[aria-label],button,[role="button"],a,div,span'
+  const elements = Array.from(document.querySelectorAll(selector)).slice(0, 10_000)
   return elements.map((element) => {
     const htmlElement = element as HTMLElement
     const rect = htmlElement.getBoundingClientRect()
@@ -1709,7 +1567,8 @@ function temuSeeMoreCandidatesOnPage(): CollectionImageIndexSeeMoreCandidate[] {
 async function temuSeeMoreClickTargetOnPage(
   candidateIndex: number,
 ): Promise<CollectionImageIndexSeeMoreClickTarget | null> {
-  const element = temuSeeMoreElementsOnPage()[candidateIndex]
+  const selector = '[aria-label],button,[role="button"],a,div,span'
+  const element = Array.from(document.querySelectorAll(selector)).slice(0, 10_000)[candidateIndex]
   if (!element) {
     return null
   }
@@ -1734,7 +1593,6 @@ async function temuSeeMoreClickTargetOnPage(
     .slice(0, 160)
   const ariaLabel = (htmlElement.getAttribute('aria-label') || '').trim().slice(0, 160)
   const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value))
-  htmlElement.click()
   return {
     label: `${ariaLabel} ${text}`.trim(),
     text,
@@ -1746,24 +1604,6 @@ async function temuSeeMoreClickTargetOnPage(
     width: Math.round(rect.width),
     height: Math.round(rect.height),
   }
-}
-
-function temuSeeMoreElementsOnPage() {
-  const selector = '[aria-label],button,[role="button"],a,div,span'
-  const elements = Array.from(document.querySelectorAll(selector))
-  if (elements.length <= TEMU_SEE_MORE_ELEMENT_WINDOW * 2) {
-    return elements
-  }
-  const head = elements.slice(0, TEMU_SEE_MORE_ELEMENT_WINDOW)
-  const tail = elements.slice(-TEMU_SEE_MORE_ELEMENT_WINDOW)
-  const seen = new Set(head)
-  const merged = [...head]
-  for (const element of tail) {
-    if (!seen.has(element)) {
-      merged.push(element)
-    }
-  }
-  return merged
 }
 
 function currentPageCacheKey(input: CurrentPageInput) {
@@ -2104,7 +1944,7 @@ const ImageIndexInputSchema = z.object({
   output_dir: z.string().optional(),
   page_url: z.string().optional(),
   limit: z.number().int().min(0).max(500).optional(),
-  see_more_clicks: z.number().int().min(0).max(50).optional(),
+  see_more_clicks: z.number().int().min(0).max(10).optional(),
   items: z.array(ImageIndexItemSchema).max(1000).optional(),
 })
 

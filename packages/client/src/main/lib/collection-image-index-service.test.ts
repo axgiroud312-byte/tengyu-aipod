@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Page } from 'playwright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type CollectionImageIndexItem,
@@ -16,10 +15,6 @@ import {
   collectionImageIndexPageKind,
   collectionImageIndexProductFolderName,
   collectionImageIndexRectCenterInside,
-  collectionImageIndexSearchSeeMoreClicks,
-  collectionImageIndexShouldRetryTemuSearchSeeMore,
-  collectionImageIndexTemuSearchSeeMoreMissRecovery,
-  collectionImageIndexTemuSeeMoreProgress,
   collectionImageIndexUpgradeTemuImageUrl,
   downloadCollectionImageIndexItems,
 } from './collection-image-index-service'
@@ -146,35 +141,6 @@ describe('collection image index product folders', () => {
 })
 
 describe('collection image index Temu See more chooser', () => {
-  it('allows more than ten search see more clicks up to the shared cap', () => {
-    expect(collectionImageIndexSearchSeeMoreClicks(99)).toBe(50)
-  })
-
-  it('keeps retrying several Temu search see more misses before giving up', () => {
-    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(0)).toBe(true)
-    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(1)).toBe(true)
-    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(2)).toBe(true)
-    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(3)).toBe(true)
-    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(4)).toBe(false)
-  })
-
-  it('nudges the Temu search page once after a miss before retrying', async () => {
-    const calls: string[] = []
-    const page = {
-      evaluate: async () => {
-        calls.push('evaluate')
-        return null
-      },
-      waitForTimeout: async (timeoutMs: number) => {
-        calls.push(`wait:${timeoutMs}`)
-      },
-    } as Pick<Page, 'evaluate' | 'waitForTimeout'>
-
-    await collectionImageIndexTemuSearchSeeMoreMissRecovery(page)
-
-    expect(calls).toEqual(['evaluate', 'wait:650'])
-  })
-
   it('prefers aria-label See more items candidates', () => {
     const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
       {
@@ -189,27 +155,6 @@ describe('collection image index Temu See more chooser', () => {
         text: 'See more',
         ariaLabel: 'See more items',
         area: 3200,
-        visible: true,
-      },
-    ])
-
-    expect(index).toBe(1)
-  })
-
-  it('prefers exact See more text when aria-label is missing', () => {
-    const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
-      {
-        label: 'See more details',
-        text: 'See more details',
-        ariaLabel: '',
-        area: 1_600,
-        visible: true,
-      },
-      {
-        label: 'See more',
-        text: 'See more',
-        ariaLabel: '',
-        area: 800,
         visible: true,
       },
     ])
@@ -261,33 +206,6 @@ describe('collection image index Temu See more chooser', () => {
 })
 
 describe('collection image index Temu shop page SSR parser', () => {
-  it('only treats unique count growth as progress even if scrollHeight changes', () => {
-    expect(
-      collectionImageIndexTemuSeeMoreProgress(
-        { uniqueCount: 100, scrollHeight: 12_000 },
-        { uniqueCount: 100, scrollHeight: 14_239 },
-      ),
-    ).toEqual({
-      before: { uniqueCount: 100, scrollHeight: 12_000 },
-      after: { uniqueCount: 100, scrollHeight: 14_239 },
-      deltaUniqueCount: 0,
-      deltaScrollHeight: 2_239,
-      grew: false,
-    })
-    expect(
-      collectionImageIndexTemuSeeMoreProgress(
-        { uniqueCount: 100, scrollHeight: 12_000 },
-        { uniqueCount: 160, scrollHeight: 14_239 },
-      ),
-    ).toEqual({
-      before: { uniqueCount: 100, scrollHeight: 12_000 },
-      after: { uniqueCount: 160, scrollHeight: 14_239 },
-      deltaUniqueCount: 60,
-      deltaScrollHeight: 2_239,
-      grew: true,
-    })
-  })
-
   it('detects Temu shop URLs', () => {
     expect(
       collectionImageIndexIsTemuShopPageUrl(
@@ -317,16 +235,6 @@ describe('collection image index Temu shop page SSR parser', () => {
         'https://www.temu.com/bgn_verification.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html',
       ),
     ).toBe(true)
-    expect(
-      collectionImageIndexIsTemuVerificationPageUrl(
-        'https://www.temu.com/login.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html&login_scene=2&refer_page_name=bgn_verification',
-      ),
-    ).toBe(true)
-    expect(
-      collectionImageIndexIsTemuVerificationPageUrl(
-        'https://www.temu.com/login.html?from=https%3A%2F%2Fwww.temu.com%2Fsearch_result.html&login_scene=2&refer_page_name=search_result',
-      ),
-    ).toBe(false)
     expect(
       collectionImageIndexIsTemuVerificationPageUrl(
         'https://www.temu.com/mall.html?mall_id=634418228197396',

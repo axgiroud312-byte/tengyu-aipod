@@ -128,7 +128,7 @@ function searchSeeMoreClicks(value: number) {
   if (!Number.isFinite(value)) {
     return 1
   }
-  return Math.min(50, Math.max(0, Math.floor(value)))
+  return Math.min(10, Math.max(0, Math.floor(value)))
 }
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
@@ -204,15 +204,7 @@ function isTemuVerificationPageUrl(value: string | null | undefined) {
   }
   try {
     const url = new URL(value)
-    if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
-      return false
-    }
-    const pathname = url.pathname.toLowerCase()
-    const referPageName = url.searchParams.get('refer_page_name')?.toLowerCase()
-    return (
-      pathname.includes('/bgn_verification.html') ||
-      (pathname.includes('/login.html') && referPageName === 'bgn_verification')
-    )
+    return /(\.|^)temu\.com$/i.test(url.hostname) && url.pathname.includes('/bgn_verification.html')
   } catch {
     return false
   }

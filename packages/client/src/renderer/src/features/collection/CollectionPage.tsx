@@ -184,7 +184,7 @@ function clampSearchSeeMoreClicks(value: number) {
   if (!Number.isFinite(value)) {
     return 0
   }
-  return Math.min(50, Math.max(0, Math.floor(value)))
+  return Math.min(10, Math.max(0, Math.floor(value)))
 }
 
 function profileLabel(profileId: string, profiles: CollectionProfileOption[]) {
@@ -209,7 +209,7 @@ function currentPageKindLabel(currentPage: CollectionCurrentPageResult | null) {
   if (!currentPage?.pageUrl) {
     return '等待页面'
   }
-  if (isTemuVerificationPageUrl(currentPage.pageUrl)) {
+  if (currentPage.pageUrl.includes('/bgn_verification.html')) {
     return '安全验证页'
   }
   if (isTemuShopPageUrl(currentPage.pageUrl)) {
@@ -232,23 +232,6 @@ function isTemuShopPageUrl(value: string) {
       pathname.endsWith('/mall.html') ||
       /-m-\d+\.html$/i.test(pathname) ||
       url.searchParams.has('mall_id')
-    )
-  } catch {
-    return false
-  }
-}
-
-function isTemuVerificationPageUrl(value: string) {
-  try {
-    const url = new URL(value)
-    if (!/(\.|^)temu\.com$/i.test(url.hostname)) {
-      return false
-    }
-    const pathname = url.pathname.toLowerCase()
-    const referPageName = url.searchParams.get('refer_page_name')?.toLowerCase()
-    return (
-      pathname.includes('/bgn_verification.html') ||
-      (pathname.includes('/login.html') && referPageName === 'bgn_verification')
     )
   } catch {
     return false
@@ -388,7 +371,7 @@ export function CollectionPage({
                 <Input
                   className="h-8 w-16 px-2"
                   id="collection-see-more-clicks"
-                  max={50}
+                  max={10}
                   min={0}
                   onChange={(event) =>
                     onStateChange(
