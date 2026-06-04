@@ -226,8 +226,10 @@ const SCAN_PAGE_STABILIZE_MS = 1_500
 const SHOP_SCAN_MAX_SCROLLS = 30
 const SHOP_SCAN_STABLE_ROUNDS = 3
 const SHOP_SEE_MORE_MAX_CLICKS = 50
-const SEARCH_SEE_MORE_MAX_CLICKS = 10
+const SEARCH_SEE_MORE_MAX_CLICKS = 50
 const SEARCH_SEE_MORE_REVEAL_MAX_SCROLLS = 30
+const SEARCH_SEE_MORE_RETRY_MISS_LIMIT = 2
+const SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS = 4
 const SEE_MORE_CLICK_WAIT_MS = 2_500
 
 const lastValidCurrentPages = new Map<string, CollectionCurrentPageResult>()
@@ -1069,11 +1071,26 @@ async function scanPageImageIndex(
   return scanResultFromPageIndexPayload(payload)
 }
 
-function collectionImageIndexSearchSeeMoreClicks(value: number | undefined) {
+export function collectionImageIndexSearchSeeMoreClicks(value: number | undefined) {
   if (!Number.isFinite(value)) {
     return 0
   }
   return Math.min(SEARCH_SEE_MORE_MAX_CLICKS, Math.max(0, Math.floor(value ?? 0)))
+}
+
+export function collectionImageIndexShouldRetryTemuSearchSeeMore(missStreak: number) {
+  return missStreak < SEARCH_SEE_MORE_RETRY_MISS_LIMIT
+}
+
+export async function collectionImageIndexTemuSearchSeeMoreMissRecovery(
+  page: Pick<Page, 'evaluate' | 'waitForTimeout'>,
+) {
+  await page
+    .evaluate(() => {
+      window.scrollBy(0, Math.max(window.innerHeight * 1.5, 900))
+    })
+    .catch(() => null)
+  await page.waitForTimeout(650).catch(() => null)
 }
 
 async function scanSearchPageImageIndexWithSeeMore(
@@ -1085,6 +1102,7 @@ async function scanSearchPageImageIndexWithSeeMore(
 ): Promise<CollectionImageIndexScanResult> {
   throwIfTemuVerificationPage(page.url())
   let mergedPayload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
+  let missStreak = 0
 
   for (let index = 0; index < seeMoreClicks; index += 1) {
     throwIfTemuVerificationPage(page.url())
@@ -1103,6 +1121,8 @@ async function scanSearchPageImageIndexWithSeeMore(
       requestedClicks: seeMoreClicks,
       clickedSeeMore: clickResult.clicked,
       reason: clickResult.reason,
+      missStreak,
+      missRecoveryScrolls: clickResult.clicked ? 0 : 1,
       candidateCount: clickResult.candidateCount,
       revealScrollRounds: revealResult.scrollRounds,
       revealStableRounds: revealResult.stableRounds,
@@ -1111,8 +1131,15 @@ async function scanSearchPageImageIndexWithSeeMore(
       pageUrl: page.url(),
     })
     if (!clickResult.clicked) {
-      break
+      await collectionImageIndexTemuSearchSeeMoreMissRecovery(page)
+      missStreak += 1
+      if (!collectionImageIndexShouldRetryTemuSearchSeeMore(missStreak)) {
+        break
+      }
+      await page.waitForTimeout(1_000).catch(() => null)
+      continue
     }
+    missStreak = 0
     const payload = (await page.evaluate(scanScript(0, platform))) as PageIndexPayload
     mergedPayload = mergePageIndexPayloads(mergedPayload, payload)
   }
@@ -1388,7 +1415,7 @@ async function revealTemuSeeMore(
     } else {
       stableRounds = 0
     }
-    if (stableRounds >= 2 || round >= maxScrolls) {
+    if (stableRounds >= SEARCH_SEE_MORE_REVEAL_STABLE_ROUNDS || round >= maxScrolls) {
       break
     }
     previousKey = currentKey
@@ -1944,7 +1971,7 @@ const ImageIndexInputSchema = z.object({
   output_dir: z.string().optional(),
   page_url: z.string().optional(),
   limit: z.number().int().min(0).max(500).optional(),
-  see_more_clicks: z.number().int().min(0).max(10).optional(),
+  see_more_clicks: z.number().int().min(0).max(50).optional(),
   items: z.array(ImageIndexItemSchema).max(1000).optional(),
 })
 

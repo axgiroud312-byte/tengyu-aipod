@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Page } from 'playwright'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   type CollectionImageIndexItem,
@@ -15,6 +16,9 @@ import {
   collectionImageIndexPageKind,
   collectionImageIndexProductFolderName,
   collectionImageIndexRectCenterInside,
+  collectionImageIndexSearchSeeMoreClicks,
+  collectionImageIndexShouldRetryTemuSearchSeeMore,
+  collectionImageIndexTemuSearchSeeMoreMissRecovery,
   collectionImageIndexUpgradeTemuImageUrl,
   downloadCollectionImageIndexItems,
 } from './collection-image-index-service'
@@ -141,6 +145,33 @@ describe('collection image index product folders', () => {
 })
 
 describe('collection image index Temu See more chooser', () => {
+  it('allows more than ten search see more clicks up to the shared cap', () => {
+    expect(collectionImageIndexSearchSeeMoreClicks(99)).toBe(50)
+  })
+
+  it('retries one failed Temu search see more miss before giving up', () => {
+    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(0)).toBe(true)
+    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(1)).toBe(true)
+    expect(collectionImageIndexShouldRetryTemuSearchSeeMore(2)).toBe(false)
+  })
+
+  it('nudges the Temu search page once after a miss before retrying', async () => {
+    const calls: string[] = []
+    const page = {
+      evaluate: async () => {
+        calls.push('evaluate')
+        return null
+      },
+      waitForTimeout: async (timeoutMs: number) => {
+        calls.push(`wait:${timeoutMs}`)
+      },
+    } as Pick<Page, 'evaluate' | 'waitForTimeout'>
+
+    await collectionImageIndexTemuSearchSeeMoreMissRecovery(page)
+
+    expect(calls).toEqual(['evaluate', 'wait:650'])
+  })
+
   it('prefers aria-label See more items candidates', () => {
     const index = collectionImageIndexChooseTemuSeeMoreCandidateIndex([
       {
