@@ -37,6 +37,7 @@ import {
   FolderOpen,
   Loader2,
   Play,
+  Plus,
   RefreshCw,
   Settings2,
   Square,
@@ -47,6 +48,7 @@ import {
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DetectionConfig } from '../../../../main/lib/detection-config'
+import type { TitleKeywordGroup } from '../../../../main/lib/title-service'
 
 type Option = {
   key: string
@@ -862,9 +864,14 @@ export function FullTaskPage() {
   const [titleModel, setTitleModel] = useFullTaskSessionState('titleModel', 'qwen3.6-flash')
   const [titleFileName, setTitleFileName] = useFullTaskSessionState('titleFileName', '标题')
   const [titleImageIndex, setTitleImageIndex] = useFullTaskSessionState('titleImageIndex', '1')
-  const [titlePrefix, setTitlePrefix] = useFullTaskSessionState('titlePrefix', '')
-  const [titleSuffix, setTitleSuffix] = useFullTaskSessionState('titleSuffix', '')
-  const [titleSeparator, setTitleSeparator] = useFullTaskSessionState('titleSeparator', ' ')
+  const [titleKeywordGroups, setTitleKeywordGroups] = useFullTaskSessionState<TitleKeywordGroup[]>(
+    'titleKeywordGroups',
+    [{ prefix: '', suffix: '' }],
+  )
+  const [titleKeywordGroupSeparator, setTitleKeywordGroupSeparator] = useFullTaskSessionState(
+    'titleKeywordGroupSeparator',
+    ' ',
+  )
   const [titleExistingStrategy, setTitleExistingStrategy] =
     useFullTaskSessionState<TitleExistingStrategy>('titleExistingStrategy', 'skip')
   const [titleMaxRetries, setTitleMaxRetries] = useFullTaskSessionState('titleMaxRetries', '2')
@@ -1507,6 +1514,25 @@ export function FullTaskPage() {
     }
   }
 
+  function updateTitleKeywordGroup(index: number, key: keyof TitleKeywordGroup, value: string) {
+    setTitleKeywordGroups((current) =>
+      current.map((group, groupIndex) =>
+        groupIndex === index ? { ...group, [key]: value } : group,
+      ),
+    )
+  }
+
+  function addTitleKeywordGroup() {
+    setTitleKeywordGroups((current) => [...current, { prefix: '', suffix: '' }])
+  }
+
+  function removeTitleKeywordGroup(index: number) {
+    setTitleKeywordGroups((current) => {
+      const nextGroups = current.filter((_, groupIndex) => groupIndex !== index)
+      return nextGroups.length ? nextGroups : [{ prefix: '', suffix: '' }]
+    })
+  }
+
   function buildConfig(): PipelineRunConfig {
     return {
       ...(nonEmpty(name) ? { name: name.trim() } : {}),
@@ -1542,9 +1568,8 @@ export function FullTaskPage() {
         existingStrategy: titleExistingStrategy,
         maxRetries: numberFromText(titleMaxRetries, 2),
         ...(nonEmpty(extraRequirement) ? { extraRequirement: extraRequirement.trim() } : {}),
-        ...(nonEmpty(titlePrefix) ? { titlePrefix: titlePrefix.trim() } : {}),
-        ...(nonEmpty(titleSuffix) ? { titleSuffix: titleSuffix.trim() } : {}),
-        ...(titleSeparator ? { titleSeparator } : {}),
+        keywordGroups: titleKeywordGroups,
+        keywordGroupSeparator: titleKeywordGroupSeparator,
         preprocess: {
           compression: titleCompression,
           maxSize: numberFromText(titleMaxSize, 1024),
@@ -2334,7 +2359,7 @@ export function FullTaskPage() {
                       />
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-3">
+                    <div className="grid gap-4 md:grid-cols-4">
                       <Field label="标题文件名">
                         <Input
                           onChange={(event) => setTitleFileName(event.target.value)}
@@ -2359,30 +2384,67 @@ export function FullTaskPage() {
                           value={titleMaxSize}
                         />
                       </Field>
+                      <Field label="关键词分隔符">
+                        <Input
+                          onChange={(event) => setTitleKeywordGroupSeparator(event.target.value)}
+                          placeholder="空格"
+                          value={titleKeywordGroupSeparator}
+                        />
+                      </Field>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <Field label="前缀">
-                        <Input
-                          onChange={(event) => setTitlePrefix(event.target.value)}
-                          placeholder="默认不填"
-                          value={titlePrefix}
-                        />
-                      </Field>
-                      <Field label="后缀">
-                        <Input
-                          onChange={(event) => setTitleSuffix(event.target.value)}
-                          placeholder="默认不填"
-                          value={titleSuffix}
-                        />
-                      </Field>
-                      <Field label="分隔符">
-                        <Input
-                          onChange={(event) => setTitleSeparator(event.target.value)}
-                          placeholder="空格"
-                          value={titleSeparator}
-                        />
-                      </Field>
+                    <div className="rounded-md border p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground">标题关键词组</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            完整任务会在每个模板批次标题生成时按货号顺序平均分组。
+                          </p>
+                        </div>
+                        <Button onClick={addTitleKeywordGroup} type="button" variant="secondary">
+                          <Plus className="mr-2 h-4 w-4" />
+                          新增组
+                        </Button>
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        {titleKeywordGroups.map((group, index) => (
+                          <div
+                            className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
+                            key={`${group.prefix ?? ''}:${group.suffix ?? ''}`}
+                          >
+                            <div className="flex items-center text-sm font-medium text-muted-foreground">
+                              第 {index + 1} 组
+                            </div>
+                            <Input
+                              aria-label={`第 ${index + 1} 组前缀`}
+                              onChange={(event) =>
+                                updateTitleKeywordGroup(index, 'prefix', event.target.value)
+                              }
+                              placeholder="前缀关键词"
+                              value={group.prefix ?? ''}
+                            />
+                            <Input
+                              aria-label={`第 ${index + 1} 组后缀`}
+                              onChange={(event) =>
+                                updateTitleKeywordGroup(index, 'suffix', event.target.value)
+                              }
+                              placeholder="后缀关键词"
+                              value={group.suffix ?? ''}
+                            />
+                            <Button
+                              aria-label={`删除第 ${index + 1} 组`}
+                              className="h-10 w-10 p-0"
+                              onClick={() => removeTitleKeywordGroup(index)}
+                              title={`删除第 ${index + 1} 组`}
+                              type="button"
+                              variant="ghost"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
 
                     <div className="grid gap-4 md:grid-cols-2">

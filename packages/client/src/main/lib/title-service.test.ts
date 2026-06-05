@@ -10,9 +10,11 @@ import { TempFileManager } from './temp-file-manager'
 import {
   type TitleBatchConfig,
   TitleService,
+  assignTitleKeywordGroups,
   getNthImageFromSkuFolder,
-  joinTitleParts,
+  joinTitleWithKeywordGroup,
   normalizeTitleFileBaseName,
+  normalizeTitleKeywordGroups,
   parseTitle,
   readExistingTitles,
   scanSkuFolders,
@@ -159,14 +161,56 @@ describe('title service utilities', () => {
     expect(parseTitle(`${'A'.repeat(80)} extra`, 'en', 'mercado')).toHaveLength(60)
   })
 
-  it('normalizes title file names and joins prefix/suffix around generated title', () => {
+  it('normalizes title file names', () => {
     expect(normalizeTitleFileBaseName(' 英文标题.xlsx ')).toBe('英文标题')
     expect(normalizeTitleFileBaseName('../bad:name')).toBe('.._bad_name')
     expect(titleXlsxPath('/tmp/batch', '英文标题')).toBe(join('/tmp/batch', '英文标题.xlsx'))
-    expect(joinTitleParts('Temu', 'Vintage Shirt', 'Summer', ' - ')).toBe(
-      'Temu - Vintage Shirt - Summer',
+  })
+
+  it('normalizes and assigns keyword groups in natural sku order', () => {
+    const groups = normalizeTitleKeywordGroups([
+      { prefix: ' A ', suffix: '' },
+      { prefix: '', suffix: '' },
+      { suffix: ' C ' },
+      { prefix: 'D', suffix: 'E' },
+    ])
+    expect(groups).toEqual([{ prefix: 'A' }, { suffix: 'C' }, { prefix: 'D', suffix: 'E' }])
+
+    const skuCodes = Array.from({ length: 1000 }, (_, index) => `SKU${index + 1}`)
+    const assignments = assignTitleKeywordGroups(skuCodes, [
+      { prefix: 'G1' },
+      { prefix: 'G2' },
+      { prefix: 'G3' },
+      { prefix: 'G4' },
+      { prefix: 'G5' },
+      { prefix: 'G6' },
+    ])
+    const groupSizes = [1, 2, 3, 4, 5, 6].map(
+      (groupIndex) =>
+        Array.from(assignments.values()).filter((item) => item.groupIndex === groupIndex).length,
     )
-    expect(joinTitleParts('', 'Vintage Shirt', '', ' - ')).toBe('Vintage Shirt')
+    expect(groupSizes).toEqual([167, 167, 167, 167, 166, 166])
+    expect(assignments.get('SKU1')).toMatchObject({ groupIndex: 1 })
+    expect(assignments.get('SKU168')).toMatchObject({ groupIndex: 2 })
+    expect(assignments.get('SKU835')).toMatchObject({ groupIndex: 6 })
+  })
+
+  it('joins generated titles with assigned keyword group', () => {
+    expect(
+      joinTitleWithKeywordGroup(
+        'Vintage Shirt',
+        { groupIndex: 1, group: { prefix: 'Temu', suffix: 'Summer' } },
+        ' - ',
+      ),
+    ).toBe('Temu - Vintage Shirt - Summer')
+    expect(
+      joinTitleWithKeywordGroup(
+        'Vintage Shirt',
+        { groupIndex: 1, group: { suffix: 'Summer' } },
+        ' ',
+      ),
+    ).toBe('Vintage Shirt Summer')
+    expect(joinTitleWithKeywordGroup(' Vintage Shirt ', undefined, ' - ')).toBe('Vintage Shirt')
   })
 
   it('reads and writes titles xlsx with generated titles overriding existing ones', async () => {
@@ -399,7 +443,7 @@ describe('TitleService', () => {
     )
   })
 
-  it('writes custom title xlsx and wraps generated titles with prefix and suffix', async () => {
+  it('writes custom title xlsx and wraps generated titles with keyword groups', async () => {
     const batchDir = join(tempRoot, 'custom-title')
     await createSku(batchDir, 'SKU1', ['1.png'])
     const outputPath = join(workbenchRoot, '.workbench', 'tmp', 'title', 'custom-title', 'p.jpg')
@@ -412,9 +456,8 @@ describe('TitleService', () => {
         platform: 'temu',
         language: 'en',
         model: 'qwen3.6-flash',
-        titlePrefix: 'Temu',
-        titleSuffix: 'Summer',
-        titleSeparator: ' - ',
+        keywordGroups: [{ prefix: 'Temu', suffix: 'Summer' }],
+        keywordGroupSeparator: ' - ',
         existingStrategy: 'skip',
         concurrency: 1,
         taskId: 'custom-title',
@@ -455,6 +498,147 @@ describe('TitleService', () => {
     expect(result.xlsxPath).toBe(join(batchDir, '英文标题.xlsx'))
     await expect(readExistingTitles(result.xlsxPath)).resolves.toEqual(
       new Map([['SKU1', 'Temu - Vintage Shirt - Summer']]),
+    )
+  })
+
+  it('keeps keyword group assignment based on all skus when existing titles are skipped', async () => {
+    const batchDir = join(tempRoot, 'skip-with-groups')
+    await createSku(batchDir, 'SKU1', ['1.png'])
+    await createSku(batchDir, 'SKU2', ['1.png'])
+    await createSku(batchDir, 'SKU3', ['1.png'])
+    await createSku(batchDir, 'SKU4', ['1.png'])
+    await createWorkbook(join(batchDir, '标题.xlsx'), [['SKU1', 'Existing title']])
+    const outputPath = join(
+      workbenchRoot,
+      '.workbench',
+      'tmp',
+      'title',
+      'skip-with-groups',
+      'p.jpg',
+    )
+    const service = new TitleService()
+
+    const result = await service.runTitleBatch(
+      {
+        batchDir,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+        keywordGroups: [{ prefix: 'Group1' }, { prefix: 'Group2' }],
+        keywordGroupSeparator: ' ',
+        existingStrategy: 'skip',
+        concurrency: 1,
+        taskId: 'skip-with-groups',
+      },
+      {
+        skillCache: {
+          listSkills: vi.fn().mockResolvedValue([summary()]),
+          getSkill: vi.fn().mockResolvedValue(skill()),
+        },
+        createBailianAdapter: () => ({
+          visionCompletion: vi.fn().mockResolvedValue({ text: 'Generated Title' }),
+        }),
+        preprocessPool: {
+          process: vi.fn(async () => {
+            await mkdir(dirname(outputPath), { recursive: true })
+            await writeFile(outputPath, 'processed')
+            return {
+              outputPath,
+              mimeType: 'image/jpeg',
+              sizeBytes: 9,
+              dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+            }
+          }),
+          close: vi.fn(),
+        },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: () =>
+          ({
+            exec: vi.fn(),
+            prepare: vi.fn(() => ({ run: vi.fn() })),
+            close: vi.fn(),
+          }) as unknown as TestDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(result).toMatchObject({ succeeded: 3, skipped: 1 })
+    await expect(readExistingTitles(result.xlsxPath)).resolves.toEqual(
+      new Map([
+        ['SKU1', 'Existing title'],
+        ['SKU2', 'Group1 Generated Title'],
+        ['SKU3', 'Group2 Generated Title'],
+        ['SKU4', 'Group2 Generated Title'],
+      ]),
+    )
+  })
+
+  it('keeps keyword group assignment based on all skus when skuCodes filters a retry run', async () => {
+    const batchDir = join(tempRoot, 'retry-with-groups')
+    await createSku(batchDir, 'SKU1', ['1.png'])
+    await createSku(batchDir, 'SKU2', ['1.png'])
+    await createSku(batchDir, 'SKU3', ['1.png'])
+    await createSku(batchDir, 'SKU4', ['1.png'])
+    const outputPath = join(
+      workbenchRoot,
+      '.workbench',
+      'tmp',
+      'title',
+      'retry-with-groups',
+      'p.jpg',
+    )
+    const service = new TitleService()
+
+    const result = await service.runTitleBatch(
+      {
+        batchDir,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+        keywordGroups: [{ prefix: 'Group1' }, { prefix: 'Group2' }],
+        keywordGroupSeparator: ' ',
+        existingStrategy: 'regenerate',
+        skuCodes: ['SKU3'],
+        concurrency: 1,
+        taskId: 'retry-with-groups',
+      },
+      {
+        skillCache: {
+          listSkills: vi.fn().mockResolvedValue([summary()]),
+          getSkill: vi.fn().mockResolvedValue(skill()),
+        },
+        createBailianAdapter: () => ({
+          visionCompletion: vi.fn().mockResolvedValue({ text: 'Generated Title' }),
+        }),
+        preprocessPool: {
+          process: vi.fn(async () => {
+            await mkdir(dirname(outputPath), { recursive: true })
+            await writeFile(outputPath, 'processed')
+            return {
+              outputPath,
+              mimeType: 'image/jpeg',
+              sizeBytes: 9,
+              dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+            }
+          }),
+          close: vi.fn(),
+        },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: () =>
+          ({
+            exec: vi.fn(),
+            prepare: vi.fn(() => ({ run: vi.fn() })),
+            close: vi.fn(),
+          }) as unknown as TestDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(result).toMatchObject({ total: 1, succeeded: 1 })
+    await expect(readExistingTitles(result.xlsxPath)).resolves.toEqual(
+      new Map([['SKU3', 'Group2 Generated Title']]),
     )
   })
 })

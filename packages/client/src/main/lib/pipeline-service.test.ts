@@ -526,6 +526,45 @@ describe('PipelineService', () => {
     ])
   })
 
+  it('rejects collection source folders outside the collection workspace', async () => {
+    const outsideSource = join(mocks.workbenchRoot, 'outside-source')
+    await createPrint(join(outsideSource, 'source.png'))
+
+    const service = new PipelineService()
+
+    await expect(
+      service.runPipeline('run-outside-collection-source', {
+        ...baseConfig('/unused'),
+        source: {
+          mode: 'collection',
+          sourceFolder: outsideSource,
+          extract: {
+            provider: 'grsai',
+            skillId: 'extract-skill',
+            grsai: {
+              model: 'gpt-image-2',
+              aspectRatio: '1:1',
+            },
+          },
+        },
+        photoshop: {
+          ...baseConfig('/unused').photoshop,
+          enabled: false,
+          templates: [],
+        },
+        title: {
+          ...baseConfig('/unused').title,
+          enabled: false,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      details: { kind: 'path_outside_workbench' },
+    })
+
+    await expect(service.getRun('run-outside-collection-source')).resolves.toBeNull()
+  })
+
   it('holds a collection folder read lock until the complete task finishes', async () => {
     const sourceFolder = join(
       mocks.workbenchRoot,
@@ -593,6 +632,71 @@ describe('PipelineService', () => {
       run: expect.objectContaining({ status: 'completed' }),
     })
     expect(() => collectionFolderLock.assertWritable(sourceFolder)).not.toThrow()
+  })
+
+  it('marks the active step as cancelled when a complete task is cancelled mid-step', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    let finishDetection: (() => void) | undefined
+    mocks.runDetectionBatch.mockImplementationOnce(async () => {
+      await new Promise<void>((resolve) => {
+        finishDetection = resolve
+      })
+      return {
+        taskId: 'run-cancel-detection-detection',
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+        results: [
+          {
+            imagePath: join(printFolder, 'existing.png'),
+            thumbnailUrl: '',
+            artifactId: 'art-cancel',
+            printId: 'pri-cancel',
+            status: 'success' as const,
+            riskScore: 10,
+            riskLevel: 'pass' as const,
+            reason: '低风险',
+            outputPath: join(mocks.workbenchRoot, 'cancel-output.png'),
+            cached: false,
+          },
+        ],
+      }
+    })
+
+    const service = new PipelineService()
+    const run = service.runPipeline('run-cancel-detection', {
+      ...baseConfig(printFolder),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+      },
+      photoshop: {
+        ...baseConfig(printFolder).photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        enabled: false,
+      },
+    })
+    await vi.waitUntil(() => mocks.runDetectionBatch.mock.calls.length === 1)
+
+    expect(service.cancelRun('run-cancel-detection')).toBe(true)
+    finishDetection?.()
+    await expect(run).rejects.toThrow('完整任务已取消')
+
+    const detail = await service.getRun('run-cancel-detection')
+    expect(detail?.run.status).toBe('cancelled')
+    expect(detail?.steps.find((step) => step.step_key === 'detection')?.status).toBe('cancelled')
+    const progressEvents = mocks.sentEvents.filter((event) => event.channel === 'pipeline:progress')
+    const lastProgress = progressEvents.at(-1)?.payload as
+      | { logs?: Array<{ message: string }> }
+      | undefined
+    expect(lastProgress?.logs?.some((log) => log.message === '侵权检测已取消')).toBe(true)
   })
 
   it('persists uploaded img2img references outside business workspaces and keeps base64 out of the run config', async () => {

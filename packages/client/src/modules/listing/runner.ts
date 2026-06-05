@@ -34,6 +34,7 @@ import {
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
 import { loadBatchAsListingItems } from '../../main/lib/listing-batch-loader'
 import { type SqliteDatabase, openSqliteDatabase } from '../../main/lib/sqlite'
+import { assertPathInsideWorkbench } from '../../main/lib/workbench-path-guard'
 import { sheinWorkflow } from './platforms/dianxiaomi-shein/workflow'
 import { temuPopWorkflow } from './platforms/dianxiaomi-temu-pop/workflow'
 import { type ListingTaskListInput, SqliteListingTaskStore } from './task-store'
@@ -808,9 +809,11 @@ export function registerListingRunnerIpc() {
   ipcMain.handle('listing:list-tasks', async (_event, input: unknown) =>
     withListingTaskStore((store) => store.listTasks(parseListingTaskListInput(input))),
   )
-  ipcMain.handle('listing:create-task', async (_event, input: unknown) =>
-    withListingTaskStore((store) => store.createTask(parseListingTaskInput(input))),
-  )
+  ipcMain.handle('listing:create-task', async (_event, input: unknown) => {
+    const taskInput = parseListingTaskInput(input)
+    await assertListingBatchDir(taskInput.batch_dir)
+    return withListingTaskStore((store) => store.createTask(taskInput))
+  })
   ipcMain.handle('listing:update-task-status', async (_event, input: unknown) => {
     const parsed = parseListingTaskStatusInput(input)
     return withListingTaskStore((store) =>
@@ -835,12 +838,13 @@ export function registerListingRunnerIpc() {
     }
     return { ok: true, data: { path: result.filePaths[0] } }
   })
-  ipcMain.handle('listing:scan-batch-dir', (_event, input: unknown) => {
+  ipcMain.handle('listing:scan-batch-dir', async (_event, input: unknown) => {
     if (!isRecord(input) || typeof input.batchDir !== 'string') {
       throw new AppErrorClass('HTTP_4XX', '上架批次扫描参数不正确', false, {
         kind: 'validation',
       })
     }
+    await assertListingBatchDir(input.batchDir)
     return loadBatchAsListingItems(input.batchDir, {
       template: listingTemplateByKey(input.templateKey),
     })
@@ -848,6 +852,10 @@ export function registerListingRunnerIpc() {
   ipcMain.handle('listing:list-status', async (_event, input: unknown) => {
     const listInput = parseListingStatusListInput(input)
     const workbenchRoot = await readWorkbenchRoot(readAppConfig)
+    await assertPathInsideWorkbench(workbenchRoot, listInput.batchDir, {
+      domain: 'listing',
+      label: '上架批次目录',
+    })
     const store = openWorkbenchListingStatusStore(workbenchRoot)
     try {
       return store.list(listInput)
@@ -861,6 +869,11 @@ export function registerListingRunnerIpc() {
         kind: 'validation',
       })
     }
+    const workbenchRoot = await readWorkbenchRoot(readAppConfig)
+    await assertPathInsideWorkbench(workbenchRoot, input.path, {
+      domain: 'visible-workbench',
+      label: '上架证据路径',
+    })
     const error = await electronShell().openPath(input.path)
     if (error) {
       return { ok: false, error: { code: 'OPEN_PATH_FAILED', message: error } }
@@ -869,6 +882,14 @@ export function registerListingRunnerIpc() {
   })
   ipcMain.handle('listing:run', async (_event, input: unknown) => {
     const runRequest = parseListingRunRequest(input)
+    await assertListingBatchDir(runRequest.config.batch_dir)
+    if (runRequest.config.evidence_dir) {
+      const workbenchRoot = await readWorkbenchRoot(readAppConfig)
+      await assertPathInsideWorkbench(workbenchRoot, runRequest.config.evidence_dir, {
+        domain: 'visible-workbench',
+        label: '上架证据目录',
+      })
+    }
     const taskId = runRequest.config.task_id ?? randomUUID()
     void listingRunner
       .runLocalListingBatch({ ...runRequest.config, task_id: taskId }, runRequest.items)
@@ -1186,6 +1207,14 @@ async function withListingTaskStore<T>(
   } finally {
     store.close()
   }
+}
+
+async function assertListingBatchDir(batchDir: string) {
+  const workbenchRoot = await readWorkbenchRoot(readAppConfig)
+  await assertPathInsideWorkbench(workbenchRoot, batchDir, {
+    domain: 'listing',
+    label: '上架批次目录',
+  })
 }
 
 function ensureListingStatusTable(db: Pick<SqliteDatabase, 'exec'>) {

@@ -20,7 +20,13 @@ export type PipelinePrintMode = 'local' | 'full'
 export type PipelinePromptMode = 'manual' | 'ai'
 export type PipelineMattingMode = 'comfyui' | 'mixed'
 export type PipelineRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
-export type PipelineStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
+export type PipelineStepStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'skipped'
+  | 'cancelled'
 export type PipelineStepKey = 'source' | 'extract' | 'matting' | 'detection' | 'photoshop' | 'title'
 
 export interface PipelinePromptConfig {
@@ -137,6 +143,11 @@ export interface PipelinePhotoshopConfig {
   maxRetries?: number
 }
 
+export interface PipelineTitleKeywordGroup {
+  prefix?: string | undefined
+  suffix?: string | undefined
+}
+
 export interface PipelineTitleConfig {
   enabled?: boolean
   platform: string
@@ -145,9 +156,8 @@ export interface PipelineTitleConfig {
   titleFileName?: string
   imageIndex?: number
   extraRequirement?: string
-  titlePrefix?: string
-  titleSuffix?: string
-  titleSeparator?: string
+  keywordGroups?: PipelineTitleKeywordGroup[]
+  keywordGroupSeparator?: string
   existingStrategy?: 'skip' | 'regenerate'
   maxRetries?: number
   concurrency?: number

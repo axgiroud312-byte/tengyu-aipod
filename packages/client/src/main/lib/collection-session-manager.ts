@@ -26,6 +26,7 @@ import {
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -196,6 +197,12 @@ export class CollectionSessionManager {
       `${config.platform}-${timestampSlug(this.now())}`,
     )
     const outputDir = config.output_dir ?? defaultOutputDir
+    if (config.output_dir) {
+      await assertPathInsideWorkbench(workbenchRoot, outputDir, {
+        domain: 'collection',
+        label: '采集输出目录',
+      })
+    }
     const session: CollectionSession = {
       id: sessionId,
       platform: config.platform,

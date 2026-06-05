@@ -69,6 +69,7 @@ import type { CustomerAuthState } from '../../main/lib/customer-auth'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
+  TitleKeywordGroup,
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
@@ -249,9 +250,10 @@ function MainWorkbench() {
   const [language, setLanguage] = useState('en')
   const [model, setModel] = useState('qwen3.6-flash')
   const [titleFileName, setTitleFileName] = useState('标题')
-  const [titlePrefix, setTitlePrefix] = useState('')
-  const [titleSuffix, setTitleSuffix] = useState('')
-  const [titleSeparator, setTitleSeparator] = useState(' ')
+  const [keywordGroups, setKeywordGroups] = useState<TitleKeywordGroup[]>([
+    { prefix: '', suffix: '' },
+  ])
+  const [keywordGroupSeparator, setKeywordGroupSeparator] = useState(' ')
   const [imageIndex, setImageIndex] = useState('1')
   const [extraRequirement, setExtraRequirement] = useState('')
   const [existingStrategy, setExistingStrategy] = useState<TitleExistingStrategy>('skip')
@@ -260,6 +262,7 @@ function MainWorkbench() {
   const [maxSize, setMaxSize] = useState('1024')
   const [scanResult, setScanResult] = useState<{
     skuCount: number
+    skuCodes: string[]
     existingTitles: Record<string, string>
   } | null>(null)
   const [progress, setProgress] = useState<TitleProgress | null>(null)
@@ -565,9 +568,8 @@ function MainWorkbench() {
     language,
     model,
     titleFileName,
-    titlePrefix,
-    titleSuffix,
-    titleSeparator,
+    keywordGroups,
+    keywordGroupSeparator,
     imageIndex,
     extraRequirement,
     existingStrategy,
@@ -601,14 +603,11 @@ function MainWorkbench() {
       case 'titleFileName':
         if (typeof value === 'string') setTitleFileName(value)
         return
-      case 'titlePrefix':
-        if (typeof value === 'string') setTitlePrefix(value)
+      case 'keywordGroups':
+        if (Array.isArray(value)) setKeywordGroups(value)
         return
-      case 'titleSuffix':
-        if (typeof value === 'string') setTitleSuffix(value)
-        return
-      case 'titleSeparator':
-        if (typeof value === 'string') setTitleSeparator(value)
+      case 'keywordGroupSeparator':
+        if (typeof value === 'string') setKeywordGroupSeparator(value)
         return
       case 'imageIndex':
         if (typeof value === 'string') setImageIndex(value)
@@ -674,9 +673,8 @@ function MainWorkbench() {
       platform,
       language,
       model,
-      titlePrefix,
-      titleSuffix,
-      titleSeparator,
+      keywordGroups,
+      keywordGroupSeparator,
       imageIndex: parsePositiveNumber(imageIndex, 1),
       existingStrategy,
       maxRetries: parseNonNegativeNumber(maxRetries, 2),

@@ -782,6 +782,39 @@ describe('CollectionClickService', () => {
     expect(db.records).toEqual([])
     expect(fs.files.has(savedPath)).toBe(false)
   })
+
+  it('rejects record deletion while a complete task is reading the collection folder', async () => {
+    const db = new FakeDb()
+    const { service, fs } = createService({ db })
+    const savedPath = skuImagePath()
+    fs.files.set(savedPath, Buffer.from('image-bytes'))
+    db.records.push([
+      'record-1',
+      'session-1',
+      'SKU-001',
+      'https://img.temu.com/a.jpg',
+      'https://www.temu.com/goods/1',
+      'https://www.temu.com/goods/1',
+      savedPath,
+      'success',
+      null,
+      11,
+      1000,
+    ])
+    const lock = collectionFolderLock.acquireRead(COLLECTION_TASK_DIR, {
+      kind: 'pipeline',
+      runId: 'run-1',
+    })
+
+    try {
+      await expect(service.deleteRecord('record-1')).rejects.toThrow('完整任务正在读取该采集目录')
+    } finally {
+      lock.release()
+    }
+
+    expect(db.records).toHaveLength(1)
+    expect(fs.files.has(savedPath)).toBe(true)
+  })
 })
 
 describe('collection manifest export', () => {

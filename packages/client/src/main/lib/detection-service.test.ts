@@ -847,4 +847,41 @@ describe('DetectionService', () => {
       source_path: sourcePath,
     })
   })
+
+  it('removes matting candidates when deleting the promoted detection result', async () => {
+    const sourcePath = join(
+      workbenchRoot,
+      '03-检测工作区',
+      'task-delete',
+      '无风险',
+      'pri-delete.png',
+    )
+    await createImage(sourcePath, 'pass-image')
+    const service = new DetectionService()
+    const dependencies = createSqliteDependencies()
+
+    await initializeDetectionSqlite(service, dependencies)
+    const db = dependencies.openDatabase(workbenchRoot)
+    try {
+      seedDetectionResult(db, {
+        artifactId: 'art-delete',
+        detectionId: 'det-delete',
+        taskId: 'task-delete',
+        printId: 'pri-delete',
+        sourcePath,
+      })
+    } finally {
+      db.close()
+    }
+
+    await expect(
+      service.promoteToMatting({ artifact_ids: ['art-delete'], mode: 'copy' }, dependencies),
+    ).resolves.toBe(1)
+    expect(readMattingCandidates(dependencies.openDatabase)).toHaveLength(1)
+
+    await expect(service.deleteResult({ artifact_id: 'art-delete' }, dependencies)).resolves.toBe(1)
+
+    expect(readMattingCandidates(dependencies.openDatabase)).toHaveLength(0)
+    await expect(stat(sourcePath)).rejects.toThrow()
+  })
 })

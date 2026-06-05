@@ -401,6 +401,7 @@ declare global {
         >
         scanBatchDir: (input: { batchDir: string; titleFileName?: string }) => Promise<{
           skuCount: number
+          skuCodes: string[]
           existingTitles: Record<string, string>
         }>
         run: (input: import('../../main/lib/title-service').TitleBatchConfig) => Promise<string>

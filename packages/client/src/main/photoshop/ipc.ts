@@ -10,6 +10,7 @@ import {
 import { type WebContents, dialog, ipcMain, shell } from 'electron'
 import { z } from 'zod'
 import { tempFileManager } from '../lib/temp-file-manager'
+import { assertPathInsideWorkbench } from '../lib/workbench-path-guard'
 import { readAppConfig } from '../onboarding'
 import { runBatch } from './multi-batch'
 import { scanPhotoshopPrintFolder } from './print-folder'
@@ -104,16 +105,32 @@ export function registerPhotoshopIpc(): void {
         issues: parsed.error.issues,
       })
     }
+    const config = await readAppConfig()
+    if (!config.workbench_root) {
+      throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+    }
+    await assertPathInsideWorkbench(config.workbench_root, parsed.data.path, {
+      domain: 'visible-workbench',
+      label: 'PS 打开路径',
+    })
     await shell.openPath(parsed.data.path)
     return { ok: true }
   })
-  ipcMain.handle('photoshop:scan-print-folder', (_event, input: unknown) => {
+  ipcMain.handle('photoshop:scan-print-folder', async (_event, input: unknown) => {
     const parsed = scanPrintFolderInputSchema.safeParse(input)
     if (!parsed.success) {
       throw new AppErrorClass('INVALID_INPUT', '印花文件夹不能为空', false, {
         issues: parsed.error.issues,
       })
     }
+    const config = await readAppConfig()
+    if (!config.workbench_root) {
+      throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+    }
+    await assertPathInsideWorkbench(config.workbench_root, parsed.data.folder, {
+      domain: 'generation',
+      label: '印花文件夹',
+    })
     return scanPhotoshopPrintFolder(parsed.data.folder)
   })
   ipcMain.handle('photoshop:scan-template', (_event, input: unknown) => {
@@ -132,6 +149,18 @@ export function registerPhotoshopIpc(): void {
         issues: parsed.error.issues,
       })
     }
+    const config = await readAppConfig()
+    if (!config.workbench_root) {
+      throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+    }
+    await assertPathInsideWorkbench(config.workbench_root, parsed.data.print_folder, {
+      domain: 'generation',
+      label: '印花文件夹',
+    })
+    await assertPathInsideWorkbench(config.workbench_root, parsed.data.output_root, {
+      domain: 'listing',
+      label: '套版输出目录',
+    })
     const scan = await scanPhotoshopPrintFolder(parsed.data.print_folder)
     if (scan.prints.length === 0) {
       throw new AppErrorClass('INVALID_INPUT', '印花文件夹内没有可套版图片', false, {

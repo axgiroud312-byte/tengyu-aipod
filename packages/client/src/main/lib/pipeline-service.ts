@@ -56,6 +56,7 @@ import { shouldPipelineDetectionAllow } from './pipeline-policy'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 import { type TitleBatchResult, titleService } from './title-service'
+import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
@@ -236,9 +237,15 @@ const pipelineRunConfigBaseSchema = z.object({
     titleFileName: z.string().optional(),
     imageIndex: z.number().optional(),
     extraRequirement: z.string().optional(),
-    titlePrefix: z.string().optional(),
-    titleSuffix: z.string().optional(),
-    titleSeparator: z.string().optional(),
+    keywordGroups: z
+      .array(
+        z.object({
+          prefix: z.string().optional(),
+          suffix: z.string().optional(),
+        }),
+      )
+      .optional(),
+    keywordGroupSeparator: z.string().optional(),
     existingStrategy: z.enum(['skip', 'regenerate']).optional(),
     maxRetries: z.number().optional(),
     concurrency: z.number().optional(),
@@ -903,6 +910,7 @@ export class PipelineService {
     const activePrintSkuLock = this.acquirePrintSkuLock(runId, parsedConfig)
     try {
       const workbenchRoot = await this.readWorkbenchRoot()
+      await this.assertRunConfigPaths(workbenchRoot, parsedConfig)
       const runConfig = await this.normalizeRunConfig(workbenchRoot, runId, parsedConfig)
       const db = openWorkbenchDatabase(workbenchRoot)
       const active: ActivePipelineRun = {
@@ -1085,6 +1093,41 @@ export class PipelineService {
         ...sourceWithoutUploads,
         referenceImagePaths,
       },
+    }
+  }
+
+  private async assertRunConfigPaths(workbenchRoot: string, config: PipelineRunConfig) {
+    if (config.source.mode === 'collection') {
+      await assertPathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
+        domain: 'collection',
+        label: '完整任务采集来源目录',
+      })
+    }
+    if (config.source.mode === 'existing_prints') {
+      await assertPathInsideWorkbench(workbenchRoot, config.source.printFolder, {
+        domain: 'generation',
+        label: '完整任务印花来源目录',
+      })
+    }
+    if (config.source.mode === 'img2img') {
+      if (config.source.sourceFolder) {
+        await assertPathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
+          domain: 'generation',
+          label: '完整任务图生图来源目录',
+        })
+      }
+      for (const referencePath of config.source.referenceImagePaths ?? []) {
+        await assertPathInsideWorkbench(workbenchRoot, referencePath, {
+          domain: 'local-image',
+          label: '完整任务图生图参考图',
+        })
+      }
+    }
+    if (config.photoshop.enabled && config.photoshop.outputRoot) {
+      await assertPathInsideWorkbench(workbenchRoot, config.photoshop.outputRoot, {
+        domain: 'listing',
+        label: '完整任务套版输出目录',
+      })
     }
   }
 
@@ -1360,7 +1403,7 @@ export class PipelineService {
           WHERE run_id = ? AND step_key = ?
         `,
       ).run(
-        active.cancelled ? 'failed' : 'failed',
+        active.cancelled ? 'cancelled' : 'failed',
         JSON.stringify({ message: appErrorMessage(error) }),
         Date.now(),
         Date.now(),
@@ -1368,9 +1411,9 @@ export class PipelineService {
         input.stepKey,
       )
       this.appendLog(input.runId, {
-        level: 'error',
+        level: active.cancelled ? 'warn' : 'error',
         step_key: input.stepKey,
-        message: `${input.label}失败`,
+        message: active.cancelled ? `${input.label}已取消` : `${input.label}失败`,
         details: { error: appErrorMessage(error) },
       })
       this.emitRunProgress(

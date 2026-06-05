@@ -30,8 +30,19 @@ import {
 import { skillCacheManager } from './skill-cache'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
+import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 export type ExistingTitleStrategy = 'skip' | 'regenerate'
+
+export type TitleKeywordGroup = {
+  prefix?: string | undefined
+  suffix?: string | undefined
+}
+
+export type TitleKeywordGroupAssignment = {
+  groupIndex: number
+  group: TitleKeywordGroup
+}
 
 export type TitleBatchConfig = {
   batchDir: string
@@ -41,9 +52,8 @@ export type TitleBatchConfig = {
   model: string
   imageIndex?: number | undefined
   extraRequirement?: string | undefined
-  titlePrefix?: string | undefined
-  titleSuffix?: string | undefined
-  titleSeparator?: string | undefined
+  keywordGroups?: TitleKeywordGroup[] | undefined
+  keywordGroupSeparator?: string | undefined
   existingStrategy?: ExistingTitleStrategy | undefined
   maxRetries?: number | undefined
   concurrency?: number | undefined
@@ -109,6 +119,7 @@ export type TitleTaskEvent =
 
 export type TitleScanResult = {
   skuCount: number
+  skuCodes: string[]
   existingTitles: Record<string, string>
 }
 
@@ -185,6 +196,10 @@ const rawTitlePreprocessSchema = z.object({
   format: z.enum(['jpg', 'png']).optional(),
   quality: z.number().optional(),
 })
+const titleKeywordGroupSchema = z.object({
+  prefix: z.string().optional(),
+  suffix: z.string().optional(),
+})
 const titlePreprocessSchema = rawTitlePreprocessSchema.transform(
   (preprocess): NonNullable<TitleBatchConfig['preprocess']> => {
     const result: NonNullable<TitleBatchConfig['preprocess']> = {}
@@ -211,9 +226,8 @@ const rawTitleBatchConfigSchema = z.object({
   model: z.string(),
   imageIndex: z.number().optional(),
   extraRequirement: z.string().optional(),
-  titlePrefix: z.string().optional(),
-  titleSuffix: z.string().optional(),
-  titleSeparator: z.string().optional(),
+  keywordGroups: z.array(titleKeywordGroupSchema).optional(),
+  keywordGroupSeparator: z.string().optional(),
   existingStrategy: z.enum(['skip', 'regenerate']).optional(),
   maxRetries: z.number().optional(),
   concurrency: z.number().optional(),
@@ -237,14 +251,11 @@ const titleBatchConfigSchema = rawTitleBatchConfigSchema.transform((config): Tit
   if (config.extraRequirement !== undefined) {
     result.extraRequirement = config.extraRequirement
   }
-  if (config.titlePrefix !== undefined) {
-    result.titlePrefix = config.titlePrefix
+  if (config.keywordGroups !== undefined) {
+    result.keywordGroups = config.keywordGroups
   }
-  if (config.titleSuffix !== undefined) {
-    result.titleSuffix = config.titleSuffix
-  }
-  if (config.titleSeparator !== undefined) {
-    result.titleSeparator = config.titleSeparator
+  if (config.keywordGroupSeparator !== undefined) {
+    result.keywordGroupSeparator = config.keywordGroupSeparator
   }
   if (config.existingStrategy !== undefined) {
     result.existingStrategy = config.existingStrategy
@@ -380,14 +391,64 @@ export function titleXlsxPath(batchDir: string, titleFileName?: string) {
   return join(batchDir, `${normalizeTitleFileBaseName(titleFileName)}.xlsx`)
 }
 
-export function joinTitleParts(
-  prefix: string | undefined,
+export function normalizeTitleKeywordGroups(groups?: TitleKeywordGroup[]) {
+  const normalized: TitleKeywordGroup[] = []
+  for (const group of groups ?? []) {
+    const prefix = group.prefix?.trim() ?? ''
+    const suffix = group.suffix?.trim() ?? ''
+    if (!prefix && !suffix) {
+      continue
+    }
+    const nextGroup: TitleKeywordGroup = {}
+    if (prefix) {
+      nextGroup.prefix = prefix
+    }
+    if (suffix) {
+      nextGroup.suffix = suffix
+    }
+    normalized.push(nextGroup)
+  }
+  return normalized
+}
+
+export function assignTitleKeywordGroups(skuCodes: string[], groups: TitleKeywordGroup[]) {
+  const assignments = new Map<string, TitleKeywordGroupAssignment>()
+  if (skuCodes.length === 0 || groups.length === 0) {
+    return assignments
+  }
+
+  const baseSize = Math.floor(skuCodes.length / groups.length)
+  const remainder = skuCodes.length % groups.length
+  let offset = 0
+
+  for (const [index, group] of groups.entries()) {
+    const groupSize = baseSize + (index < remainder ? 1 : 0)
+    for (let i = 0; i < groupSize; i += 1) {
+      const skuCode = skuCodes[offset + i]
+      if (skuCode) {
+        assignments.set(skuCode, { groupIndex: index + 1, group })
+      }
+    }
+    offset += groupSize
+  }
+
+  return assignments
+}
+
+export function joinTitleWithKeywordGroup(
   title: string,
-  suffix: string | undefined,
+  assignment: TitleKeywordGroupAssignment | undefined,
   separator: string | undefined,
 ) {
+  if (!assignment) {
+    return title.trim()
+  }
   const delimiter = separator === undefined ? ' ' : separator
-  return [prefix?.trim() ?? '', title.trim(), suffix?.trim() ?? '']
+  return [
+    assignment.group.prefix?.trim() ?? '',
+    title.trim(),
+    assignment.group.suffix?.trim() ?? '',
+  ]
     .filter((part) => part.length > 0)
     .join(delimiter)
 }
@@ -805,6 +866,7 @@ export class TitleService {
     const existingTitles = await readExistingTitles(titleXlsxPath(batchDir, titleFileName))
     return {
       skuCount: skuFolders.length,
+      skuCodes: skuFolders.map((folder) => folder.skuCode),
       existingTitles: Object.fromEntries(existingTitles),
     }
   }
@@ -923,6 +985,8 @@ export class TitleService {
           maxRetries: config.maxRetries ?? null,
           concurrency: config.concurrency ?? null,
           preprocess: config.preprocess ?? null,
+          keywordGroups: normalizeTitleKeywordGroups(config.keywordGroups),
+          keywordGroupSeparator: config.keywordGroupSeparator ?? ' ',
         },
       })
 
@@ -939,6 +1003,11 @@ export class TitleService {
       const existingStrategy = config.existingStrategy ?? 'skip'
       const skuFilter = config.skuCodes ? new Set(config.skuCodes) : null
       const allSkuFolders = await scanSkuFolders(config.batchDir)
+      const keywordGroups = normalizeTitleKeywordGroups(config.keywordGroups)
+      const keywordAssignments = assignTitleKeywordGroups(
+        allSkuFolders.map((folder) => folder.skuCode),
+        keywordGroups,
+      )
       const skuFolders = skuFilter
         ? allSkuFolders.filter((folder) => skuFilter.has(folder.skuCode))
         : allSkuFolders
@@ -1034,6 +1103,8 @@ export class TitleService {
           concurrency,
           imageIndex,
           pendingCount: pending.length,
+          keywordGroups,
+          keywordGroupSeparator: config.keywordGroupSeparator ?? ' ',
         },
       })
 
@@ -1053,6 +1124,7 @@ export class TitleService {
             workbenchRoot,
             preprocessPool: resolved.preprocessPool,
             diagnostics,
+            keywordGroup: keywordAssignments.get(skuFolder.skuCode),
           })
 
           results.push(result)
@@ -1158,6 +1230,7 @@ export class TitleService {
     workbenchRoot: string
     preprocessPool: Pick<SharpPreprocessPool, 'process'>
     diagnostics: DiagnosticLogWriter | null
+    keywordGroup: TitleKeywordGroupAssignment | undefined
   }): Promise<TitleSkuResult> {
     const selection = await getNthImageFromSkuFolder(input.skuFolder.path, input.imageIndex)
     if (!selection.imagePath) {
@@ -1192,6 +1265,7 @@ export class TitleService {
             path: selection.imagePath,
             name: basename(selection.imagePath),
           })),
+          keywordGroup: input.keywordGroup ?? null,
         },
       })
       let attempt = 0
@@ -1270,11 +1344,10 @@ export class TitleService {
             },
           })
 
-          const title = joinTitleParts(
-            input.config.titlePrefix,
+          const title = joinTitleWithKeywordGroup(
             parseTitle(response.text, input.config.language, input.config.platform),
-            input.config.titleSuffix,
-            input.config.titleSeparator,
+            input.keywordGroup,
+            input.config.keywordGroupSeparator,
           )
           if (!title) {
             await appendDiagnosticLog(input.diagnostics, {
@@ -1298,6 +1371,7 @@ export class TitleService {
             data: {
               rawText: response.text,
               title,
+              keywordGroup: input.keywordGroup ?? null,
             },
           })
           return title
@@ -1366,6 +1440,14 @@ function emitTitleCompleted(event: TitleTaskEvent) {
 }
 
 async function openPath(path: string) {
+  const config = await readAppConfig()
+  if (!config.workbench_root) {
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+  }
+  await assertPathInsideWorkbench(config.workbench_root, path, {
+    domain: 'visible-workbench',
+    label: '标题打开路径',
+  })
   const error = await shell.openPath(path)
   if (error) {
     return { ok: false, error: { code: 'OPEN_PATH_FAILED', message: error } }
@@ -1391,17 +1473,30 @@ export function registerTitleIpc() {
     }
     return { ok: true, data: { path: result.filePaths[0] } }
   })
-  ipcMain.handle('title:scan-batch-dir', (_event, input: unknown) => {
+  ipcMain.handle('title:scan-batch-dir', async (_event, input: unknown) => {
     const parsed = parseTitleIpcInput(titleScanBatchDirInputSchema, input, '标题扫描目录参数不正确')
+    const config = await readAppConfig()
+    if (!config.workbench_root) {
+      throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+    }
+    await assertPathInsideWorkbench(config.workbench_root, parsed.batchDir, {
+      domain: 'listing',
+      label: '标题批次目录',
+    })
     return titleService.scanBatchDir(parsed.batchDir, parsed.titleFileName)
   })
-  ipcMain.handle('title:run', (_event, input: unknown) =>
-    titleService.startBatch(
-      parseTitleIpcInput(titleBatchConfigSchema, input, '标题任务参数不正确'),
-      emitTitleProgress,
-      emitTitleCompleted,
-    ),
-  )
+  ipcMain.handle('title:run', async (_event, input: unknown) => {
+    const parsed = parseTitleIpcInput(titleBatchConfigSchema, input, '标题任务参数不正确')
+    const config = await readAppConfig()
+    if (!config.workbench_root) {
+      throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+    }
+    await assertPathInsideWorkbench(config.workbench_root, parsed.batchDir, {
+      domain: 'listing',
+      label: '标题批次目录',
+    })
+    return titleService.startBatch(parsed, emitTitleProgress, emitTitleCompleted)
+  })
   ipcMain.handle('title:cancel', (_event, input: unknown) => ({
     ok: titleService.cancelTask(
       parseTitleIpcInput(titleTaskIdInputSchema, input, '标题取消参数不正确').task_id,

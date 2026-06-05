@@ -558,6 +558,7 @@ const api = {
     scanBatchDir: (input: { batchDir: string; titleFileName?: string }) =>
       ipcRenderer.invoke('title:scan-batch-dir', input) as Promise<{
         skuCount: number
+        skuCodes: string[]
         existingTitles: Record<string, string>
       }>,
     run: (input: TitleBatchConfig) => ipcRenderer.invoke('title:run', input) as Promise<string>,

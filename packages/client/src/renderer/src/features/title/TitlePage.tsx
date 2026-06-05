@@ -11,6 +11,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   Select,
   SelectContent,
@@ -19,10 +20,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { FolderOpen, Loader2, Play, RotateCcw, ScanLine, Square } from 'lucide-react'
+import { FolderOpen, Loader2, Play, Plus, RotateCcw, ScanLine, Square, Trash2 } from 'lucide-react'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
+  TitleKeywordGroup,
   TitleProgress,
 } from '../../../../main/lib/title-service'
 
@@ -35,6 +37,7 @@ export type TitleOption = {
 
 export type TitleScanSummary = {
   skuCount: number
+  skuCodes: string[]
   existingTitles: Record<string, string>
 }
 
@@ -44,9 +47,8 @@ export type TitleFormState = {
   language: string
   model: string
   titleFileName: string
-  titlePrefix: string
-  titleSuffix: string
-  titleSeparator: string
+  keywordGroups: TitleKeywordGroup[]
+  keywordGroupSeparator: string
   imageIndex: string
   extraRequirement: string
   existingStrategy: TitleExistingStrategy
@@ -113,6 +115,49 @@ function statItems(state: TitlePageState, existingTitleCount: number, pendingCou
   ]
 }
 
+function normalizeKeywordGroups(groups: TitleKeywordGroup[]) {
+  const normalized: TitleKeywordGroup[] = []
+  for (const group of groups) {
+    const prefix = group.prefix?.trim() ?? ''
+    const suffix = group.suffix?.trim() ?? ''
+    if (!prefix && !suffix) {
+      continue
+    }
+    const nextGroup: TitleKeywordGroup = {}
+    if (prefix) {
+      nextGroup.prefix = prefix
+    }
+    if (suffix) {
+      nextGroup.suffix = suffix
+    }
+    normalized.push(nextGroup)
+  }
+  return normalized
+}
+
+function buildKeywordGroupPreview(skuCodes: string[], groups: TitleKeywordGroup[]) {
+  const normalized = normalizeKeywordGroups(groups)
+  if (skuCodes.length === 0 || normalized.length === 0) {
+    return []
+  }
+
+  const baseSize = Math.floor(skuCodes.length / normalized.length)
+  const remainder = skuCodes.length % normalized.length
+  let offset = 0
+
+  return normalized.map((group, index) => {
+    const groupSize = baseSize + (index < remainder ? 1 : 0)
+    const groupSkuCodes = skuCodes.slice(offset, offset + groupSize)
+    offset += groupSize
+    return {
+      groupIndex: index + 1,
+      prefix: group.prefix ?? '',
+      suffix: group.suffix ?? '',
+      skuCodes: groupSkuCodes,
+    }
+  })
+}
+
 export function TitlePage({
   platforms,
   languages,
@@ -148,6 +193,26 @@ export function TitlePage({
   const failedRows = state.result?.results.filter((item) => item.status === 'failed') ?? []
   const progressStatusText = titleProgressText(state, isRunning)
   const batchResult = state.result
+  const keywordGroupPreview = state.scanResult
+    ? buildKeywordGroupPreview(state.scanResult.skuCodes, state.keywordGroups)
+    : []
+  const activeKeywordGroupCount = keywordGroupPreview.length
+
+  const updateKeywordGroup = (index: number, key: keyof TitleKeywordGroup, value: string) => {
+    const nextGroups = state.keywordGroups.map((group, groupIndex) =>
+      groupIndex === index ? { ...group, [key]: value } : group,
+    )
+    onStateChange('keywordGroups', nextGroups)
+  }
+
+  const addKeywordGroup = () => {
+    onStateChange('keywordGroups', [...state.keywordGroups, { prefix: '', suffix: '' }])
+  }
+
+  const removeKeywordGroup = (index: number) => {
+    const nextGroups = state.keywordGroups.filter((_, groupIndex) => groupIndex !== index)
+    onStateChange('keywordGroups', nextGroups.length ? nextGroups : [{ prefix: '', suffix: '' }])
+  }
 
   return (
     <div className="space-y-6">
@@ -315,38 +380,110 @@ export function TitlePage({
                         />
                       </div>
                       <div className="space-y-2">
-                        <label className="text-sm font-medium" htmlFor="title-prefix">
-                          前缀
+                        <label className="text-sm font-medium" htmlFor="title-keyword-separator">
+                          关键词分隔符
                         </label>
                         <Input
-                          id="title-prefix"
-                          onChange={(event) => onStateChange('titlePrefix', event.target.value)}
-                          placeholder="默认不填"
-                          value={state.titlePrefix}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium" htmlFor="title-suffix">
-                          后缀
-                        </label>
-                        <Input
-                          id="title-suffix"
-                          onChange={(event) => onStateChange('titleSuffix', event.target.value)}
-                          placeholder="默认不填"
-                          value={state.titleSuffix}
-                        />
-                      </div>
-                      <div className="space-y-2">
-                        <label className="text-sm font-medium" htmlFor="title-separator">
-                          分隔符
-                        </label>
-                        <Input
-                          id="title-separator"
-                          onChange={(event) => onStateChange('titleSeparator', event.target.value)}
+                          id="title-keyword-separator"
+                          onChange={(event) =>
+                            onStateChange('keywordGroupSeparator', event.target.value)
+                          }
                           placeholder="空格"
-                          value={state.titleSeparator}
+                          value={state.keywordGroupSeparator}
                         />
                       </div>
+                    </div>
+
+                    <div className="mt-4 rounded-md border p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <div className="text-sm font-medium">标题关键词组</div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            有效组会按货号顺序平均分配，空行不会参与分组。
+                          </p>
+                        </div>
+                        <Button onClick={addKeywordGroup} type="button" variant="secondary">
+                          <Plus className="mr-2 h-4 w-4" />
+                          新增组
+                        </Button>
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        {state.keywordGroups.map((group, index) => (
+                          <div
+                            className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
+                            key={`${group.prefix ?? ''}:${group.suffix ?? ''}`}
+                          >
+                            <div className="flex items-center text-sm font-medium text-muted-foreground">
+                              第 {index + 1} 组
+                            </div>
+                            <Input
+                              aria-label={`第 ${index + 1} 组前缀`}
+                              onChange={(event) =>
+                                updateKeywordGroup(index, 'prefix', event.target.value)
+                              }
+                              placeholder="前缀关键词"
+                              value={group.prefix ?? ''}
+                            />
+                            <Input
+                              aria-label={`第 ${index + 1} 组后缀`}
+                              onChange={(event) =>
+                                updateKeywordGroup(index, 'suffix', event.target.value)
+                              }
+                              placeholder="后缀关键词"
+                              value={group.suffix ?? ''}
+                            />
+                            <Button
+                              aria-label={`删除第 ${index + 1} 组`}
+                              className="h-10 w-10 p-0"
+                              onClick={() => removeKeywordGroup(index)}
+                              title={`删除第 ${index + 1} 组`}
+                              type="button"
+                              variant="ghost"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {state.scanResult && activeKeywordGroupCount > 0 ? (
+                        <div className="mt-4 rounded-md border bg-muted/30">
+                          <div className="border-b px-3 py-2 text-sm font-medium">
+                            分组预览（{state.scanResult.skuCount} 个货号 / {activeKeywordGroupCount}{' '}
+                            组）
+                          </div>
+                          <Accordion type="multiple">
+                            {keywordGroupPreview.map((group) => (
+                              <AccordionItem
+                                className="border-b px-3 last:border-b-0"
+                                key={group.groupIndex}
+                                value={`group-${group.groupIndex}`}
+                              >
+                                <AccordionTrigger className="py-3 text-sm">
+                                  第 {group.groupIndex} 组 · {group.skuCodes.length} 个货号
+                                  {group.prefix ? ` · 前缀：${group.prefix}` : ''}
+                                  {group.suffix ? ` · 后缀：${group.suffix}` : ''}
+                                </AccordionTrigger>
+                                <AccordionContent>
+                                  <ScrollArea className="h-48 rounded-md border bg-background">
+                                    <div className="grid gap-1 p-2 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                                      {group.skuCodes.map((skuCode) => (
+                                        <div
+                                          className="rounded-sm px-2 py-1 font-mono text-muted-foreground"
+                                          key={skuCode}
+                                        >
+                                          {skuCode}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </ScrollArea>
+                                </AccordionContent>
+                              </AccordionItem>
+                            ))}
+                          </Accordion>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="mt-4 grid gap-4 md:grid-cols-2">

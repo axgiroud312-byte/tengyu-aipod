@@ -1219,6 +1219,7 @@ export class DetectionService {
       for (const row of rows) {
         await rm(row.outputPath, { force: true }).catch(() => null)
       }
+      db.prepare('DELETE FROM matting_candidates WHERE artifact_id = ?').run(input.artifact_id)
       const info = db
         .prepare('DELETE FROM detection_results WHERE artifact_id = ?')
         .run(input.artifact_id) as { changes: number | bigint }

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { extname, join } from 'node:path'
+import { dirname, extname, join } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { Page } from 'playwright'
@@ -394,6 +394,9 @@ export class CollectionClickService {
         })
       }
       savedPath = record.savedPath ?? null
+      if (savedPath) {
+        collectionFolderLock.assertWritable(dirname(savedPath))
+      }
       deleteCollectionRecord(db, recordId)
     } finally {
       db.close()

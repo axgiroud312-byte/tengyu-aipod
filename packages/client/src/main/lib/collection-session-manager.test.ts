@@ -481,6 +481,24 @@ describe('CollectionSessionManager', () => {
     ])
   })
 
+  it('rejects custom output directories outside the collection workspace', async () => {
+    const { manager, cdp } = createManager()
+
+    await expect(
+      manager.startSession({
+        platform: 'temu',
+        profile_id: 'profile-1',
+        mode: 'click',
+        output_dir: '/tmp/outside-collection',
+      }),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      details: { kind: 'path_outside_workbench' },
+    })
+
+    expect(cdp.connectToProfile).not.toHaveBeenCalled()
+  })
+
   it('rejects a second active session', async () => {
     const { manager } = createManager()
     await manager.startSession({ platform: 'temu', profile_id: 'profile-1', mode: 'click' })

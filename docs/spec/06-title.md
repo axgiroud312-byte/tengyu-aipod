@@ -17,7 +17,8 @@
 | 标题文件名 | text | ✅ | 标题 | 写入 `{标题文件名}.xlsx`，用户可自定义 |
 | 取第几张图 | number | ✅ | 1 | 默认第 1 张 |
 | 标题额外要求 | textarea | ❌ | - | "强调原创设计，含 vintage 关键词" |
-| 标题前缀 / 后缀 / 分隔符 | text | ❌ | - | 生成标题后拼接，用于批量加固定词 |
+| 标题关键词组 | table | ❌ | - | 每组填前缀 / 后缀，按货号顺序平均分组后拼接 |
+| 关键词分隔符 | text | ❌ | 空格 | 组前缀、AI 标题、组后缀之间的统一分隔符 |
 | 已有标题策略 | radio | ✅ | 跳过 | 跳过 / 重新生成 |
 | 失败重试次数 | number | ✅ | 2 | 0-5 |
 
@@ -141,6 +142,8 @@ function parseTitle(text: string, language: string): string {
   ↓
 读已有 `{标题文件名}.xlsx`（默认 `标题.xlsx`，如存在）
   ↓
+按全部货号自然排序，把有效关键词组平均分配到货号
+  ↓
 对每个货号：
   ├─ "跳过模式" + 已有标题 → 跳过
   ├─ "重新生成" → 处理
@@ -155,7 +158,7 @@ function parseTitle(text: string, language: string): string {
   ④ 拉 skill（按 platform+language 匹配）
   ⑤ 注入用户的 extraRequirement → user message
   ⑥ 调阿里云百炼 chat.completions
-  ⑦ 解析标题 → 截断到平台长度 → 拼接前缀/后缀 → 保存
+  ⑦ 解析标题 → 截断到平台长度 → 拼接所属组前缀/后缀 → 保存
   ⑧ 失败 → 重试
   ↓
 全部完成 → 写 `{标题文件名}.xlsx`
@@ -173,6 +176,16 @@ UI 显示 ✅ N 成功 / ⚠️ M 失败
 - 已有标题策略沿用标题模块配置，首版默认跳过已有标题。
 - 启用标题生成时，标题生成完成后完整任务结束；未启用时完整任务在 PS 套版后结束。
 - 上架仍由上架模块单独读取 `04-上架工作区`。
+
+### 4.1.2 标题关键词组
+
+- 有效组 = 前缀或后缀至少一个非空的行；空行不参与分组。
+- 没有有效组时，只保存 AI 生成标题。
+- 分组基于扫描到的全部货号文件夹，使用自然排序；已有标题被跳过时，也不改变其余货号的组别。
+- 货号数量不能被组数整除时，前几组各多 1 个。例：1000 个货号 / 6 组 → 167、167、167、167、166、166。
+- 最终标题 = `组前缀 + AI 标题 + 组后缀`，三段之间使用统一关键词分隔符，默认空格。
+- 关键词只做最终拼接，不写入 AI prompt；拼接后不新增整体长度处理。
+- `标题.xlsx` 仍只写 A 列货号、B 列标题，不额外写组号列。
 
 ### 4.2 取第 N 张图的逻辑
 
@@ -347,7 +360,12 @@ UI 上若失败：提示关闭标题 xlsx 后重试。
 │                                                       │
 │ ⑥ 取第几张图：[1] (默认 1)                             │
 │ 标题名称：[标题]                                       │
-│ 前缀：[可选]  后缀：[可选]  分隔符：[空格]               │
+│ 关键词分隔符：[空格]                                    │
+│ 标题关键词组：                                          │
+│   第 1 组  前缀：[...]  后缀：[...]  [删除]              │
+│   第 2 组  前缀：[...]  后缀：[...]  [删除]              │
+│   [新增组]                                              │
+│ 分组预览：第 1 组 / 167 个货号 / 完整货号列表            │
 │                                                       │
 │ 已有标题策略：● 跳过  ○ 重新生成                        │
 │ 失败重试：[2] 次                                       │
@@ -428,7 +446,7 @@ CREATE TABLE skus (
 'title:list-languages'                → LanguageOption[]
 'title:list-models'                   → ModelOption[]
 'title:choose-batch-dir'              → { ok: true, data: { path } } | { ok: false, error }
-'title:scan-batch-dir'                → { batchDir, titleFileName? } → { skuCount, existingTitles: Record<string, string> }
+'title:scan-batch-dir'                → { batchDir, titleFileName? } → { skuCount, skuCodes: string[], existingTitles: Record<string, string> }
 'title:run'                            → {
                                           batchDir: string,
                                           titleFileName?: string,
@@ -437,9 +455,8 @@ CREATE TABLE skus (
                                           model: string,
                                           imageIndex: number,
                                           extraRequirement?: string,
-                                          titlePrefix?: string,
-                                          titleSuffix?: string,
-                                          titleSeparator?: string,
+                                          keywordGroups?: Array<{ prefix?: string, suffix?: string }>,
+                                          keywordGroupSeparator?: string,
                                           existingStrategy: 'skip' | 'regenerate',
                                           maxRetries: number,
                                           concurrency: number,
@@ -506,5 +523,5 @@ function estimateTitleCost(
 - xlsx 被锁时的错误处理
 - 通用解析器对 LLM 各种输出的兜底
 - 长标题截断
-- 自定义标题文件名、前缀、后缀、分隔符
+- 自定义标题文件名、关键词组平均分配、统一分隔符
 - 取消任务和重试失败 SKU
