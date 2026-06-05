@@ -4,8 +4,17 @@ export function defaultPipelineMattingEnabled(printMode: PipelineRunConfig['prin
   return printMode === 'local'
 }
 
-export function shouldPipelineDetectionAllow(riskLevel: 'pass' | 'review' | 'block') {
-  return riskLevel !== 'block'
+export function shouldPipelineDetectionAllow(
+  riskLevel: 'pass' | 'review' | 'block',
+  allowReview = true,
+) {
+  if (riskLevel === 'pass') {
+    return true
+  }
+  if (riskLevel === 'review') {
+    return allowReview
+  }
+  return false
 }
 
 export function plannedPipelineSteps(config: PipelineRunConfig): PipelineStepKey[] {

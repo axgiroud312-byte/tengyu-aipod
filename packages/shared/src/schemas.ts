@@ -1,6 +1,12 @@
 import { z } from 'zod'
 
-export const SkuCodeSchema = z.string().min(1).brand<'SkuCode'>()
+const WINDOWS_RESERVED_SKU_NAMES = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i
+
+export const SkuCodeSchema = z
+  .string()
+  .regex(/^[A-Za-z0-9_-]{1,60}$/)
+  .refine((value) => !WINDOWS_RESERVED_SKU_NAMES.test(value))
+  .brand<'SkuCode'>()
 export const PrintIdSchema = z
   .string()
   .regex(/^pri_[A-Za-z0-9_-]+$/)

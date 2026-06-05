@@ -50,6 +50,12 @@ describe('pipeline policy', () => {
     expect(shouldPipelineDetectionAllow('block')).toBe(false)
   })
 
+  it('can block review detection results when the pipeline uses strict pass rule', () => {
+    expect(shouldPipelineDetectionAllow('pass', false)).toBe(true)
+    expect(shouldPipelineDetectionAllow('review', false)).toBe(false)
+    expect(shouldPipelineDetectionAllow('block', false)).toBe(false)
+  })
+
   it('plans extraction only for collection sources', () => {
     expect(
       plannedPipelineSteps(

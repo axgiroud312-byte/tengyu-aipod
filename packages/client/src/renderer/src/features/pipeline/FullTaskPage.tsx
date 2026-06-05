@@ -1,4 +1,3 @@
-import { DetectionSettingsPanel } from '@/components/detection-settings-panel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -15,18 +14,19 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import type { TitleExistingStrategy } from '@/features/title/TitlePage'
-import type {
-  PipelinePrintMode,
-  PipelineProgress,
-  PipelinePromptConfig,
-  PipelinePromptMode,
-  PipelineRunConfig,
-  PipelineRunRecord,
-  PipelineSourceMode,
-  PipelineStepStatus,
-  SkillSummary,
+import {
+  type PipelinePreviewImage,
+  type PipelinePrintMode,
+  type PipelineProgress,
+  type PipelinePromptConfig,
+  type PipelinePromptMode,
+  type PipelineRunConfig,
+  type PipelineRunRecord,
+  type PipelineSourceMode,
+  type SkillSummary,
+  SkuCodeSchema,
 } from '@tengyu-aipod/shared'
-import { FolderOpen, Play, RefreshCw, Square, WandSparkles } from 'lucide-react'
+import { FolderOpen, Play, RefreshCw, Settings2, Square, WandSparkles } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DetectionConfig } from '../../../../main/lib/detection-config'
@@ -38,8 +38,13 @@ type Option = {
 
 type TaskSourceMode = Extract<PipelineSourceMode, 'collection' | 'txt2img' | 'img2img'>
 type ExtractProvider = 'grsai' | 'comfyui-chenyu'
+type Img2imgReferenceMode = 'layout' | 'style' | 'layout-style' | 'manual'
+type DetectionPassRule = 'allow-review' | 'pass-only'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
+type GenerationImageSource = Awaited<
+  ReturnType<typeof window.api.generation.scanImageFolder>
+>[number]
 
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
 type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
@@ -98,21 +103,34 @@ const sourceModeOptions: Array<{ key: TaskSourceMode; label: string }> = [
   { key: 'img2img', label: '图生图' },
 ]
 
-const statusLabels: Record<PipelineStepStatus, string> = {
-  pending: '等待',
-  running: '运行中',
-  completed: '完成',
-  failed: '失败',
-  skipped: '跳过',
-}
-
-const statusTone: Record<PipelineStepStatus, string> = {
-  pending: 'border-muted bg-muted/30 text-muted-foreground',
-  running: 'border-blue-200 bg-blue-50 text-blue-800',
-  completed: 'border-emerald-200 bg-emerald-50 text-emerald-800',
-  failed: 'border-red-200 bg-red-50 text-red-800',
-  skipped: 'border-slate-200 bg-slate-50 text-slate-700',
-}
+const img2imgReferenceModes: Array<{
+  key: Img2imgReferenceMode
+  label: string
+  instruction: string
+}> = [
+  {
+    key: 'layout',
+    label: '参考构图',
+    instruction:
+      'Use only the layout structure from the reference image. Do not copy subject matter.',
+  },
+  {
+    key: 'style',
+    label: '参考风格',
+    instruction: 'Use only the art style from the reference image. Create new content.',
+  },
+  {
+    key: 'layout-style',
+    label: '构图+风格',
+    instruction:
+      'Use both layout and art style from the reference image while creating a new motif.',
+  },
+  {
+    key: 'manual',
+    label: '自己写',
+    instruction: '',
+  },
+]
 
 function Field({
   children,
@@ -233,13 +251,301 @@ function skillInCategories(skill: SkillSummary, categories: readonly string[]) {
   return categories.includes(skill.category ?? '')
 }
 
+function localImageUrl(path: string) {
+  return `tengyu-local-image://image/${encodeURIComponent(path)}`
+}
+
+function fileUrlLocalPath(url: string) {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'file:') {
+      return null
+    }
+    const path = decodeURIComponent(parsed.pathname)
+    return /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path
+  } catch {
+    return null
+  }
+}
+
+function pipelinePreviewSrc(image: PipelinePreviewImage) {
+  const localPath = image.local_path ?? fileUrlLocalPath(image.url)
+  return localPath ? localImageUrl(localPath) : image.url
+}
+
+function previewTitleForSource(
+  sourceMode: TaskSourceMode,
+  currentStep: PipelineProgress['current_step'],
+) {
+  if (currentStep === 'extract') {
+    return '提取结果'
+  }
+  if (currentStep === 'matting') {
+    return '抠图结果'
+  }
+  if (currentStep === 'detection') {
+    return '检测后放行'
+  }
+  if (currentStep === 'photoshop') {
+    return '套版执行'
+  }
+  if (currentStep === 'title') {
+    return '标题生成'
+  }
+  if (sourceMode === 'collection') {
+    return '采集来源'
+  }
+  return sourceMode === 'txt2img' ? '文生图预览' : '图生图预览'
+}
+
+function compactPath(value: string) {
+  return value.split(/[\\/]/).filter(Boolean).slice(-3).join(' / ') || value
+}
+
+function promptPreviewLines(
+  promptMode: PipelinePromptMode,
+  manualPrompts: string,
+  requirement: string,
+) {
+  if (promptMode === 'manual') {
+    return splitLines(manualPrompts)
+  }
+  return requirement.trim() ? [requirement.trim()] : []
+}
+
+function AdvancedDisclosure({
+  children,
+  summary,
+}: {
+  children: ReactNode
+  summary: string
+}) {
+  return (
+    <details className="rounded-md border bg-background px-3 py-2 text-sm">
+      <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
+        <Settings2 className="size-4" />
+        {summary}
+      </summary>
+      <div className="mt-4">{children}</div>
+    </details>
+  )
+}
+
+function SourceImagePreviewGrid({
+  images,
+  title,
+}: {
+  images: GenerationImageSource[]
+  title: string
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <span className="text-xs tabular-nums text-muted-foreground">{images.length} 张</span>
+      </div>
+      {images.length ? (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {images.slice(0, 12).map((image) => (
+            <div className="min-w-0 rounded-md border bg-muted/30 p-2" key={image.path}>
+              <img
+                alt={image.name}
+                className="aspect-square w-full rounded-sm object-cover"
+                src={localImageUrl(image.path)}
+              />
+              <span className="mt-2 block truncate text-xs font-medium">{image.name}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+          选择文件夹后显示图片
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PipelineImagePreviewGrid({ images }: { images: PipelinePreviewImage[] }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">运行产物</h3>
+        <span className="text-xs tabular-nums text-muted-foreground">{images.length} 张</span>
+      </div>
+      {images.length ? (
+        <div className="mt-3 grid grid-cols-2 gap-2">
+          {images.slice(0, 12).map((image, index) => (
+            <div
+              className="min-w-0 rounded-md border bg-muted/30 p-2"
+              key={image.local_path ?? image.url}
+            >
+              <img
+                alt={`产物 ${index + 1}`}
+                className="aspect-square w-full rounded-sm object-cover"
+                src={pipelinePreviewSrc(image)}
+              />
+              <span className="mt-2 block truncate text-xs font-medium">
+                {image.print_id ?? image.artifact_id ?? `产物 ${index + 1}`}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+          启动后逐张显示生成结果
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PromptPreview({
+  lines,
+  modeLabel,
+}: {
+  lines: string[]
+  modeLabel: string
+}) {
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="text-sm font-semibold">提示词</h3>
+        <span className="text-xs text-muted-foreground">{modeLabel}</span>
+      </div>
+      {lines.length ? (
+        <div className="mt-3 space-y-2">
+          {lines.slice(0, 6).map((line, index) => (
+            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" key={line}>
+              <div className="mb-1 text-xs tabular-nums text-muted-foreground">
+                {String(index + 1).padStart(2, '0')}
+              </div>
+              <p className="line-clamp-3 text-pretty">{line}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-3 rounded-md bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
+          填写提示词或印花要求后显示
+        </div>
+      )}
+    </div>
+  )
+}
+
+function PipelineEffectPreview({
+  currentStep,
+  message,
+  previewImages,
+  progress,
+  promptLines,
+  promptMode,
+  sourceFolder,
+  sourceLoading,
+  sourceError,
+  sourceImages,
+  sourceMode,
+}: {
+  currentStep: PipelineProgress['current_step']
+  message: string
+  previewImages: PipelinePreviewImage[]
+  progress: PipelineProgress | null
+  promptLines: string[]
+  promptMode: PipelinePromptMode
+  sourceFolder: string
+  sourceLoading: boolean
+  sourceError: string | null
+  sourceImages: GenerationImageSource[]
+  sourceMode: TaskSourceMode
+}) {
+  const showPrompt = sourceMode === 'txt2img' || sourceMode === 'img2img'
+  const title = previewTitleForSource(sourceMode, currentStep)
+  return (
+    <div className="space-y-4 xl:sticky xl:top-4">
+      <div className="rounded-md border bg-background p-4 shadow-sm">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-sm font-medium text-muted-foreground">实际效果</p>
+            <h2 className="mt-1 text-lg font-semibold text-balance">{title}</h2>
+          </div>
+          <Badge variant="secondary">{currentStep ?? '配置中'}</Badge>
+        </div>
+        <p className="mt-2 text-sm text-pretty text-muted-foreground">{message}</p>
+
+        <div className="mt-4 space-y-5">
+          {showPrompt ? (
+            <PromptPreview
+              lines={promptLines}
+              modeLabel={promptMode === 'manual' ? '手写' : 'AI 生成'}
+            />
+          ) : null}
+
+          {sourceMode === 'collection' || sourceMode === 'img2img' ? (
+            <div>
+              <SourceImagePreviewGrid
+                images={sourceImages}
+                title={sourceMode === 'img2img' ? '参考图' : '采集图'}
+              />
+              {sourceLoading ? (
+                <p className="mt-2 text-xs text-muted-foreground">正在检索图片...</p>
+              ) : null}
+              {sourceError ? <p className="mt-2 text-xs text-red-600">{sourceError}</p> : null}
+            </div>
+          ) : null}
+
+          <PipelineImagePreviewGrid images={previewImages} />
+        </div>
+      </div>
+
+      <div className="rounded-md border bg-background p-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="text-sm font-semibold">运行摘要</h3>
+          <span className="text-xs text-muted-foreground">{progress?.status ?? '未启动'}</span>
+        </div>
+        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">印花</div>
+            <div className="mt-1 text-lg font-semibold tabular-nums">
+              {progress?.stats.prints ?? 0}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">疑似放行</div>
+            <div className="mt-1 text-lg font-semibold tabular-nums">
+              {progress?.stats.detectionReview ?? 0}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">高风险拦截</div>
+            <div className="mt-1 text-lg font-semibold tabular-nums">
+              {progress?.stats.detectionBlock ?? 0}
+            </div>
+          </div>
+          <div className="rounded-md border p-3">
+            <div className="text-xs text-muted-foreground">标题成功</div>
+            <div className="mt-1 text-lg font-semibold tabular-nums">
+              {progress?.stats.titleSucceeded ?? 0}
+            </div>
+          </div>
+        </div>
+        {sourceFolder ? (
+          <p className="mt-3 truncate text-xs text-muted-foreground">{compactPath(sourceFolder)}</p>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function FullTaskPage() {
   const [name, setName] = useState('')
+  const [printSkuCode, setPrintSkuCode] = useState('')
   const [sourceMode, setSourceMode] = useState<TaskSourceMode>('collection')
   const [printMode, setPrintMode] = useState<PipelinePrintMode>('local')
   const [sourceFolder, setSourceFolder] = useState('')
   const [extractProvider, setExtractProvider] = useState<ExtractProvider>('grsai')
   const [promptMode, setPromptMode] = useState<PipelinePromptMode>('manual')
+  const [img2imgReferenceMode, setImg2imgReferenceMode] =
+    useState<Img2imgReferenceMode>('layout-style')
   const [manualPrompts, setManualPrompts] = useState('')
   const [promptRequirement, setPromptRequirement] = useState('')
   const [promptCount, setPromptCount] = useState('5')
@@ -265,6 +571,7 @@ export function FullTaskPage() {
   const [outputRoot, setOutputRoot] = useState('')
   const [detectionEnabled, setDetectionEnabled] = useState(true)
   const [detectionConfig, setDetectionConfig] = useState<DetectionConfig | null>(null)
+  const [detectionPassRule, setDetectionPassRule] = useState<DetectionPassRule>('allow-review')
   const [detectionCompression, setDetectionCompression] = useState(true)
   const [titlePlatform, setTitlePlatform] = useState('temu')
   const [titleLanguage, setTitleLanguage] = useState('en')
@@ -285,6 +592,10 @@ export function FullTaskPage() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
+  const [sourcePreviewImages, setSourcePreviewImages] = useState<GenerationImageSource[]>([])
+  const [sourcePreviewLoading, setSourcePreviewLoading] = useState(false)
+  const [sourcePreviewError, setSourcePreviewError] = useState<string | null>(null)
+  const [pipelinePreviewImages, setPipelinePreviewImages] = useState<PipelinePreviewImage[]>([])
 
   const [generationSettings, setGenerationSettings] = useState<GenerationSettingsSnapshot | null>(
     null,
@@ -352,6 +663,11 @@ export function FullTaskPage() {
     { key: 'manual', label: '手写提示词' },
     { key: 'ai', label: 'AI 生成提示词' },
   ]
+  const selectedImg2imgReferenceMode =
+    img2imgReferenceModes.find((item) => item.key === img2imgReferenceMode) ??
+    img2imgReferenceModes[0]
+  const promptLines = promptPreviewLines(promptMode, manualPrompts, promptRequirement)
+  const workflowPreviewImages = progress?.preview_images ?? pipelinePreviewImages
   const sourceBadgeLabel =
     sourceMode === 'collection'
       ? '采集 + 提取'
@@ -363,6 +679,12 @@ export function FullTaskPage() {
     sourceMode === 'img2img' ? '选择参考图文件夹' : '选择采集图片文件夹'
   const validationIssues = useMemo(() => {
     const issues: string[] = []
+    const normalizedPrintSkuCode = printSkuCode.trim()
+    if (!normalizedPrintSkuCode) {
+      issues.push('请先填写印花货号')
+    } else if (!SkuCodeSchema.safeParse(normalizedPrintSkuCode).success) {
+      issues.push('印花货号只能使用英文、数字、短横线和下划线，长度 1-60')
+    }
     if (templatePaths.length === 0) {
       issues.push('请先选择 PSD 模板')
     }
@@ -447,6 +769,7 @@ export function FullTaskPage() {
     promptRequirement,
     promptSkillId,
     promptSkillOptions.length,
+    printSkuCode,
     runningInstances.length,
     sourceFolder,
     sourceMode,
@@ -458,17 +781,7 @@ export function FullTaskPage() {
   const canStart = !running && !isMac && validationIssues.length === 0
 
   const refreshOptions = useCallback(async () => {
-    const [
-      skills,
-      nextExtractWorkflows,
-      nextMattingWorkflows,
-      nextInstances,
-      nextPlatforms,
-      nextLanguages,
-      nextTitleModels,
-      nextGenerationSettings,
-      runs,
-    ] = await Promise.all([
+    const results = await Promise.allSettled([
       window.api.skill.list({ module: 'generation' }),
       window.api.generation.listComfyuiExtractWorkflows(),
       window.api.generation.listComfyuiMattingWorkflows(),
@@ -478,7 +791,41 @@ export function FullTaskPage() {
       window.api.title.listModels(),
       window.api.generationSettings.get(),
       window.api.pipeline.listRuns(),
+      window.api.detection.getConfig(),
     ])
+    const failed = results
+      .map((result, index) => ({ result, index }))
+      .filter(
+        (item): item is { result: PromiseRejectedResult; index: number } =>
+          item.result.status === 'rejected',
+      )
+    const errorLabels = [
+      'Skill',
+      '提取工作流',
+      '抠图工作流',
+      '晨羽实例',
+      '标题平台',
+      '标题语言',
+      '标题模型',
+      '生图设置',
+      '最近任务',
+      '检测配置',
+    ]
+
+    if (failed.length) {
+      setError(`部分配置加载失败：${failed.map((item) => errorLabels[item.index]).join('、')}`)
+    }
+
+    const skills = results[0].status === 'fulfilled' ? results[0].value : []
+    const nextExtractWorkflows = results[1].status === 'fulfilled' ? results[1].value : []
+    const nextMattingWorkflows = results[2].status === 'fulfilled' ? results[2].value : []
+    const nextInstances = results[3].status === 'fulfilled' ? results[3].value : []
+    const nextPlatforms = results[4].status === 'fulfilled' ? results[4].value : []
+    const nextLanguages = results[5].status === 'fulfilled' ? results[5].value : []
+    const nextTitleModels = results[6].status === 'fulfilled' ? results[6].value : []
+    const nextGenerationSettings = results[7].status === 'fulfilled' ? results[7].value : null
+    const runs = results[8].status === 'fulfilled' ? results[8].value : []
+    const nextDetectionConfig = results[9].status === 'fulfilled' ? results[9].value : null
 
     setGenerationSkills(skills)
     setExtractWorkflows(nextExtractWorkflows.map(optionFromWorkflow))
@@ -489,6 +836,7 @@ export function FullTaskPage() {
     setTitleModels(nextTitleModels)
     setGenerationSettings(nextGenerationSettings)
     setRecentRuns(runs)
+    setDetectionConfig(nextDetectionConfig)
   }, [])
 
   useEffect(() => {
@@ -501,6 +849,7 @@ export function FullTaskPage() {
     return window.api.pipeline.onProgress((nextProgress) => {
       if (!currentRunId || nextProgress.run_id === currentRunId) {
         setProgress(nextProgress)
+        setPipelinePreviewImages(nextProgress.preview_images ?? [])
         setMessage(nextProgress.message)
       }
     })
@@ -637,6 +986,15 @@ export function FullTaskPage() {
     }
   }, [titleModel, titleModels])
 
+  useEffect(() => {
+    if (sourceMode === 'txt2img' || !sourceFolder.trim()) {
+      setSourcePreviewImages([])
+      setSourcePreviewError(null)
+      return
+    }
+    void scanSourcePreview(sourceFolder)
+  }, [sourceFolder, sourceMode])
+
   function updatePrintMode(nextMode: PipelinePrintMode) {
     setPrintMode(nextMode)
     setMattingEnabled(nextMode === 'local')
@@ -646,6 +1004,24 @@ export function FullTaskPage() {
     const selected = await window.api.generation.chooseImageFolder()
     if (selected.ok) {
       setSourceFolder(selected.data.path)
+    }
+  }
+
+  async function scanSourcePreview(folder = sourceFolder) {
+    if (!folder.trim() || sourceMode === 'txt2img') {
+      setSourcePreviewImages([])
+      return
+    }
+    setSourcePreviewLoading(true)
+    setSourcePreviewError(null)
+    try {
+      const images = await window.api.generation.scanImageFolder({ folder })
+      setSourcePreviewImages(images)
+    } catch (scanError) {
+      setSourcePreviewImages([])
+      setSourcePreviewError(scanError instanceof Error ? scanError.message : '检索图片失败')
+    } finally {
+      setSourcePreviewLoading(false)
     }
   }
 
@@ -675,6 +1051,9 @@ export function FullTaskPage() {
       requirement: promptRequirement,
       count: numberFromText(promptCount, 5),
       model: promptModel,
+      ...(sourceMode === 'img2img' && selectedImg2imgReferenceMode?.instruction
+        ? { modeInstruction: selectedImg2imgReferenceMode.instruction }
+        : {}),
       ...(nonEmpty(promptSkillId) ? { skillId: promptSkillId.trim() } : {}),
     }
   }
@@ -736,6 +1115,7 @@ export function FullTaskPage() {
     }
     return {
       enabled: detectionEnabled,
+      allowReview: detectionPassRule === 'allow-review',
       skillId: base.skillId,
       skillVersion: base.skillVersion,
       model: base.model,
@@ -753,6 +1133,7 @@ export function FullTaskPage() {
   function buildConfig(): PipelineRunConfig {
     return {
       ...(nonEmpty(name) ? { name: name.trim() } : {}),
+      ...(nonEmpty(printSkuCode) ? { printSkuCode: printSkuCode.trim() } : {}),
       printMode,
       source: buildSourceConfig(),
       matting: {
@@ -801,6 +1182,7 @@ export function FullTaskPage() {
       return
     }
     setError(null)
+    setPipelinePreviewImages([])
     setMessage('正在提交完整任务')
     try {
       const runId = await window.api.pipeline.run(buildConfig())
@@ -825,7 +1207,7 @@ export function FullTaskPage() {
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
+    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_520px]">
       <div className="space-y-5">
         {isMac ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -842,22 +1224,29 @@ export function FullTaskPage() {
           <CardHeader className="pb-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <CardTitle className="flex items-center gap-2 text-lg">
-                  <WandSparkles className="h-5 w-5" />
+                <CardTitle className="flex items-center gap-2 text-lg text-balance">
+                  <WandSparkles className="size-5" />
                   完整任务
                 </CardTitle>
-                <CardDescription>按来源、抠图、检测、套版和标题顺序执行。</CardDescription>
+                <CardDescription>少配参数，右侧直接看来源和运行产物。</CardDescription>
               </div>
-              <Badge variant="secondary">三段式</Badge>
+              <Badge variant="secondary">可视化</Badge>
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_220px]">
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_220px]">
               <Field label="任务名">
                 <Input
                   onChange={(event) => setName(event.target.value)}
                   placeholder="可选"
                   value={name}
+                />
+              </Field>
+              <Field label="印花货号">
+                <Input
+                  onChange={(event) => setPrintSkuCode(event.target.value)}
+                  placeholder="例如 TY-001"
+                  value={printSkuCode}
                 />
               </Field>
               <SelectField
@@ -1031,7 +1420,7 @@ export function FullTaskPage() {
                           value={promptModel}
                         />
                       ) : (
-                        <div className="lg:col-span-2 flex items-end rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                        <div className="flex items-end rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
                           手写模式只需要填写提示词。
                         </div>
                       )}
@@ -1125,6 +1514,18 @@ export function FullTaskPage() {
                         图生图会把参考图一起送给 Grsai。
                       </span>
                     </div>
+
+                    <SelectField
+                      label="参考方式"
+                      onValueChange={(value) =>
+                        setImg2imgReferenceMode(value as Img2imgReferenceMode)
+                      }
+                      options={img2imgReferenceModes.map((item) => ({
+                        key: item.key,
+                        label: item.label,
+                      }))}
+                      value={img2imgReferenceMode}
+                    />
 
                     <div className="grid gap-4 lg:grid-cols-3">
                       <SelectField
@@ -1234,7 +1635,7 @@ export function FullTaskPage() {
               </CardHeader>
               <CardContent className="space-y-4">
                 {mattingEnabled ? (
-                  <>
+                  <AdvancedDisclosure summary="抠图设置">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <Badge variant="secondary">仅晨羽工作流</Badge>
                       <span className="text-muted-foreground">
@@ -1276,7 +1677,7 @@ export function FullTaskPage() {
                         关闭后会直接进入侵权检测、套版和标题。
                       </div>
                     </div>
-                  </>
+                  </AdvancedDisclosure>
                 ) : (
                   <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
                     已关闭抠图，后续步骤会直接进入侵权检测和套版。
@@ -1318,10 +1719,39 @@ export function FullTaskPage() {
                 </div>
 
                 {detectionEnabled ? (
-                  <DetectionSettingsPanel
-                    onConfigChange={setDetectionConfig}
-                    onCompressionChange={setDetectionCompression}
-                  />
+                  <div className="space-y-4">
+                    <SelectField
+                      label="通过要求"
+                      onValueChange={(value) => setDetectionPassRule(value as DetectionPassRule)}
+                      options={[
+                        { key: 'allow-review', label: '无风险 + 疑似通过' },
+                        { key: 'pass-only', label: '仅无风险通过' },
+                      ]}
+                      value={detectionPassRule}
+                    />
+                    <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground md:grid-cols-3">
+                      <div>
+                        <p className="text-xs">检测模型</p>
+                        <p className="mt-1 truncate font-medium text-foreground">
+                          {detectionConfig?.model || '未加载'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs">检测 Skill</p>
+                        <p className="mt-1 truncate font-medium text-foreground">
+                          {detectionConfig?.skillId || '未选择'}
+                        </p>
+                      </div>
+                      <label className="flex items-center gap-2" htmlFor="detection-compression">
+                        <Checkbox
+                          checked={detectionCompression}
+                          id="detection-compression"
+                          onCheckedChange={(checked) => setDetectionCompression(Boolean(checked))}
+                        />
+                        压缩图片
+                      </label>
+                    </div>
+                  </div>
                 ) : (
                   <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
                     已关闭侵权检测，后续会直接进入 PS 套版。
@@ -1330,7 +1760,7 @@ export function FullTaskPage() {
 
                 <Separator />
 
-                <div className="space-y-4">
+                <AdvancedDisclosure summary="PS 套版设置">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
@@ -1366,7 +1796,7 @@ export function FullTaskPage() {
                     <Field label="套版输出目录">
                       <Input
                         onChange={(event) => setOutputRoot(event.target.value)}
-                        placeholder="留空则写入 04-上架工作区/完整任务-时间"
+                        placeholder="留空则写入 04-上架工作区"
                         value={outputRoot}
                       />
                     </Field>
@@ -1436,11 +1866,11 @@ export function FullTaskPage() {
                       />
                     </Field>
                   </div>
-                </div>
+                </AdvancedDisclosure>
 
                 <Separator />
 
-                <div className="space-y-4">
+                <AdvancedDisclosure summary="标题生成设置">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">标题生成</p>
                     <p className="mt-1 text-sm text-muted-foreground">
@@ -1578,7 +2008,7 @@ export function FullTaskPage() {
                       标题生成会沿用当前平台、语言、模型和预处理设置。
                     </div>
                   </div>
-                </div>
+                </AdvancedDisclosure>
               </CardContent>
             </Card>
 
@@ -1610,60 +2040,19 @@ export function FullTaskPage() {
       </div>
 
       <aside className="space-y-5">
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-base">运行状态</CardTitle>
-            <CardDescription>{currentRunId ?? '暂无运行任务'}</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {progress ? (
-              <>
-                <div className="grid grid-cols-2 gap-2 text-sm">
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-muted-foreground">印花</div>
-                    <div className="mt-1 text-lg font-semibold">{progress.stats.prints}</div>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-muted-foreground">疑似放行</div>
-                    <div className="mt-1 text-lg font-semibold">
-                      {progress.stats.detectionReview}
-                    </div>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-muted-foreground">高风险拦截</div>
-                    <div className="mt-1 text-lg font-semibold">
-                      {progress.stats.detectionBlock}
-                    </div>
-                  </div>
-                  <div className="rounded-md border p-3">
-                    <div className="text-xs text-muted-foreground">标题成功</div>
-                    <div className="mt-1 text-lg font-semibold">
-                      {progress.stats.titleSucceeded}
-                    </div>
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  {progress.steps.map((step) => (
-                    <div
-                      className={`rounded-md border px-3 py-2 text-sm ${statusTone[step.status]}`}
-                      key={step.id}
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="font-medium">{step.label}</span>
-                        <span>{statusLabels[step.status]}</span>
-                      </div>
-                      <div className="mt-1 text-xs opacity-80">
-                        {step.input_count} → {step.output_count}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="text-sm text-muted-foreground">任务启动后显示每个步骤的进度。</div>
-            )}
-          </CardContent>
-        </Card>
+        <PipelineEffectPreview
+          currentStep={progress?.current_step ?? null}
+          message={message}
+          previewImages={workflowPreviewImages}
+          progress={progress}
+          promptLines={promptLines}
+          promptMode={promptMode}
+          sourceError={sourcePreviewError}
+          sourceFolder={sourceFolder}
+          sourceImages={sourcePreviewImages}
+          sourceLoading={sourcePreviewLoading}
+          sourceMode={sourceMode}
+        />
 
         <Card>
           <CardHeader className="pb-4">

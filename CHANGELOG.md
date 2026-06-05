@@ -12,8 +12,9 @@
 - 上架模块（Temu + Shein）：listing-automation-builder SKILL 四层结构 / Profile 锁 / 批次加载 / 断点续传 / 证据 / UI / 失败重试 / 真实店小秘 smoke
 - PS 套版能力：Windows 本机通过 Photoshop COM bridge 调用真实 Photoshop，支持 PSD 模板扫描、JSX 生成、智能对象替换、多模板批次、裁切策略、跳过已完成、进度日志和基础 UI。
 - PS 套版真实验证：已在本机 Photoshop 27.7.0 上执行可用 fixture 范围内的真实 COM 测试，并生成输出证据目录。
-- 完整任务最初版：新增固定跨模块流程页面和主进程服务，支持采集目录 / 文生图 / 图生图 / 已有印花作为来源，按可选抠图、可选侵权检测、PS 套版、标题生成顺序执行。
-- 完整任务运行记录：新增 `pipeline_runs` / `pipeline_steps` 本地 SQLite 记录、进度事件、取消入口和最近运行列表；检测中 `block` 拦截，`pass` / `review` 放行。
+- 完整任务最初版：新增固定跨模块流程页面和主进程服务，支持采集目录 / 文生图 / 图生图作为页面来源，底层兼容已有印花入口，按可选抠图、可选侵权检测、PS 套版、标题生成顺序执行。
+- 完整任务印花货号：启动前填写印花货号，PS 前复制到 `02-印花工作区/等待套版/{runId}/`；单张按 `{印花货号}.{ext}` 命名，多张自动追加 `-01`、`-02`，PS 输出货号文件夹同名。
+- 完整任务运行记录和预览：新增 `pipeline_runs` / `pipeline_steps` 本地 SQLite 记录、进度事件、取消入口、最近运行列表、来源图/提示词/运行产物预览；检测中 `block` 拦截，默认 `pass` / `review` 放行，也可选择只放行 `pass`。
 
 ### Known Limitations
 

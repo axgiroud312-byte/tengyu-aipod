@@ -395,7 +395,7 @@ class AliyunBailianAdapter {
 
 - 用户关闭检测时，该 step 记录为 `skipped`，印花直接进入 PS 套版。
 - 用户开启检测时，`block` 级别图片被拦截，不进入后续 PS。
-- `pass` 和 `review` 都进入后续 PS；`review` 只是计数和提醒，不阻断流程。
+- 默认 `pass` 和 `review` 都进入后续 PS；`review` 只是计数和提醒。完整任务页也可切到“仅无风险通过”，此时 `review` 和 `block` 都不进入 PS。
 - 完整任务直接使用检测输出路径继续处理，不要求用户点击“加入套版清单”。
 - 如果检测后没有任何可继续处理的印花，完整任务失败并停止。
 

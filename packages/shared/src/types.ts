@@ -21,19 +21,14 @@ export type PipelinePromptMode = 'manual' | 'ai'
 export type PipelineMattingMode = 'comfyui' | 'mixed'
 export type PipelineRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type PipelineStepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
-export type PipelineStepKey =
-  | 'source'
-  | 'extract'
-  | 'matting'
-  | 'detection'
-  | 'photoshop'
-  | 'title'
+export type PipelineStepKey = 'source' | 'extract' | 'matting' | 'detection' | 'photoshop' | 'title'
 
 export interface PipelinePromptConfig {
   mode: PipelinePromptMode
   prompts?: string[]
   requirement?: string
   count?: number
+  modeInstruction?: string
   skillId?: string
   skillVersion?: string
   model?: string
@@ -73,19 +68,17 @@ export type PipelineSourceConfig =
     }
   | {
       mode: 'txt2img'
-      provider: PipelineProvider
+      provider: 'grsai'
       prompt: PipelinePromptConfig
       grsai?: PipelineGrsaiImageConfig
-      comfyui?: PipelineComfyuiWorkflowConfig
     }
   | {
       mode: 'img2img'
-      provider: PipelineProvider
+      provider: 'grsai'
       sourceFolder: string
       prompt: PipelinePromptConfig
       sendReferenceImages?: boolean
       grsai?: PipelineGrsaiImageConfig
-      comfyui?: PipelineComfyuiWorkflowConfig
     }
   | {
       mode: 'existing_prints'
@@ -109,6 +102,7 @@ export interface PipelineMattingConfig {
 
 export interface PipelineDetectionConfig {
   enabled: boolean
+  allowReview?: boolean
   skillId?: string
   skillVersion?: string
   model?: string
@@ -157,6 +151,7 @@ export interface PipelineTitleConfig {
 
 export interface PipelineRunConfig {
   name?: string
+  printSkuCode?: string
   printMode: PipelinePrintMode
   source: PipelineSourceConfig
   matting: PipelineMattingConfig
@@ -212,6 +207,17 @@ export interface PipelineProgress {
   message: string
   stats: PipelineRunStats
   steps: PipelineStepRecord[]
+  preview_images?: PipelinePreviewImage[]
+}
+
+export interface PipelinePreviewImage {
+  step_key: PipelineStepKey
+  prompt: string
+  url: string
+  local_path?: string
+  source_path?: string
+  artifact_id?: string
+  print_id?: string
 }
 
 export interface PipelineRunDetail {

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join } from 'node:path'
 import {
   AppErrorClass,
@@ -9,6 +9,7 @@ import {
   type PipelineExtractConfig,
   type PipelineGrsaiImageConfig,
   type PipelineMattingConfig,
+  type PipelinePreviewImage,
   type PipelineProgress,
   type PipelinePromptConfig,
   type PipelineRunConfig,
@@ -21,6 +22,7 @@ import {
   type PipelineStepRecord,
   type PipelineStepStatus,
   type PipelineTaskEvent,
+  SkuCodeSchema,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { BrowserWindow, ipcMain } from 'electron'
@@ -35,9 +37,7 @@ import {
   type GenerationRunResult,
   generateTxt2imgPrompts,
   runComfyuiExtractBatch,
-  runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
-  runComfyuiTxt2imgBatch,
   runExtractBatch,
   runMixedMattingBatch,
   runTxt2imgBatch,
@@ -48,6 +48,7 @@ import { tempFileManager } from './temp-file-manager'
 import { type TitleBatchResult, titleService } from './title-service'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const DEFAULT_STATS: PipelineRunStats = {
   sourceImages: 0,
   prints: 0,
@@ -68,6 +69,7 @@ type PipelineImage = {
 type ActivePipelineRun = {
   cancelled: boolean
   currentCancel: (() => void | Promise<void>) | null
+  previewImages: PipelinePreviewImage[]
 }
 
 const promptConfigSchema = z.object({
@@ -75,6 +77,7 @@ const promptConfigSchema = z.object({
   prompts: z.array(z.string()).optional(),
   requirement: z.string().optional(),
   count: z.number().optional(),
+  modeInstruction: z.string().optional(),
   skillId: z.string().optional(),
   skillVersion: z.string().optional(),
   model: z.string().optional(),
@@ -114,19 +117,17 @@ const sourceSchema = z.discriminatedUnion('mode', [
   }),
   z.object({
     mode: z.literal('txt2img'),
-    provider: z.enum(['grsai', 'comfyui-chenyu']),
+    provider: z.literal('grsai'),
     prompt: promptConfigSchema,
     grsai: grsaiImageSchema.optional(),
-    comfyui: comfyuiWorkflowSchema.optional(),
   }),
   z.object({
     mode: z.literal('img2img'),
-    provider: z.enum(['grsai', 'comfyui-chenyu']),
+    provider: z.literal('grsai'),
     sourceFolder: z.string(),
     prompt: promptConfigSchema,
     sendReferenceImages: z.boolean().optional(),
     grsai: grsaiImageSchema.optional(),
-    comfyui: comfyuiWorkflowSchema.optional(),
   }),
   z.object({
     mode: z.literal('existing_prints'),
@@ -136,6 +137,7 @@ const sourceSchema = z.discriminatedUnion('mode', [
 
 const pipelineRunConfigSchema = z.object({
   name: z.string().optional(),
+  printSkuCode: SkuCodeSchema.optional(),
   printMode: z.enum(['local', 'full']),
   source: sourceSchema,
   matting: z.object({
@@ -154,6 +156,7 @@ const pipelineRunConfigSchema = z.object({
   }),
   detection: z.object({
     enabled: z.boolean(),
+    allowReview: z.boolean().optional(),
     skillId: z.string().optional(),
     skillVersion: z.string().optional(),
     model: z.string().optional(),
@@ -275,6 +278,18 @@ function safePathSegment(value: string) {
   return value.replace(/[\\/:*?"<>|]/g, '_').trim() || '完整任务'
 }
 
+function imageFileExtension(path: string) {
+  const extension = extname(path).toLowerCase()
+  return /\.(?:jpe?g|png|webp)$/i.test(extension) ? extension : '.png'
+}
+
+function printSkuName(prefix: string, index: number, total: number) {
+  if (total === 1) {
+    return prefix
+  }
+  return `${prefix}-${String(index + 1).padStart(2, '0')}`
+}
+
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })
 }
@@ -366,6 +381,44 @@ function printAssetsFromImages(images: PipelineImage[]): PhotoshopPrintAsset[] {
   }))
 }
 
+async function preparePhotoshopPrints(
+  workbenchRoot: string,
+  runId: string,
+  prints: PipelineImage[],
+  printSkuCode: string | undefined,
+): Promise<PipelineImage[]> {
+  const prefix = printSkuCode?.trim()
+  if (!prefix) {
+    return prints
+  }
+  const parsed = SkuCodeSchema.safeParse(prefix)
+  if (!parsed.success) {
+    throw new AppErrorClass(
+      'INVALID_INPUT',
+      '印花货号只能使用英文、数字、短横线和下划线，长度 1-60',
+      false,
+      { printSkuCode },
+    )
+  }
+
+  const waitingFolder = join(
+    workbenchRoot,
+    WORKBENCH_DIRECTORIES.generation,
+    WAITING_PHOTOSHOP_PRINT_FOLDER,
+    safePathSegment(runId),
+  )
+  await mkdir(waitingFolder, { recursive: true })
+
+  return Promise.all(
+    prints.map(async (image, index) => {
+      const printName = printSkuName(parsed.data, index, prints.length)
+      const targetPath = join(waitingFolder, `${printName}${imageFileExtension(image.path)}`)
+      await copyFile(image.path, targetPath)
+      return { path: targetPath }
+    }),
+  )
+}
+
 function parseStats(value: string): PipelineRunStats {
   try {
     return { ...DEFAULT_STATS, ...(JSON.parse(value) as Partial<PipelineRunStats>) }
@@ -427,9 +480,8 @@ function readStepRows(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
   return rows.filter(isPipelineStepRecord)
 }
 
-function defaultOutputRoot(workbenchRoot: string, name?: string) {
-  const label = safePathSegment(name?.trim() || `完整任务-${timestampSlug()}`)
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.listing, label)
+function defaultOutputRoot(workbenchRoot: string) {
+  return join(workbenchRoot, WORKBENCH_DIRECTORIES.listing)
 }
 
 function ensurePromptList(prompts: string[] | undefined) {
@@ -539,6 +591,7 @@ async function resolvePrompts(
     count: prompt.count ?? 5,
     ...(referenceImages?.length ? { referenceImages } : {}),
     ...(prompt.model ? { model: prompt.model } : {}),
+    ...(prompt.modeInstruction ? { modeInstruction: prompt.modeInstruction } : {}),
     ...(prompt.skillId ? { skillId: prompt.skillId } : {}),
     ...(prompt.skillVersion ? { skillVersion: prompt.skillVersion } : {}),
   }
@@ -562,8 +615,12 @@ function emitGenerationProgressAsPipeline(
   runId: string,
   stepKey: PipelineStepKey,
   emitProgress: (message: string) => void,
+  emitPreviewImages?: (images: GenerationRunImage[]) => void,
 ) {
   return (progress: GenerationProgress) => {
+    if (progress.images) {
+      emitPreviewImages?.(progress.images)
+    }
     emitProgress(
       `${stepKey}：${progress.processed}/${progress.total}，成功 ${progress.succeeded}，失败 ${progress.failed}`,
     )
@@ -632,7 +689,7 @@ export class PipelineService {
     }
     const workbenchRoot = await this.readWorkbenchRoot()
     const db = openWorkbenchDatabase(workbenchRoot)
-    const active: ActivePipelineRun = { cancelled: false, currentCancel: null }
+    const active: ActivePipelineRun = { cancelled: false, currentCancel: null, previewImages: [] }
     this.activeRuns.set(runId, active)
     const stats: PipelineRunStats = { ...DEFAULT_STATS }
     const runName = config.name?.trim() || `完整任务-${timestampSlug()}`
@@ -770,6 +827,7 @@ export class PipelineService {
     stats: PipelineRunStats,
     message: string,
   ) {
+    const previewImages = this.activeRuns.get(runId)?.previewImages
     emitPipelineProgress({
       run_id: runId,
       status,
@@ -777,7 +835,32 @@ export class PipelineService {
       message,
       stats: { ...stats },
       steps: readStepRows(db, runId),
+      ...(previewImages ? { preview_images: previewImages } : {}),
     })
+  }
+
+  private updateGenerationPreviewImages(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    stepKey: PipelineStepKey,
+    stats: PipelineRunStats,
+    message: string,
+    images: GenerationRunImage[],
+  ) {
+    const active = this.activeRuns.get(runId)
+    if (!active) {
+      return
+    }
+    active.previewImages = images.map((image) => ({
+      step_key: stepKey,
+      prompt: image.prompt,
+      url: image.url,
+      ...(image.localPath ? { local_path: image.localPath } : {}),
+      ...(image.sourcePath ? { source_path: image.sourcePath } : {}),
+      ...(image.artifactId ? { artifact_id: image.artifactId } : {}),
+      ...(image.printId ? { print_id: image.printId } : {}),
+    }))
+    this.emitRunProgress(db, runId, 'running', stepKey, stats, message)
   }
 
   private assertNotCancelled(active: ActivePipelineRun) {
@@ -973,7 +1056,16 @@ export class PipelineService {
       stats,
       message: '正在准备来源',
       run: async (emitMessage) => {
-        const output = await this.resolveSourceImages(runId, config, emitMessage)
+        const output = await this.resolveSourceImages(runId, config, emitMessage, (images) =>
+          this.updateGenerationPreviewImages(
+            db,
+            runId,
+            'source',
+            stats,
+            '正在生成来源图片',
+            images,
+          ),
+        )
         stats.sourceImages = output.extractSources.length
         stats.prints = output.prints.length
         return {
@@ -992,6 +1084,7 @@ export class PipelineService {
     runId: string,
     config: PipelineRunConfig,
     emitMessage: (message: string) => void,
+    emitPreviewImages: (images: GenerationRunImage[]) => void,
   ): Promise<{ extractSources: PipelineImage[]; prints: PipelineImage[] }> {
     const source = config.source
     if (source.mode === 'collection') {
@@ -1013,36 +1106,27 @@ export class PipelineService {
     if (source.mode === 'txt2img') {
       const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
       emitMessage(`文生图提示词 ${prompts.length} 条`)
-      if (source.provider === 'grsai') {
-        if (!source.grsai) {
-          throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
-        }
-        const result = await runTxt2imgBatch(
-          {
-            capability: 'txt2img',
-            prompts,
-            model: source.grsai.model,
-            aspectRatio: source.grsai.aspectRatio,
-            concurrency: source.grsai.concurrency ?? 3,
-            taskId: `${runId}-txt2img`,
-            ...grsaiOptionalFields(source.grsai),
-          },
-          { emitProgress: emitGenerationProgressAsPipeline(runId, 'source', emitMessage) },
-        )
-        return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
+      if (!source.grsai) {
+        throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
       }
-      if (!source.comfyui) {
-        throw new AppErrorClass('HTTP_4XX', '文生图缺少 ComfyUI 工作流配置', false)
-      }
-      const result = await runComfyuiTxt2imgBatch(
+      const result = await runTxt2imgBatch(
         {
+          capability: 'txt2img',
           prompts,
-          workflowId: source.comfyui.workflowId,
-          concurrency: source.comfyui.concurrency ?? 1,
+          model: source.grsai.model,
+          aspectRatio: source.grsai.aspectRatio,
+          concurrency: source.grsai.concurrency ?? 3,
           taskId: `${runId}-txt2img`,
-          ...comfyuiOptionalFields(source.comfyui),
+          ...grsaiOptionalFields(source.grsai),
         },
-        { emitProgress: emitGenerationProgressAsPipeline(runId, 'source', emitMessage) },
+        {
+          emitProgress: emitGenerationProgressAsPipeline(
+            runId,
+            'source',
+            emitMessage,
+            emitPreviewImages,
+          ),
+        },
       )
       return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
     }
@@ -1051,50 +1135,40 @@ export class PipelineService {
     if (sourcePaths.length === 0) {
       throw new AppErrorClass('HTTP_4XX', '图生图来源目录里没有图片', false)
     }
-    if (source.provider === 'grsai') {
-      if (!source.grsai) {
-        throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
-      }
-      const references = source.sendReferenceImages
-        ? await Promise.all(sourcePaths.map((imagePath) => imageReference(imagePath)))
-        : undefined
-      const promptReferences = await Promise.all(
-        sourcePaths.slice(0, 4).map((imagePath) => imageReference(imagePath)),
-      )
-      const prompts = await resolvePrompts(
-        source.prompt,
-        'img2img',
-        config.printMode,
-        promptReferences,
-      )
-      const result = await runTxt2imgBatch(
-        {
-          capability: 'img2img',
-          prompts,
-          model: source.grsai.model,
-          aspectRatio: source.grsai.aspectRatio,
-          concurrency: source.grsai.concurrency ?? 3,
-          taskId: `${runId}-img2img`,
-          ...(references?.length ? { referenceImages: references } : {}),
-          ...grsaiOptionalFields(source.grsai),
-        },
-        { emitProgress: emitGenerationProgressAsPipeline(runId, 'source', emitMessage) },
-      )
-      return { extractSources: [], prints: usableGenerationImages(result, '图生图') }
+    if (!source.grsai) {
+      throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
     }
-    if (!source.comfyui) {
-      throw new AppErrorClass('HTTP_4XX', '图生图缺少 ComfyUI 工作流配置', false)
-    }
-    const prompts = source.prompt.mode === 'manual' ? ensurePromptList(source.prompt.prompts) : []
-    const result = await runComfyuiImg2imgBatch(
+    const references = source.sendReferenceImages
+      ? await Promise.all(sourcePaths.map((imagePath) => imageReference(imagePath)))
+      : undefined
+    const promptReferences = await Promise.all(
+      sourcePaths.slice(0, 4).map((imagePath) => imageReference(imagePath)),
+    )
+    const prompts = await resolvePrompts(
+      source.prompt,
+      'img2img',
+      config.printMode,
+      promptReferences,
+    )
+    const result = await runTxt2imgBatch(
       {
-        sourceImagePaths: sourcePaths,
-        workflowId: source.comfyui.workflowId,
-        prompt: prompts[0] ?? source.prompt.requirement ?? '',
+        capability: 'img2img',
+        prompts,
+        model: source.grsai.model,
+        aspectRatio: source.grsai.aspectRatio,
+        concurrency: source.grsai.concurrency ?? 3,
         taskId: `${runId}-img2img`,
-        ...comfyuiOptionalFields(source.comfyui),
+        ...(references?.length ? { referenceImages: references } : {}),
+        ...grsaiOptionalFields(source.grsai),
       },
-      { emitProgress: emitGenerationProgressAsPipeline(runId, 'source', emitMessage) },
+      {
+        emitProgress: emitGenerationProgressAsPipeline(
+          runId,
+          'source',
+          emitMessage,
+          emitPreviewImages,
+        ),
+      },
     )
     return { extractSources: [], prints: usableGenerationImages(result, '图生图') }
   }
@@ -1119,7 +1193,14 @@ export class PipelineService {
       stats,
       message: '正在从采集原图提取印花',
       run: async (emitMessage) => {
-        const result = await this.runExtractConfig(runId, source.extract, sourceImages, emitMessage)
+        const result = await this.runExtractConfig(
+          runId,
+          source.extract,
+          sourceImages,
+          emitMessage,
+          (images) =>
+            this.updateGenerationPreviewImages(db, runId, 'extract', stats, '正在提取印花', images),
+        )
         const prints = usableGenerationImages(result, '提取')
         stats.prints = prints.length
         return {
@@ -1136,6 +1217,7 @@ export class PipelineService {
     config: PipelineExtractConfig,
     sourceImages: PipelineImage[],
     emitMessage: (message: string) => void,
+    emitPreviewImages: (images: GenerationRunImage[]) => void,
   ): Promise<GenerationRunResult> {
     const sourceImagePaths = sourceImages.map((image) => image.path)
     if (config.provider === 'grsai') {
@@ -1154,7 +1236,14 @@ export class PipelineService {
           ...(config.variables ? { variables: config.variables } : {}),
           ...grsaiOptionalFields(config.grsai),
         },
-        { emitProgress: emitGenerationProgressAsPipeline(runId, 'extract', emitMessage) },
+        {
+          emitProgress: emitGenerationProgressAsPipeline(
+            runId,
+            'extract',
+            emitMessage,
+            emitPreviewImages,
+          ),
+        },
       )
     }
     if (!config.comfyui) {
@@ -1169,7 +1258,14 @@ export class PipelineService {
         ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
         ...comfyuiOptionalFields(config.comfyui),
       },
-      { emitProgress: emitGenerationProgressAsPipeline(runId, 'extract', emitMessage) },
+      {
+        emitProgress: emitGenerationProgressAsPipeline(
+          runId,
+          'extract',
+          emitMessage,
+          emitPreviewImages,
+        ),
+      },
     )
   }
 
@@ -1203,7 +1299,22 @@ export class PipelineService {
               taskId: `${runId}-matting`,
               ...mattingOptionalFields(config),
             },
-            { emitProgress: emitGenerationProgressAsPipeline(runId, 'matting', emitMessage) },
+            {
+              emitProgress: emitGenerationProgressAsPipeline(
+                runId,
+                'matting',
+                emitMessage,
+                (images) =>
+                  this.updateGenerationPreviewImages(
+                    db,
+                    runId,
+                    'matting',
+                    stats,
+                    '正在抠图',
+                    images,
+                  ),
+              ),
+            },
           )
         } else {
           if (!config.workflowId) {
@@ -1216,7 +1327,22 @@ export class PipelineService {
               taskId: `${runId}-matting`,
               ...mattingOptionalFields(config),
             },
-            { emitProgress: emitGenerationProgressAsPipeline(runId, 'matting', emitMessage) },
+            {
+              emitProgress: emitGenerationProgressAsPipeline(
+                runId,
+                'matting',
+                emitMessage,
+                (images) =>
+                  this.updateGenerationPreviewImages(
+                    db,
+                    runId,
+                    'matting',
+                    stats,
+                    '正在抠图',
+                    images,
+                  ),
+              ),
+            },
           )
         }
         const output = usableGenerationImages(result, '抠图')
@@ -1267,7 +1393,7 @@ export class PipelineService {
           ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
         })
         active.currentCancel = null
-        const output = this.allowedDetectionImages(result)
+        const output = this.allowedDetectionImages(result, config.allowReview ?? true)
         stats.detectionPass = output.pass
         stats.detectionReview = output.review
         stats.detectionBlock = output.block
@@ -1291,7 +1417,7 @@ export class PipelineService {
     })
   }
 
-  private allowedDetectionImages(result: DetectionBatchResult) {
+  private allowedDetectionImages(result: DetectionBatchResult, allowReview: boolean) {
     let pass = 0
     let review = 0
     let block = 0
@@ -1300,7 +1426,7 @@ export class PipelineService {
       if (item.status === 'failed') {
         continue
       }
-      if (!shouldPipelineDetectionAllow(item.riskLevel)) {
+      if (!shouldPipelineDetectionAllow(item.riskLevel, allowReview)) {
         block += 1
         continue
       }
@@ -1339,23 +1465,32 @@ export class PipelineService {
         if (prints.length === 0) {
           throw new AppErrorClass('HTTP_4XX', '没有可套版的印花', false)
         }
-        const outputRoot =
-          config.photoshop.outputRoot || defaultOutputRoot(workbenchRoot, config.name)
+        const outputRoot = config.photoshop.outputRoot || defaultOutputRoot(workbenchRoot)
         const taskId = `${runId}-photoshop`
         const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
         const cancelFilePath = join(taskDir, 'cancel.flag')
         active.currentCancel = () => writeFile(cancelFilePath, String(Date.now()), 'utf8')
-        const result = await runBatch(printAssetsFromImages(prints), config.photoshop.templates, {
-          taskId,
-          outputRoot,
-          outputLayout: 'template_first',
-          replaceRange: config.photoshop.replaceRange ?? 'auto',
-          format: config.photoshop.format ?? 'jpg',
-          clipMode: config.photoshop.clipMode ?? 'auto',
-          skipCompleted: config.photoshop.skipCompleted ?? true,
-          maxRetries: config.photoshop.maxRetries ?? 1,
-          cancelFilePath,
-        })
+        const photoshopPrints = await preparePhotoshopPrints(
+          workbenchRoot,
+          runId,
+          prints,
+          config.printSkuCode,
+        )
+        const result = await runBatch(
+          printAssetsFromImages(photoshopPrints),
+          config.photoshop.templates,
+          {
+            taskId,
+            outputRoot,
+            outputLayout: 'template_first',
+            replaceRange: config.photoshop.replaceRange ?? 'auto',
+            format: config.photoshop.format ?? 'jpg',
+            clipMode: config.photoshop.clipMode ?? 'auto',
+            skipCompleted: config.photoshop.skipCompleted ?? true,
+            maxRetries: config.photoshop.maxRetries ?? 1,
+            cancelFilePath,
+          },
+        )
         active.currentCancel = null
         stats.photoshopGroups = result.groups_completed
         return {
@@ -1363,6 +1498,14 @@ export class PipelineService {
           outputCount: result.groups_completed,
           outputJson: {
             outputRoot,
+            waitingPrintFolder: config.printSkuCode
+              ? join(
+                  workbenchRoot,
+                  WORKBENCH_DIRECTORIES.generation,
+                  WAITING_PHOTOSHOP_PRINT_FOLDER,
+                  safePathSegment(runId),
+                )
+              : null,
             templatesTotal: result.templates_total,
             groupsCompleted: result.groups_completed,
             outputs: result.outputs.length,
