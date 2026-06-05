@@ -15,6 +15,7 @@ import {
   type CustomerAuthState,
   registerCustomerAuthIpc,
 } from './lib/customer-auth'
+import { withCustomerAuthorizedIpcHandlers } from './lib/customer-auth-ipc-guard'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { registerDetectionIpc } from './lib/detection-service'
 import {
@@ -125,24 +126,26 @@ app.whenReady().then(() => {
   })
   registerCustomerAuthIpc(customerAuthService)
   registerOnboardingIpc()
-  registerChenyuInstanceIpc()
-  registerBrowserProfileLockIpc()
-  registerGenerationLocalConfigIpc()
   registerLocalImageProtocolHandler()
-  registerComfyuiWorkflowCacheIpc()
-  registerSkillCacheIpc()
-  registerTempFileIpc()
-  registerCollectionConfigIpc()
-  registerCollectionSessionIpc()
-  registerCollectionClickIpc()
-  registerCollectionImageIndexIpc()
-  registerTitleIpc()
-  registerDetectionConfigIpc()
-  registerDetectionIpc()
-  registerGenerationIpc()
-  registerPipelineIpc()
-  registerListingRunnerIpc()
-  registerPhotoshopIpc()
+  withCustomerAuthorizedIpcHandlers(ipcMain, customerAuthService, () => {
+    registerChenyuInstanceIpc()
+    registerBrowserProfileLockIpc()
+    registerGenerationLocalConfigIpc()
+    registerComfyuiWorkflowCacheIpc()
+    registerSkillCacheIpc()
+    registerTempFileIpc()
+    registerCollectionConfigIpc()
+    registerCollectionSessionIpc()
+    registerCollectionClickIpc()
+    registerCollectionImageIndexIpc()
+    registerTitleIpc()
+    registerDetectionConfigIpc()
+    registerDetectionIpc()
+    registerGenerationIpc()
+    registerPipelineIpc()
+    registerListingRunnerIpc()
+    registerPhotoshopIpc()
+  })
   void tempFileManager.cleanupOrphans().catch(() => null)
   void cleanupDiagnosticLogs().catch(() => null)
   diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()

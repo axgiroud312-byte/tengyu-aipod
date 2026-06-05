@@ -2088,6 +2088,7 @@ export class PipelineService {
     config: PipelineDetectionConfig,
     prints: PipelineImage[],
     stats: PipelineRunStats,
+    requireContinuingPrints: boolean,
   ) {
     return this.executeStep(db, active, {
       runId,
@@ -2170,7 +2171,7 @@ export class PipelineService {
         stats.detectionReview = output.review
         stats.detectionBlock = output.block
         stats.prints = output.images.length
-        if (output.images.length === 0) {
+        if (requireContinuingPrints && output.images.length === 0) {
           throw new AppErrorClass('HTTP_4XX', '检测后没有可继续套版的印花', false)
         }
         return {

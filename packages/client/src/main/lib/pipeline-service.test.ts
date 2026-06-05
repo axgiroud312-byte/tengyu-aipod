@@ -378,6 +378,28 @@ describe('PipelineService', () => {
     )
   })
 
+  it('rejects a custom Photoshop output root outside the workbench when enabled is omitted', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    const config = baseConfig(printFolder)
+    const { enabled: _enabled, ...photoshopWithoutEnabled } = config.photoshop
+
+    const service = new PipelineService()
+    await expect(
+      service.runPipeline('run-custom-output-outside', {
+        ...config,
+        photoshop: {
+          ...photoshopWithoutEnabled,
+          outputRoot: join(dirname(mocks.workbenchRoot), 'outside-listing'),
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      message: '完整任务套版输出目录必须位于工作区允许目录内',
+    })
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+  })
+
   it('uses the print sku code for the waiting Photoshop print filename and sku folder id', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing.png'))
@@ -751,6 +773,67 @@ describe('PipelineService', () => {
       | { logs?: Array<{ message: string }> }
       | undefined
     expect(lastProgress?.logs?.some((log) => log.message === '侵权检测已取消')).toBe(true)
+  })
+
+  it('completes a detection-only run when every print is blocked', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    const printPath = join(printFolder, 'existing.png')
+    await createPrint(printPath)
+    mocks.runDetectionBatch.mockResolvedValueOnce({
+      taskId: 'run-detection-only-blocked-detection',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: printPath,
+          thumbnailUrl: '',
+          artifactId: 'art-blocked',
+          printId: 'pri-blocked',
+          status: 'success' as const,
+          riskScore: 98,
+          riskLevel: 'block' as const,
+          reason: '高风险',
+          outputPath: printPath,
+          cached: false,
+        },
+      ],
+    })
+
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-detection-only-blocked', {
+      ...baseConfig(printFolder),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+        allowReview: false,
+      },
+      photoshop: {
+        ...baseConfig(printFolder).photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+    expect(result.steps.find((step) => step.step_key === 'detection')).toMatchObject({
+      status: 'completed',
+      output_count: 0,
+    })
+    expect(
+      (result.result_sections ?? []).find((section) => section.key === 'detection_blocked'),
+    ).toEqual(
+      expect.objectContaining({
+        items: [expect.objectContaining({ artifact_id: 'art-blocked' })],
+      }),
+    )
   })
 
   it('persists uploaded img2img references outside business workspaces and keeps base64 out of the run config', async () => {

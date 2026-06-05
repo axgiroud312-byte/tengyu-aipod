@@ -776,7 +776,14 @@ describe('generation comfyui service', () => {
     const debugLogs: GenerationDebugLogEntry[] = []
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
-      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+      images: [
+        {
+          url: 'file:///result.png',
+          local_path: '/result.png',
+          artifact_id: 'art-extract-output',
+          print_id: 'pri_extract_output',
+        },
+      ],
     })
 
     const result = await runComfyuiExtractBatch(
@@ -803,6 +810,12 @@ describe('generation comfyui service', () => {
       total: 1,
       succeeded: 1,
       failed: 0,
+      images: [
+        expect.objectContaining({
+          artifactId: 'art-extract-output',
+          printId: 'pri_extract_output',
+        }),
+      ],
     })
     expect(fakeDb.artifacts).toHaveLength(1)
     const sourceArtifactId = fakeDb.artifacts[0]?.[0]
@@ -1071,7 +1084,14 @@ describe('generation comfyui img2img service', () => {
     ])
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
-      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+      images: [
+        {
+          url: 'file:///result.png',
+          local_path: '/result.png',
+          artifact_id: 'art-img2img-output',
+          print_id: 'pri_img2img_output',
+        },
+      ],
     })
 
     const result = await runComfyuiImg2imgBatch(
@@ -1089,7 +1109,18 @@ describe('generation comfyui img2img service', () => {
       },
     )
 
-    expect(result).toMatchObject({ taskId: 'img2img-task', total: 1, succeeded: 1, failed: 0 })
+    expect(result).toMatchObject({
+      taskId: 'img2img-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        expect.objectContaining({
+          artifactId: 'art-img2img-output',
+          printId: 'pri_img2img_output',
+        }),
+      ],
+    })
     const request = generate.mock.calls[0]?.[0] as { options?: Record<string, unknown> } | undefined
     expect(request?.options?.preserveWorkflowPrompt).toBeUndefined()
     expect(generate).toHaveBeenCalledWith(
@@ -1286,7 +1317,14 @@ describe('generation comfyui matting service', () => {
     const progress: unknown[] = []
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
-      images: [{ url: 'file:///matting.png', local_path: '/matting.png' }],
+      images: [
+        {
+          url: 'file:///matting.png',
+          local_path: '/matting.png',
+          artifact_id: 'art-matting-output',
+          print_id: 'pri_matting_output',
+        },
+      ],
     })
 
     const result = await runComfyuiMattingBatch(
@@ -1306,7 +1344,18 @@ describe('generation comfyui matting service', () => {
       },
     )
 
-    expect(result).toMatchObject({ taskId: 'matting-task', total: 1, succeeded: 1, failed: 0 })
+    expect(result).toMatchObject({
+      taskId: 'matting-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        expect.objectContaining({
+          artifactId: 'art-matting-output',
+          printId: 'pri_matting_output',
+        }),
+      ],
+    })
     expect(generate).toHaveBeenCalledWith(
       expect.objectContaining({
         capability: 'matting',
@@ -1393,7 +1442,14 @@ describe('generation comfyui matting service', () => {
       })
       .mockResolvedValueOnce({
         status: 'succeeded',
-        images: [{ url: 'file:///final.png', local_path: finalPath }],
+        images: [
+          {
+            url: 'file:///final.png',
+            local_path: finalPath,
+            artifact_id: 'art-extract-matting-output',
+            print_id: 'pri_extract_matting_output',
+          },
+        ],
       })
 
     const result = await runComfyuiExtractMattingBatch(
@@ -1439,7 +1495,14 @@ describe('generation comfyui matting service', () => {
       total: 1,
       succeeded: 1,
       failed: 0,
-      images: [expect.objectContaining({ localPath: finalPath, sourcePath })],
+      images: [
+        expect.objectContaining({
+          localPath: finalPath,
+          sourcePath,
+          artifactId: 'art-extract-matting-output',
+          printId: 'pri_extract_matting_output',
+        }),
+      ],
     })
     expect(fakeDb.artifacts).toHaveLength(1)
     expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
@@ -1497,7 +1560,14 @@ describe('generation comfyui matting service', () => {
     })
     const generateComposite = vi.fn().mockResolvedValue({
       status: 'succeeded',
-      images: [{ url: 'file:///matting.png', local_path: '/matting.png' }],
+      images: [
+        {
+          url: 'file:///matting.png',
+          local_path: '/matting.png',
+          artifact_id: 'art-mixed-output',
+          print_id: 'pri_mixed_output',
+        },
+      ],
     })
     const createTaskDir = vi.fn(async () => {
       const dir = join(workbenchRoot, '.workbench', 'tmp', 'matting', 'mixed-task')
@@ -1554,7 +1624,18 @@ describe('generation comfyui matting service', () => {
     )
 
     const sourceArtifactId = String(fakeDb.artifacts[0]?.[0])
-    expect(result).toMatchObject({ taskId: 'mixed-task', total: 1, succeeded: 1, failed: 0 })
+    expect(result).toMatchObject({
+      taskId: 'mixed-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        expect.objectContaining({
+          artifactId: 'art-mixed-output',
+          printId: 'pri_mixed_output',
+        }),
+      ],
+    })
     expect(fakeDb.artifacts[0]?.[3]).toBe('manual-import')
     expect(listSkills).toHaveBeenCalledWith({ module: 'generation', category: 'matting-mask' })
     expect(getSkill).toHaveBeenCalledWith('matting-mask-v1', '1.0.0')

@@ -421,6 +421,10 @@ describe('generation ComfyUI mocked E2E', () => {
     expect(artifact.provider).toBe('comfyui-chenyu')
     expect(artifact.model_or_workflow).toBe('extract-e2e')
     expect(artifact.file_path).toBe(result.images[0]?.localPath)
+    expect(result.images[0]).toMatchObject({
+      artifactId: artifact.id,
+      printId: artifact.print_id,
+    })
   })
 
   it('runs img2img through Chenyu and ComfyUI, injects inputs, and writes a versioned print output', async () => {
@@ -477,6 +481,10 @@ describe('generation ComfyUI mocked E2E', () => {
     const artifact = outputArtifact(db, 'img2img')
     expect(artifact.file_path).toBe(expectedPath)
     expect(artifact.source_artifact_ids).toBe(JSON.stringify(['print-artifact']))
+    expect(result.images[0]).toMatchObject({
+      artifactId: artifact.id,
+      printId: artifact.print_id,
+    })
   })
 
   it('runs direct matting through Chenyu and ComfyUI, injects inputs, and writes the transparent PNG output', async () => {
@@ -533,6 +541,10 @@ describe('generation ComfyUI mocked E2E', () => {
     const artifact = outputArtifact(db, 'matting')
     expect(artifact.provider).toBe('comfyui-chenyu')
     expect(artifact.file_path).toBe(expectedPath)
+    expect(result.images[0]).toMatchObject({
+      artifactId: artifact.id,
+      printId: artifact.print_id,
+    })
   })
 
   it('runs mixed matting with a Grsai mask, injects source and mask slots separately, writes the mixed artifact, and cleans temp files', async () => {
@@ -617,6 +629,10 @@ describe('generation ComfyUI mocked E2E', () => {
     const artifact = outputArtifact(db, 'matting')
     expect(artifact.provider).toBe('grsai+comfyui-mask')
     expect(artifact.file_path).toBe(expectedPath)
+    expect(result.images[0]).toMatchObject({
+      artifactId: artifact.id,
+      printId: artifact.print_id,
+    })
     expect(createTaskDir).toHaveBeenCalledWith('matting', 'mixed-e2e-task')
     expect(cleanupTask).toHaveBeenCalledWith('matting', 'mixed-e2e-task')
     await expect(stat(maskPath)).rejects.toMatchObject({ code: 'ENOENT' })

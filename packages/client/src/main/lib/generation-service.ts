@@ -40,6 +40,7 @@ import { normalizeGenerationLocalConfig } from './generation-local-config'
 import {
   GRSAI_SUPPORTED_MODELS,
   type GenerateRequest,
+  type GenerateResponse,
   GrsaiAdapter,
   type GrsaiModel,
 } from './grsai-adapter'
@@ -132,6 +133,18 @@ export type GenerationRunResult = {
 export type GenerationTaskEvent =
   | { ok: true; result: GenerationRunResult }
   | { ok: false; taskId: string; error: string }
+
+function generationImageIdentity(
+  image: GenerateResponse['images'][number],
+  fallback: { artifactId?: string | null; printId?: string | null } = {},
+) {
+  const artifactId = image.artifact_id ?? fallback.artifactId ?? undefined
+  const printId = image.print_id ?? fallback.printId ?? undefined
+  return {
+    ...(artifactId ? { artifactId } : {}),
+    ...(printId ? { printId } : {}),
+  }
+}
 
 export type GenerationDebugLogLevel = 'debug' | 'info' | 'warn' | 'error'
 
@@ -2640,8 +2653,7 @@ export async function runComfyuiExtractBatch(
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               sourcePath: sourceImagePath,
-              artifactId: sourceIdentity.artifactId,
-              printId: sourceIdentity.printId,
+              ...generationImageIdentity(image, sourceIdentity),
             })),
           )
         } catch (error) {
@@ -2848,8 +2860,7 @@ export async function runComfyuiExtractMattingBatch(
             url: finalImage.url,
             ...(finalImage.local_path ? { localPath: finalImage.local_path } : {}),
             sourcePath: sourceImagePath,
-            artifactId: sourceIdentity.artifactId,
-            printId: sourceIdentity.printId,
+            ...generationImageIdentity(finalImage, sourceIdentity),
           })
         } catch (error) {
           await diagnostics
@@ -2988,8 +2999,7 @@ export async function runComfyuiMattingBatch(
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               sourcePath: source.imagePath,
-              artifactId,
-              printId: source.printId,
+              ...generationImageIdentity(image, { artifactId, printId: source.printId }),
             })),
           )
         } catch (error) {
@@ -3192,8 +3202,7 @@ export async function runMixedMattingBatch(
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               sourcePath: source.imagePath,
-              artifactId,
-              printId: source.printId,
+              ...generationImageIdentity(image, { artifactId, printId: source.printId }),
             })),
           )
         } catch (error) {
@@ -3338,6 +3347,7 @@ export async function runComfyuiTxt2imgBatch(
                   prompt,
                   url: image.url,
                   ...(image.local_path ? { localPath: image.local_path } : {}),
+                  ...generationImageIdentity(image),
                 })),
               )
             } catch (error) {
@@ -3477,8 +3487,7 @@ export async function runComfyuiImg2imgBatch(
               prompt,
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
-              artifactId,
-              printId: source.printId,
+              ...generationImageIdentity(image, { artifactId, printId: source.printId }),
             })),
           )
         } catch (error) {

@@ -223,8 +223,9 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
                 `${printId}${input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)}`,
               )
         await writeFile(targetPath, buffer)
+        let artifactId: string | undefined
         if (shouldRegisterArtifact) {
-          await registerComfyuiArtifact(db, {
+          artifactId = await registerComfyuiArtifact(db, {
             taskId,
             printId,
             targetPath,
@@ -239,6 +240,8 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
         images.push({
           url: pathToFileURL(targetPath).toString(),
           local_path: targetPath,
+          print_id: printId,
+          ...(artifactId ? { artifact_id: artifactId } : {}),
         })
       }
 
