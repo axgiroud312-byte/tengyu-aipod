@@ -6,6 +6,7 @@ import type { ipcMain } from 'electron'
 import type { Browser, Page } from 'playwright'
 import { z } from 'zod'
 import { cdpClient } from './cdp-client'
+import { collectionFolderLock } from './collection-folder-lock'
 import { getPlatformRule } from './collection-platform-rules'
 import type { CollectionDebugLogLevel, CollectionSessionEvent } from './collection-session-manager'
 
@@ -497,13 +498,14 @@ export async function downloadCollectionImageIndexItems(input: DownloadInput) {
       url: shortLogText(item.originalUrl),
     })
     try {
-      const image = await downloadImage(item.originalUrl)
       const itemTargetDir = collectionImageIndexItemTargetDir(
         targetDir,
         input.platform,
         item.sourcePageUrl ?? scan.pageUrl,
         item,
       )
+      collectionFolderLock.assertWritable(itemTargetDir)
+      const image = await downloadImage(item.originalUrl)
       await mkdir(itemTargetDir, { recursive: true })
       const savedPath = await nextImagePath(
         itemTargetDir,

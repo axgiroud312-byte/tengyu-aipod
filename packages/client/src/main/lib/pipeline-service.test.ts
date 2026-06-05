@@ -7,6 +7,7 @@ import {
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { collectionFolderLock } from './collection-folder-lock'
 import { PipelineService, registerPipelineIpc } from './pipeline-service'
 import type { TitleBatchResult } from './title-service'
 
@@ -99,6 +100,18 @@ const mocks = vi.hoisted(() => ({
       },
     ],
   })),
+  runExtractBatch: vi.fn(async (input: { sourceImagePaths: string[]; taskId: string }) => ({
+    taskId: input.taskId,
+    capability: 'extract' as const,
+    total: input.sourceImagePaths.length,
+    succeeded: input.sourceImagePaths.length,
+    failed: 0,
+    images: input.sourceImagePaths.map((sourcePath, index) => ({
+      prompt: 'extract print',
+      url: `file://extracted-${index + 1}.png`,
+      localPath: sourcePath,
+    })),
+  })),
   runDetectionBatch: vi.fn(),
 }))
 
@@ -153,7 +166,7 @@ vi.mock('./generation-service', () => ({
   generateTxt2imgPrompts: vi.fn(),
   runComfyuiExtractBatch: vi.fn(),
   runComfyuiMattingBatch: vi.fn(),
-  runExtractBatch: vi.fn(),
+  runExtractBatch: mocks.runExtractBatch,
   runMixedMattingBatch: vi.fn(),
   runTxt2imgBatch: mocks.runTxt2imgBatch,
 }))
@@ -256,6 +269,7 @@ describe('PipelineService', () => {
     mocks.runTitleBatch.mockClear()
     mocks.createTaskDir.mockClear()
     mocks.runTxt2imgBatch.mockClear()
+    mocks.runExtractBatch.mockClear()
     mocks.runDetectionBatch.mockReset()
     mocks.sentEvents = []
   })
@@ -265,6 +279,7 @@ describe('PipelineService', () => {
       Object.defineProperty(process, 'platform', originalPlatform)
     }
     await rm(mocks.workbenchRoot, { recursive: true, force: true })
+    collectionFolderLock.clearForTests()
     mocks.workbenchRoot = ''
   })
 
@@ -509,6 +524,75 @@ describe('PipelineService', () => {
       ['photoshop', 'skipped'],
       ['title', 'skipped'],
     ])
+  })
+
+  it('holds a collection folder read lock until the complete task finishes', async () => {
+    const sourceFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.collection,
+      'temu-20260531-120000',
+    )
+    await createPrint(join(sourceFolder, 'source.png'))
+    let finishExtract: (() => void) | undefined
+    mocks.runExtractBatch.mockImplementationOnce(
+      async (input: { sourceImagePaths: string[]; taskId: string }) => {
+        expect(() => collectionFolderLock.assertWritable(sourceFolder)).toThrow(
+          '完整任务正在读取该采集目录',
+        )
+        await new Promise<void>((resolve) => {
+          finishExtract = resolve
+        })
+        return {
+          taskId: input.taskId,
+          capability: 'extract' as const,
+          total: input.sourceImagePaths.length,
+          succeeded: input.sourceImagePaths.length,
+          failed: 0,
+          images: input.sourceImagePaths.map((sourcePath, index) => ({
+            prompt: 'extract print',
+            url: `file://extracted-${index + 1}.png`,
+            localPath: sourcePath,
+          })),
+        }
+      },
+    )
+
+    const service = new PipelineService()
+    const run = service.runPipeline('run-collection-read-lock', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'collection',
+        sourceFolder,
+        extract: {
+          provider: 'grsai',
+          skillId: 'extract-skill',
+          grsai: {
+            model: 'gpt-image-2',
+            aspectRatio: '1:1',
+          },
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+    await vi.waitUntil(() => mocks.runExtractBatch.mock.calls.length === 1)
+
+    expect(() => collectionFolderLock.assertWritable(sourceFolder)).toThrow(
+      '完整任务正在读取该采集目录',
+    )
+
+    finishExtract?.()
+    await expect(run).resolves.toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
+    })
+    expect(() => collectionFolderLock.assertWritable(sourceFolder)).not.toThrow()
   })
 
   it('persists uploaded img2img references outside business workspaces and keeps base64 out of the run config', async () => {

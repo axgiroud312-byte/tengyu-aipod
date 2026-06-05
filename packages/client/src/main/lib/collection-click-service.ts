@@ -8,6 +8,7 @@ import type { Page } from 'playwright'
 import { z } from 'zod'
 import { cdpClient } from './cdp-client'
 import type { CollectionBindingPayload } from './cdp-client'
+import { collectionFolderLock } from './collection-folder-lock'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
   COLLECTION_RECORD_LIST_LIMIT_MAX,
@@ -421,6 +422,7 @@ export class CollectionClickService {
       file_base: input.fileBase,
     })
     try {
+      collectionFolderLock.assertWritable(input.targetDir)
       const image = await this.imageBuffer(input.session, input.event)
       const buffer = image.buffer
       this.debug('图片下载完成', 'debug', {
@@ -507,6 +509,7 @@ export class CollectionClickService {
   ): Promise<CollectionSavedResult> {
     const target = targetForStoredRecord(session, record, this.now())
     try {
+      collectionFolderLock.assertWritable(target.targetDir)
       const buffer = await this.downloadImage(record.sourceUrl)
       const hash = sha256(buffer)
       await this.mkdir(target.targetDir, { recursive: true })

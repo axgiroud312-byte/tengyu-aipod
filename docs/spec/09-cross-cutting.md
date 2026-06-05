@@ -98,6 +98,7 @@ class TaskQueueManager {
 | 资源 | 互斥规则 |
 |---|---|
 | `browser_profile:<id>` | 同 profile 单模块占用（采集 OR 上架）|
+| `collection_folder:<path>` | 完整任务读取采集文件夹时，采集写入同路径或子路径被拒绝 |
 | `photoshop:singleton` | PS 全局串行 |
 | `sku:<code>` | 同 SKU 单进行中任务 |
 | `global_concurrency` | 总数 ≤ maxConcurrency |

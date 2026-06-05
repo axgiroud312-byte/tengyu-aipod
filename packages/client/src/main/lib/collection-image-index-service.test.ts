@@ -1,7 +1,9 @@
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { collectionFolderLock } from './collection-folder-lock'
 import {
   type CollectionImageIndexItem,
   chooseCollectionCurrentPage,
@@ -28,6 +30,7 @@ vi.mock('../onboarding', () => ({
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  collectionFolderLock.clearForTests()
   mockWorkbenchRoot = ''
 })
 
@@ -615,6 +618,36 @@ describe('collection image index download logs', () => {
         ),
       ).toBe(true)
     } finally {
+      await rm(workbenchRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('blocks image pool downloads while a complete task is reading the target collection folder', async () => {
+    const workbenchRoot = await mkdtemp(join(tmpdir(), 'collection-debug-locked-'))
+    mockWorkbenchRoot = workbenchRoot
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const lock = collectionFolderLock.acquireRead(
+      join(workbenchRoot, WORKBENCH_DIRECTORIES.collection),
+      {
+        kind: 'pipeline',
+        runId: 'run-reading-collection',
+      },
+    )
+
+    try {
+      const result = await downloadCollectionImageIndexItems({
+        platform: 'temu',
+        profileId: 'profile-1',
+        items: [downloadItem('item-1', 'https://img.kwcdn.com/product/a.jpg')],
+      })
+
+      expect(result.saved).toHaveLength(0)
+      expect(result.failed).toHaveLength(1)
+      expect(result.failed[0]?.error).toContain('完整任务正在读取该采集目录')
+      expect(fetchMock).not.toHaveBeenCalled()
+    } finally {
+      lock.release()
       await rm(workbenchRoot, { recursive: true, force: true })
     }
   })

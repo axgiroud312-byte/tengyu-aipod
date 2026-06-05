@@ -4,8 +4,9 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type { AppErrorClass } from '@tengyu-aipod/shared'
 import sharp from 'sharp'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CollectionClickService, parseCollectionRecordListInput } from './collection-click-service'
+import { collectionFolderLock } from './collection-folder-lock'
 import type { CollectionPlatformRule } from './collection-injected-script'
 import {
   COLLECTION_RECORD_LIST_LIMIT_MAX,
@@ -28,6 +29,10 @@ const platformRule: CollectionPlatformRule = {
 
 const COLLECTION_TEST_NOW = 1_779_610_000_000
 const COLLECTION_TASK_DIR = '/tmp/wb/01-采集工作区/temu-20260531-120000'
+
+afterEach(() => {
+  collectionFolderLock.clearForTests()
+})
 
 function looseImagePath(ext: '.jpg' | '.png' | '.webp') {
   return `${COLLECTION_TASK_DIR}/temu-${localTimestampSlug(COLLECTION_TEST_NOW)}-001${ext}`
@@ -545,6 +550,38 @@ describe('CollectionClickService', () => {
       looseImagePath('.webp'),
       'success',
     ])
+  })
+
+  it('blocks writes while a complete task is reading the same collection folder', async () => {
+    const lock = collectionFolderLock.acquireRead(COLLECTION_TASK_DIR, {
+      kind: 'pipeline',
+      runId: 'run-reading-collection',
+    })
+    const { service, fs, db } = createService({
+      session: activeSession({ mode: 'scroll' }),
+    })
+
+    try {
+      await expect(
+        service.handleScroll(
+          {
+            kind: 'scroll',
+            img: 'https://img.temu.com/a.webp',
+            page: 'https://www.temu.com/search?q=shirt',
+          },
+          platformRule,
+        ),
+      ).resolves.toMatchObject({
+        status: 'failed',
+        error: expect.stringContaining('完整任务正在读取该采集目录'),
+      })
+
+      expect(fs.writeFile).not.toHaveBeenCalled()
+      expect(db.records[0]?.[7]).toBe('failed')
+      expect(db.records[0]?.[8]).toContain('完整任务正在读取该采集目录')
+    } finally {
+      lock.release()
+    }
   })
 
   it('dispatches only events that match the active collection mode', async () => {

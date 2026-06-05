@@ -217,6 +217,7 @@ interface QueuedTask {
 ```ts
 type ResourceLock =
   | { type: 'browser_profile'; profile_id: string }
+  | { type: 'collection_folder'; path: string }
   | { type: 'photoshop'; instance: 'singleton' }
   | { type: 'sku'; sku_code: string }
   | { type: 'global_concurrency' }

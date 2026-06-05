@@ -34,6 +34,7 @@ import { BrowserWindow, ipcMain } from 'electron'
 import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { runBatch } from '../photoshop/multi-batch'
+import { type CollectionFolderReadLock, collectionFolderLock } from './collection-folder-lock'
 import {
   type DetectionBatchResult,
   type DetectionImageResult,
@@ -82,6 +83,7 @@ type ActivePipelineRun = {
   previewImages: PipelinePreviewImage[]
   resultSections: PipelineResultSection[]
   logs: PipelineRuntimeLogEntry[]
+  collectionReadLock: CollectionFolderReadLock | null
 }
 
 class PromiseMutex {
@@ -909,12 +911,20 @@ export class PipelineService {
         previewImages: [],
         resultSections: [],
         logs: [],
+        collectionReadLock: null,
       }
       this.activeRuns.set(runId, active)
       const stats: PipelineRunStats = { ...DEFAULT_STATS }
       const runName = runConfig.name?.trim() || `完整任务-${timestampSlug()}`
 
       try {
+        active.collectionReadLock =
+          runConfig.source.mode === 'collection'
+            ? collectionFolderLock.acquireRead(runConfig.source.sourceFolder, {
+                kind: 'pipeline',
+                runId,
+              })
+            : null
         ensurePipelineTables(db)
         this.createRun(db, runId, runName, runConfig)
         this.appendLog(runId, {
@@ -998,6 +1008,7 @@ export class PipelineService {
         this.completeRun(db, runId, status, stats, appErrorMessage(error))
         throw error
       } finally {
+        active.collectionReadLock?.release()
         db.close()
         this.activeRuns.delete(runId)
       }
