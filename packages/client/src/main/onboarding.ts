@@ -1,4 +1,6 @@
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { dialog, ipcMain } from 'electron'
+import { z } from 'zod'
 import { hasSecret, setSecret } from './lib/keychain'
 import { markOnboardingComplete, readOnboardingStateFile } from './lib/onboarding-state'
 import {
@@ -11,6 +13,27 @@ import {
 } from './lib/workbench-config'
 
 export { readAppConfig }
+
+const workbenchRootInputSchema = z.string()
+const onboardingApiKeysInputSchema = z.object({
+  chenyu: z.string().optional(),
+  grsai: z.string().optional(),
+  bailian: z.string().optional(),
+  bit_browser_url: z.string().optional(),
+})
+const keychainHasInputSchema = z.object({
+  key: z.string().min(1),
+})
+
+function parseOnboardingIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
 
 export function registerOnboardingIpc() {
   ipcMain.handle('onboarding:get-state', async () => {
@@ -45,8 +68,12 @@ export function registerOnboardingIpc() {
     return { ok: true, data: { path: result.filePaths[0] } }
   })
 
-  ipcMain.handle('workspace:save-root', async (_event, root: string) => {
-    const nextRoot = root.trim()
+  ipcMain.handle('workspace:save-root', async (_event, root: unknown) => {
+    const nextRoot = parseOnboardingIpcInput(
+      workbenchRootInputSchema,
+      root,
+      '工作区路径参数不正确',
+    ).trim()
     if (!nextRoot) {
       return { ok: false, error: { code: 'INVALID_INPUT', message: '工作区不能为空' } }
     }
@@ -72,8 +99,15 @@ export function registerOnboardingIpc() {
     return { ok: true, data: { path: result.filePaths[0] } }
   })
 
-  ipcMain.handle('onboarding:save-workbench-root', async (_event, root: string) => {
-    const nextRoot = root.trim()
+  ipcMain.handle('onboarding:save-workbench-root', async (_event, root: unknown) => {
+    const nextRoot = parseOnboardingIpcInput(
+      workbenchRootInputSchema,
+      root,
+      '首次设置工作区路径参数不正确',
+    ).trim()
+    if (!nextRoot) {
+      return { ok: false, error: { code: 'INVALID_INPUT', message: '工作区不能为空' } }
+    }
     await ensureWorkbenchDirectories(nextRoot)
     const config = await readAppConfig()
     await writeAppConfig({ ...config, workbench_root: nextRoot })
@@ -81,9 +115,14 @@ export function registerOnboardingIpc() {
     return { ok: true, data: { path: nextRoot } }
   })
 
-  ipcMain.handle('onboarding:save-api-keys', async (_event, apiKeys: Record<string, string>) => {
-    for (const [key, value] of Object.entries(apiKeys)) {
-      const trimmed = value.trim()
+  ipcMain.handle('onboarding:save-api-keys', async (_event, apiKeys: unknown) => {
+    const parsed = parseOnboardingIpcInput(
+      onboardingApiKeysInputSchema,
+      apiKeys,
+      'API Key 参数不正确',
+    )
+    for (const [key, value] of Object.entries(parsed)) {
+      const trimmed = value?.trim()
       if (trimmed) {
         await setSecret(key, trimmed)
       }
@@ -98,5 +137,9 @@ export function registerOnboardingIpc() {
     return { ok: true }
   })
 
-  ipcMain.handle('keychain:has', async (_event, input: { key: string }) => hasSecret(input.key))
+  ipcMain.handle('keychain:has', async (_event, input: unknown) =>
+    hasSecret(
+      parseOnboardingIpcInput(keychainHasInputSchema, input, 'Keychain 查询参数不正确').key,
+    ),
+  )
 }

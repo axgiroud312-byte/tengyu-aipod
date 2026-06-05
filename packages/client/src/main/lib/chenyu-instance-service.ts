@@ -1,5 +1,6 @@
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
+import { z } from 'zod'
 import {
   ChenyuCloudClient,
   type ChenyuGpu,
@@ -22,7 +23,7 @@ export type ChenyuSettingsSnapshot = {
 }
 
 export type ChenyuSaveSettingsInput = {
-  apiKey?: string
+  apiKey?: string | undefined
   config: ChenyuConfig
 }
 
@@ -50,15 +51,126 @@ export type ChenyuManagedInstance = {
 }
 
 export type ChenyuCreateFixedPodInstanceInput = {
-  podTag?: string
-  gpuUuid?: string
-  gpuNums?: number
-  autoShutdownMinutes?: number | null
+  podTag?: string | undefined
+  gpuUuid?: string | undefined
+  gpuNums?: number | undefined
+  autoShutdownMinutes?: number | null | undefined
 }
 
 const DEFAULT_GPU_NUMS = 1
 const POD_DISCOVERY_PAGE_SIZE = 50
 const GPU_PAGE_SIZE = 100
+const rawChenyuConfigSchema = z.object({
+  pod_search_keyword: z.string().optional(),
+  pod_title: z.string().optional(),
+  pod_uuid: z.string().optional(),
+  pod_tags: z.array(z.string()).optional(),
+  default_pod_tag: z.string().optional(),
+  default_gpu_uuid: z.string().optional(),
+  default_gpu_name: z.string().optional(),
+  default_gpu_nums: z.number().optional(),
+  auto_shutdown_minutes: z.number().nullable().optional(),
+})
+const chenyuConfigSchema = rawChenyuConfigSchema.transform((config): ChenyuConfig => {
+  const result: ChenyuConfig = {}
+  if (config.pod_search_keyword !== undefined) {
+    result.pod_search_keyword = config.pod_search_keyword
+  }
+  if (config.pod_title !== undefined) {
+    result.pod_title = config.pod_title
+  }
+  if (config.pod_uuid !== undefined) {
+    result.pod_uuid = config.pod_uuid
+  }
+  if (config.pod_tags !== undefined) {
+    result.pod_tags = config.pod_tags
+  }
+  if (config.default_pod_tag !== undefined) {
+    result.default_pod_tag = config.default_pod_tag
+  }
+  if (config.default_gpu_uuid !== undefined) {
+    result.default_gpu_uuid = config.default_gpu_uuid
+  }
+  if (config.default_gpu_name !== undefined) {
+    result.default_gpu_name = config.default_gpu_name
+  }
+  if (config.default_gpu_nums !== undefined) {
+    result.default_gpu_nums = config.default_gpu_nums
+  }
+  if (config.auto_shutdown_minutes !== undefined) {
+    result.auto_shutdown_minutes = config.auto_shutdown_minutes
+  }
+  return result
+})
+const chenyuSaveSettingsInputSchema = z
+  .object({
+    apiKey: z.string().optional(),
+    config: chenyuConfigSchema,
+  })
+  .transform((input): ChenyuSaveSettingsInput => {
+    const result: ChenyuSaveSettingsInput = { config: input.config }
+    if (input.apiKey !== undefined) {
+      result.apiKey = input.apiKey
+    }
+    return result
+  })
+const chenyuDiscoverPodInputSchema = z.object({ keyword: z.string().optional() }).optional()
+const chenyuCreateFixedPodInstanceInputSchema = z
+  .object({
+    podTag: z.string().optional(),
+    gpuUuid: z.string().optional(),
+    gpuNums: z.number().optional(),
+    autoShutdownMinutes: z.number().nullable().optional(),
+  })
+  .transform((input): ChenyuCreateFixedPodInstanceInput => {
+    const result: ChenyuCreateFixedPodInstanceInput = {}
+    if (input.podTag !== undefined) {
+      result.podTag = input.podTag
+    }
+    if (input.gpuUuid !== undefined) {
+      result.gpuUuid = input.gpuUuid
+    }
+    if (input.gpuNums !== undefined) {
+      result.gpuNums = input.gpuNums
+    }
+    if (input.autoShutdownMinutes !== undefined) {
+      result.autoShutdownMinutes = input.autoShutdownMinutes
+    }
+    return result
+  })
+const chenyuStartupInstanceInputSchema = z
+  .object({
+    instanceUuid: z.string(),
+    gpuUuid: z.string().optional(),
+    gpuNums: z.number().optional(),
+  })
+  .transform((input): { instanceUuid: string; gpuUuid?: string; gpuNums?: number } => {
+    const result: { instanceUuid: string; gpuUuid?: string; gpuNums?: number } = {
+      instanceUuid: input.instanceUuid,
+    }
+    if (input.gpuUuid !== undefined) {
+      result.gpuUuid = input.gpuUuid
+    }
+    if (input.gpuNums !== undefined) {
+      result.gpuNums = input.gpuNums
+    }
+    return result
+  })
+const chenyuInstanceUuidInputSchema = z.object({ instanceUuid: z.string() })
+const chenyuSetActiveInstanceInputSchema = z.object({
+  instanceUuid: z.string(),
+  comfyuiUrl: z.string().optional(),
+})
+
+function parseChenyuIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
 
 export async function readChenyuSettings(): Promise<ChenyuSettingsSnapshot> {
   const config = await readAppConfig()
@@ -176,8 +288,8 @@ export async function createFixedPodInstance(input: ChenyuCreateFixedPodInstance
 
 export async function startupChenyuInstance(input: {
   instanceUuid: string
-  gpuUuid?: string
-  gpuNums?: number
+  gpuUuid?: string | undefined
+  gpuNums?: number | undefined
 }) {
   const client = await requireChenyuClient()
   return client.startup({
@@ -214,7 +326,7 @@ export async function setActiveChenyuInstance(
   const client = await requireChenyuClient()
   const info = await client.getInstanceInfo(instanceUuid)
   const manager = new ComfyuiInstanceManager({ chenyu: client })
-  return manager.setCurrentInstance(info, input)
+  return manager.setCurrentInstance(info, input.comfyuiUrl ? { comfyuiUrl: input.comfyuiUrl } : {})
 }
 
 export async function getActiveChenyuInstance() {
@@ -229,41 +341,55 @@ export async function refreshActiveChenyuInstance() {
 
 export function registerChenyuInstanceIpc() {
   ipcMain.handle('chenyu:get-settings', () => readChenyuSettings())
-  ipcMain.handle('chenyu:save-settings', (_event, input: ChenyuSaveSettingsInput) =>
-    saveChenyuSettings(input),
+  ipcMain.handle('chenyu:save-settings', (_event, input: unknown) =>
+    saveChenyuSettings(
+      parseChenyuIpcInput(chenyuSaveSettingsInputSchema, input, '晨羽设置参数不正确'),
+    ),
   )
   ipcMain.handle('chenyu:test-connection', () => testChenyuConnection())
-  ipcMain.handle('chenyu:discover-pod', (_event, input?: { keyword?: string }) =>
-    discoverChenyuPod(input?.keyword),
+  ipcMain.handle('chenyu:discover-pod', (_event, input: unknown) =>
+    discoverChenyuPod(
+      parseChenyuIpcInput(chenyuDiscoverPodInputSchema, input, '晨羽 POD 查询参数不正确')?.keyword,
+    ),
   )
   ipcMain.handle('chenyu:list-gpus', () => listChenyuGpus())
   ipcMain.handle('chenyu:list-instances', () => listChenyuInstances())
-  ipcMain.handle(
-    'chenyu:create-fixed-pod-instance',
-    (_event, input: ChenyuCreateFixedPodInstanceInput) => createFixedPodInstance(input),
+  ipcMain.handle('chenyu:create-fixed-pod-instance', (_event, input: unknown) =>
+    createFixedPodInstance(
+      parseChenyuIpcInput(chenyuCreateFixedPodInstanceInputSchema, input, '晨羽创建云机参数不正确'),
+    ),
   )
-  ipcMain.handle(
-    'chenyu:startup-instance',
-    (_event, input: { instanceUuid: string; gpuUuid?: string; gpuNums?: number }) =>
-      startupChenyuInstance(input),
+  ipcMain.handle('chenyu:startup-instance', (_event, input: unknown) =>
+    startupChenyuInstance(
+      parseChenyuIpcInput(chenyuStartupInstanceInputSchema, input, '晨羽启动云机参数不正确'),
+    ),
   )
-  ipcMain.handle('chenyu:shutdown-instance', (_event, input: { instanceUuid: string }) =>
-    shutdownChenyuInstance(input.instanceUuid),
+  ipcMain.handle('chenyu:shutdown-instance', (_event, input: unknown) =>
+    shutdownChenyuInstance(
+      parseChenyuIpcInput(chenyuInstanceUuidInputSchema, input, '晨羽关机参数不正确').instanceUuid,
+    ),
   )
-  ipcMain.handle('chenyu:restart-instance', (_event, input: { instanceUuid: string }) =>
-    restartChenyuInstance(input.instanceUuid),
+  ipcMain.handle('chenyu:restart-instance', (_event, input: unknown) =>
+    restartChenyuInstance(
+      parseChenyuIpcInput(chenyuInstanceUuidInputSchema, input, '晨羽重启参数不正确').instanceUuid,
+    ),
   )
-  ipcMain.handle('chenyu:destroy-instance', (_event, input: { instanceUuid: string }) =>
-    destroyChenyuInstance(input.instanceUuid),
+  ipcMain.handle('chenyu:destroy-instance', (_event, input: unknown) =>
+    destroyChenyuInstance(
+      parseChenyuIpcInput(chenyuInstanceUuidInputSchema, input, '晨羽销毁参数不正确').instanceUuid,
+    ),
   )
-  ipcMain.handle(
-    'chenyu:set-active-instance',
-    (_event, input: { instanceUuid: string; comfyuiUrl?: string }) =>
-      setActiveChenyuInstance(
-        input.instanceUuid,
-        input.comfyuiUrl ? { comfyuiUrl: input.comfyuiUrl } : {},
-      ),
-  )
+  ipcMain.handle('chenyu:set-active-instance', (_event, input: unknown) => {
+    const parsed = parseChenyuIpcInput(
+      chenyuSetActiveInstanceInputSchema,
+      input,
+      '晨羽当前云机参数不正确',
+    )
+    return setActiveChenyuInstance(
+      parsed.instanceUuid,
+      parsed.comfyuiUrl ? { comfyuiUrl: parsed.comfyuiUrl } : {},
+    )
+  })
   ipcMain.handle('chenyu:get-active-instance', () => getActiveChenyuInstance())
   ipcMain.handle('chenyu:refresh-active-instance', () => refreshActiveChenyuInstance())
 }

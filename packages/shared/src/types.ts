@@ -60,6 +60,12 @@ export interface PipelineExtractConfig {
   comfyui?: PipelineComfyuiWorkflowConfig
 }
 
+export interface PipelineReferenceImageInput {
+  name: string
+  base64: string
+  mime_type: string
+}
+
 export type PipelineSourceConfig =
   | {
       mode: 'collection'
@@ -75,7 +81,9 @@ export type PipelineSourceConfig =
   | {
       mode: 'img2img'
       provider: 'grsai'
-      sourceFolder: string
+      sourceFolder?: string
+      referenceImages?: PipelineReferenceImageInput[]
+      referenceImagePaths?: string[]
       prompt: PipelinePromptConfig
       sendReferenceImages?: boolean
       grsai?: PipelineGrsaiImageConfig
@@ -119,6 +127,7 @@ export interface PipelineDetectionConfig {
 }
 
 export interface PipelinePhotoshopConfig {
+  enabled?: boolean
   templates: string[]
   outputRoot?: string
   replaceRange?: 'auto' | 'top' | 'all'
@@ -129,6 +138,7 @@ export interface PipelinePhotoshopConfig {
 }
 
 export interface PipelineTitleConfig {
+  enabled?: boolean
   platform: string
   language: string
   model: string

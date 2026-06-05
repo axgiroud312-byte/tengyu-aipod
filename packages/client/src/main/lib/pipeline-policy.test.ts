@@ -21,6 +21,7 @@ function baseConfig(source: PipelineRunConfig['source']): PipelineRunConfig {
       model: 'qwen3-vl-flash',
     },
     photoshop: {
+      enabled: true,
       templates: ['C:\\mockups\\shirt.psd'],
       replaceRange: 'auto',
       format: 'jpg',
@@ -29,6 +30,7 @@ function baseConfig(source: PipelineRunConfig['source']): PipelineRunConfig {
       maxRetries: 1,
     },
     title: {
+      enabled: true,
       platform: 'temu',
       language: 'en',
       model: 'qwen3.6-flash',
@@ -82,5 +84,49 @@ describe('pipeline policy', () => {
         }),
       ),
     ).toEqual(['source', 'matting', 'detection', 'photoshop', 'title'])
+  })
+
+  it('stops before downstream steps when optional stages are disabled', () => {
+    const defaults = baseConfig({ mode: 'existing_prints', printFolder: 'x' })
+    expect(
+      plannedPipelineSteps({
+        ...baseConfig({
+          mode: 'collection',
+          sourceFolder: 'C:\\work\\01-采集工作区\\temu',
+          extract: {
+            provider: 'grsai',
+            skillId: 'extract',
+            grsai: {
+              model: 'gpt-image-2',
+              aspectRatio: '1024x1024',
+            },
+          },
+        }),
+        matting: { enabled: false, mode: 'comfyui' },
+        detection: { enabled: false },
+        photoshop: { ...defaults.photoshop, enabled: false },
+        title: { ...defaults.title, enabled: false },
+      }),
+    ).toEqual(['source', 'extract'])
+  })
+
+  it('does not plan title when Photoshop is disabled', () => {
+    const defaults = baseConfig({ mode: 'existing_prints', printFolder: 'x' })
+    expect(
+      plannedPipelineSteps({
+        ...baseConfig({
+          mode: 'existing_prints',
+          printFolder: 'C:\\work\\02-印花工作区\\ready',
+        }),
+        photoshop: {
+          ...defaults.photoshop,
+          enabled: false,
+        },
+        title: {
+          ...defaults.title,
+          enabled: true,
+        },
+      }),
+    ).toEqual(['source', 'matting', 'detection'])
   })
 })

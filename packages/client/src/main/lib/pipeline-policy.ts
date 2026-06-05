@@ -28,6 +28,11 @@ export function plannedPipelineSteps(config: PipelineRunConfig): PipelineStepKey
   if (config.detection.enabled) {
     steps.push('detection')
   }
-  steps.push('photoshop', 'title')
+  if (config.photoshop.enabled !== false) {
+    steps.push('photoshop')
+  }
+  if (config.title.enabled !== false && config.photoshop.enabled !== false) {
+    steps.push('title')
+  }
   return steps
 }

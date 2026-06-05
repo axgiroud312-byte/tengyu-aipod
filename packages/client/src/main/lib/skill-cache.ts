@@ -2,12 +2,14 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import {
   API_PATHS,
+  AppErrorClass,
   CACHE_REFRESH_INTERVAL_MINUTES,
   type Skill,
   type SkillModule,
   type SkillSummary,
 } from '@tengyu-aipod/shared'
 import { app, ipcMain } from 'electron'
+import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { serverUrl } from './server-base-url'
 
@@ -16,10 +18,49 @@ const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const SKILL_INDEX_FILE_NAME = 'index.json'
 
 export type SkillListFilter = {
-  module?: SkillModule
-  category?: string
-  platform?: string
-  language?: string
+  module?: SkillModule | undefined
+  category?: string | undefined
+  platform?: string | undefined
+  language?: string | undefined
+}
+
+const rawSkillListFilterSchema = z
+  .object({
+    module: z.enum(['generation', 'detection', 'title']).optional(),
+    category: z.string().optional(),
+    platform: z.string().optional(),
+    language: z.string().optional(),
+  })
+  .optional()
+const skillListFilterSchema = rawSkillListFilterSchema.transform((filter): SkillListFilter => {
+  const result: SkillListFilter = {}
+  if (filter?.module !== undefined) {
+    result.module = filter.module
+  }
+  if (filter?.category !== undefined) {
+    result.category = filter.category
+  }
+  if (filter?.platform !== undefined) {
+    result.platform = filter.platform
+  }
+  if (filter?.language !== undefined) {
+    result.language = filter.language
+  }
+  return result
+})
+const skillGetInputSchema = z.object({
+  id: z.string().min(1),
+  version: z.string().optional(),
+})
+
+function parseSkillIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
 }
 
 interface SkillIndexFile {
@@ -307,12 +348,15 @@ export class SkillCacheManager {
 export const skillCacheManager = new SkillCacheManager()
 
 export function registerSkillCacheIpc() {
-  ipcMain.handle('skill:list', (_event, filter?: SkillListFilter) =>
-    skillCacheManager.listSkills(filter),
+  ipcMain.handle('skill:list', (_event, filter: unknown) =>
+    skillCacheManager.listSkills(
+      parseSkillIpcInput(skillListFilterSchema, filter, 'Skill 列表筛选参数不正确') ?? {},
+    ),
   )
-  ipcMain.handle('skill:get', (_event, input: { id: string; version?: string }) =>
-    skillCacheManager.getSkill(input.id, input.version),
-  )
+  ipcMain.handle('skill:get', (_event, input: unknown) => {
+    const parsed = parseSkillIpcInput(skillGetInputSchema, input, 'Skill 查询参数不正确')
+    return skillCacheManager.getSkill(parsed.id, parsed.version)
+  })
   ipcMain.handle('skill:refresh', async () => {
     try {
       const items = await skillCacheManager.refresh()

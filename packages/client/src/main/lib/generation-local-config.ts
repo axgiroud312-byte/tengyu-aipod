@@ -1,4 +1,6 @@
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
+import { z } from 'zod'
 import { getSecret, setSecret } from './keychain'
 import { type GenerationLocalConfig, readAppConfig, writeAppConfig } from './workbench-config'
 
@@ -20,15 +22,24 @@ export type GrsaiImageModelOption = {
 export type GenerationLocalSettingsSnapshot = {
   grsaiKeyConfigured: boolean
   bailianKeyConfigured: boolean
-  config: Required<GenerationLocalConfig>
+  config: NormalizedGenerationLocalConfig
   grsaiModels: GrsaiImageModelOption[]
   bailianTextModels: LocalModelOption[]
   bailianVisionModels: LocalModelOption[]
 }
 
+export type NormalizedGenerationLocalConfig = {
+  bailian_text_model: string
+  bailian_vision_model: string
+  grsai_node: 'cn' | 'global'
+  default_concurrency: number
+  grsai_concurrency: number
+  grsai_retries: number
+}
+
 export type SaveGenerationLocalSettingsInput = {
-  grsaiApiKey?: string
-  bailianApiKey?: string
+  grsaiApiKey?: string | undefined
+  bailianApiKey?: string | undefined
   config: GenerationLocalConfig
 }
 
@@ -115,13 +126,76 @@ export const BAILIAN_VISION_MODELS: LocalModelOption[] = [
   { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'vision' },
 ]
 
-export const DEFAULT_GENERATION_LOCAL_CONFIG: Required<GenerationLocalConfig> = {
+export const DEFAULT_GENERATION_LOCAL_CONFIG: NormalizedGenerationLocalConfig = {
   bailian_text_model: 'qwen3.6-flash',
   bailian_vision_model: 'qwen3.6-flash',
   grsai_node: 'cn',
   default_concurrency: 20,
   grsai_concurrency: 20,
   grsai_retries: 2,
+}
+
+const rawGenerationLocalConfigSchema = z.object({
+  bailian_text_model: z.string().optional(),
+  bailian_vision_model: z.string().optional(),
+  grsai_node: z.enum(['cn', 'global']).optional(),
+  default_concurrency: z.number().optional(),
+  grsai_concurrency: z.number().optional(),
+  grsai_retries: z.number().optional(),
+})
+const generationLocalConfigSchema = rawGenerationLocalConfigSchema.transform(
+  (config): GenerationLocalConfig => {
+    const result: GenerationLocalConfig = {}
+    if (config.bailian_text_model !== undefined) {
+      result.bailian_text_model = config.bailian_text_model
+    }
+    if (config.bailian_vision_model !== undefined) {
+      result.bailian_vision_model = config.bailian_vision_model
+    }
+    if (config.grsai_node !== undefined) {
+      result.grsai_node = config.grsai_node
+    }
+    if (config.default_concurrency !== undefined) {
+      result.default_concurrency = config.default_concurrency
+    }
+    if (config.grsai_concurrency !== undefined) {
+      result.grsai_concurrency = config.grsai_concurrency
+    }
+    if (config.grsai_retries !== undefined) {
+      result.grsai_retries = config.grsai_retries
+    }
+    return result
+  },
+)
+const saveGenerationLocalSettingsInputSchema = z
+  .object({
+    grsaiApiKey: z.string().optional(),
+    bailianApiKey: z.string().optional(),
+    config: generationLocalConfigSchema,
+  })
+  .transform((input): SaveGenerationLocalSettingsInput => {
+    const result: SaveGenerationLocalSettingsInput = { config: input.config }
+    if (input.grsaiApiKey !== undefined) {
+      result.grsaiApiKey = input.grsaiApiKey
+    }
+    if (input.bailianApiKey !== undefined) {
+      result.bailianApiKey = input.bailianApiKey
+    }
+    return result
+  })
+
+function parseGenerationSettingsIpcInput<T>(
+  schema: z.ZodType<T>,
+  input: unknown,
+  message: string,
+): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
 }
 
 export function clampGenerationInt(value: unknown, min: number, max: number, fallback: number) {
@@ -134,15 +208,18 @@ export function clampGenerationInt(value: unknown, min: number, max: number, fal
 
 export function normalizeGenerationLocalConfig(
   config: GenerationLocalConfig = {},
-): Required<GenerationLocalConfig> {
-  const textModel = BAILIAN_TEXT_MODELS.some((model) => model.id === config.bailian_text_model)
-    ? config.bailian_text_model
-    : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_text_model
-  const visionModel = BAILIAN_VISION_MODELS.some(
-    (model) => model.id === config.bailian_vision_model,
-  )
-    ? config.bailian_vision_model
-    : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_vision_model
+): NormalizedGenerationLocalConfig {
+  const configuredTextModel = config.bailian_text_model
+  const textModel =
+    configuredTextModel && BAILIAN_TEXT_MODELS.some((model) => model.id === configuredTextModel)
+      ? configuredTextModel
+      : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_text_model
+  const configuredVisionModel = config.bailian_vision_model
+  const visionModel =
+    configuredVisionModel &&
+    BAILIAN_VISION_MODELS.some((model) => model.id === configuredVisionModel)
+      ? configuredVisionModel
+      : DEFAULT_GENERATION_LOCAL_CONFIG.bailian_vision_model
 
   const defaultConcurrency = clampGenerationInt(
     config.default_concurrency ?? config.grsai_concurrency,
@@ -193,7 +270,13 @@ export async function saveGenerationLocalSettings(input: SaveGenerationLocalSett
 
 export function registerGenerationLocalConfigIpc() {
   ipcMain.handle('generation-settings:get', () => readGenerationLocalSettings())
-  ipcMain.handle('generation-settings:save', (_event, input: SaveGenerationLocalSettingsInput) =>
-    saveGenerationLocalSettings(input),
+  ipcMain.handle('generation-settings:save', (_event, input: unknown) =>
+    saveGenerationLocalSettings(
+      parseGenerationSettingsIpcInput(
+        saveGenerationLocalSettingsInputSchema,
+        input,
+        '生图本地设置参数不正确',
+      ),
+    ),
   )
 }

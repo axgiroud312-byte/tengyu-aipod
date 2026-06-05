@@ -11,6 +11,7 @@ import {
 import { BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import ExcelJS from 'exceljs'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
+import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
 import {
@@ -34,26 +35,28 @@ export type ExistingTitleStrategy = 'skip' | 'regenerate'
 
 export type TitleBatchConfig = {
   batchDir: string
-  titleFileName?: string
+  titleFileName?: string | undefined
   platform: string
   language: string
   model: string
-  imageIndex?: number
-  extraRequirement?: string
-  titlePrefix?: string
-  titleSuffix?: string
-  titleSeparator?: string
-  existingStrategy?: ExistingTitleStrategy
-  maxRetries?: number
-  concurrency?: number
-  preprocess?: {
-    maxSize?: number
-    compression?: boolean
-    format?: PreprocessFormat
-    quality?: number
-  }
-  taskId?: string
-  skuCodes?: string[]
+  imageIndex?: number | undefined
+  extraRequirement?: string | undefined
+  titlePrefix?: string | undefined
+  titleSuffix?: string | undefined
+  titleSeparator?: string | undefined
+  existingStrategy?: ExistingTitleStrategy | undefined
+  maxRetries?: number | undefined
+  concurrency?: number | undefined
+  preprocess?:
+    | {
+        maxSize?: number | undefined
+        compression?: boolean | undefined
+        format?: PreprocessFormat | undefined
+        quality?: number | undefined
+      }
+    | undefined
+  taskId?: string | undefined
+  skuCodes?: string[] | undefined
 }
 
 export type TitleProgress = {
@@ -63,8 +66,8 @@ export type TitleProgress = {
   succeeded: number
   failed: number
   skipped: number
-  diagnosticsLogPath?: string
-  status?: 'running' | 'cancelled'
+  diagnosticsLogPath?: string | undefined
+  status?: 'running' | 'cancelled' | undefined
 }
 
 export type TitleSkuResult =
@@ -73,14 +76,14 @@ export type TitleSkuResult =
       status: 'success'
       title: string
       imagePath: string
-      warning?: string
+      warning?: string | undefined
     }
   | {
       skuCode: string
       status: 'failed'
       error: string
-      imagePath?: string
-      warning?: string
+      imagePath?: string | undefined
+      warning?: string | undefined
     }
   | {
       skuCode: string
@@ -96,8 +99,8 @@ export type TitleBatchResult = {
   failed: number
   skipped: number
   results: TitleSkuResult[]
-  cancelled?: boolean
-  diagnosticsLogPath?: string
+  cancelled?: boolean | undefined
+  diagnosticsLogPath?: string | undefined
 }
 
 export type TitleTaskEvent =
@@ -175,6 +178,114 @@ const LANGUAGE_OPTIONS = [
   { key: 'ru', label: '俄语' },
   { key: 'ar', label: '阿拉伯语' },
 ]
+
+const rawTitlePreprocessSchema = z.object({
+  maxSize: z.number().optional(),
+  compression: z.boolean().optional(),
+  format: z.enum(['jpg', 'png']).optional(),
+  quality: z.number().optional(),
+})
+const titlePreprocessSchema = rawTitlePreprocessSchema.transform(
+  (preprocess): NonNullable<TitleBatchConfig['preprocess']> => {
+    const result: NonNullable<TitleBatchConfig['preprocess']> = {}
+    if (preprocess.maxSize !== undefined) {
+      result.maxSize = preprocess.maxSize
+    }
+    if (preprocess.compression !== undefined) {
+      result.compression = preprocess.compression
+    }
+    if (preprocess.format !== undefined) {
+      result.format = preprocess.format
+    }
+    if (preprocess.quality !== undefined) {
+      result.quality = preprocess.quality
+    }
+    return result
+  },
+)
+const rawTitleBatchConfigSchema = z.object({
+  batchDir: z.string(),
+  titleFileName: z.string().optional(),
+  platform: z.string(),
+  language: z.string(),
+  model: z.string(),
+  imageIndex: z.number().optional(),
+  extraRequirement: z.string().optional(),
+  titlePrefix: z.string().optional(),
+  titleSuffix: z.string().optional(),
+  titleSeparator: z.string().optional(),
+  existingStrategy: z.enum(['skip', 'regenerate']).optional(),
+  maxRetries: z.number().optional(),
+  concurrency: z.number().optional(),
+  preprocess: titlePreprocessSchema.optional(),
+  taskId: z.string().optional(),
+  skuCodes: z.array(z.string()).optional(),
+})
+const titleBatchConfigSchema = rawTitleBatchConfigSchema.transform((config): TitleBatchConfig => {
+  const result: TitleBatchConfig = {
+    batchDir: config.batchDir,
+    platform: config.platform,
+    language: config.language,
+    model: config.model,
+  }
+  if (config.titleFileName !== undefined) {
+    result.titleFileName = config.titleFileName
+  }
+  if (config.imageIndex !== undefined) {
+    result.imageIndex = config.imageIndex
+  }
+  if (config.extraRequirement !== undefined) {
+    result.extraRequirement = config.extraRequirement
+  }
+  if (config.titlePrefix !== undefined) {
+    result.titlePrefix = config.titlePrefix
+  }
+  if (config.titleSuffix !== undefined) {
+    result.titleSuffix = config.titleSuffix
+  }
+  if (config.titleSeparator !== undefined) {
+    result.titleSeparator = config.titleSeparator
+  }
+  if (config.existingStrategy !== undefined) {
+    result.existingStrategy = config.existingStrategy
+  }
+  if (config.maxRetries !== undefined) {
+    result.maxRetries = config.maxRetries
+  }
+  if (config.concurrency !== undefined) {
+    result.concurrency = config.concurrency
+  }
+  if (config.preprocess !== undefined) {
+    result.preprocess = config.preprocess
+  }
+  if (config.taskId !== undefined) {
+    result.taskId = config.taskId
+  }
+  if (config.skuCodes !== undefined) {
+    result.skuCodes = config.skuCodes
+  }
+  return result
+})
+const titleScanBatchDirInputSchema = z.object({
+  batchDir: z.string(),
+  titleFileName: z.string().optional(),
+})
+const titleTaskIdInputSchema = z.object({ task_id: z.string() })
+const titleGetResultInputSchema = z.object({
+  sku_code: z.string(),
+  batch_dir: z.string(),
+})
+const titleOpenPathInputSchema = z.object({ path: z.string() })
+
+function parseTitleIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
 
 function createDefaultBailianAdapter(apiKey: string) {
   return new AliyunBailianAdapter({
@@ -1280,22 +1391,35 @@ export function registerTitleIpc() {
     }
     return { ok: true, data: { path: result.filePaths[0] } }
   })
-  ipcMain.handle(
-    'title:scan-batch-dir',
-    (_event, input: { batchDir: string; titleFileName?: string }) =>
-      titleService.scanBatchDir(input.batchDir, input.titleFileName),
+  ipcMain.handle('title:scan-batch-dir', (_event, input: unknown) => {
+    const parsed = parseTitleIpcInput(titleScanBatchDirInputSchema, input, '标题扫描目录参数不正确')
+    return titleService.scanBatchDir(parsed.batchDir, parsed.titleFileName)
+  })
+  ipcMain.handle('title:run', (_event, input: unknown) =>
+    titleService.startBatch(
+      parseTitleIpcInput(titleBatchConfigSchema, input, '标题任务参数不正确'),
+      emitTitleProgress,
+      emitTitleCompleted,
+    ),
   )
-  ipcMain.handle('title:run', (_event, input: TitleBatchConfig) =>
-    titleService.startBatch(input, emitTitleProgress, emitTitleCompleted),
-  )
-  ipcMain.handle('title:cancel', (_event, input: { task_id: string }) => ({
-    ok: titleService.cancelTask(input.task_id),
+  ipcMain.handle('title:cancel', (_event, input: unknown) => ({
+    ok: titleService.cancelTask(
+      parseTitleIpcInput(titleTaskIdInputSchema, input, '标题取消参数不正确').task_id,
+    ),
   }))
-  ipcMain.handle('title:retry-failed', (_event, input: { task_id: string }) =>
-    titleService.retryFailed(input.task_id, emitTitleProgress, emitTitleCompleted),
+  ipcMain.handle('title:retry-failed', (_event, input: unknown) =>
+    titleService.retryFailed(
+      parseTitleIpcInput(titleTaskIdInputSchema, input, '标题重试参数不正确').task_id,
+      emitTitleProgress,
+      emitTitleCompleted,
+    ),
   )
-  ipcMain.handle('title:get-result', (_event, input: { sku_code: string; batch_dir: string }) =>
-    titleService.getResult(input),
+  ipcMain.handle('title:get-result', (_event, input: unknown) =>
+    titleService.getResult(
+      parseTitleIpcInput(titleGetResultInputSchema, input, '标题结果查询参数不正确'),
+    ),
   )
-  ipcMain.handle('title:open-path', (_event, input: { path: string }) => openPath(input.path))
+  ipcMain.handle('title:open-path', (_event, input: unknown) =>
+    openPath(parseTitleIpcInput(titleOpenPathInputSchema, input, '标题打开路径参数不正确').path),
+  )
 }

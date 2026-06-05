@@ -9,8 +9,14 @@ import {
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
+import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
-import { ChenyuCloudClient, type ChenyuInstanceInfo, chenyuStatusName } from './chenyu-cloud-client'
+import {
+  ChenyuCloudClient,
+  type ChenyuInstanceInfo,
+  type ChenyuWorkflowMarketParams,
+  chenyuStatusName,
+} from './chenyu-cloud-client'
 import {
   type ChenyuRunImageWorkflowInput,
   type ChenyuRunImageWorkflowResult,
@@ -54,41 +60,41 @@ export type Txt2imgPromptDraft = {
 }
 
 export type GenerationPromptInput = {
-  capability?: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>
-  skillId?: string
-  skillVersion?: string
-  printMode?: 'local' | 'full'
+  capability?: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'> | undefined
+  skillId?: string | undefined
+  skillVersion?: string | undefined
+  printMode?: 'local' | 'full' | undefined
   requirement: string
   count: number
-  model?: string
-  modeInstruction?: string
-  referenceImages?: Array<{ base64: string; mime_type: string }>
+  model?: string | undefined
+  modeInstruction?: string | undefined
+  referenceImages?: Array<{ base64: string; mime_type: string }> | undefined
 }
 
 export type Txt2imgRunInput = {
-  capability?: 'txt2img' | 'img2img'
+  capability?: 'txt2img' | 'img2img' | undefined
   prompts: string[]
   model: string
   aspectRatio: string
-  imageSize?: '1K' | '2K' | '4K'
-  referenceImages?: Array<{ base64: string; mime_type: string }>
+  imageSize?: '1K' | '2K' | '4K' | undefined
+  referenceImages?: Array<{ base64: string; mime_type: string }> | undefined
   concurrency: number
-  taskId?: string
+  taskId?: string | undefined
 }
 
 export type ComfyuiInstanceRunInput = {
-  instanceUuid?: string
+  instanceUuid?: string | undefined
 }
 
 export type ComfyuiTxt2imgRunInput = ComfyuiInstanceRunInput & {
   prompts: string[]
   workflowId: string
-  workflowName?: string
-  workflowVersion?: string
-  width?: number
-  height?: number
-  concurrency?: number
-  taskId?: string
+  workflowName?: string | undefined
+  workflowVersion?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
+  concurrency?: number | undefined
+  taskId?: string | undefined
 }
 
 export type GenerationProgress = {
@@ -98,18 +104,18 @@ export type GenerationProgress = {
   total: number
   succeeded: number
   failed: number
-  current_prompt?: string
-  images?: GenerationRunImage[]
-  status?: 'running' | 'cancelled'
+  current_prompt?: string | undefined
+  images?: GenerationRunImage[] | undefined
+  status?: 'running' | 'cancelled' | undefined
 }
 
 export type GenerationRunImage = {
   prompt: string
   url: string
-  localPath?: string
-  sourcePath?: string
-  artifactId?: string
-  printId?: string
+  localPath?: string | undefined
+  sourcePath?: string | undefined
+  artifactId?: string | undefined
+  printId?: string | undefined
 }
 
 export type GenerationRunResult = {
@@ -119,8 +125,8 @@ export type GenerationRunResult = {
   failed: number
   images: GenerationRunImage[]
   failures: Array<{ prompt: string; error: string; sourcePath?: string }>
-  cancelled?: boolean
-  diagnosticsLogPath?: string
+  cancelled?: boolean | undefined
+  diagnosticsLogPath?: string | undefined
 }
 
 export type GenerationTaskEvent =
@@ -172,91 +178,103 @@ export type ChooseGenerationImageFolderResult =
 export type ExtractRunInput = {
   sourceImagePaths: string[]
   skillId: string
-  skillVersion?: string
-  variables?: Record<string, unknown>
+  skillVersion?: string | undefined
+  variables?: Record<string, unknown> | undefined
   model: string
   aspectRatio: string
-  imageSize?: '1K' | '2K' | '4K'
+  imageSize?: '1K' | '2K' | '4K' | undefined
   concurrency: number
-  taskId?: string
+  taskId?: string | undefined
 }
 
 export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
-  sourceArtifactIds?: string[]
-  sourceImagePaths?: string[]
+  sourceArtifactIds?: string[] | undefined
+  sourceImagePaths?: string[] | undefined
   workflowId: string
-  workflowName?: string
-  workflowVersion?: string
-  prompt?: string
-  width?: number
-  height?: number
-  taskId?: string
+  workflowName?: string | undefined
+  workflowVersion?: string | undefined
+  prompt?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
+  taskId?: string | undefined
 }
 
 export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
   sourceImagePaths: string[]
   workflowId: string
-  workflowName?: string
-  workflowVersion?: string
-  skillId?: string
-  skillVersion?: string
-  prompt?: string
-  width?: number
-  height?: number
-  taskId?: string
+  workflowName?: string | undefined
+  workflowVersion?: string | undefined
+  skillId?: string | undefined
+  skillVersion?: string | undefined
+  prompt?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
+  taskId?: string | undefined
 }
 
 export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
-  sourceArtifactIds?: string[]
-  sourceImagePaths?: string[]
+  sourceArtifactIds?: string[] | undefined
+  sourceImagePaths?: string[] | undefined
   workflowId: string
-  workflowName?: string
-  workflowVersion?: string
-  prompt?: string
-  width?: number
-  height?: number
-  taskId?: string
+  workflowName?: string | undefined
+  workflowVersion?: string | undefined
+  prompt?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
+  taskId?: string | undefined
 }
 
 export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & {
   workflowId: string
-  maskSkillId?: string
-  maskSkillVersion?: string
-  maskModel?: string
+  maskSkillId?: string | undefined
+  maskSkillVersion?: string | undefined
+  maskModel?: string | undefined
 }
 
 export type ComfyuiExtractMattingRunInput = ComfyuiInstanceRunInput & {
   sourceImagePaths: string[]
   extractWorkflowId: string
-  extractWorkflowName?: string
-  extractWorkflowVersion?: string
+  extractWorkflowName?: string | undefined
+  extractWorkflowVersion?: string | undefined
   mattingWorkflowId: string
-  mattingWorkflowName?: string
-  mattingWorkflowVersion?: string
-  skillId?: string
-  skillVersion?: string
-  prompt?: string
-  width?: number
-  height?: number
-  taskId?: string
+  mattingWorkflowName?: string | undefined
+  mattingWorkflowVersion?: string | undefined
+  skillId?: string | undefined
+  skillVersion?: string | undefined
+  prompt?: string | undefined
+  width?: number | undefined
+  height?: number | undefined
+  taskId?: string | undefined
 }
 
 export type ChenyuWorkflowMarketListInput = {
-  keyword?: string
-  tag?: string
-  sort?: string
-  page?: number
-  page_size?: number
+  keyword?: string | undefined
+  tag?: string | undefined
+  sort?: string | undefined
+  page?: number | undefined
+  page_size?: number | undefined
 }
 
 export type ChenyuWorkflowRunInput = {
   capability: GenerationCapability
   workflowId: string
-  revisionId?: string
-  inputs?: Record<string, unknown>
-  prompt?: string
-  acceptExternalCostRisk?: boolean
-  taskId?: string
+  revisionId?: string | undefined
+  inputs?: Record<string, unknown> | undefined
+  prompt?: string | undefined
+  acceptExternalCostRisk?: boolean | undefined
+  taskId?: string | undefined
+}
+
+function chenyuWorkflowMarketParams(
+  input: ChenyuWorkflowMarketListInput,
+): ChenyuWorkflowMarketParams {
+  return {
+    ...(input.keyword !== undefined ? { keyword: input.keyword } : {}),
+    ...(input.tag !== undefined ? { tag: input.tag } : {}),
+    ...(input.sort !== undefined ? { sort: input.sort } : {}),
+    ...(input.page !== undefined ? { page: input.page } : {}),
+    ...(input.page_size !== undefined ? { page_size: input.page_size } : {}),
+  }
 }
 
 type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -314,6 +332,150 @@ const GENERATION_CAPABILITY_FOLDERS = {
 let generationDebugLogSequence = 0
 const activeGenerationTasks = new Set<string>()
 const cancelledGenerationTasks = new Set<string>()
+
+const generationCapabilitySchema = z.enum(['txt2img', 'img2img', 'extract', 'matting'])
+const promptCapabilitySchema = z.enum(['txt2img', 'img2img', 'extract'])
+const txt2imgCapabilitySchema = z.enum(['txt2img', 'img2img'])
+const imageSizeSchema = z.enum(['1K', '2K', '4K'])
+const referenceImageSchema = z.object({
+  base64: z.string().min(1),
+  mime_type: z.string().min(1),
+})
+const stringArraySchema = z.array(z.string())
+const optionalStringSchema = z.string().optional()
+const positiveNumberSchema = z.number().positive().optional()
+
+const generationPromptInputSchema = z.object({
+  capability: promptCapabilitySchema.optional(),
+  skillId: optionalStringSchema,
+  skillVersion: optionalStringSchema,
+  printMode: z.enum(['local', 'full']).optional(),
+  requirement: z.string(),
+  count: z.number(),
+  model: optionalStringSchema,
+  modeInstruction: optionalStringSchema,
+  referenceImages: z.array(referenceImageSchema).optional(),
+})
+
+const txt2imgRunInputSchema = z.object({
+  capability: txt2imgCapabilitySchema.optional(),
+  prompts: stringArraySchema,
+  model: z.string(),
+  aspectRatio: z.string(),
+  imageSize: imageSizeSchema.optional(),
+  referenceImages: z.array(referenceImageSchema).optional(),
+  concurrency: z.number(),
+  taskId: optionalStringSchema,
+})
+
+const comfyuiInstanceRunInputSchema = z.object({
+  instanceUuid: optionalStringSchema,
+})
+
+const comfyuiTxt2imgRunInputSchema = comfyuiInstanceRunInputSchema.extend({
+  prompts: stringArraySchema,
+  workflowId: z.string(),
+  workflowName: optionalStringSchema,
+  workflowVersion: optionalStringSchema,
+  width: positiveNumberSchema,
+  height: positiveNumberSchema,
+  concurrency: positiveNumberSchema,
+  taskId: optionalStringSchema,
+})
+
+const extractRunInputSchema = z.object({
+  sourceImagePaths: stringArraySchema,
+  skillId: z.string(),
+  skillVersion: optionalStringSchema,
+  variables: z.record(z.unknown()).optional(),
+  model: z.string(),
+  aspectRatio: z.string(),
+  imageSize: imageSizeSchema.optional(),
+  concurrency: z.number(),
+  taskId: optionalStringSchema,
+})
+
+const comfyuiSourceInputSchema = comfyuiInstanceRunInputSchema.extend({
+  sourceArtifactIds: stringArraySchema.optional(),
+  sourceImagePaths: stringArraySchema.optional(),
+  workflowId: z.string(),
+  workflowName: optionalStringSchema,
+  workflowVersion: optionalStringSchema,
+  prompt: optionalStringSchema,
+  width: positiveNumberSchema,
+  height: positiveNumberSchema,
+  taskId: optionalStringSchema,
+})
+
+const comfyuiExtractRunInputSchema = comfyuiInstanceRunInputSchema.extend({
+  sourceImagePaths: stringArraySchema,
+  workflowId: z.string(),
+  workflowName: optionalStringSchema,
+  workflowVersion: optionalStringSchema,
+  skillId: optionalStringSchema,
+  skillVersion: optionalStringSchema,
+  prompt: optionalStringSchema,
+  width: positiveNumberSchema,
+  height: positiveNumberSchema,
+  taskId: optionalStringSchema,
+})
+
+const comfyuiExtractMattingRunInputSchema = comfyuiInstanceRunInputSchema.extend({
+  sourceImagePaths: stringArraySchema,
+  extractWorkflowId: z.string(),
+  extractWorkflowName: optionalStringSchema,
+  extractWorkflowVersion: optionalStringSchema,
+  mattingWorkflowId: z.string(),
+  mattingWorkflowName: optionalStringSchema,
+  mattingWorkflowVersion: optionalStringSchema,
+  skillId: optionalStringSchema,
+  skillVersion: optionalStringSchema,
+  prompt: optionalStringSchema,
+  width: positiveNumberSchema,
+  height: positiveNumberSchema,
+  taskId: optionalStringSchema,
+})
+
+const mixedMattingRunInputSchema = comfyuiSourceInputSchema.extend({
+  maskSkillId: optionalStringSchema,
+  maskSkillVersion: optionalStringSchema,
+  maskModel: optionalStringSchema,
+})
+
+const chenyuWorkflowMarketListInputSchema = z
+  .object({
+    keyword: optionalStringSchema,
+    tag: optionalStringSchema,
+    sort: optionalStringSchema,
+    page: z.number().optional(),
+    page_size: z.number().optional(),
+  })
+  .optional()
+
+const chenyuWorkflowRunInputSchema = z.object({
+  capability: generationCapabilitySchema,
+  workflowId: z.string(),
+  revisionId: optionalStringSchema,
+  inputs: z.record(z.unknown()).optional(),
+  prompt: optionalStringSchema,
+  acceptExternalCostRisk: z.boolean().optional(),
+  taskId: optionalStringSchema,
+})
+
+const scanGenerationImageFolderInputSchema = z.object({ folder: z.string() })
+const resolveImg2imgReferencesInputSchema = z.object({ artifactIds: stringArraySchema })
+const chenyuWorkflowInfoInputSchema = z.object({ workflowId: z.string() })
+const generationCancelInputSchema = z.object({ task_id: z.string() })
+
+function parseGenerationIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
 
 export function requestGenerationCancel(taskId: string) {
   if (!activeGenerationTasks.has(taskId)) {
@@ -377,8 +539,8 @@ function normalizeModel(model: string) {
 }
 
 function requestedComfyuiSourceCount(input: {
-  sourceArtifactIds?: string[]
-  sourceImagePaths?: string[]
+  sourceArtifactIds?: string[] | undefined
+  sourceImagePaths?: string[] | undefined
 }) {
   const artifactCount = new Set(
     (input.sourceArtifactIds ?? []).map((artifactId) => artifactId.trim()).filter(Boolean),
@@ -389,14 +551,17 @@ function requestedComfyuiSourceCount(input: {
   return artifactCount + imagePathCount
 }
 
-function comfyuiSizePx(input: { width?: number; height?: number }) {
+function comfyuiSizePx(input: { width?: number | undefined; height?: number | undefined }) {
   return {
     width: clampInt(input.width ?? 1024, 256, 4096, 1024),
     height: clampInt(input.height ?? 1024, 256, 4096, 1024),
   }
 }
 
-function comfyuiOptionalSizePx(input: { width?: number; height?: number }) {
+function comfyuiOptionalSizePx(input: {
+  width?: number | undefined
+  height?: number | undefined
+}) {
   if (input.width === undefined && input.height === undefined) {
     return undefined
   }
@@ -1046,8 +1211,8 @@ async function registerManualPrintSourceArtifacts(
 async function comfyuiSourceArtifactIds(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
-    sourceArtifactIds?: string[]
-    sourceImagePaths?: string[]
+    sourceArtifactIds?: string[] | undefined
+    sourceImagePaths?: string[] | undefined
     taskId: string
   },
 ) {
@@ -1127,7 +1292,7 @@ async function registerGeneratedArtifact(
     prompt: string
     model: string
     params: Record<string, unknown>
-    sourceArtifactIds?: string[]
+    sourceArtifactIds?: string[] | undefined
     createdAt: number
   },
 ) {
@@ -2754,7 +2919,15 @@ export async function runComfyuiMattingBatch(
 
     try {
       ensureGenerationTables(db)
-      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, {
+        taskId,
+        ...(input.sourceArtifactIds !== undefined
+          ? { sourceArtifactIds: input.sourceArtifactIds }
+          : {}),
+        ...(input.sourceImagePaths !== undefined
+          ? { sourceImagePaths: input.sourceImagePaths }
+          : {}),
+      })
       const result: GenerationRunResult = {
         taskId,
         total: sourceArtifactIds.length,
@@ -2889,7 +3062,15 @@ export async function runMixedMattingBatch(
 
     try {
       ensureGenerationTables(db)
-      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, {
+        taskId,
+        ...(input.sourceArtifactIds !== undefined
+          ? { sourceArtifactIds: input.sourceArtifactIds }
+          : {}),
+        ...(input.sourceImagePaths !== undefined
+          ? { sourceImagePaths: input.sourceImagePaths }
+          : {}),
+      })
       const result: GenerationRunResult = {
         taskId,
         total: sourceArtifactIds.length,
@@ -3224,7 +3405,15 @@ export async function runComfyuiImg2imgBatch(
 
     try {
       ensureGenerationTables(db)
-      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, { ...input, taskId })
+      const sourceArtifactIds = await comfyuiSourceArtifactIds(db, {
+        taskId,
+        ...(input.sourceArtifactIds !== undefined
+          ? { sourceArtifactIds: input.sourceArtifactIds }
+          : {}),
+        ...(input.sourceImagePaths !== undefined
+          ? { sourceImagePaths: input.sourceImagePaths }
+          : {}),
+      })
       const result: GenerationRunResult = {
         taskId,
         total: sourceArtifactIds.length,
@@ -3358,7 +3547,7 @@ export async function listChenyuWorkflowMarket(
       workbenchRoot: '',
       openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
     })
-  return runner.listWorkflows(input)
+  return runner.listWorkflows(chenyuWorkflowMarketParams(input))
 }
 
 export async function getChenyuWorkflowInfo(
@@ -3647,18 +3836,23 @@ export function parseManualPrompts(text: string) {
 }
 
 export function registerGenerationIpc() {
-  ipcMain.handle('generation:generate-prompts', (_event, input: GenerationPromptInput) =>
-    generateTxt2imgPrompts(input),
+  ipcMain.handle('generation:generate-prompts', (_event, input: unknown) =>
+    generateTxt2imgPrompts(
+      parseGenerationIpcInput(generationPromptInputSchema, input, '生图提示词参数不正确'),
+    ),
   )
   ipcMain.handle('generation:choose-image-folder', () => chooseGenerationImageFolder())
-  ipcMain.handle('generation:scan-image-folder', (_event, input: { folder: string }) =>
-    scanGenerationImageFolder(input),
+  ipcMain.handle('generation:scan-image-folder', (_event, input: unknown) =>
+    scanGenerationImageFolder(
+      parseGenerationIpcInput(scanGenerationImageFolderInputSchema, input, '图片文件夹参数不正确'),
+    ),
   )
   ipcMain.handle('generation:list-extract-sources', () => listExtractSources())
   ipcMain.handle('generation:list-img2img-sources', () => listImg2imgSources())
-  ipcMain.handle(
-    'generation:resolve-img2img-references',
-    (_event, input: { artifactIds: string[] }) => resolveImg2imgReferences(input),
+  ipcMain.handle('generation:resolve-img2img-references', (_event, input: unknown) =>
+    resolveImg2imgReferences(
+      parseGenerationIpcInput(resolveImg2imgReferencesInputSchema, input, '图生图参考图参数不正确'),
+    ),
   )
   ipcMain.handle('generation:list-comfyui-txt2img-workflows', () => listComfyuiTxt2imgWorkflows())
   ipcMain.handle('generation:list-comfyui-img2img-workflows', () => listComfyuiImg2imgWorkflows())
@@ -3667,41 +3861,72 @@ export function registerGenerationIpc() {
   ipcMain.handle('generation:list-comfyui-mixed-matting-workflows', () =>
     listComfyuiMixedMattingWorkflows(),
   )
-  ipcMain.handle(
-    'generation:list-chenyu-workflows',
-    (_event, input?: ChenyuWorkflowMarketListInput) => listChenyuWorkflowMarket(input),
+  ipcMain.handle('generation:list-chenyu-workflows', (_event, input: unknown) =>
+    listChenyuWorkflowMarket(
+      parseGenerationIpcInput(
+        chenyuWorkflowMarketListInputSchema,
+        input,
+        '晨羽工作流查询参数不正确',
+      ) ?? {},
+    ),
   )
-  ipcMain.handle('generation:get-chenyu-workflow', (_event, input: { workflowId: string }) =>
-    getChenyuWorkflowInfo(input.workflowId),
+  ipcMain.handle('generation:get-chenyu-workflow', (_event, input: unknown) =>
+    getChenyuWorkflowInfo(
+      parseGenerationIpcInput(chenyuWorkflowInfoInputSchema, input, '晨羽工作流详情参数不正确')
+        .workflowId,
+    ),
   )
-  ipcMain.handle('generation:parse-manual-prompts', (_event, text: string) =>
-    parseManualPrompts(text),
+  ipcMain.handle('generation:parse-manual-prompts', (_event, text: unknown) =>
+    parseManualPrompts(parseGenerationIpcInput(z.string(), text, '手动提示词文本参数不正确')),
   )
-  ipcMain.handle('generation:run-txt2img', (_event, input: Txt2imgRunInput) => runTxt2img(input))
-  ipcMain.handle('generation:run-comfyui-txt2img', (_event, input: ComfyuiTxt2imgRunInput) =>
-    runComfyuiTxt2img(input),
+  ipcMain.handle('generation:run-txt2img', (_event, input: unknown) =>
+    runTxt2img(parseGenerationIpcInput(txt2imgRunInputSchema, input, '文生图任务参数不正确')),
   )
-  ipcMain.handle('generation:run-extract', (_event, input: ExtractRunInput) => runExtract(input))
-  ipcMain.handle('generation:run-comfyui-extract', (_event, input: ComfyuiExtractRunInput) =>
-    runComfyuiExtract(input),
+  ipcMain.handle('generation:run-comfyui-txt2img', (_event, input: unknown) =>
+    runComfyuiTxt2img(
+      parseGenerationIpcInput(comfyuiTxt2imgRunInputSchema, input, 'ComfyUI 文生图任务参数不正确'),
+    ),
   )
-  ipcMain.handle(
-    'generation:run-comfyui-extract-matting',
-    (_event, input: ComfyuiExtractMattingRunInput) => runComfyuiExtractMatting(input),
+  ipcMain.handle('generation:run-extract', (_event, input: unknown) =>
+    runExtract(parseGenerationIpcInput(extractRunInputSchema, input, '提取任务参数不正确')),
   )
-  ipcMain.handle('generation:run-comfyui-matting', (_event, input: ComfyuiMattingRunInput) =>
-    runComfyuiMatting(input),
+  ipcMain.handle('generation:run-comfyui-extract', (_event, input: unknown) =>
+    runComfyuiExtract(
+      parseGenerationIpcInput(comfyuiExtractRunInputSchema, input, 'ComfyUI 提取任务参数不正确'),
+    ),
   )
-  ipcMain.handle('generation:run-mixed-matting', (_event, input: MixedMattingRunInput) =>
-    runMixedMatting(input),
+  ipcMain.handle('generation:run-comfyui-extract-matting', (_event, input: unknown) =>
+    runComfyuiExtractMatting(
+      parseGenerationIpcInput(
+        comfyuiExtractMattingRunInputSchema,
+        input,
+        'ComfyUI 提取抠图任务参数不正确',
+      ),
+    ),
   )
-  ipcMain.handle('generation:run-comfyui-img2img', (_event, input: ComfyuiImg2imgRunInput) =>
-    runComfyuiImg2img(input),
+  ipcMain.handle('generation:run-comfyui-matting', (_event, input: unknown) =>
+    runComfyuiMatting(
+      parseGenerationIpcInput(comfyuiSourceInputSchema, input, 'ComfyUI 抠图任务参数不正确'),
+    ),
   )
-  ipcMain.handle('generation:run-chenyu-workflow', (_event, input: ChenyuWorkflowRunInput) =>
-    runChenyuWorkflow(input),
+  ipcMain.handle('generation:run-mixed-matting', (_event, input: unknown) =>
+    runMixedMatting(
+      parseGenerationIpcInput(mixedMattingRunInputSchema, input, '混合抠图任务参数不正确'),
+    ),
   )
-  ipcMain.handle('generation:cancel', (_event, input: { task_id: string }) => ({
-    ok: requestGenerationCancel(input.task_id),
+  ipcMain.handle('generation:run-comfyui-img2img', (_event, input: unknown) =>
+    runComfyuiImg2img(
+      parseGenerationIpcInput(comfyuiSourceInputSchema, input, 'ComfyUI 图生图任务参数不正确'),
+    ),
+  )
+  ipcMain.handle('generation:run-chenyu-workflow', (_event, input: unknown) =>
+    runChenyuWorkflow(
+      parseGenerationIpcInput(chenyuWorkflowRunInputSchema, input, '晨羽工作流运行参数不正确'),
+    ),
+  )
+  ipcMain.handle('generation:cancel', (_event, input: unknown) => ({
+    ok: requestGenerationCancel(
+      parseGenerationIpcInput(generationCancelInputSchema, input, '生图取消参数不正确').task_id,
+    ),
   }))
 }

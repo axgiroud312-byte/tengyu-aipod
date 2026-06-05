@@ -19,11 +19,12 @@
 ### Changed
 
 - 完整任务页：AI 生成提示词模式下的“印花要求”改为下拉式输入，默认收起显示摘要，展开后输入并可收回，减少来源配置区的视觉占用。
+- 完整任务页：抠图、侵权检测、PS 套版和标题生成改为显式开关，未开启的后续步骤不再阻塞启动；图生图来源改为上传/删除参考图，来源图预览支持折叠。
 
 ### Known Limitations
 
 - PS 套版 v1 为 Windows-only，需要 Photoshop 2023+，通过 `New-Object -ComObject Photoshop.Application` + `DoJavaScriptFile` 执行；macOS 不支持该能力。
-- 完整任务最初版包含 PS 套版，所以同样仅能在 Windows 启动；macOS 上完整任务入口提示不可启动。
+- 完整任务仅在启用 PS 套版时要求 Windows；关闭 PS 套版后可在 macOS 运行前置步骤。
 - 完整任务最初版不包含上架，不支持暂停/恢复/断点续跑，也不是自由流程编辑器；这些留给后续通用编排引擎。
 - 真实 PS 测试需要显式设置 `REAL_PS=1`；会写入真实输出目录或覆盖文件的操作还需要 `REAL_PS_MUTATE=1`。
 - 当前本机 E2E fixture 只有 2 个 PSD 和 3 张素材，未满足 3 PSD + 5 印花的完整手动矩阵。

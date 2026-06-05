@@ -12,6 +12,7 @@ import {
   type PipelinePreviewImage,
   type PipelineProgress,
   type PipelinePromptConfig,
+  type PipelineReferenceImageInput,
   type PipelineRunConfig,
   type PipelineRunDetail,
   type PipelineRunRecord,
@@ -49,6 +50,7 @@ import { type TitleBatchResult, titleService } from './title-service'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
+const PIPELINE_RUNS_FOLDER = 'pipeline-runs'
 const DEFAULT_STATS: PipelineRunStats = {
   sourceImages: 0,
   prints: 0,
@@ -109,6 +111,12 @@ const extractSchema = z.object({
   comfyui: comfyuiWorkflowSchema.optional(),
 })
 
+const referenceImageInputSchema = z.object({
+  name: z.string().min(1),
+  base64: z.string().min(1),
+  mime_type: z.string().min(1),
+})
+
 const sourceSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('collection'),
@@ -124,7 +132,9 @@ const sourceSchema = z.discriminatedUnion('mode', [
   z.object({
     mode: z.literal('img2img'),
     provider: z.literal('grsai'),
-    sourceFolder: z.string(),
+    sourceFolder: z.string().optional(),
+    referenceImages: z.array(referenceImageInputSchema).optional(),
+    referenceImagePaths: z.array(z.string()).optional(),
     prompt: promptConfigSchema,
     sendReferenceImages: z.boolean().optional(),
     grsai: grsaiImageSchema.optional(),
@@ -179,7 +189,8 @@ const pipelineRunConfigSchema = z.object({
     maxRetries: z.number().optional(),
   }),
   photoshop: z.object({
-    templates: z.array(z.string()).min(1),
+    enabled: z.boolean().optional(),
+    templates: z.array(z.string()),
     outputRoot: z.string().optional(),
     replaceRange: z.enum(['auto', 'top', 'all']).optional(),
     format: z.enum(['jpg', 'png']).optional(),
@@ -188,6 +199,7 @@ const pipelineRunConfigSchema = z.object({
     maxRetries: z.number().optional(),
   }),
   title: z.object({
+    enabled: z.boolean().optional(),
     platform: z.string(),
     language: z.string(),
     model: z.string(),
@@ -303,6 +315,25 @@ function mimeTypeFromPath(path: string) {
     return 'image/webp'
   }
   return 'image/png'
+}
+
+function referenceImageExtension(image: PipelineReferenceImageInput) {
+  const nameExtension = extname(image.name).toLowerCase()
+  if (IMAGE_EXTENSIONS.test(nameExtension)) {
+    return nameExtension
+  }
+  if (image.mime_type === 'image/jpeg') {
+    return '.jpg'
+  }
+  if (image.mime_type === 'image/webp') {
+    return '.webp'
+  }
+  return '.png'
+}
+
+function decodeReferenceImageBase64(value: string) {
+  const payload = value.includes(',') ? value.slice(value.indexOf(',') + 1) : value
+  return Buffer.from(payload, 'base64')
 }
 
 async function imageReference(imagePath: string) {
@@ -680,7 +711,7 @@ export class PipelineService {
   }
 
   async runPipeline(runId: string, config: PipelineRunConfig): Promise<PipelineRunDetail> {
-    if (process.platform === 'darwin') {
+    if (process.platform === 'darwin' && config.photoshop.enabled !== false) {
       throw new AppErrorClass(
         'HTTP_4XX',
         '完整任务包含 PS 套版，当前 v1 仅支持在 Windows 执行',
@@ -688,18 +719,19 @@ export class PipelineService {
       )
     }
     const workbenchRoot = await this.readWorkbenchRoot()
+    const runConfig = await this.normalizeRunConfig(workbenchRoot, runId, config)
     const db = openWorkbenchDatabase(workbenchRoot)
     const active: ActivePipelineRun = { cancelled: false, currentCancel: null, previewImages: [] }
     this.activeRuns.set(runId, active)
     const stats: PipelineRunStats = { ...DEFAULT_STATS }
-    const runName = config.name?.trim() || `完整任务-${timestampSlug()}`
+    const runName = runConfig.name?.trim() || `完整任务-${timestampSlug()}`
 
     try {
       ensurePipelineTables(db)
-      this.createRun(db, runId, runName, config)
+      this.createRun(db, runId, runName, runConfig)
       this.emitRunProgress(db, runId, 'running', null, stats, '完整任务已启动')
 
-      const sourceImages = await this.runSourceStep(db, active, runId, config, stats)
+      const sourceImages = await this.runSourceStep(db, active, runId, runConfig, stats)
       let prints = sourceImages.prints
 
       if (sourceImages.extractSources.length > 0) {
@@ -707,34 +739,50 @@ export class PipelineService {
           db,
           active,
           runId,
-          config.source,
+          runConfig.source,
           sourceImages.extractSources,
           stats,
         )
       }
 
-      if (config.matting.enabled) {
-        prints = await this.runMattingStep(db, active, runId, config.matting, prints, stats)
+      if (runConfig.matting.enabled) {
+        prints = await this.runMattingStep(db, active, runId, runConfig.matting, prints, stats)
       } else {
         this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', prints.length)
       }
 
-      if (config.detection.enabled) {
-        prints = await this.runDetectionStep(db, active, runId, config.detection, prints, stats)
+      if (runConfig.detection.enabled) {
+        prints = await this.runDetectionStep(db, active, runId, runConfig.detection, prints, stats)
       } else {
         this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', prints.length)
       }
 
-      const photoshopResult = await this.runPhotoshopStep(
-        db,
-        active,
-        runId,
-        workbenchRoot,
-        config,
-        prints,
-        stats,
-      )
-      await this.runTitleStep(db, active, runId, config, photoshopResult, stats)
+      if (runConfig.photoshop.enabled === false) {
+        this.recordSkippedStep(db, runId, 'photoshop', 'photoshop', 'PS 套版', prints.length)
+        this.recordSkippedStep(db, runId, 'title', 'title', '标题生成', prints.length)
+      } else {
+        const photoshopResult = await this.runPhotoshopStep(
+          db,
+          active,
+          runId,
+          workbenchRoot,
+          runConfig,
+          prints,
+          stats,
+        )
+        if (runConfig.title.enabled === false) {
+          this.recordSkippedStep(
+            db,
+            runId,
+            'title',
+            'title',
+            '标题生成',
+            photoshopResult.result.templates.length,
+          )
+        } else {
+          await this.runTitleStep(db, active, runId, runConfig, photoshopResult, stats)
+        }
+      }
 
       this.assertNotCancelled(active)
       this.completeRun(db, runId, 'completed', stats, null)
@@ -755,6 +803,45 @@ export class PipelineService {
       throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
     }
     return config.workbench_root
+  }
+
+  private async normalizeRunConfig(
+    workbenchRoot: string,
+    runId: string,
+    config: PipelineRunConfig,
+  ): Promise<PipelineRunConfig> {
+    if (config.source.mode !== 'img2img' || !config.source.referenceImages?.length) {
+      return config
+    }
+
+    const referenceFolder = join(
+      workbenchRoot,
+      WORKBENCH_DIRECTORIES.metadata,
+      PIPELINE_RUNS_FOLDER,
+      safePathSegment(runId),
+      'references',
+    )
+    await mkdir(referenceFolder, { recursive: true })
+    const referenceImagePaths = await Promise.all(
+      config.source.referenceImages.map(async (image, index) => {
+        const baseName = safePathSegment(basename(image.name, extname(image.name)))
+        const targetPath = join(
+          referenceFolder,
+          `${String(index + 1).padStart(2, '0')}-${baseName}${referenceImageExtension(image)}`,
+        )
+        await writeFile(targetPath, decodeReferenceImageBase64(image.base64))
+        return targetPath
+      }),
+    )
+
+    const { referenceImages: _referenceImages, ...sourceWithoutUploads } = config.source
+    return {
+      ...config,
+      source: {
+        ...sourceWithoutUploads,
+        referenceImagePaths,
+      },
+    }
   }
 
   private createRun(
@@ -1131,9 +1218,13 @@ export class PipelineService {
       return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
     }
 
-    const sourcePaths = await scanImageFiles(source.sourceFolder)
+    const sourcePaths = source.referenceImagePaths?.length
+      ? source.referenceImagePaths
+      : source.sourceFolder
+        ? await scanImageFiles(source.sourceFolder)
+        : []
     if (sourcePaths.length === 0) {
-      throw new AppErrorClass('HTTP_4XX', '图生图来源目录里没有图片', false)
+      throw new AppErrorClass('HTTP_4XX', '请先添加至少一张图生图参考图', false)
     }
     if (!source.grsai) {
       throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)

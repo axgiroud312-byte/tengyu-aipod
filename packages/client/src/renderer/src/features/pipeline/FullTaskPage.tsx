@@ -34,6 +34,8 @@ import {
   RefreshCw,
   Settings2,
   Square,
+  Trash2,
+  Upload,
   WandSparkles,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
@@ -54,6 +56,20 @@ type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listIns
 type GenerationImageSource = Awaited<
   ReturnType<typeof window.api.generation.scanImageFolder>
 >[number]
+
+type ReferenceImageDraft = {
+  id: string
+  name: string
+  dataUrl: string
+  base64: string
+  mime_type: string
+}
+
+type SourcePreviewItem = {
+  id: string
+  name: string
+  src: string
+}
 
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
 type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
@@ -246,11 +262,81 @@ function PromptRequirementField({
   )
 }
 
+function ReferenceImagePicker({
+  images,
+  onAddFiles,
+  onRemove,
+}: {
+  images: ReferenceImageDraft[]
+  onAddFiles: (files: FileList | null) => void
+  onRemove: (id: string) => void
+}) {
+  return (
+    <div className="rounded-md border p-3">
+      <label className="block space-y-2 text-sm font-medium">
+        <span>参考图</span>
+        <div className="flex min-h-10 items-center gap-3 rounded-md border border-dashed px-3 py-2">
+          <Upload className="h-4 w-4 text-muted-foreground" />
+          <input
+            accept="image/*"
+            className="block min-w-0 flex-1 text-sm"
+            multiple
+            onChange={(event) => {
+              onAddFiles(event.target.files)
+              event.currentTarget.value = ''
+            }}
+            type="file"
+          />
+        </div>
+      </label>
+      {images.length ? (
+        <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+          {images.map((image) => (
+            <div className="relative rounded-md border bg-muted p-2 text-xs" key={image.id}>
+              <button
+                aria-label={`删除参考图 ${image.name}`}
+                className="absolute right-3 top-3 inline-flex h-7 w-7 items-center justify-center rounded-sm border bg-background/90 text-muted-foreground shadow-sm hover:text-red-600"
+                onClick={() => onRemove(image.id)}
+                type="button"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+              <img
+                alt={image.name}
+                className="h-20 w-full rounded-sm object-cover"
+                src={image.dataUrl}
+              />
+              <div className="mt-1 truncate">{image.name}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function splitLines(value: string) {
   return value
     .split(/\r?\n/)
     .map((line) => line.trim())
     .filter(Boolean)
+}
+
+function splitDataUrl(dataUrl: string) {
+  const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
+  return {
+    mime_type: match?.[1] ?? 'image/png',
+    base64: match?.[2] ?? dataUrl,
+  }
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader()
+    reader.addEventListener('load', () => resolve(String(reader.result ?? '')))
+    reader.addEventListener('error', () => reject(reader.error ?? new Error('读取参考图失败')))
+    reader.readAsDataURL(file)
+  })
 }
 
 function optionFromSkill(skill: SkillSummary): Option {
@@ -429,34 +515,47 @@ function AdvancedDisclosure({
 }
 
 function SourceImagePreviewGrid({
+  collapsed,
   images,
+  onCollapsedChange,
   title,
 }: {
-  images: GenerationImageSource[]
+  collapsed: boolean
+  images: SourcePreviewItem[]
+  onCollapsedChange: (collapsed: boolean) => void
   title: string
 }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3">
         <h3 className="text-sm font-semibold">{title}</h3>
-        <span className="text-xs tabular-nums text-muted-foreground">{images.length} 张</span>
+        <div className="flex items-center gap-2">
+          <span className="text-xs tabular-nums text-muted-foreground">{images.length} 张</span>
+          <Button
+            className="h-7 px-2 text-xs"
+            onClick={() => onCollapsedChange(!collapsed)}
+            variant="ghost"
+          >
+            {collapsed ? '展开' : '折叠'}
+          </Button>
+        </div>
       </div>
-      {images.length ? (
+      {images.length === 0 ? (
+        <div className="mt-3 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+          选择图片后显示预览
+        </div>
+      ) : collapsed ? null : (
         <div className="mt-3 grid grid-cols-2 gap-2">
           {images.slice(0, 12).map((image) => (
-            <div className="min-w-0 rounded-md border bg-muted/30 p-2" key={image.path}>
+            <div className="min-w-0 rounded-md border bg-muted/30 p-2" key={image.id}>
               <img
                 alt={image.name}
                 className="aspect-square w-full rounded-sm object-cover"
-                src={localImageUrl(image.path)}
+                src={image.src}
               />
               <span className="mt-2 block truncate text-xs font-medium">{image.name}</span>
             </div>
           ))}
-        </div>
-      ) : (
-        <div className="mt-3 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-          选择文件夹后显示图片
         </div>
       )}
     </div>
@@ -540,7 +639,9 @@ function PipelineEffectPreview({
   sourceFolder,
   sourceLoading,
   sourceError,
+  sourceImagesCollapsed,
   sourceImages,
+  onSourceImagesCollapsedChange,
   sourceMode,
 }: {
   currentStep: PipelineProgress['current_step']
@@ -552,7 +653,9 @@ function PipelineEffectPreview({
   sourceFolder: string
   sourceLoading: boolean
   sourceError: string | null
-  sourceImages: GenerationImageSource[]
+  sourceImagesCollapsed: boolean
+  sourceImages: SourcePreviewItem[]
+  onSourceImagesCollapsedChange: (collapsed: boolean) => void
   sourceMode: TaskSourceMode
 }) {
   const showPrompt = sourceMode === 'txt2img' || sourceMode === 'img2img'
@@ -580,7 +683,9 @@ function PipelineEffectPreview({
           {sourceMode === 'collection' || sourceMode === 'img2img' ? (
             <div>
               <SourceImagePreviewGrid
+                collapsed={sourceImagesCollapsed}
                 images={sourceImages}
+                onCollapsedChange={onSourceImagesCollapsedChange}
                 title={sourceMode === 'img2img' ? '参考图' : '采集图'}
               />
               {sourceLoading ? (
@@ -639,6 +744,7 @@ export function FullTaskPage() {
   const [sourceMode, setSourceMode] = useState<TaskSourceMode>('collection')
   const [printMode, setPrintMode] = useState<PipelinePrintMode>('local')
   const [sourceFolder, setSourceFolder] = useState('')
+  const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>([])
   const [extractProvider, setExtractProvider] = useState<ExtractProvider>('grsai')
   const [promptMode, setPromptMode] = useState<PipelinePromptMode>('manual')
   const [img2imgReferenceMode, setImg2imgReferenceMode] =
@@ -667,6 +773,7 @@ export function FullTaskPage() {
   const [photoshopMaxRetries, setPhotoshopMaxRetries] = useState('1')
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
   const [outputRoot, setOutputRoot] = useState('')
+  const [photoshopEnabled, setPhotoshopEnabled] = useState(false)
   const [detectionEnabled, setDetectionEnabled] = useState(true)
   const [detectionConfig, setDetectionConfig] = useState<DetectionConfig | null>(null)
   const [detectionPassRule, setDetectionPassRule] = useState<DetectionPassRule>('allow-review')
@@ -683,6 +790,7 @@ export function FullTaskPage() {
   const [titleMaxRetries, setTitleMaxRetries] = useState('2')
   const [titleCompression, setTitleCompression] = useState(true)
   const [titleMaxSize, setTitleMaxSize] = useState('1024')
+  const [titleEnabled, setTitleEnabled] = useState(false)
   const [extraRequirement, setExtraRequirement] = useState('')
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
   const [currentRunId, setCurrentRunId] = useState<string | null>(null)
@@ -691,6 +799,7 @@ export function FullTaskPage() {
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
   const [sourcePreviewImages, setSourcePreviewImages] = useState<GenerationImageSource[]>([])
+  const [sourceImagesCollapsed, setSourceImagesCollapsed] = useState(true)
   const [sourcePreviewLoading, setSourcePreviewLoading] = useState(false)
   const [sourcePreviewError, setSourcePreviewError] = useState<string | null>(null)
   const [pipelinePreviewImages, setPipelinePreviewImages] = useState<PipelinePreviewImage[]>([])
@@ -766,24 +875,38 @@ export function FullTaskPage() {
     img2imgReferenceModes[0]
   const promptLines = promptPreviewLines(promptMode, manualPrompts, promptRequirement)
   const workflowPreviewImages = progress?.preview_images ?? pipelinePreviewImages
+  const sourcePreviewItems = useMemo<SourcePreviewItem[]>(() => {
+    if (sourceMode === 'img2img') {
+      return referenceImages.map((image) => ({
+        id: image.id,
+        name: image.name,
+        src: image.dataUrl,
+      }))
+    }
+    return sourcePreviewImages.map((image) => ({
+      id: image.path,
+      name: image.name,
+      src: localImageUrl(image.path),
+    }))
+  }, [referenceImages, sourceMode, sourcePreviewImages])
   const sourceBadgeLabel =
     sourceMode === 'collection'
       ? '采集 + 提取'
       : sourceMode === 'txt2img'
         ? '固定付费模型'
         : '固定付费模型'
-  const sourceFolderLabel = sourceMode === 'img2img' ? '图生图参考文件夹' : '采集文件夹'
-  const sourceFolderPlaceholder =
-    sourceMode === 'img2img' ? '选择参考图文件夹' : '选择采集图片文件夹'
   const validationIssues = useMemo(() => {
     const issues: string[] = []
     const normalizedPrintSkuCode = printSkuCode.trim()
-    if (!normalizedPrintSkuCode) {
+    if (photoshopEnabled && !normalizedPrintSkuCode) {
       issues.push('请先填写印花货号')
-    } else if (!SkuCodeSchema.safeParse(normalizedPrintSkuCode).success) {
+    } else if (normalizedPrintSkuCode && !SkuCodeSchema.safeParse(normalizedPrintSkuCode).success) {
       issues.push('印花货号只能使用英文、数字、短横线和下划线，长度 1-60')
     }
-    if (templatePaths.length === 0) {
+    if (photoshopEnabled && isMac) {
+      issues.push('PS 套版仅支持 Windows，关闭 PS 套版后可在当前电脑运行前置步骤')
+    }
+    if (photoshopEnabled && templatePaths.length === 0) {
       issues.push('请先选择 PSD 模板')
     }
     if (sourceMode === 'collection') {
@@ -810,8 +933,8 @@ export function FullTaskPage() {
       }
     }
     if (sourceMode === 'txt2img' || sourceMode === 'img2img') {
-      if (sourceMode === 'img2img' && !sourceFolder.trim()) {
-        issues.push('请先选择图生图参考文件夹')
+      if (sourceMode === 'img2img' && referenceImages.length === 0) {
+        issues.push('请先添加至少一张图生图参考图')
       }
       if (promptMode === 'manual') {
         if (splitLines(manualPrompts).length === 0) {
@@ -846,7 +969,10 @@ export function FullTaskPage() {
     if (detectionEnabled && !detectionConfig) {
       issues.push('请先完成侵权检测设置加载')
     }
-    if (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim()) {
+    if (titleEnabled && !photoshopEnabled) {
+      issues.push('标题生成需要先启用 PS 套版')
+    }
+    if (titleEnabled && (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim())) {
       issues.push('请先完成标题设置')
     }
     return issues
@@ -858,25 +984,29 @@ export function FullTaskPage() {
     extractWorkflowId,
     detectionConfig,
     detectionEnabled,
+    isMac,
     manualPrompts,
     mattingEnabled,
     mattingInstanceUuid,
     mattingWorkflowId,
+    photoshopEnabled,
     promptMode,
     promptModel,
     promptRequirement,
     promptSkillId,
     promptSkillOptions.length,
     printSkuCode,
+    referenceImages.length,
     runningInstances.length,
     sourceFolder,
     sourceMode,
     templatePaths.length,
+    titleEnabled,
     titleLanguage,
     titleModel,
     titlePlatform,
   ])
-  const canStart = !running && !isMac && validationIssues.length === 0
+  const canStart = !running && validationIssues.length === 0
 
   const refreshOptions = useCallback(async () => {
     const results = await Promise.allSettled([
@@ -1085,7 +1215,13 @@ export function FullTaskPage() {
   }, [titleModel, titleModels])
 
   useEffect(() => {
-    if (sourceMode === 'txt2img' || !sourceFolder.trim()) {
+    if (!photoshopEnabled && titleEnabled) {
+      setTitleEnabled(false)
+    }
+  }, [photoshopEnabled, titleEnabled])
+
+  useEffect(() => {
+    if (sourceMode !== 'collection' || !sourceFolder.trim()) {
       setSourcePreviewImages([])
       setSourcePreviewError(null)
       return
@@ -1115,6 +1251,31 @@ export function FullTaskPage() {
     }
   }
 
+  async function addReferenceFiles(files: FileList | null) {
+    if (!files?.length) {
+      return
+    }
+    const nextImages = await Promise.all(
+      Array.from(files).map(async (file) => {
+        const dataUrl = await readFileAsDataUrl(file)
+        const { base64, mime_type } = splitDataUrl(dataUrl)
+        return {
+          id: crypto.randomUUID(),
+          name: file.name,
+          dataUrl,
+          base64,
+          mime_type,
+        } satisfies ReferenceImageDraft
+      }),
+    )
+    setReferenceImages((current) => [...current, ...nextImages])
+    setSourceImagesCollapsed(false)
+  }
+
+  function removeReferenceImage(id: string) {
+    setReferenceImages((current) => current.filter((image) => image.id !== id))
+  }
+
   async function scanSourcePreview(folder = sourceFolder) {
     if (!folder.trim() || sourceMode === 'txt2img') {
       setSourcePreviewImages([])
@@ -1125,6 +1286,7 @@ export function FullTaskPage() {
     try {
       const images = await window.api.generation.scanImageFolder({ folder })
       setSourcePreviewImages(images)
+      setSourceImagesCollapsed(true)
     } catch (scanError) {
       setSourcePreviewImages([])
       setSourcePreviewError(scanError instanceof Error ? scanError.message : '检索图片失败')
@@ -1206,7 +1368,11 @@ export function FullTaskPage() {
     return {
       mode: 'img2img',
       provider: 'grsai',
-      sourceFolder,
+      referenceImages: referenceImages.map((image) => ({
+        name: image.name,
+        base64: image.base64,
+        mime_type: image.mime_type,
+      })),
       prompt: buildPromptConfig(),
       sendReferenceImages: true,
       grsai,
@@ -1254,6 +1420,7 @@ export function FullTaskPage() {
       },
       detection: buildDetectionConfig(),
       photoshop: {
+        enabled: photoshopEnabled,
         templates: templatePaths,
         ...(nonEmpty(outputRoot) ? { outputRoot: outputRoot.trim() } : {}),
         replaceRange,
@@ -1263,6 +1430,7 @@ export function FullTaskPage() {
         maxRetries: numberFromText(photoshopMaxRetries, 1),
       },
       title: {
+        enabled: titleEnabled && photoshopEnabled,
         platform: titlePlatform,
         language: titleLanguage,
         model: titleModel,
@@ -1317,7 +1485,7 @@ export function FullTaskPage() {
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_520px]">
       <div className="space-y-5">
-        {isMac ? (
+        {isMac && photoshopEnabled ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             PS 套版 v1 仅支持 Windows，当前电脑不能启动完整任务。
           </div>
@@ -1398,10 +1566,10 @@ export function FullTaskPage() {
                 {sourceMode === 'collection' ? (
                   <>
                     <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                      <Field label={sourceFolderLabel}>
+                      <Field label="采集文件夹">
                         <Input
                           onChange={(event) => setSourceFolder(event.target.value)}
-                          placeholder={sourceFolderPlaceholder}
+                          placeholder="选择采集图片文件夹"
                           value={sourceFolder}
                         />
                       </Field>
@@ -1599,23 +1767,11 @@ export function FullTaskPage() {
 
                 {sourceMode === 'img2img' ? (
                   <>
-                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                      <Field label={sourceFolderLabel}>
-                        <Input
-                          onChange={(event) => setSourceFolder(event.target.value)}
-                          placeholder={sourceFolderPlaceholder}
-                          value={sourceFolder}
-                        />
-                      </Field>
-                      <Button
-                        className="mt-7 h-10"
-                        onClick={() => void chooseSourceFolder()}
-                        variant="outline"
-                      >
-                        <FolderOpen className="mr-2 h-4 w-4" />
-                        选择
-                      </Button>
-                    </div>
+                    <ReferenceImagePicker
+                      images={referenceImages}
+                      onAddFiles={(files) => void addReferenceFiles(files)}
+                      onRemove={removeReferenceImage}
+                    />
 
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <Badge variant="secondary">固定付费模型</Badge>
@@ -1801,7 +1957,7 @@ export function FullTaskPage() {
                 <div className="flex items-start justify-between gap-3">
                   <div>
                     <CardTitle className="text-lg">侵权检测 / 套版 / 标题</CardTitle>
-                    <CardDescription>检测可选，后面两步固定顺序执行。</CardDescription>
+                    <CardDescription>后续步骤按开关顺序执行，未开启不参与校验。</CardDescription>
                   </div>
                   <Badge variant="secondary">后续流程</Badge>
                 </div>
@@ -1864,263 +2020,331 @@ export function FullTaskPage() {
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                    已关闭侵权检测，后续会直接进入 PS 套版。
+                    已关闭侵权检测，后续会直接进入已开启的下一步。
                   </div>
                 )}
 
                 <Separator />
 
-                <AdvancedDisclosure summary="PS 套版设置">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        选择模板和输出目录，其他参数沿用现有模块设置。
-                      </p>
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      开启后才要求印花货号、PSD 模板和 Windows 环境。
+                    </p>
+                  </div>
+                  <label
+                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                    htmlFor="photoshop-enabled"
+                  >
+                    <Checkbox
+                      aria-label="启用 PS 套版"
+                      checked={photoshopEnabled}
+                      id="photoshop-enabled"
+                      onCheckedChange={(checked) => setPhotoshopEnabled(Boolean(checked))}
+                    />
+                    启用套版
+                  </label>
+                </div>
+
+                {photoshopEnabled ? (
+                  <AdvancedDisclosure summary="PS 套版设置">
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          选择模板和输出目录，其他参数沿用现有模块设置。
+                        </p>
+                      </div>
+                      <Badge variant="secondary">Windows only</Badge>
                     </div>
-                    <Badge variant="secondary">Windows only</Badge>
-                  </div>
 
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-                    <Field label="PSD 模板">
-                      <Input readOnly value={templatePaths.join('；')} />
-                    </Field>
-                    <Button
-                      className="mt-7 h-10"
-                      onClick={() => void chooseTemplates()}
-                      variant="outline"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      选择模板
-                    </Button>
-                    <Button
-                      className="mt-7 h-10"
-                      onClick={() => setTemplatePaths([])}
-                      variant="ghost"
-                    >
-                      清空
-                    </Button>
-                  </div>
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                      <Field label="PSD 模板">
+                        <Input readOnly value={templatePaths.join('；')} />
+                      </Field>
+                      <Button
+                        className="mt-7 h-10"
+                        onClick={() => void chooseTemplates()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择模板
+                      </Button>
+                      <Button
+                        className="mt-7 h-10"
+                        onClick={() => setTemplatePaths([])}
+                        variant="ghost"
+                      >
+                        清空
+                      </Button>
+                    </div>
 
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                    <Field label="套版输出目录">
-                      <Input
-                        onChange={(event) => setOutputRoot(event.target.value)}
-                        placeholder="留空则写入 04-上架工作区"
-                        value={outputRoot}
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <Field label="套版输出目录">
+                        <Input
+                          onChange={(event) => setOutputRoot(event.target.value)}
+                          placeholder="留空则写入 04-上架工作区"
+                          value={outputRoot}
+                        />
+                      </Field>
+                      <Button
+                        className="mt-7 h-10"
+                        onClick={() => void chooseOutputRoot()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label
+                        className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                        htmlFor="skip-completed"
+                      >
+                        <Checkbox
+                          aria-label="跳过已完成"
+                          checked={skipCompleted}
+                          id="skip-completed"
+                          onCheckedChange={(checked) => setSkipCompleted(Boolean(checked))}
+                        />
+                        跳过已完成
+                      </label>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-4">
+                      <SelectField
+                        label="替换范围"
+                        onValueChange={(value) => setReplaceRange(value as 'auto' | 'top' | 'all')}
+                        options={[
+                          { key: 'auto', label: '自动识别' },
+                          { key: 'top', label: '顶层智能对象' },
+                          { key: 'all', label: '全部智能对象' },
+                        ]}
+                        value={replaceRange}
                       />
-                    </Field>
-                    <Button
-                      className="mt-7 h-10"
-                      onClick={() => void chooseOutputRoot()}
-                      variant="outline"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      选择
-                    </Button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label
-                      className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                      htmlFor="skip-completed"
-                    >
-                      <Checkbox
-                        aria-label="跳过已完成"
-                        id="skip-completed"
-                        checked={skipCompleted}
-                        onCheckedChange={(checked) => setSkipCompleted(Boolean(checked))}
+                      <SelectField
+                        label="裁切模式"
+                        onValueChange={(value) => setClipMode(value as 'auto' | 'guides' | 'none')}
+                        options={[
+                          { key: 'auto', label: '自动裁切' },
+                          { key: 'guides', label: '参考辅助线' },
+                          { key: 'none', label: '不裁切' },
+                        ]}
+                        value={clipMode}
                       />
-                      跳过已完成
-                    </label>
-                  </div>
-
-                  <div className="grid gap-4 lg:grid-cols-4">
-                    <SelectField
-                      label="替换范围"
-                      onValueChange={(value) => setReplaceRange(value as 'auto' | 'top' | 'all')}
-                      options={[
-                        { key: 'auto', label: '自动识别' },
-                        { key: 'top', label: '顶层智能对象' },
-                        { key: 'all', label: '全部智能对象' },
-                      ]}
-                      value={replaceRange}
-                    />
-                    <SelectField
-                      label="裁切模式"
-                      onValueChange={(value) => setClipMode(value as 'auto' | 'guides' | 'none')}
-                      options={[
-                        { key: 'auto', label: '自动裁切' },
-                        { key: 'guides', label: '参考辅助线' },
-                        { key: 'none', label: '不裁切' },
-                      ]}
-                      value={clipMode}
-                    />
-                    <SelectField
-                      label="导出格式"
-                      onValueChange={(value) => setFormat(value as 'jpg' | 'png')}
-                      options={[
-                        { key: 'jpg', label: 'JPG' },
-                        { key: 'png', label: 'PNG' },
-                      ]}
-                      value={format}
-                    />
-                    <Field label="失败重试">
-                      <Input
-                        className="tabular-nums"
-                        min={0}
-                        max={5}
-                        onChange={(event) => setPhotoshopMaxRetries(event.target.value)}
-                        type="number"
-                        value={photoshopMaxRetries}
+                      <SelectField
+                        label="导出格式"
+                        onValueChange={(value) => setFormat(value as 'jpg' | 'png')}
+                        options={[
+                          { key: 'jpg', label: 'JPG' },
+                          { key: 'png', label: 'PNG' },
+                        ]}
+                        value={format}
                       />
-                    </Field>
+                      <Field label="失败重试">
+                        <Input
+                          className="tabular-nums"
+                          max={5}
+                          min={0}
+                          onChange={(event) => setPhotoshopMaxRetries(event.target.value)}
+                          type="number"
+                          value={photoshopMaxRetries}
+                        />
+                      </Field>
+                    </div>
+                  </AdvancedDisclosure>
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                    已关闭 PS 套版，任务会在当前印花产物处结束。
                   </div>
-                </AdvancedDisclosure>
+                )}
 
                 <Separator />
 
-                <AdvancedDisclosure summary="标题生成设置">
+                <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">标题生成</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      直接扫描套版后的货号文件夹并写入标题表。
+                      需要 PS 套版产出的货号文件夹；关闭套版时不可开启。
                     </p>
                   </div>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <SelectField
-                      label="标题平台"
-                      onValueChange={setTitlePlatform}
-                      options={platforms}
-                      value={titlePlatform}
+                  <label
+                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                    htmlFor="title-enabled"
+                  >
+                    <Checkbox
+                      aria-label="启用标题生成"
+                      checked={titleEnabled && photoshopEnabled}
+                      disabled={!photoshopEnabled}
+                      id="title-enabled"
+                      onCheckedChange={(checked) => setTitleEnabled(Boolean(checked))}
                     />
-                    <SelectField
-                      label="标题语言"
-                      onValueChange={setTitleLanguage}
-                      options={languages}
-                      value={titleLanguage}
-                    />
-                    <SelectField
-                      label="标题模型"
-                      onValueChange={setTitleModel}
-                      options={titleModels}
-                      value={titleModel}
-                    />
-                  </div>
+                    启用标题
+                  </label>
+                </div>
 
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <Field label="标题文件名">
-                      <Input
-                        onChange={(event) => setTitleFileName(event.target.value)}
-                        value={titleFileName}
-                      />
-                    </Field>
-                    <Field label="取第几张">
-                      <Input
-                        className="tabular-nums"
-                        min={1}
-                        onChange={(event) => setTitleImageIndex(event.target.value)}
-                        type="number"
-                        value={titleImageIndex}
-                      />
-                    </Field>
-                    <Field label="最大边长">
-                      <Input
-                        className="tabular-nums"
-                        min={256}
-                        onChange={(event) => setTitleMaxSize(event.target.value)}
-                        type="number"
-                        value={titleMaxSize}
-                      />
-                    </Field>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <Field label="前缀">
-                      <Input
-                        onChange={(event) => setTitlePrefix(event.target.value)}
-                        placeholder="默认不填"
-                        value={titlePrefix}
-                      />
-                    </Field>
-                    <Field label="后缀">
-                      <Input
-                        onChange={(event) => setTitleSuffix(event.target.value)}
-                        placeholder="默认不填"
-                        value={titleSuffix}
-                      />
-                    </Field>
-                    <Field label="分隔符">
-                      <Input
-                        onChange={(event) => setTitleSeparator(event.target.value)}
-                        placeholder="空格"
-                        value={titleSeparator}
-                      />
-                    </Field>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <SelectField
-                      label="已有标题策略"
-                      onValueChange={(value) =>
-                        setTitleExistingStrategy(value as TitleExistingStrategy)
-                      }
-                      options={[
-                        { key: 'skip', label: '跳过已有' },
-                        { key: 'regenerate', label: '重新生成' },
-                      ]}
-                      value={titleExistingStrategy}
-                    />
-                    <Field label="失败重试次数">
-                      <Input
-                        className="tabular-nums"
-                        min={0}
-                        max={5}
-                        onChange={(event) => setTitleMaxRetries(event.target.value)}
-                        type="number"
-                        value={titleMaxRetries}
-                      />
-                    </Field>
-                  </div>
-
-                  <Field label="标题额外要求">
-                    <Textarea
-                      onChange={(event) => setExtraRequirement(event.target.value)}
-                      placeholder="例如：强调原创设计、带 vintage 关键词"
-                      value={extraRequirement}
-                    />
-                  </Field>
-
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
-                    <Field label="图像预处理">
-                      <div className="rounded-md border p-4">
-                        <div className="space-y-3 text-sm">
-                          <label
-                            className="flex items-center gap-2 text-muted-foreground"
-                            htmlFor="title-preprocess-flatten"
-                          >
-                            <Checkbox checked disabled id="title-preprocess-flatten" />
-                            透明底自动加白
-                          </label>
-                          <label className="flex items-center gap-2" htmlFor="title-compression">
-                            <Checkbox
-                              checked={titleCompression}
-                              id="title-compression"
-                              onCheckedChange={(checked) => setTitleCompression(Boolean(checked))}
-                            />
-                            压缩图片节省费用
-                          </label>
-                        </div>
-                      </div>
-                    </Field>
-                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      标题生成会沿用当前平台、语言、模型和预处理设置。
+                {titleEnabled && photoshopEnabled ? (
+                  <AdvancedDisclosure summary="标题生成设置">
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">标题生成</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        直接扫描套版后的货号文件夹并写入标题表。
+                      </p>
                     </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <SelectField
+                        label="标题平台"
+                        onValueChange={setTitlePlatform}
+                        options={platforms}
+                        value={titlePlatform}
+                      />
+                      <SelectField
+                        label="标题语言"
+                        onValueChange={setTitleLanguage}
+                        options={languages}
+                        value={titleLanguage}
+                      />
+                      <SelectField
+                        label="标题模型"
+                        onValueChange={setTitleModel}
+                        options={titleModels}
+                        value={titleModel}
+                      />
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <Field label="标题文件名">
+                        <Input
+                          onChange={(event) => setTitleFileName(event.target.value)}
+                          value={titleFileName}
+                        />
+                      </Field>
+                      <Field label="取第几张">
+                        <Input
+                          className="tabular-nums"
+                          min={1}
+                          onChange={(event) => setTitleImageIndex(event.target.value)}
+                          type="number"
+                          value={titleImageIndex}
+                        />
+                      </Field>
+                      <Field label="最大边长">
+                        <Input
+                          className="tabular-nums"
+                          min={256}
+                          onChange={(event) => setTitleMaxSize(event.target.value)}
+                          type="number"
+                          value={titleMaxSize}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <Field label="前缀">
+                        <Input
+                          onChange={(event) => setTitlePrefix(event.target.value)}
+                          placeholder="默认不填"
+                          value={titlePrefix}
+                        />
+                      </Field>
+                      <Field label="后缀">
+                        <Input
+                          onChange={(event) => setTitleSuffix(event.target.value)}
+                          placeholder="默认不填"
+                          value={titleSuffix}
+                        />
+                      </Field>
+                      <Field label="分隔符">
+                        <Input
+                          onChange={(event) => setTitleSeparator(event.target.value)}
+                          placeholder="空格"
+                          value={titleSeparator}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <SelectField
+                        label="已有标题策略"
+                        onValueChange={(value) =>
+                          setTitleExistingStrategy(value as TitleExistingStrategy)
+                        }
+                        options={[
+                          { key: 'skip', label: '跳过已有' },
+                          { key: 'regenerate', label: '重新生成' },
+                        ]}
+                        value={titleExistingStrategy}
+                      />
+                      <Field label="失败重试次数">
+                        <Input
+                          className="tabular-nums"
+                          min={0}
+                          max={5}
+                          onChange={(event) => setTitleMaxRetries(event.target.value)}
+                          type="number"
+                          value={titleMaxRetries}
+                        />
+                      </Field>
+                    </div>
+
+                    <Field label="标题额外要求">
+                      <Textarea
+                        onChange={(event) => setExtraRequirement(event.target.value)}
+                        placeholder="例如：强调原创设计、带 vintage 关键词"
+                        value={extraRequirement}
+                      />
+                    </Field>
+
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
+                      <Field label="图像预处理">
+                        <div className="rounded-md border p-4">
+                          <div className="space-y-3 text-sm">
+                            <label
+                              className="flex items-center gap-2 text-muted-foreground"
+                              htmlFor="title-preprocess-flatten"
+                            >
+                              <Checkbox checked disabled id="title-preprocess-flatten" />
+                              透明底自动加白
+                            </label>
+                            <label className="flex items-center gap-2" htmlFor="title-compression">
+                              <Checkbox
+                                checked={titleCompression}
+                                id="title-compression"
+                                onCheckedChange={(checked) => setTitleCompression(Boolean(checked))}
+                              />
+                              压缩图片节省费用
+                            </label>
+                          </div>
+                        </div>
+                      </Field>
+                      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                        标题生成会沿用当前平台、语言、模型和预处理设置。
+                      </div>
+                    </div>
+                  </AdvancedDisclosure>
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                    {photoshopEnabled
+                      ? '已关闭标题生成，任务会在 PS 套版后结束。'
+                      : '标题生成需要先启用 PS 套版。'}
                   </div>
-                </AdvancedDisclosure>
+                )}
               </CardContent>
             </Card>
+
+            {!running && validationIssues.length ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
+                <p className="font-medium">暂不能启动</p>
+                <ul className="mt-2 list-disc space-y-1 pl-5">
+                  {validationIssues.map((issue) => (
+                    <li key={issue}>{issue}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-3">
               <Button
@@ -2158,10 +2382,12 @@ export function FullTaskPage() {
           promptLines={promptLines}
           promptMode={promptMode}
           sourceError={sourcePreviewError}
-          sourceFolder={sourceFolder}
-          sourceImages={sourcePreviewImages}
+          sourceFolder={sourceMode === 'collection' ? sourceFolder : ''}
+          sourceImages={sourcePreviewItems}
+          sourceImagesCollapsed={sourceImagesCollapsed}
           sourceLoading={sourcePreviewLoading}
           sourceMode={sourceMode}
+          onSourceImagesCollapsedChange={setSourceImagesCollapsed}
         />
 
         <Card>

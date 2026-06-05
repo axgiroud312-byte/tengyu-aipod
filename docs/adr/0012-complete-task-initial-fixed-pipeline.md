@@ -4,6 +4,9 @@
 
 Accepted
 
+> Update: ADR-0013 keeps the fixed step order but changes downstream steps
+> (matting / detection / Photoshop / title) to explicit toggles.
+
 ## Context
 
 用户需要把“采集 / 生图 / 抠图 / 侵权检测 / PS 套版 / 标题生成”按顺序跑起来，

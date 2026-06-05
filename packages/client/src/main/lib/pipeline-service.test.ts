@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
@@ -79,6 +79,20 @@ const mocks = vi.hoisted(() => ({
     await mkdir(taskDir, { recursive: true })
     return taskDir
   }),
+  runTxt2imgBatch: vi.fn(async () => ({
+    taskId: 'txt2img-task',
+    capability: 'img2img' as const,
+    total: 1,
+    succeeded: 1,
+    failed: 0,
+    images: [
+      {
+        prompt: 'new print',
+        url: 'file://generated.png',
+        localPath: join(mocks.workbenchRoot, 'generated.png'),
+      },
+    ],
+  })),
 }))
 
 vi.mock('electron', () => ({
@@ -126,7 +140,7 @@ vi.mock('./generation-service', () => ({
   runComfyuiMattingBatch: vi.fn(),
   runExtractBatch: vi.fn(),
   runMixedMattingBatch: vi.fn(),
-  runTxt2imgBatch: vi.fn(),
+  runTxt2imgBatch: mocks.runTxt2imgBatch,
 }))
 
 function setPlatform(value: NodeJS.Platform) {
@@ -158,6 +172,7 @@ function baseConfig(printFolder: string): PipelineRunConfig {
       enabled: false,
     },
     photoshop: {
+      enabled: true,
       templates: ['C:\\templates\\shirt.psd'],
       replaceRange: 'auto',
       format: 'jpg',
@@ -166,6 +181,7 @@ function baseConfig(printFolder: string): PipelineRunConfig {
       maxRetries: 1,
     },
     title: {
+      enabled: true,
       platform: 'temu',
       language: 'en',
       model: 'qwen3.6-flash',
@@ -183,6 +199,7 @@ describe('PipelineService', () => {
     mocks.runBatch.mockClear()
     mocks.runTitleBatch.mockClear()
     mocks.createTaskDir.mockClear()
+    mocks.runTxt2imgBatch.mockClear()
   })
 
   afterEach(async () => {
@@ -265,6 +282,90 @@ describe('PipelineService', () => {
       ],
       result_groups: [expect.objectContaining({ sku_folder: 'TY-001' })],
     })
+  })
+
+  it('can complete before Photoshop and title when those stages are disabled', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-source-only', {
+      ...baseConfig(printFolder),
+      photoshop: {
+        ...baseConfig(printFolder).photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+    expect(mocks.runTitleBatch).not.toHaveBeenCalled()
+    expect(result.steps.map((step) => [step.step_key, step.status])).toEqual([
+      ['source', 'completed'],
+      ['matting', 'skipped'],
+      ['detection', 'skipped'],
+      ['photoshop', 'skipped'],
+      ['title', 'skipped'],
+    ])
+  })
+
+  it('persists uploaded img2img references outside business workspaces and keeps base64 out of the run config', async () => {
+    const service = new PipelineService()
+    const base64 = Buffer.from('reference-image').toString('base64')
+    const result = await service.runPipeline('run-img2img-upload', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'grsai',
+        referenceImages: [{ name: 'dog shirt.png', base64, mime_type: 'image/png' }],
+        prompt: { mode: 'manual', prompts: ['make a new dog shirt'] },
+        sendReferenceImages: true,
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    const referenceFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.metadata,
+      'pipeline-runs',
+      'run-img2img-upload',
+      'references',
+    )
+    const savedFiles = await readdir(referenceFolder)
+    expect(savedFiles).toEqual(['01-dog shirt.png'])
+    await expect(readFile(join(referenceFolder, savedFiles[0] ?? ''), 'utf8')).resolves.toBe(
+      'reference-image',
+    )
+    const savedConfig = JSON.parse(result.run.config_json) as PipelineRunConfig
+    expect(savedConfig.source).toMatchObject({
+      mode: 'img2img',
+      referenceImagePaths: [join(referenceFolder, '01-dog shirt.png')],
+    })
+    expect(JSON.stringify(savedConfig)).not.toContain(base64)
+    expect(mocks.runTxt2imgBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        capability: 'img2img',
+        referenceImages: [{ base64, mime_type: 'image/png' }],
+      }),
+      expect.anything(),
+    )
   })
 
   it('rejects ComfyUI txt2img/img2img sources at the IPC schema boundary', () => {

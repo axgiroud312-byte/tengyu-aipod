@@ -12,6 +12,7 @@ import {
 } from '@tengyu-aipod/shared'
 import type { BrowserWindow, ipcMain } from 'electron'
 import type { ChatCompletionMessageParam } from 'openai/resources/chat/completions'
+import { z } from 'zod'
 import { AliyunBailianAdapter, type VisionResponse } from './aliyun-bailian-adapter'
 import {
   type DiagnosticLogWriter,
@@ -31,27 +32,29 @@ import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 const nodeRequire = createRequire(import.meta.url)
 
 export type DetectionThreshold = {
-  passMax?: number
-  reviewMax?: number
+  passMax?: number | undefined
+  reviewMax?: number | undefined
 }
 
 export type DetectionBatchConfig = {
   imagePaths: string[]
   skillId: string
-  skillVersion?: string
+  skillVersion?: string | undefined
   model: string
-  variables?: Record<string, unknown>
-  threshold?: DetectionThreshold
-  preprocess?: {
-    compress?: boolean
-    maxSize?: number
-    format?: PreprocessFormat
-    quality?: number
-  }
-  concurrency?: number
-  maxRetries?: number
-  forceRetest?: boolean
-  taskId?: string
+  variables?: Record<string, unknown> | undefined
+  threshold?: DetectionThreshold | undefined
+  preprocess?:
+    | {
+        compress?: boolean | undefined
+        maxSize?: number | undefined
+        format?: PreprocessFormat | undefined
+        quality?: number | undefined
+      }
+    | undefined
+  concurrency?: number | undefined
+  maxRetries?: number | undefined
+  forceRetest?: boolean | undefined
+  taskId?: string | undefined
 }
 
 export type DetectionProgress = {
@@ -61,10 +64,10 @@ export type DetectionProgress = {
   succeeded: number
   failed: number
   skipped: number
-  diagnosticsLogPath?: string
-  concurrency?: number
-  current_image?: string
-  status?: 'running' | 'cancelled'
+  diagnosticsLogPath?: string | undefined
+  concurrency?: number | undefined
+  current_image?: string | undefined
+  status?: 'running' | 'cancelled' | undefined
 }
 
 export type DetectionInputSource = {
@@ -147,8 +150,8 @@ export type DetectionImageResult =
   | {
       imagePath: string
       thumbnailUrl: string
-      artifactId?: string
-      printId?: string
+      artifactId?: string | undefined
+      printId?: string | undefined
       status: 'failed'
       errorCode: DetectionErrorCode
       error: string
@@ -161,8 +164,8 @@ export type DetectionBatchResult = {
   failed: number
   skipped: number
   results: DetectionImageResult[]
-  cancelled?: boolean
-  diagnosticsLogPath?: string
+  cancelled?: boolean | undefined
+  diagnosticsLogPath?: string | undefined
 }
 
 export type DetectionTaskEvent =
@@ -174,7 +177,7 @@ export type ChooseDetectionInputFolderResult =
   | { ok: false; error: { code: string; message: string } }
 
 type DetectionServiceDependencies = {
-  skillCache?: { getSkill: (id: string, version?: string) => Promise<Skill> }
+  skillCache?: { getSkill: (id: string, version?: string | undefined) => Promise<Skill> }
   createBailianAdapter?: (apiKey: string) => Pick<AliyunBailianAdapter, 'visionCompletion'>
   preprocessPool?: Pick<SharpPreprocessPool, 'process' | 'close'>
   readConfig?: ReadAppConfig
@@ -218,6 +221,55 @@ type CachedDetectionRow = {
 
 const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
+const riskLevelSchema = z.enum(['pass', 'review', 'block'])
+const detectionStringArraySchema = z.array(z.string())
+const detectionThresholdSchema = z.object({
+  passMax: z.number().optional(),
+  reviewMax: z.number().optional(),
+})
+const detectionPreprocessSchema = z.object({
+  compress: z.boolean().optional(),
+  maxSize: z.number().optional(),
+  format: z.enum(['jpg', 'png']).optional(),
+  quality: z.number().optional(),
+})
+const detectionBatchConfigSchema = z.object({
+  imagePaths: detectionStringArraySchema,
+  skillId: z.string(),
+  skillVersion: z.string().optional(),
+  model: z.string(),
+  variables: z.record(z.unknown()).optional(),
+  threshold: detectionThresholdSchema.optional(),
+  preprocess: detectionPreprocessSchema.optional(),
+  concurrency: z.number().optional(),
+  maxRetries: z.number().optional(),
+  forceRetest: z.boolean().optional(),
+  taskId: z.string().optional(),
+})
+const detectionScanFolderInputSchema = z.object({ folder: z.string() })
+const detectionCancelInputSchema = z.object({ task_id: z.string() })
+const detectionListResultsInputSchema = z
+  .object({
+    task_id: z.string().nullable().optional(),
+    risk_level: riskLevelSchema.nullable().optional(),
+  })
+  .optional()
+const detectionArtifactIdInputSchema = z.object({ artifact_id: z.string() })
+const detectionArtifactIdsInputSchema = z.object({ artifact_ids: detectionStringArraySchema })
+const detectionPromoteToMattingInputSchema = z.object({
+  artifact_ids: detectionStringArraySchema,
+  mode: z.enum(['copy', 'move']).optional(),
+})
+
+function parseDetectionIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const RISK_OUTPUT_FOLDERS: Record<RiskLevel, string> = {
   pass: '无风险',
@@ -950,7 +1002,10 @@ export class DetectionService {
   }
 
   async listResults(
-    input: { task_id?: string | null; risk_level?: RiskLevel | null } = {},
+    input: {
+      task_id?: string | null | undefined
+      risk_level?: RiskLevel | null | undefined
+    } = {},
     dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
   ): Promise<DetectionStoredResult[]> {
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
@@ -1050,7 +1105,7 @@ export class DetectionService {
   }
 
   async promoteToMatting(
-    input: { artifact_ids: string[]; mode?: 'copy' | 'move' },
+    input: { artifact_ids: string[]; mode?: 'copy' | 'move' | undefined },
     dependencies: Pick<DetectionServiceDependencies, 'readConfig' | 'openDatabase'> = {},
   ) {
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
@@ -1695,37 +1750,53 @@ export function registerDetectionIpc() {
   const ipcMain = electronIpcMain()
   ipcMain.handle('detection:choose-input-folder', () => chooseDetectionInputFolder())
   ipcMain.handle('detection:list-input-sources', () => detectionService.listInputSources())
-  ipcMain.handle('detection:scan-folder', (_event, input: { folder: string }) =>
-    detectionService.scanFolder(input),
+  ipcMain.handle('detection:scan-folder', (_event, input: unknown) =>
+    detectionService.scanFolder(
+      parseDetectionIpcInput(detectionScanFolderInputSchema, input, '检测图片文件夹参数不正确'),
+    ),
   )
   ipcMain.handle('detection:list-models', () => detectionService.listModels())
-  ipcMain.handle('detection:run', (_event, input: DetectionBatchConfig) =>
-    detectionService.startBatch(input, emitDetectionProgress, emitDetectionCompleted),
+  ipcMain.handle('detection:run', (_event, input: unknown) =>
+    detectionService.startBatch(
+      parseDetectionIpcInput(detectionBatchConfigSchema, input, '检测任务参数不正确'),
+      emitDetectionProgress,
+      emitDetectionCompleted,
+    ),
   )
-  ipcMain.handle('detection:cancel', (_event, input: { task_id: string }) => ({
-    ok: detectionService.cancelTask(input.task_id),
+  ipcMain.handle('detection:cancel', (_event, input: unknown) => ({
+    ok: detectionService.cancelTask(
+      parseDetectionIpcInput(detectionCancelInputSchema, input, '检测取消参数不正确').task_id,
+    ),
   }))
-  ipcMain.handle(
-    'detection:list-results',
-    (_event, input?: { task_id?: string | null; risk_level?: RiskLevel | null }) =>
-      detectionService.listResults(input),
+  ipcMain.handle('detection:list-results', (_event, input: unknown) =>
+    detectionService.listResults(
+      parseDetectionIpcInput(detectionListResultsInputSchema, input, '检测结果查询参数不正确'),
+    ),
   )
-  ipcMain.handle('detection:get-result', (_event, input: { artifact_id: string }) =>
-    detectionService.getResult(input),
+  ipcMain.handle('detection:get-result', (_event, input: unknown) =>
+    detectionService.getResult(
+      parseDetectionIpcInput(detectionArtifactIdInputSchema, input, '检测结果详情参数不正确'),
+    ),
   )
-  ipcMain.handle('detection:retest', (_event, input: { artifact_ids: string[] }) =>
-    detectionService.retest(input, emitDetectionProgress, emitDetectionCompleted),
+  ipcMain.handle('detection:retest', (_event, input: unknown) =>
+    detectionService.retest(
+      parseDetectionIpcInput(detectionArtifactIdsInputSchema, input, '复测参数不正确'),
+      emitDetectionProgress,
+      emitDetectionCompleted,
+    ),
   )
-  ipcMain.handle(
-    'detection:promote-to-matting',
-    (_event, input: { artifact_ids: string[]; mode?: 'copy' | 'move' }) =>
-      detectionService.promoteToMatting(input),
+  ipcMain.handle('detection:promote-to-matting', (_event, input: unknown) =>
+    detectionService.promoteToMatting(
+      parseDetectionIpcInput(detectionPromoteToMattingInputSchema, input, '检测转抠图参数不正确'),
+    ),
   )
   ipcMain.handle('detection:list-matting-candidates', () =>
     detectionService.listMattingCandidates(),
   )
-  ipcMain.handle('detection:delete-result', (_event, input: { artifact_id: string }) =>
-    detectionService.deleteResult(input),
+  ipcMain.handle('detection:delete-result', (_event, input: unknown) =>
+    detectionService.deleteResult(
+      parseDetectionIpcInput(detectionArtifactIdInputSchema, input, '删除检测结果参数不正确'),
+    ),
   )
 }
 
