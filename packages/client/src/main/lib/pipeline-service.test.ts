@@ -958,6 +958,14 @@ describe('PipelineService', () => {
       completedImages[1]?.localPath,
     ])
     expect(finalSection?.items.every((item) => item.status === 'success')).toBe(true)
+    expect(detail?.logs?.find((entry) => entry.message === '文生图失败 98 张')).toMatchObject({
+      level: 'warn',
+      details: {
+        total: 100,
+        failed: 98,
+        reasons: 'content policy x98',
+      },
+    })
   })
 
   it('keeps only the final matting group after collection extract then matting', async () => {

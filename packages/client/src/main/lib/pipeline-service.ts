@@ -772,6 +772,18 @@ function parseJsonArray<T>(value: string | null | undefined): T[] {
   }
 }
 
+function generationFailureReasons(result: GenerationRunResult) {
+  const counts = new Map<string, number>()
+  for (const failure of result.failures) {
+    const reason = failure.error.trim().replace(/\s+/g, ' ').slice(0, 160) || '未知原因'
+    counts.set(reason, (counts.get(reason) ?? 0) + 1)
+  }
+  return Array.from(counts.entries())
+    .slice(0, 5)
+    .map(([reason, count]) => `${reason} x${count}`)
+    .join('；')
+}
+
 function readRunDetail(
   db: Pick<SqliteDatabase, 'prepare'>,
   runId: string,
@@ -1364,6 +1376,27 @@ export class PipelineService {
     this.persistRunUiState(runId, active)
   }
 
+  private appendGenerationFailureLog(
+    runId: string,
+    stepKey: PipelineStepKey,
+    label: string,
+    result: GenerationRunResult,
+  ) {
+    if (result.failed <= 0) {
+      return
+    }
+    this.appendLog(runId, {
+      level: 'warn',
+      step_key: stepKey,
+      message: `${label}失败 ${result.failed} 张`,
+      details: {
+        total: result.total,
+        failed: result.failed,
+        reasons: generationFailureReasons(result) || '未返回失败原因',
+      },
+    })
+  }
+
   private updateGenerationPreviewImages(
     db: Pick<SqliteDatabase, 'prepare'>,
     runId: string,
@@ -1749,6 +1782,7 @@ export class PipelineService {
         },
       )
       emitPreviewImages(result.images, result.total, result.failed)
+      this.appendGenerationFailureLog(runId, 'source', '文生图', result)
       return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
     }
 
@@ -1797,6 +1831,7 @@ export class PipelineService {
       },
     )
     emitPreviewImages(result.images, result.total, result.failed)
+    this.appendGenerationFailureLog(runId, 'source', '图生图', result)
     return { extractSources: [], prints: usableGenerationImages(result, '图生图') }
   }
 
@@ -1847,6 +1882,7 @@ export class PipelineService {
               failed,
             ),
         )
+        this.appendGenerationFailureLog(runId, 'extract', '提取', result)
         const prints = usableGenerationImages(result, '提取')
         stats.prints = prints.length
         this.updateResultSection(
@@ -2017,6 +2053,7 @@ export class PipelineService {
             },
           )
         }
+        this.appendGenerationFailureLog(runId, 'matting', '抠图', result)
         const output = usableGenerationImages(result, '抠图')
         stats.prints = output.length
         this.updateResultSection(
