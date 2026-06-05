@@ -24,7 +24,6 @@ import {
   type PipelinePrintMode,
   type PipelineProgress,
   type PipelinePromptConfig,
-  type PipelinePromptMode,
   type PipelineResultImage,
   type PipelineResultSection,
   type PipelineRunConfig,
@@ -63,7 +62,7 @@ type Option = {
 
 type TaskSourceMode = Extract<PipelineSourceMode, 'collection' | 'txt2img' | 'img2img'>
 type ExtractProvider = 'grsai' | 'comfyui-chenyu'
-type Img2imgReferenceMode = 'layout' | 'style' | 'layout-style' | 'manual'
+type Img2imgReferenceMode = 'layout' | 'style' | 'layout-style'
 type DetectionPassRule = 'allow-review' | 'pass-only'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
@@ -214,11 +213,6 @@ const img2imgReferenceModes: Array<{
     label: '构图+风格',
     instruction:
       'Use both layout and art style from the reference image while creating a new motif.',
-  },
-  {
-    key: 'manual',
-    label: '自己写',
-    instruction: '',
   },
 ]
 
@@ -380,13 +374,6 @@ function ReferenceImagePicker({
   )
 }
 
-function splitLines(value: string) {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-}
-
 function splitDataUrl(dataUrl: string) {
   const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
   return {
@@ -411,8 +398,27 @@ function optionFromSkill(skill: SkillSummary): Option {
   }
 }
 
-function detectionSkillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
+function skillVersionOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
   return `${skill.id}@@${skill.version}`
+}
+
+function parseSkillVersionKey(value: string) {
+  const [id, version] = value.split('@@')
+  if (!id) {
+    return null
+  }
+  return { id, version: version || undefined }
+}
+
+function optionFromPromptSkill(skill: SkillSummary): Option {
+  return {
+    key: skillVersionOptionKey(skill),
+    label: `${skillTitle(skill)}${skill.version ? ` · ${skill.version}` : ''}`,
+  }
+}
+
+function detectionSkillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
+  return skillVersionOptionKey(skill)
 }
 
 function parseDetectionSkillKey(value: string) {
@@ -852,13 +858,8 @@ export function FullTaskPage() {
     'extractProvider',
     'grsai',
   )
-  const [promptMode, setPromptMode] = useFullTaskSessionState<PipelinePromptMode>(
-    'promptMode',
-    'manual',
-  )
   const [img2imgReferenceMode, setImg2imgReferenceMode] =
     useFullTaskSessionState<Img2imgReferenceMode>('img2imgReferenceMode', 'layout-style')
-  const [manualPrompts, setManualPrompts] = useFullTaskSessionState('manualPrompts', '')
   const [promptRequirement, setPromptRequirement] = useFullTaskSessionState('promptRequirement', '')
   const [promptRequirementOpen, setPromptRequirementOpen] = useState(false)
   const [promptCount, setPromptCount] = useFullTaskSessionState('promptCount', '5')
@@ -979,7 +980,7 @@ export function FullTaskPage() {
       skillInCategories(skill, [promptSkillCategory]),
     )
     const pool = filtered.length > 0 ? filtered : generationSkills
-    return pool.map(optionFromSkill)
+    return pool.map(optionFromPromptSkill)
   }, [generationSkills, promptSkillCategory])
   const extractSkillOptions = useMemo(() => {
     if (extractProvider !== 'grsai') {
@@ -1003,10 +1004,6 @@ export function FullTaskPage() {
       })),
     [runningInstances],
   )
-  const promptModeOptions: Option[] = [
-    { key: 'manual', label: '手写提示词' },
-    { key: 'ai', label: 'AI 生成提示词' },
-  ]
   const detectionModelOptions = useMemo(
     () => (detectionModels.length ? detectionModels : ['qwen3.6-flash']),
     [detectionModels],
@@ -1022,6 +1019,7 @@ export function FullTaskPage() {
   const selectedImg2imgReferenceMode =
     img2imgReferenceModes.find((item) => item.key === img2imgReferenceMode) ??
     img2imgReferenceModes[0]
+  const selectedPromptSkill = useMemo(() => parseSkillVersionKey(promptSkillId), [promptSkillId])
   const sourceBadgeLabel =
     sourceMode === 'collection'
       ? '采集 + 提取'
@@ -1066,30 +1064,20 @@ export function FullTaskPage() {
       }
     }
     if (sourceMode === 'txt2img' || sourceMode === 'img2img') {
-      if (
-        sourceMode === 'img2img' &&
-        referenceImages.length === 0 &&
-        (promptMode === 'ai' || sendReferenceToImageModel)
-      ) {
+      if (sourceMode === 'img2img' && referenceImages.length === 0) {
         issues.push('请先添加至少一张图生图参考图')
       }
-      if (promptMode === 'manual') {
-        if (splitLines(manualPrompts).length === 0) {
-          issues.push('请至少填写一条提示词')
-        }
-      } else {
-        if (promptSkillOptions.length === 0) {
-          issues.push('请先在后台配置提示词 Skill')
-        }
-        if (!promptSkillId.trim()) {
-          issues.push('请先选择提示词 Skill')
-        }
-        if (!promptModel.trim()) {
-          issues.push('请先选择提示词模型')
-        }
-        if (!promptRequirement.trim()) {
-          issues.push('请先填写印花要求')
-        }
+      if (promptSkillOptions.length === 0) {
+        issues.push('请先在后台配置提示词 Skill')
+      }
+      if (!selectedPromptSkill) {
+        issues.push('请先选择提示词 Skill')
+      }
+      if (!promptModel.trim()) {
+        issues.push('请先选择提示词模型')
+      }
+      if (!promptRequirement.trim()) {
+        issues.push('请先填写印花要求')
       }
     }
     if (mattingEnabled) {
@@ -1127,21 +1115,18 @@ export function FullTaskPage() {
     detectionEnabled,
     detectionModel,
     isMac,
-    manualPrompts,
     mattingEnabled,
     mattingInstanceUuid,
     mattingWorkflowId,
     photoshopEnabled,
-    promptMode,
     promptModel,
     promptRequirement,
-    promptSkillId,
     promptSkillOptions.length,
     printSkuCode,
     referenceImages.length,
     runningInstances.length,
-    sendReferenceToImageModel,
     selectedDetectionSkill,
+    selectedPromptSkill,
     sourceFolder,
     sourceMode,
     templatePaths.length,
@@ -1296,8 +1281,8 @@ export function FullTaskPage() {
   }, [aspectRatio, selectedGrsaiModel, setAspectRatio])
 
   useEffect(() => {
-    if (promptMode !== 'ai' || promptModelOptions.length === 0) {
-      if (promptMode === 'ai' && promptModelOptions.length === 0) {
+    if (sourceMode === 'collection' || promptModelOptions.length === 0) {
+      if (sourceMode !== 'collection' && promptModelOptions.length === 0) {
         setPromptModel('')
       }
       return
@@ -1305,7 +1290,7 @@ export function FullTaskPage() {
     if (!promptModelOptions.some((item) => item.key === promptModel)) {
       setPromptModel(promptModelOptions[0]?.key ?? '')
     }
-  }, [promptModel, promptModelOptions, promptMode, setPromptModel])
+  }, [promptModel, promptModelOptions, setPromptModel, sourceMode])
 
   useEffect(() => {
     if (
@@ -1369,8 +1354,8 @@ export function FullTaskPage() {
   ])
 
   useEffect(() => {
-    if (sourceMode === 'collection' || promptMode !== 'ai' || promptSkillOptions.length === 0) {
-      if (promptMode === 'ai' && promptSkillOptions.length === 0) {
+    if (sourceMode === 'collection' || promptSkillOptions.length === 0) {
+      if (sourceMode !== 'collection' && promptSkillOptions.length === 0) {
         setPromptSkillId('')
       }
       return
@@ -1378,7 +1363,7 @@ export function FullTaskPage() {
     if (!promptSkillOptions.some((item) => item.key === promptSkillId)) {
       setPromptSkillId(promptSkillOptions[0]?.key ?? '')
     }
-  }, [promptMode, promptSkillId, promptSkillOptions, setPromptSkillId, sourceMode])
+  }, [promptSkillId, promptSkillOptions, setPromptSkillId, sourceMode])
 
   useEffect(() => {
     const firstPlatform = platforms[0]
@@ -1449,11 +1434,6 @@ export function FullTaskPage() {
     setSourceMode(nextMode)
   }
 
-  function updatePromptMode(nextMode: PipelinePromptMode) {
-    setPromptRequirementOpen(false)
-    setPromptMode(nextMode)
-  }
-
   async function chooseSourceFolder() {
     const selected = await window.api.generation.chooseImageFolder()
     if (selected.ok) {
@@ -1500,12 +1480,7 @@ export function FullTaskPage() {
   }
 
   function buildPromptConfig(): PipelinePromptConfig {
-    if (promptMode === 'manual') {
-      return {
-        mode: 'manual',
-        prompts: splitLines(manualPrompts),
-      }
-    }
+    const skill = selectedPromptSkill
     return {
       mode: 'ai',
       requirement: promptRequirement,
@@ -1514,7 +1489,9 @@ export function FullTaskPage() {
       ...(sourceMode === 'img2img' && selectedImg2imgReferenceMode?.instruction
         ? { modeInstruction: selectedImg2imgReferenceMode.instruction }
         : {}),
-      ...(nonEmpty(promptSkillId) ? { skillId: promptSkillId.trim() } : {}),
+      ...(skill
+        ? { skillId: skill.id, ...(skill.version ? { skillVersion: skill.version } : {}) }
+        : {}),
     }
   }
 
@@ -1886,63 +1863,40 @@ export function FullTaskPage() {
                 {sourceMode === 'txt2img' ? (
                   <>
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <Badge variant="secondary">固定付费模型</Badge>
-                      <span className="text-muted-foreground">只需要选提示词和 Grsai 参数。</span>
+                      <Badge variant="secondary">AI 写提示词</Badge>
+                      <span className="text-muted-foreground">
+                        AI 生成提示词后再走 Grsai 付费生图。
+                      </span>
                     </div>
-                    <div className="grid gap-4 lg:grid-cols-3">
+                    <div className="grid gap-4 lg:grid-cols-4">
                       <SelectField
-                        label="提示词模式"
-                        onValueChange={(value) => updatePromptMode(value as PipelinePromptMode)}
-                        options={promptModeOptions}
-                        value={promptMode}
+                        label="提示词 Skill"
+                        onValueChange={setPromptSkillId}
+                        options={promptSkillOptions}
+                        value={promptSkillId}
                       />
-                      {promptMode === 'ai' ? (
-                        <SelectField
-                          label="提示词模型"
-                          onValueChange={setPromptModel}
-                          options={promptModelOptions}
-                          value={promptModel}
-                        />
-                      ) : (
-                        <div className="flex items-end rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-                          手写模式只需要填写提示词。
-                        </div>
-                      )}
-                    </div>
-
-                    {promptMode === 'manual' ? (
-                      <Field label="提示词">
-                        <Textarea
-                          onChange={(event) => setManualPrompts(event.target.value)}
-                          placeholder="每行一条提示词"
-                          value={manualPrompts}
+                      <SelectField
+                        label="提示词模型"
+                        onValueChange={setPromptModel}
+                        options={promptModelOptions}
+                        value={promptModel}
+                      />
+                      <PromptRequirementField
+                        id="txt2img-print-requirement"
+                        onOpenChange={setPromptRequirementOpen}
+                        onValueChange={setPromptRequirement}
+                        open={promptRequirementOpen}
+                        value={promptRequirement}
+                      />
+                      <Field label="数量">
+                        <Input
+                          className="tabular-nums"
+                          onChange={(event) => setPromptCount(event.target.value)}
+                          type="number"
+                          value={promptCount}
                         />
                       </Field>
-                    ) : (
-                      <div className="grid gap-4 lg:grid-cols-3">
-                        <SelectField
-                          label="提示词 Skill"
-                          onValueChange={setPromptSkillId}
-                          options={promptSkillOptions}
-                          value={promptSkillId}
-                        />
-                        <PromptRequirementField
-                          id="txt2img-print-requirement"
-                          onOpenChange={setPromptRequirementOpen}
-                          onValueChange={setPromptRequirement}
-                          open={promptRequirementOpen}
-                          value={promptRequirement}
-                        />
-                        <Field label="数量">
-                          <Input
-                            className="tabular-nums"
-                            onChange={(event) => setPromptCount(event.target.value)}
-                            type="number"
-                            value={promptCount}
-                          />
-                        </Field>
-                      </div>
-                    )}
+                    </div>
 
                     <div className="grid gap-4 md:grid-cols-3">
                       <SelectField
@@ -2015,60 +1969,35 @@ export function FullTaskPage() {
                       value={img2imgReferenceMode}
                     />
 
-                    <div className="grid gap-4 lg:grid-cols-3">
+                    <div className="grid gap-4 lg:grid-cols-4">
                       <SelectField
-                        label="提示词模式"
-                        onValueChange={(value) => updatePromptMode(value as PipelinePromptMode)}
-                        options={promptModeOptions}
-                        value={promptMode}
+                        label="提示词 Skill"
+                        onValueChange={setPromptSkillId}
+                        options={promptSkillOptions}
+                        value={promptSkillId}
                       />
-                      {promptMode === 'ai' ? (
-                        <SelectField
-                          label="提示词模型"
-                          onValueChange={setPromptModel}
-                          options={promptModelOptions}
-                          value={promptModel}
-                        />
-                      ) : (
-                        <div className="lg:col-span-2 flex items-end rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-                          手写模式只需要填写提示词。
-                        </div>
-                      )}
-                    </div>
-
-                    {promptMode === 'manual' ? (
-                      <Field label="提示词">
-                        <Textarea
-                          onChange={(event) => setManualPrompts(event.target.value)}
-                          placeholder="每行一条提示词"
-                          value={manualPrompts}
+                      <SelectField
+                        label="提示词模型"
+                        onValueChange={setPromptModel}
+                        options={promptModelOptions}
+                        value={promptModel}
+                      />
+                      <PromptRequirementField
+                        id="img2img-print-requirement"
+                        onOpenChange={setPromptRequirementOpen}
+                        onValueChange={setPromptRequirement}
+                        open={promptRequirementOpen}
+                        value={promptRequirement}
+                      />
+                      <Field label="数量">
+                        <Input
+                          className="tabular-nums"
+                          onChange={(event) => setPromptCount(event.target.value)}
+                          type="number"
+                          value={promptCount}
                         />
                       </Field>
-                    ) : (
-                      <div className="grid gap-4 lg:grid-cols-3">
-                        <SelectField
-                          label="提示词 Skill"
-                          onValueChange={setPromptSkillId}
-                          options={promptSkillOptions}
-                          value={promptSkillId}
-                        />
-                        <PromptRequirementField
-                          id="img2img-print-requirement"
-                          onOpenChange={setPromptRequirementOpen}
-                          onValueChange={setPromptRequirement}
-                          open={promptRequirementOpen}
-                          value={promptRequirement}
-                        />
-                        <Field label="数量">
-                          <Input
-                            className="tabular-nums"
-                            onChange={(event) => setPromptCount(event.target.value)}
-                            type="number"
-                            value={promptCount}
-                          />
-                        </Field>
-                      </div>
-                    )}
+                    </div>
 
                     <div className="grid gap-4 md:grid-cols-3">
                       <SelectField
