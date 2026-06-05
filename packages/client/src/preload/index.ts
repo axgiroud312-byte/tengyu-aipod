@@ -184,7 +184,8 @@ const api = {
       ipcRenderer.invoke('customerAuth:getSmsCountdown') as Promise<{ remaining_seconds: number }>,
     loginByPhone: (input: { code: string; invite?: string; phone: string }) =>
       ipcRenderer.invoke('customerAuth:loginByPhone', input) as Promise<CustomerAuthState>,
-    verify: () => ipcRenderer.invoke('customerAuth:verify') as Promise<CustomerAuthState>,
+    verify: (input?: { allowStaleOnTransientFailure?: boolean }) =>
+      ipcRenderer.invoke('customerAuth:verify', input) as Promise<CustomerAuthState>,
     logout: () => ipcRenderer.invoke('customerAuth:logout') as Promise<CustomerAuthState>,
   },
   chenyu: {

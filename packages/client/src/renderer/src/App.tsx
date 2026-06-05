@@ -1571,7 +1571,7 @@ function CustomerAuthGate({ children }: { children: React.ReactNode }) {
 
     const timer = window.setInterval(() => {
       void window.api.customerAuth
-        .verify()
+        .verify({ allowStaleOnTransientFailure: true })
         .then(setAuthState)
         .catch((error) => {
           setAuthState({

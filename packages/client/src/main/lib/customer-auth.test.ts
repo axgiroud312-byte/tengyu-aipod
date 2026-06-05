@@ -82,7 +82,7 @@ afterEach(async () => {
 describe('CustomerAuthService', () => {
   it('normalizes PHP auth base URL', () => {
     expect(resolvePhpAuthBaseUrl('https://tengyuai.com///')).toBe('https://tengyuai.com')
-    expect(resolvePhpAuthBaseUrl('')).toBe('https://tengyuai.com')
+    expect(resolvePhpAuthBaseUrl('')).toBe('https://www.tengyuai.com')
   })
 
   it('returns the official WeChat QR page URL without generating a local QR image', async () => {
@@ -108,7 +108,7 @@ describe('CustomerAuthService', () => {
       token: 'wx-token',
     })
     expect(JSON.stringify(result)).not.toContain('qrcode_image_url')
-    expect(fetch).toHaveBeenCalledWith('https://tengyuai.com/api/wxlogin/get_qrcode', {
+    expect(fetch).toHaveBeenCalledWith('https://www.tengyuai.com/api/wxlogin/get_qrcode', {
       method: 'GET',
     })
   })
@@ -182,7 +182,7 @@ describe('CustomerAuthService', () => {
         method: 'phone',
         phone: '13800000000',
       },
-      url: 'https://tengyuai.com/user/public/login',
+      url: 'https://www.tengyuai.com/user/public/login',
     })
     expect(phoneRequest?.body).toHaveProperty('finger')
     expect(verifyRequest).toMatchObject({
@@ -237,7 +237,7 @@ describe('CustomerAuthService', () => {
     expect(state.status).toBe('active')
     expect(wechatRequest).toMatchObject({
       body: { token: 'wx-token' },
-      url: 'https://tengyuai.com/api/wxlogin/check_login',
+      url: 'https://www.tengyuai.com/api/wxlogin/check_login',
     })
     expect(wechatRequest?.body).toHaveProperty('finger')
     expect(verifyRequest).toMatchObject({
@@ -263,7 +263,7 @@ describe('CustomerAuthService', () => {
       ok: true,
       remaining_seconds: 60,
     })
-    expect(fetch).toHaveBeenCalledWith('https://tengyuai.com/user/public/send_login_sms', {
+    expect(fetch).toHaveBeenCalledWith('https://www.tengyuai.com/user/public/send_login_sms', {
       body: JSON.stringify({ phone: '13800000000' }),
       headers: { 'content-type': 'application/json' },
       method: 'POST',
@@ -298,6 +298,35 @@ describe('CustomerAuthService', () => {
     })
     expect(secretStore.values.has('customer-auth.php-secret')).toBe(false)
     expect(secretStore.values.has('customer-auth.php-uid')).toBe(false)
+  })
+
+  it('keeps active cached authorization during transient recheck failures', async () => {
+    const secretStore = createSecretStore({
+      'customer-auth.php-secret': 'php-secret',
+      'customer-auth.php-uid': '123',
+    })
+    vi.mocked(fetch)
+      .mockResolvedValueOnce(
+        jsonResponse({
+          data: { customer: customer(), status: 'active' },
+          ok: true,
+          status: 'active',
+        }),
+      )
+      .mockRejectedValueOnce(new Error('旧登录服务暂不可用'))
+    const service = new CustomerAuthService({
+      fetcher: fetch,
+      secretStore,
+    })
+
+    await expect(service.verify()).resolves.toMatchObject({ status: 'active' })
+    await expect(service.verify({ allowStaleOnTransientFailure: true })).resolves.toMatchObject({
+      customer: expect.objectContaining({ php_uid: 123 }),
+      message: null,
+      status: 'active',
+    })
+    expect(secretStore.values.get('customer-auth.php-secret')).toBe('php-secret')
+    expect(secretStore.values.get('customer-auth.php-uid')).toBe('123')
   })
 
   it('clears partial credentials and returns a clear relogin state', async () => {

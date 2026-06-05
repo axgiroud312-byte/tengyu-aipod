@@ -3,6 +3,7 @@ export const APP_VERSION = '0.0.0'
 export const DEFAULT_TASK_CONCURRENCY = 3
 export const CACHE_REFRESH_INTERVAL_MINUTES = 30
 export const TEMP_FILE_MAX_AGE_HOURS = 24
+export const DEFAULT_PHP_AUTH_BASE_URL = 'https://www.tengyuai.com'
 
 export const API_PATHS = {
   skills: '/api/skills',

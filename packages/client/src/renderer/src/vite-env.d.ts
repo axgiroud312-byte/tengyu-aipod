@@ -65,7 +65,9 @@ declare global {
           invite?: string
           phone: string
         }) => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
-        verify: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
+        verify: (input?: {
+          allowStaleOnTransientFailure?: boolean
+        }) => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
         logout: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
       }
       chenyu: {

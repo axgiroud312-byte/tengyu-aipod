@@ -493,19 +493,20 @@ describe('CollectionSessionManager', () => {
     } satisfies Partial<AppErrorClass>)
   })
 
-  it('releases the profile lock if CDP connection fails', async () => {
+  it('marks the session failed and releases the profile lock if CDP connection fails', async () => {
     const locks = new BrowserProfileLockManager()
     const cdp = {
       connectToProfile: vi.fn().mockRejectedValue(new Error('CDP down')),
       disconnect: vi.fn().mockResolvedValue(undefined),
       injectPageScript: vi.fn(),
     }
-    const { manager } = createManager({ locks, cdp })
+    const { manager, db } = createManager({ locks, cdp })
 
     await expect(
       manager.startSession({ platform: 'temu', profile_id: 'profile-1', mode: 'click' }),
     ).rejects.toThrow('CDP down')
     expect(locks.status('profile-1')).toBeNull()
+    expect(db.rows.get('session-1')).toMatchObject({ ended_at: 1000, status: 'failed' })
   })
 
   it('pauses and resumes active sessions with IPC-friendly events', async () => {

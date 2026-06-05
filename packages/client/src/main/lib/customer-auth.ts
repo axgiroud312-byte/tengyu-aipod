@@ -2,13 +2,12 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { arch, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
-import { API_PATHS } from '@tengyu-aipod/shared'
+import { API_PATHS, DEFAULT_PHP_AUTH_BASE_URL } from '@tengyu-aipod/shared'
 import { app, ipcMain, shell } from 'electron'
 import { z } from 'zod'
 import { deleteSecret, deleteSecrets, getSecret, setSecret, setSecrets } from './keychain'
 import { serverUrl } from './server-base-url'
 
-const DEFAULT_PHP_AUTH_BASE_URL = 'https://tengyuai.com'
 const CUSTOMER_UID_KEY = 'customer-auth.php-uid'
 const CUSTOMER_SECRET_KEY = 'customer-auth.php-secret'
 const STATE_FILE_NAME = 'customer-auth.json'
@@ -71,6 +70,10 @@ type CustomerAuthStateFile = {
 type LoginCredentials = {
   secret: string
   uid: number
+}
+
+type VerifyOptions = {
+  allowStaleOnTransientFailure?: boolean | undefined
 }
 
 type CredentialsReadResult =
@@ -344,7 +347,7 @@ export class CustomerAuthService {
     )
   }
 
-  async verify(): Promise<CustomerAuthState> {
+  async verify(options: VerifyOptions = {}): Promise<CustomerAuthState> {
     const result = await this.readCredentials()
     if (!result.credentials) {
       return this.commitState(
@@ -389,10 +392,11 @@ export class CustomerAuthService {
         await this.clearCredentials()
         return this.commitState(nologinState(message))
       }
-      return this.commitState(anonymousState(message))
+      return this.handleTransientVerifyFailure(message, options)
     } catch (error) {
-      return this.commitState(
-        anonymousState(error instanceof Error ? error.message : '客户授权服务暂不可用'),
+      return this.handleTransientVerifyFailure(
+        error instanceof Error ? error.message : '客户授权服务暂不可用',
+        options,
       )
     }
   }
@@ -469,6 +473,21 @@ export class CustomerAuthService {
     await this.secretStore.deleteSecrets([CUSTOMER_UID_KEY, CUSTOMER_SECRET_KEY])
   }
 
+  private async handleTransientVerifyFailure(message: string, options: VerifyOptions) {
+    if (options.allowStaleOnTransientFailure) {
+      const cached = await this.readStateFile()
+      if (cached?.status === 'active' && cached.customer) {
+        return {
+          customer: cached.customer,
+          message: cached.message ?? null,
+          status: cached.status,
+        }
+      }
+    }
+
+    return this.commitState(anonymousState(message))
+  }
+
   private async getOrCreateFinger() {
     const state = await this.readStateFile()
     if (state?.finger) {
@@ -501,6 +520,12 @@ export class CustomerAuthService {
   }
 }
 
+const verifyInputSchema = z
+  .object({
+    allowStaleOnTransientFailure: z.boolean().optional(),
+  })
+  .optional()
+
 export function registerCustomerAuthIpc(service = new CustomerAuthService()) {
   ipcMain.handle('customerAuth:getState', () => service.getState())
   ipcMain.handle('customerAuth:getQrcode', () => service.getQrcode())
@@ -515,6 +540,8 @@ export function registerCustomerAuthIpc(service = new CustomerAuthService()) {
   ipcMain.handle('customerAuth:loginByPhone', (_event, input: unknown) =>
     service.loginByPhone(phoneLoginInputSchema.parse(input)),
   )
-  ipcMain.handle('customerAuth:verify', () => service.verify())
+  ipcMain.handle('customerAuth:verify', (_event, input: unknown) =>
+    service.verify(verifyInputSchema.parse(input)),
+  )
   ipcMain.handle('customerAuth:logout', () => service.logout())
 }

@@ -1,3 +1,4 @@
+import { DEFAULT_PHP_AUTH_BASE_URL } from '@tengyu-aipod/shared'
 import { z } from 'zod'
 
 export const phpAuthVerifyInputSchema = z.object({
@@ -64,7 +65,7 @@ function isSuccessStatus(value: unknown) {
 }
 
 export function phpAuthBaseUrl() {
-  return (process.env.PHP_AUTH_BASE_URL?.trim() || 'https://www.tengyuai.com').replace(/\/+$/, '')
+  return (process.env.PHP_AUTH_BASE_URL?.trim() || DEFAULT_PHP_AUTH_BASE_URL).replace(/\/+$/, '')
 }
 
 export async function fetchPhpUserInfo(

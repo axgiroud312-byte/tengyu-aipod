@@ -30,7 +30,13 @@ import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 const nodeRequire = createRequire(import.meta.url)
 
 export type CollectionMode = 'click' | 'scroll'
-export type CollectionSessionStatus = 'starting' | 'active' | 'paused' | 'stopping' | 'completed'
+export type CollectionSessionStatus =
+  | 'starting'
+  | 'active'
+  | 'paused'
+  | 'stopping'
+  | 'completed'
+  | 'failed'
 export type CollectionPauseReason = 'manual_intervention' | 'browser_closed' | 'window_closed'
 
 export type CollectionSessionConfig = {
@@ -233,6 +239,8 @@ export class CollectionSessionManager {
         profile_id: config.profile_id,
         error: appErrorMessage(error),
       })
+      const failedSession = { ...session, ended_at: this.now(), status: 'failed' as const }
+      writeSession(workbenchRoot, this.openDatabase, failedSession)
       await this.cdp.disconnect(config.profile_id).catch(() => null)
       lock.release()
       this.active = null
