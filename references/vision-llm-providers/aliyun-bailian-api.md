@@ -202,7 +202,7 @@ completion = client.chat.completions.create(
    b. 拼接 messages（system + user with image + prompt）
    c. POST /v1/chat/completions
    d. 解析返回 JSON → { risk: 0-100, reason: "..." }
-4. 按阈值归类 → 物理复制图到 `03-检测工作区/{任务名}/通过`、`复查`、`失败`
+4. 按阈值归类 → 物理复制图到 `03-检测工作区/{任务名}/无风险`、`疑似`、`高风险`
 5. 数据库登记每张图的判决、风险值、模型版本、skill 版本
 ```
 

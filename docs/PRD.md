@@ -65,7 +65,7 @@
 |---|---|---|
 | 客户登录与授权门禁 | ✅ | 复用旧 PHP 微信扫码 / 手机号验证码登录，Next 负责后台授权校验 |
 | 采集 | ✅ | 7 个内置跨境平台（Temu/Ozon/Shein/TikTok/Shopee/1688/Mercado Libre）|
-| 生图（统一模块）| ✅ | 5 个入口（文生图/图生图/提取/抠图/提取后抠图）× 2 provider（comfyui-chenyu / grsai）|
+| 生图（统一模块）| ✅ | 5 个入口（文生图/图生图/提取/抠图/提取后抠图），按能力支持 comfyui-chenyu / grsai；抠图无纯 Grsai 路径 |
 | 侵权检测 | ✅ | 阿里云百炼 qwen3-vl-* 系列 |
 | PS 套版 | ✅ Windows-only | macOS 上灰显并提示 |
 | 标题生成 | ✅ | 多平台 + 多语言 |
@@ -601,7 +601,8 @@ v1.5 再把固定完整任务升级为通用编排引擎：
 
 ## 13. 错误、日志、遥测
 
-- **日志**：`.workbench/logs/`，结构化 JSON，30 天自动清理
+- **普通落盘日志**：`.workbench/logs/*.log`，结构化 JSON；当前主要由 PS 套版写入，30 天清理是目标策略
+- **诊断日志**：`.workbench/logs/diagnostics/{generation|detection|title}/`，默认 7 天自动清理，总量上限 1GB
 - **采集运行期日志**：采集页弹窗内存保留最近 `1000` 条，不落盘；用于当场排查扫描/下载进度。
 - **生图运行期日志**：生图页弹窗内存保留最近 `1000` 条，不落盘；用于当场排查提示词生成、生图提交、模型调用进度和保存路径。
 - **崩溃日志**：单独目录，下次启动询问是否上报
@@ -695,6 +696,7 @@ v1.5 再把固定完整任务升级为通用编排引擎：
 docs/
 ├── PRD.md (本文件)
 ├── CONTEXT.md                 ← 领域语言
+├── PROJECT_TOUR.md             ← 项目导览 / 回神地图
 ├── spec/
 │   ├── 00-overview.md          ← 整体架构 + 技术栈
 │   ├── 01-orchestration.md     ← 任务/货号模型 + 编排引擎
@@ -717,7 +719,11 @@ docs/
     ├── 0008-temp-file-manager-and-cleanup.md
     ├── 0009-replace-better-sqlite3-with-node-sqlite.md
     ├── 0010-collection-image-pool-and-runtime-logs.md
-    └── 0011-customer-login-via-php-auth.md
+    ├── 0011-customer-login-via-php-auth.md
+    ├── 0012-complete-task-initial-fixed-pipeline.md
+    ├── 0013-complete-task-explicit-stage-toggles.md
+    └── 0014-listing-platforms-commons.md
 ```
 
 外部参考资料：[../references/](../references/)
+路线图与变更记录：[../ROADMAP.md](../ROADMAP.md) / [../CHANGELOG.md](../CHANGELOG.md)

@@ -13,7 +13,7 @@
 
 ## 当前阶段
 
-- ✅ 文档体系完成（PRD / CONTEXT / 10 个 Spec / 13 个 ADR / 4 份 references/）
+- ✅ 文档体系完成（PRD / CONTEXT / 10 个 Spec / 14 个 ADR / 4 份 references/）
 - ✅ 旧 Trellis 任务资料已清理，当前以代码、docs/spec 和 ADR 为准
 - ✅ 切片 0-8 代码层归档完成，v1 全功能（采集 / 检测 / 生图 / PS 套版 / 标题 / 上架）已就位
 - ✅ 完整任务最初版已就位：来源 → 可选抠图 → 可选检测 → 可选 PS 套版 → 可选标题生成
@@ -43,7 +43,7 @@ docs/
 │   ├─ 07-listing.md             ← 上架（直接 Port + 重写）
 │   ├─ 08-server.md              ← 服务器端 + Admin
 │   └─ 09-cross-cutting.md       ← 跨平台 / 并发 / 暂停 / 打包
-└─ adr/                          ← 13 个关键架构决策
+└─ adr/                          ← 14 个关键架构决策
     ├─ 0001-electron-react-stack.md
     ├─ 0002-no-client-auth-gate.md
     ├─ 0003-skill-and-provider-cloud-dispatch.md
@@ -56,7 +56,8 @@ docs/
     ├─ 0010-collection-image-pool-and-runtime-logs.md
     ├─ 0011-customer-login-via-php-auth.md
     ├─ 0012-complete-task-initial-fixed-pipeline.md
-    └─ 0013-complete-task-explicit-stage-toggles.md
+    ├─ 0013-complete-task-explicit-stage-toggles.md
+    └─ 0014-listing-platforms-commons.md
 
 references/                      ← 外部依赖参考资料（不是设计文档）
 ├─ generation-comfyui/chenyu-cloud-api.md      ← 晨羽智云 API

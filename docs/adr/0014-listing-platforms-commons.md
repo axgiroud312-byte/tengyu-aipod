@@ -1,4 +1,4 @@
-# ADR-0010 — 上架平台抽取 `_commons` 基础层，selector 升级为 record
+# ADR-0014 — 上架平台抽取 `_commons` 基础层，selector 升级为 record
 
 **状态**：已采纳
 **日期**：2026-05-26

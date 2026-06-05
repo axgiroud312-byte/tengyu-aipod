@@ -32,7 +32,7 @@
 
 理由：
 
-1. **能力齐全**：Electron 主进程能自由调 Node 模块（winax 调 COM、Playwright 操作浏览器、sharp 图像处理、better-sqlite3 本地数据库）。这些是腾域的核心能力。
+1. **能力齐全**：Electron 主进程能自由调 Node 模块（winax 调 COM、Playwright 操作浏览器、sharp 图像处理、Electron 内置 `node:sqlite` 本地数据库；SQLite 访问约束见 ADR-0009）。这些是腾域的核心能力。
 
 2. **跨平台**：Windows + macOS 双端打包，electron-builder 一行配置搞定。
 

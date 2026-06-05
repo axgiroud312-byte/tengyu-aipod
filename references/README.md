@@ -34,7 +34,7 @@
 - 视觉/LLM provider 见 [vision-llm-providers/aliyun-bailian-api.md](./vision-llm-providers/aliyun-bailian-api.md)
 
 ### 上架（listing/）
-- _待编写_ — 店小秘自动化方案（参考 `~/Desktop/一键pod/上架程序`）
+- _外部参考待补_ — 店小秘自动化方案；当前实现规则见 [上架 Spec](../docs/spec/07-listing.md)、[ADR-0004](../docs/adr/0004-listing-direct-port-with-rewrite.md) 和 [ADR-0014](../docs/adr/0014-listing-platforms-commons.md)
 
 ### 服务器端（server/）
 - _待编写_ — Wave SaaS 参考、JWT 鉴权设计、工作流/skill 版本策略

@@ -1,4 +1,4 @@
-Photoshop feature folder.
+# Photoshop Feature
 
-The M1 shell keeps the existing Photoshop panel in `App.tsx`; later UI milestones can move the panel
-here once the route structure is stable.
+This folder owns the Photoshop page UI. `PhotoshopPage.tsx` is rendered from the Workbench shell, while
+main-process Photoshop execution remains under `packages/client/src/main/photoshop/`.

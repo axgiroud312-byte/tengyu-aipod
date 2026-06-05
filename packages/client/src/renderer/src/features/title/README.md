@@ -1,4 +1,4 @@
-Title feature folder.
+# Title Feature
 
-The title panel is still hosted by `App.tsx` in M1 so progress listeners and retry state remain
-unchanged while routes and shell navigation are introduced.
+This folder owns the title generation page UI. `TitlePage.tsx` renders the module surface; `App.tsx`
+still keeps cross-route title state and progress listeners that need to survive navigation.

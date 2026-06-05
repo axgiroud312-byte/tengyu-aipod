@@ -8,7 +8,7 @@
 
 | 层 | 技术选型 |
 |---|---|
-| 运行时 | Electron 33+（双端 Windows + macOS）|
+| 运行时 | Electron 42.x（双端 Windows + macOS）|
 | 渲染层 | React 18+ + TypeScript 5+ |
 | 构建 | electron-vite + Vite 5 |
 | UI 库 | shadcn/ui + Tailwind CSS |
@@ -384,10 +384,10 @@ CREATE INDEX idx_workflow_steps_task ON workflow_steps(task_id);
 ```
 
 **格式**：pino JSON 每行一条
-**保留**：30 天，超过自动清理
+**保留**：普通 `.log` 文件目标策略为 30 天，超过自动清理；诊断日志见下方单独策略
 **用户操作**：设置面板可"导出压缩包"、"立即清理"、"删除所有日志"
 
-**运行期日志例外**：采集页和生图页的命令行式日志弹窗只保存在前端内存中，最多保留最近 `1000` 条，用于当场排查图池扫描/下载、点击采集、提示词生成、生图任务提交和模型调用进度；不写入 `.workbench/logs/`。
+**运行期日志例外**：采集页、生图页和完整任务页的命令行式日志弹窗只保存在前端内存中，最多保留最近 `1000` 条，用于当场排查图池扫描/下载、点击采集、提示词生成、生图任务提交、模型调用进度，以及完整任务各阶段开始/完成/失败、数量、模型和输出路径；不写入 `.workbench/logs/`。
 
 **诊断日志**：生图、侵权检测、标题生成会额外写 `.workbench/logs/diagnostics/`，用于排查 LLM / provider 调用。记录完整请求参数、原始响应、轮询/重试次数、解析失败、缓存/跳过决策和结构化错误；不记录 API Key / token / authorization / password / secret，不记录 base64 / data URL / Buffer 图片原文，只记录图片元信息。默认保留 7 天，总量上限 1GB，启动和每 24 小时自动清理。
 

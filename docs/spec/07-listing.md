@@ -677,7 +677,6 @@ packages/client/src/modules/listing/platforms/
 
 ## 17. 关键参考
 
-- listing-automation-builder SKILL：`/Users/macmini/Desktop/一键pod/上架程序/.agents/skills/listing-automation-builder/SKILL.md`（v1 把这份 SKILL 复制到腾域 `.agents/skills/` 下）
-- 一键pod/上架程序源码：runner.ts + ListingAdapter.ts + platforms 的实现细节
-
-详细 port 范围和重写策略见 [Q12 拍板记录](../../grilling-archive)（如保留）。
+- ADR-0004：上架模块必须按 selectors / page-parser / action-executor / workflow 四层结构落地。
+- ADR-0014：上架平台 `_commons` 基础层和 selector record 结构。
+- 历史“一键pod/上架程序”源码只作为迁移参考，不在文档中依赖本机绝对路径。
