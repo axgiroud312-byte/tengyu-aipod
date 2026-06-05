@@ -26,7 +26,16 @@ import {
   type SkillSummary,
   SkuCodeSchema,
 } from '@tengyu-aipod/shared'
-import { FolderOpen, Play, RefreshCw, Settings2, Square, WandSparkles } from 'lucide-react'
+import {
+  Check,
+  ChevronDown,
+  FolderOpen,
+  Play,
+  RefreshCw,
+  Settings2,
+  Square,
+  WandSparkles,
+} from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import type { DetectionConfig } from '../../../../main/lib/detection-config'
@@ -173,6 +182,67 @@ function SelectField({
         </SelectContent>
       </Select>
     </Field>
+  )
+}
+
+function PromptRequirementField({
+  id,
+  onOpenChange,
+  onValueChange,
+  open,
+  value,
+}: {
+  id: string
+  onOpenChange: (open: boolean) => void
+  onValueChange: (value: string) => void
+  open: boolean
+  value: string
+}) {
+  const summary = value.trim().replace(/\s+/g, ' ')
+
+  return (
+    <div className="relative grid gap-2 text-sm font-medium">
+      <span>印花要求</span>
+      <button
+        aria-controls={id}
+        aria-expanded={open}
+        className="flex h-9 w-full items-center justify-between gap-2 rounded-md border border-input bg-transparent px-3 py-2 text-left text-sm shadow-sm ring-offset-background focus:outline-none focus:ring-1 focus:ring-ring"
+        onClick={() => onOpenChange(!open)}
+        type="button"
+      >
+        <span className={summary ? 'truncate' : 'truncate text-muted-foreground'}>
+          {summary || '点击填写印花要求'}
+        </span>
+        <ChevronDown
+          className={`h-4 w-4 shrink-0 opacity-50 transition-transform ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      {open ? (
+        <div
+          className="absolute left-0 top-full z-30 mt-2 w-[min(28rem,calc(100vw-2rem))] rounded-md border bg-popover p-3 text-popover-foreground shadow-md"
+          id={id}
+        >
+          <Textarea
+            autoFocus
+            className="min-h-32 resize-y"
+            onChange={(event) => onValueChange(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Escape') {
+                onOpenChange(false)
+              }
+            }}
+            placeholder="例如：圣诞元素、不要文字、适合儿童 T 恤"
+            value={value}
+          />
+          <div className="mt-2 flex justify-end">
+            <Button className="h-8 px-3" onClick={() => onOpenChange(false)} variant="secondary">
+              <Check className="mr-2 h-4 w-4" />
+              收起
+            </Button>
+          </div>
+        </div>
+      ) : null}
+    </div>
   )
 }
 
@@ -548,6 +618,7 @@ export function FullTaskPage() {
     useState<Img2imgReferenceMode>('layout-style')
   const [manualPrompts, setManualPrompts] = useState('')
   const [promptRequirement, setPromptRequirement] = useState('')
+  const [promptRequirementOpen, setPromptRequirementOpen] = useState(false)
   const [promptCount, setPromptCount] = useState('5')
   const [promptSkillId, setPromptSkillId] = useState('')
   const [promptModel, setPromptModel] = useState('')
@@ -1000,6 +1071,16 @@ export function FullTaskPage() {
     setMattingEnabled(nextMode === 'local')
   }
 
+  function updateSourceMode(nextMode: TaskSourceMode) {
+    setPromptRequirementOpen(false)
+    setSourceMode(nextMode)
+  }
+
+  function updatePromptMode(nextMode: PipelinePromptMode) {
+    setPromptRequirementOpen(false)
+    setPromptMode(nextMode)
+  }
+
   async function chooseSourceFolder() {
     const selected = await window.api.generation.chooseImageFolder()
     if (selected.ok) {
@@ -1274,7 +1355,7 @@ export function FullTaskPage() {
 
               <Tabs
                 className="mt-4"
-                onValueChange={(value) => setSourceMode(value as TaskSourceMode)}
+                onValueChange={(value) => updateSourceMode(value as TaskSourceMode)}
                 value={sourceMode}
               >
                 <TabsList className="grid w-full grid-cols-3">
@@ -1408,7 +1489,7 @@ export function FullTaskPage() {
                     <div className="grid gap-4 lg:grid-cols-3">
                       <SelectField
                         label="提示词模式"
-                        onValueChange={(value) => setPromptMode(value as PipelinePromptMode)}
+                        onValueChange={(value) => updatePromptMode(value as PipelinePromptMode)}
                         options={promptModeOptions}
                         value={promptMode}
                       />
@@ -1442,12 +1523,13 @@ export function FullTaskPage() {
                           options={promptSkillOptions}
                           value={promptSkillId}
                         />
-                        <Field label="印花要求">
-                          <Textarea
-                            onChange={(event) => setPromptRequirement(event.target.value)}
-                            value={promptRequirement}
-                          />
-                        </Field>
+                        <PromptRequirementField
+                          id="txt2img-print-requirement"
+                          onOpenChange={setPromptRequirementOpen}
+                          onValueChange={setPromptRequirement}
+                          open={promptRequirementOpen}
+                          value={promptRequirement}
+                        />
                         <Field label="数量">
                           <Input
                             className="tabular-nums"
@@ -1530,7 +1612,7 @@ export function FullTaskPage() {
                     <div className="grid gap-4 lg:grid-cols-3">
                       <SelectField
                         label="提示词模式"
-                        onValueChange={(value) => setPromptMode(value as PipelinePromptMode)}
+                        onValueChange={(value) => updatePromptMode(value as PipelinePromptMode)}
                         options={promptModeOptions}
                         value={promptMode}
                       />
@@ -1564,12 +1646,13 @@ export function FullTaskPage() {
                           options={promptSkillOptions}
                           value={promptSkillId}
                         />
-                        <Field label="印花要求">
-                          <Textarea
-                            onChange={(event) => setPromptRequirement(event.target.value)}
-                            value={promptRequirement}
-                          />
-                        </Field>
+                        <PromptRequirementField
+                          id="img2img-print-requirement"
+                          onOpenChange={setPromptRequirementOpen}
+                          onValueChange={setPromptRequirement}
+                          open={promptRequirementOpen}
+                          value={promptRequirement}
+                        />
                         <Field label="数量">
                           <Input
                             className="tabular-nums"

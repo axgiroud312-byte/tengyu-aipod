@@ -16,6 +16,10 @@
 - 完整任务印花货号：启动前填写印花货号，PS 前复制到 `02-印花工作区/等待套版/{runId}/`；单张按 `{印花货号}.{ext}` 命名，多张自动追加 `-01`、`-02`，PS 输出货号文件夹同名。
 - 完整任务运行记录和预览：新增 `pipeline_runs` / `pipeline_steps` 本地 SQLite 记录、进度事件、取消入口、最近运行列表、来源图/提示词/运行产物预览；检测中 `block` 拦截，默认 `pass` / `review` 放行，也可选择只放行 `pass`。
 
+### Changed
+
+- 完整任务页：AI 生成提示词模式下的“印花要求”改为下拉式输入，默认收起显示摘要，展开后输入并可收回，减少来源配置区的视觉占用。
+
 ### Known Limitations
 
 - PS 套版 v1 为 Windows-only，需要 Photoshop 2023+，通过 `New-Object -ComObject Photoshop.Application` + `DoJavaScriptFile` 执行；macOS 不支持该能力。
