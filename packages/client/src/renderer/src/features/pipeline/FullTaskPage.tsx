@@ -149,7 +149,7 @@ function Field({
   label: string
 }) {
   return (
-    <div className="grid gap-2 text-sm font-medium">
+    <div className="grid min-w-0 gap-2 text-sm font-medium">
       <span>{label}</span>
       {children}
     </div>
@@ -170,12 +170,12 @@ function SelectField({
   return (
     <Field label={label}>
       <Select onValueChange={onValueChange} value={value}>
-        <SelectTrigger>
+        <SelectTrigger className="min-w-0 [&>span]:min-w-0 [&>span]:truncate">
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
+        <SelectContent className="max-w-[min(28rem,var(--radix-select-trigger-width))]">
           {options.map((option) => (
-            <SelectItem key={option.key} value={option.key}>
+            <SelectItem className="truncate" key={option.key} value={option.key}>
               {option.label}
             </SelectItem>
           ))}
@@ -256,8 +256,35 @@ function splitLines(value: string) {
 function optionFromSkill(skill: SkillSummary): Option {
   return {
     key: skill.id,
-    label: `${skill.id}${skill.version ? ` · ${skill.version}` : ''}`,
+    label: `${skillTitle(skill)}${skill.version ? ` · ${skill.version}` : ''}`,
   }
+}
+
+function skillTitle(skill: SkillSummary) {
+  const noteTitle = skill.notes?.split('：')[0]?.trim()
+  if (noteTitle && !noteTitle.startsWith('用于')) {
+    if (noteTitle.includes('付费模型提取') || noteTitle.includes('ComfyUI 提取')) {
+      return '提取提示词'
+    }
+    return noteTitle
+  }
+
+  if (skill.category === 'extract-paid-model' || skill.category === 'extract-comfyui-workflow') {
+    return '提取提示词'
+  }
+  if (skill.category === 'txt2img-local-print') {
+    return '文生图局部印花'
+  }
+  if (skill.category === 'txt2img-full-print') {
+    return '文生图满印'
+  }
+  if (skill.category === 'img2img-local-reference') {
+    return '图生图局部参考图'
+  }
+  if (skill.category === 'img2img-full-reference') {
+    return '图生图满印参考图'
+  }
+  return skill.id
 }
 
 function optionFromWorkflow(workflow: { id: string; name: string; version?: string }): Option {
