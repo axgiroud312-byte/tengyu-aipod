@@ -117,18 +117,19 @@ function canStartTask(skuCode: string | null): { ok: boolean; reason?: string } 
 
 ### 2.4 完整任务最初版
 
-v1 已实现一个固定流程完整任务，不是自由流程编辑器，也不包含上架：
+v1 已实现一个固定流程完整任务，不是自由流程编辑器，也不包含上架。
+当前完整任务页按三个设置区块组织：印花来源 / 是否抠图 / 侵权检测 + 套版 + 标题生成。
+来源区当前只暴露 `collection`、`txt2img`、`img2img`；`existing_prints` 仍保留在底层 pipeline schema 里做兼容，不作为主入口：
 
 ```
 来源准备
-  ├─ collection：用户先完成采集，完整任务从采集目录读取原图并提取
-  ├─ txt2img：文生图直接产生印花
-  ├─ img2img：图生图产生印花
-  └─ existing_prints：从已有印花文件夹开始
+  ├─ collection：采集 + 提取（Grsai / 晨羽）
+  ├─ txt2img：固定 Grsai 付费模型
+  └─ img2img：固定 Grsai 付费模型
   ↓
-可选抠图
+可选抠图（固定 ComfyUI 晨羽）
   ↓
-可选侵权检测
+可选侵权检测（复用检测模块设置）
   ↓
 PS 套版
   ↓
@@ -138,7 +139,7 @@ PS 套版
 首版策略：
 
 - 局部印花默认启用抠图，满印默认关闭抠图。
-- 侵权检测可选；开启时 `block` 拦截，`pass` 和 `review` 放行，`review` 单独计数。
+- 侵权检测可选；完整任务页直接复用检测模块设置面板，开启时 `block` 拦截，`pass` 和 `review` 放行，`review` 单独计数。
 - PS 套版和标题生成是固定后续流程，不可跳过。
 - 因为包含 PS 套版，完整任务只能在 Windows 启动；macOS 入口提示不可用。
 - 取消是尽力取消：检测、PS、标题可向底层 runner 传取消信号；生图批处理主要在 step 边界停止。
