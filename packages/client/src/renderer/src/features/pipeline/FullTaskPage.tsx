@@ -844,6 +844,10 @@ export function FullTaskPage() {
     'referenceImages',
     [],
   )
+  const [sendReferenceToImageModel, setSendReferenceToImageModel] = useFullTaskSessionState(
+    'sendReferenceToImageModel',
+    false,
+  )
   const [extractProvider, setExtractProvider] = useFullTaskSessionState<ExtractProvider>(
     'extractProvider',
     'grsai',
@@ -1062,7 +1066,11 @@ export function FullTaskPage() {
       }
     }
     if (sourceMode === 'txt2img' || sourceMode === 'img2img') {
-      if (sourceMode === 'img2img' && referenceImages.length === 0) {
+      if (
+        sourceMode === 'img2img' &&
+        referenceImages.length === 0 &&
+        (promptMode === 'ai' || sendReferenceToImageModel)
+      ) {
         issues.push('请先添加至少一张图生图参考图')
       }
       if (promptMode === 'manual') {
@@ -1132,6 +1140,7 @@ export function FullTaskPage() {
     printSkuCode,
     referenceImages.length,
     runningInstances.length,
+    sendReferenceToImageModel,
     selectedDetectionSkill,
     sourceFolder,
     sourceMode,
@@ -1555,7 +1564,7 @@ export function FullTaskPage() {
         mime_type: image.mime_type,
       })),
       prompt: buildPromptConfig(),
-      sendReferenceImages: true,
+      sendReferenceImages: sendReferenceToImageModel,
       grsai,
     }
   }
@@ -1975,9 +1984,24 @@ export function FullTaskPage() {
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <Badge variant="secondary">固定付费模型</Badge>
                       <span className="text-muted-foreground">
-                        图生图会把参考图一起送给 Grsai。
+                        默认只用于提示词生成，勾选后才送给 Grsai 图片模型。
                       </span>
                     </div>
+
+                    <label
+                      className="inline-flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                      htmlFor="send-reference-to-image-model"
+                    >
+                      <Checkbox
+                        aria-label="生图时带参考图"
+                        checked={sendReferenceToImageModel}
+                        id="send-reference-to-image-model"
+                        onCheckedChange={(checked) =>
+                          setSendReferenceToImageModel(Boolean(checked))
+                        }
+                      />
+                      生图时带参考图
+                    </label>
 
                     <SelectField
                       label="参考方式"

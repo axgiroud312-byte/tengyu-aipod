@@ -807,6 +807,72 @@ describe('PipelineService', () => {
     )
   })
 
+  it('keeps uploaded img2img references out of the image model request when disabled', async () => {
+    const service = new PipelineService()
+    const base64 = Buffer.from('reference-image').toString('base64')
+    await service.runPipeline('run-img2img-reference-disabled', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'grsai',
+        referenceImages: [{ name: 'reference.png', base64, mime_type: 'image/png' }],
+        prompt: { mode: 'manual', prompts: ['make a new floral print'] },
+        sendReferenceImages: false,
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    const generationInput = mocks.runTxt2imgBatch.mock.calls[0]?.[0] as
+      | { capability?: string; referenceImages?: unknown[] }
+      | undefined
+    expect(generationInput).toMatchObject({ capability: 'img2img' })
+    expect(generationInput?.referenceImages).toBeUndefined()
+  })
+
+  it('allows manual img2img without references when image model references are disabled', async () => {
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-img2img-no-reference', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['make a new geometric print'] },
+        sendReferenceImages: false,
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    expect(mocks.runTxt2imgBatch.mock.calls[0]?.[0]).toMatchObject({
+      capability: 'img2img',
+      prompts: ['make a new geometric print'],
+    })
+  })
+
   it('emits staged result sections and runtime logs for a complete task', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing.png'))

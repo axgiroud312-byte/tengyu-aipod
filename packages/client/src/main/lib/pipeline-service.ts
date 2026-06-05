@@ -1072,6 +1072,7 @@ export class PipelineService {
             runConfig.detection,
             prints,
             stats,
+            runConfig.photoshop.enabled !== false,
           )
         } else {
           this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', prints.length)
@@ -1225,7 +1226,7 @@ export class PipelineService {
         })
       }
     }
-    if (config.photoshop.enabled && config.photoshop.outputRoot) {
+    if (config.photoshop.enabled !== false && config.photoshop.outputRoot) {
       await assertPathInsideWorkbench(workbenchRoot, config.photoshop.outputRoot, {
         domain: 'listing',
         label: '完整任务套版输出目录',
@@ -1791,7 +1792,10 @@ export class PipelineService {
       : source.sourceFolder
         ? await scanImageFiles(source.sourceFolder)
         : []
-    if (sourcePaths.length === 0) {
+    if (
+      sourcePaths.length === 0 &&
+      (source.prompt.mode !== 'manual' || source.sendReferenceImages)
+    ) {
       throw new AppErrorClass('HTTP_4XX', '请先添加至少一张图生图参考图', false)
     }
     if (!source.grsai) {
