@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { appendFile, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
-import { readAppConfig } from '../onboarding'
+import { readAppConfig } from './workbench-config'
 
 export type DiagnosticModule = 'generation' | 'detection' | 'title'
 

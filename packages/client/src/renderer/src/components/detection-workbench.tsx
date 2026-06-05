@@ -217,21 +217,27 @@ function ImageFolderPanel({
 function RunPanel({
   imageCount,
   compression,
+  model,
+  models,
   running,
   skillLoading,
   skillReady,
   progress,
   onCompressionChange,
+  onModelChange,
   onRun,
   onCancel,
 }: {
   imageCount: number
   compression: boolean
+  model: string
+  models: string[]
   running: boolean
   skillLoading: boolean
   skillReady: boolean
   progress: DetectionProgress | null
   onCompressionChange: (enabled: boolean) => void
+  onModelChange: (model: string) => void
   onRun: () => void
   onCancel: () => void
 }) {
@@ -251,7 +257,7 @@ function RunPanel({
           </div>
           <div>
             <dt className="text-muted-foreground">模型</dt>
-            <dd className="truncate font-medium">{DEFAULT_MODEL}</dd>
+            <dd className="truncate font-medium">{model || DEFAULT_MODEL}</dd>
           </div>
           <div>
             <dt className="text-muted-foreground">Skill</dt>
@@ -261,7 +267,23 @@ function RunPanel({
           </div>
         </dl>
 
-        <label className="mt-5 flex items-center justify-between rounded-md border px-3 py-2 text-sm font-medium">
+        <label className="mt-5 block space-y-2 text-sm font-medium">
+          <span>检测模型</span>
+          <select
+            className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            disabled={running}
+            onChange={(event) => onModelChange(event.target.value)}
+            value={model}
+          >
+            {(models.length ? models : [DEFAULT_MODEL]).map((item) => (
+              <option key={item} value={item}>
+                {item}
+              </option>
+            ))}
+          </select>
+        </label>
+
+        <label className="mt-4 flex items-center justify-between rounded-md border px-3 py-2 text-sm font-medium">
           <span>压缩图片</span>
           <input
             checked={compression}
@@ -433,6 +455,8 @@ export function DetectionWorkbench() {
   const [sourceImages, setSourceImages] = useState<DetectionImageInfo[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
   const [compression, setCompression] = useState(true)
+  const [models, setModels] = useState<string[]>([])
+  const [model, setModel] = useState(DEFAULT_MODEL)
   const [skill, setSkill] = useState<Skill | null>(null)
   const [skillLoading, setSkillLoading] = useState(true)
   const [progress, setProgress] = useState<DetectionProgress | null>(null)
@@ -451,7 +475,11 @@ export function DetectionWorkbench() {
     async function loadSkill() {
       setSkillLoading(true)
       try {
-        const skills = await window.api.skill.list({ module: 'detection' })
+        const [skills, modelList, config] = await Promise.all([
+          window.api.skill.list({ module: 'detection' }),
+          window.api.detection.listModels(),
+          window.api.detection.getConfig(),
+        ])
         const summary = selectDefaultSkill(skills)
         if (!summary) {
           throw new Error('没有可用的侵权检测 Skill，请先在设置里同步 Skill')
@@ -460,6 +488,8 @@ export function DetectionWorkbench() {
         if (!mounted) {
           return
         }
+        setModels(modelList)
+        setModel(config?.model ?? modelList[0] ?? DEFAULT_MODEL)
         setSkill(detail)
         setError(null)
       } catch (nextError) {
@@ -631,7 +661,7 @@ export function DetectionWorkbench() {
         imagePaths: sourceImages.map((image) => image.path),
         skillId: skill.id,
         skillVersion: skill.version,
-        model: DEFAULT_MODEL,
+        model: model || DEFAULT_MODEL,
         variables: defaultVariables(skill),
         threshold: DEFAULT_THRESHOLD,
         preprocess: {
@@ -713,11 +743,14 @@ export function DetectionWorkbench() {
         <RunPanel
           compression={compression}
           imageCount={sourceImages.length}
+          model={model}
+          models={models}
           progress={progress}
           running={running}
           skillLoading={skillLoading}
           skillReady={Boolean(skill)}
           onCompressionChange={setCompression}
+          onModelChange={setModel}
           onCancel={() => void cancelDetection()}
           onRun={() => void startDetection()}
         />

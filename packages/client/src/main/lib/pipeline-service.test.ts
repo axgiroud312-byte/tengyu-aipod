@@ -8,12 +8,14 @@ import {
 } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PipelineService, registerPipelineIpc } from './pipeline-service'
+import type { TitleBatchResult } from './title-service'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 const mocks = vi.hoisted(() => ({
   workbenchRoot: '',
   ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
+  sentEvents: [] as Array<{ channel: string; payload: unknown }>,
   runBatch: vi.fn(
     async (
       prints: PhotoshopPrintAsset[],
@@ -57,7 +59,11 @@ const mocks = vi.hoisted(() => ({
     },
   ),
   runTitleBatch: vi.fn(
-    async (input: { batchDir: string; taskId: string; titleFileName?: string }) => ({
+    async (input: {
+      batchDir: string
+      taskId: string
+      titleFileName?: string
+    }): Promise<TitleBatchResult> => ({
       taskId: input.taskId,
       xlsxPath: join(input.batchDir, `${input.titleFileName ?? '标题'}.xlsx`),
       total: 1,
@@ -93,11 +99,20 @@ const mocks = vi.hoisted(() => ({
       },
     ],
   })),
+  runDetectionBatch: vi.fn(),
 }))
 
 vi.mock('electron', () => ({
   BrowserWindow: {
-    getAllWindows: () => [],
+    getAllWindows: () => [
+      {
+        webContents: {
+          send: (channel: string, payload: unknown) => {
+            mocks.sentEvents.push({ channel, payload })
+          },
+        },
+      },
+    ],
   },
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -129,7 +144,7 @@ vi.mock('./temp-file-manager', () => ({
 
 vi.mock('./detection-service', () => ({
   detectionService: {
-    runDetectionBatch: vi.fn(),
+    runDetectionBatch: mocks.runDetectionBatch,
     cancelTask: vi.fn(),
   },
 }))
@@ -154,6 +169,46 @@ function setPlatform(value: NodeJS.Platform) {
 async function createPrint(path: string) {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, 'image')
+}
+
+function createPhotoshopBatchResult(
+  prints: PhotoshopPrintAsset[],
+  config: {
+    taskId: string
+    outputRoot: string
+    outputLayout: 'template_first' | 'sku_first'
+  },
+) {
+  const printId = prints[0]?.id ?? 'print'
+  const outputPath = join(config.outputRoot, 'shirt', printId, '01.jpg')
+  return {
+    ok: true,
+    task_id: config.taskId,
+    output_layout: config.outputLayout,
+    templates_total: 1,
+    groups_total: 1,
+    groups_completed: 1,
+    outputs: [outputPath],
+    templates: [
+      {
+        template_id: 'tpl-shirt',
+        template_name: 'shirt',
+        groups_total: 1,
+        groups_completed: 1,
+        outputs: [outputPath],
+      },
+    ],
+    result_groups: [
+      {
+        template_id: 'tpl-shirt',
+        template_name: 'shirt',
+        group_index: 0,
+        sku_folder: printId,
+        print_ids: [printId],
+        outputs: [outputPath],
+      },
+    ],
+  }
 }
 
 function baseConfig(printFolder: string): PipelineRunConfig {
@@ -201,6 +256,8 @@ describe('PipelineService', () => {
     mocks.runTitleBatch.mockClear()
     mocks.createTaskDir.mockClear()
     mocks.runTxt2imgBatch.mockClear()
+    mocks.runDetectionBatch.mockReset()
+    mocks.sentEvents = []
   })
 
   afterEach(async () => {
@@ -332,36 +389,7 @@ describe('PipelineService', () => {
         await new Promise<void>((resolve) => {
           resolvePhotoshop = resolve
         })
-        const printId = prints[0]?.id ?? 'print'
-        const outputPath = join(config.outputRoot, 'shirt', printId, '01.jpg')
-        return {
-          ok: true,
-          task_id: config.taskId,
-          output_layout: config.outputLayout,
-          templates_total: 1,
-          groups_total: 1,
-          groups_completed: 1,
-          outputs: [outputPath],
-          templates: [
-            {
-              template_id: 'tpl-shirt',
-              template_name: 'shirt',
-              groups_total: 1,
-              groups_completed: 1,
-              outputs: [outputPath],
-            },
-          ],
-          result_groups: [
-            {
-              template_id: 'tpl-shirt',
-              template_name: 'shirt',
-              group_index: 0,
-              sku_folder: printId,
-              print_ids: [printId],
-              outputs: [outputPath],
-            },
-          ],
-        }
+        return createPhotoshopBatchResult(prints, config)
       },
     )
 
@@ -378,6 +406,78 @@ describe('PipelineService', () => {
     resolvePhotoshop?.()
     await expect(firstRun).resolves.toMatchObject({
       run: expect.objectContaining({ status: 'completed' }),
+    })
+  })
+
+  it('queues concurrent Photoshop runs with different print sku codes', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    let resolvePhotoshop: (() => void) | undefined
+    mocks.runBatch.mockImplementation(
+      async (
+        prints: PhotoshopPrintAsset[],
+        _templates: unknown,
+        config: {
+          taskId: string
+          outputRoot: string
+          outputLayout: 'template_first' | 'sku_first'
+        },
+      ) => {
+        if (config.taskId === 'run-ps-lock-1-photoshop') {
+          await new Promise<void>((resolve) => {
+            resolvePhotoshop = resolve
+          })
+        }
+        return createPhotoshopBatchResult(prints, config)
+      },
+    )
+
+    const service = new PipelineService()
+    const firstRun = service.runPipeline('run-ps-lock-1', {
+      ...baseConfig(printFolder),
+      printSkuCode: 'TY-LOCK-A',
+    })
+    await vi.waitUntil(() => mocks.runBatch.mock.calls.length === 1)
+
+    const secondRun = service.runPipeline('run-ps-lock-2', {
+      ...baseConfig(printFolder),
+      printSkuCode: 'TY-LOCK-B',
+    })
+    await new Promise((resolve) => setTimeout(resolve, 20))
+
+    expect(mocks.runBatch).toHaveBeenCalledTimes(1)
+    resolvePhotoshop?.()
+    await vi.waitUntil(() => mocks.runBatch.mock.calls.length === 2)
+    await expect(Promise.all([firstRun, secondRun])).resolves.toHaveLength(2)
+  })
+
+  it('completes the title step when every title batch is skipped', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    mocks.runTitleBatch.mockResolvedValueOnce({
+      taskId: 'run-title-skipped-title-1',
+      xlsxPath: join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, 'shirt', '标题.xlsx'),
+      total: 1,
+      succeeded: 0,
+      failed: 0,
+      skipped: 1,
+      results: [
+        {
+          skuCode: 'TY-BASE',
+          status: 'skipped' as const,
+          title: 'Existing title',
+        },
+      ],
+    })
+
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-title-skipped', baseConfig(printFolder))
+
+    expect(result.run.status).toBe('completed')
+    expect(result.steps.find((step) => step.step_key === 'title')).toMatchObject({
+      status: 'completed',
+      output_count: 1,
     })
   })
 
@@ -463,6 +563,148 @@ describe('PipelineService', () => {
       }),
       expect.anything(),
     )
+  })
+
+  it('emits staged result sections and runtime logs for a complete task', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    const service = new PipelineService()
+    await service.runPipeline('run-result-sections', {
+      ...baseConfig(printFolder),
+      photoshop: {
+        ...baseConfig(printFolder).photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        enabled: false,
+      },
+    })
+
+    const progressEvents = mocks.sentEvents.filter((event) => event.channel === 'pipeline:progress')
+    const lastProgress = progressEvents.at(-1)?.payload as
+      | {
+          result_sections?: Array<{ key: string; completed: number; items: unknown[] }>
+          logs?: Array<{ message: string }>
+        }
+      | undefined
+
+    expect(
+      lastProgress?.result_sections?.find((section) => section.key === 'print_products'),
+    ).toMatchObject({
+      completed: 1,
+      items: [
+        expect.objectContaining({
+          status: 'success',
+          local_path: expect.stringContaining('existing.png'),
+        }),
+      ],
+    })
+    expect(lastProgress?.logs?.map((entry) => entry.message)).toContain('完整任务完成')
+  })
+
+  it('emits detection passed and blocked sections using the full task pass rule', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'pass.png'))
+    await createPrint(join(printFolder, 'review.png'))
+    await createPrint(join(printFolder, 'block.png'))
+    mocks.runDetectionBatch.mockResolvedValueOnce({
+      taskId: 'run-detection-sections-detection',
+      total: 3,
+      succeeded: 3,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: join(printFolder, 'pass.png'),
+          thumbnailUrl: '',
+          artifactId: 'art-pass',
+          printId: 'pri-pass',
+          status: 'success' as const,
+          riskScore: 10,
+          riskLevel: 'pass' as const,
+          reason: '低风险',
+          outputPath: join(mocks.workbenchRoot, 'pass-output.png'),
+          cached: false,
+        },
+        {
+          imagePath: join(printFolder, 'review.png'),
+          thumbnailUrl: '',
+          artifactId: 'art-review',
+          printId: 'pri-review',
+          status: 'success' as const,
+          riskScore: 55,
+          riskLevel: 'review' as const,
+          reason: '疑似',
+          outputPath: join(mocks.workbenchRoot, 'review-output.png'),
+          cached: false,
+        },
+        {
+          imagePath: join(printFolder, 'block.png'),
+          thumbnailUrl: '',
+          artifactId: 'art-block',
+          printId: 'pri-block',
+          status: 'success' as const,
+          riskScore: 90,
+          riskLevel: 'block' as const,
+          reason: '高风险',
+          outputPath: join(mocks.workbenchRoot, 'block-output.png'),
+          cached: false,
+        },
+      ],
+    })
+
+    const service = new PipelineService()
+    await service.runPipeline('run-detection-sections', {
+      ...baseConfig(printFolder),
+      detection: {
+        enabled: true,
+        allowReview: false,
+        skillId: 'infringement-detection',
+        skillVersion: 'v1',
+        model: 'qwen3-vl-flash',
+      },
+      photoshop: {
+        ...baseConfig(printFolder).photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        enabled: false,
+      },
+    })
+
+    const progressEvents = mocks.sentEvents.filter((event) => event.channel === 'pipeline:progress')
+    const lastProgress = progressEvents.at(-1)?.payload as
+      | {
+          result_sections?: Array<{
+            key: string
+            completed: number
+            items: Array<{ print_id?: string }>
+          }>
+        }
+      | undefined
+    const passed = lastProgress?.result_sections?.find(
+      (section) => section.key === 'detection_passed',
+    )
+    const blocked = lastProgress?.result_sections?.find(
+      (section) => section.key === 'detection_blocked',
+    )
+
+    expect(passed).toMatchObject({
+      completed: 1,
+      items: [expect.objectContaining({ print_id: 'pri-pass' })],
+    })
+    expect(blocked).toMatchObject({
+      completed: 2,
+      items: [
+        expect.objectContaining({ print_id: 'pri-review' }),
+        expect.objectContaining({ print_id: 'pri-block' }),
+      ],
+    })
   })
 
   it('rejects ComfyUI txt2img/img2img sources at the IPC schema boundary', () => {

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { BrowserWindow, app, ipcMain } from 'electron'
@@ -44,15 +45,16 @@ if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.TENGYU_ELECTRON_USER_DATA_DIR)
 }
 
-function resolveAppIconPath(): string {
-  return app.isPackaged
+function resolveAppIconPath(): string | undefined {
+  const appIconPath = app.isPackaged
     ? join(process.resourcesPath, 'icon.png')
-    : join(app.getAppPath(), 'resources/icon.png')
+    : join(currentDir, '../../resources/icon.png')
+  return existsSync(appIconPath) ? appIconPath : undefined
 }
 
-function applyAppIcon(): string {
+function applyAppIcon(): string | undefined {
   const appIconPath = resolveAppIconPath()
-  if (process.platform === 'darwin') {
+  if (process.platform === 'darwin' && appIconPath) {
     app.dock?.setIcon(appIconPath)
   }
   return appIconPath
@@ -64,7 +66,7 @@ function createMainWindow(appIconPath = resolveAppIconPath()): void {
     height: 900,
     minWidth: 1100,
     minHeight: 700,
-    icon: appIconPath,
+    ...(appIconPath ? { icon: appIconPath } : {}),
     title: '腾域 aipod',
     webPreferences: {
       preload: join(currentDir, '../preload/index.mjs'),

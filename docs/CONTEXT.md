@@ -60,6 +60,10 @@ _Avoid_: 输出图、上架图、模特图
 任何由模块产生的本地文件（图片、JSX、临时遮罩、xlsx 等）。每个 artifact 在数据库里登记血缘。
 _Avoid_: 输出文件、结果
 
+**印花产物区**：
+完整任务页中展示文生图、图生图、提取和抠图等会产出新印花图片的结果区域。它按预计产出数量预留图片槽位，完成一张显示一张。
+_Avoid_: 图像处理区域、生成区域（过窄，容易漏掉提取和抠图）
+
 ### 模块
 
 **模块 / Module**：
@@ -101,6 +105,10 @@ _Avoid_: 审计日志（常规运行期日志不是长期审计）
 **诊断日志 / Diagnostic Log**：
 生图、侵权检测、标题生成共用的落盘排障 JSONL。写在 `.workbench/logs/diagnostics/{generation|detection|title}/{taskIdOrRunId}.jsonl`，默认开启，用于查看本次发送给 LLM / provider 的完整参数、原始返回、轮询/重试次数、解析失败和跳过决策。API Key、authorization、token、secret、password 永远脱敏；base64 / data URL / Buffer 图片内容只记录 mime、字节数、sha256、长度等元信息。默认保留 7 天，总量上限 1GB，启动和每 24 小时自动清理。
 _Avoid_: 审计日志、业务产物、长期用户数据备份
+
+**完整任务运行期日志 / Complete Task Runtime Log**：
+完整任务页内存日志，用于当场查看固定流程每个阶段的开始、完成、失败、数量、模型、输出路径和关键错误。最多保留最近 `1000` 条，应用重启后消失；深度排障仍查看各模块诊断日志。
+_Avoid_: 审计日志、诊断日志
 
 ### 编排
 

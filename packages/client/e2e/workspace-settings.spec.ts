@@ -18,6 +18,35 @@ function sendJson(response: ServerResponse, body: unknown, status = 200) {
 async function startMockServer() {
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/user/public/send_login_sms') {
+      sendJson(response, { status: 1, info: 'ok', data: {} })
+      return
+    }
+
+    if (url.pathname === '/user/public/login') {
+      sendJson(response, { status: 1, info: 'ok', data: { secret: 'e2e-secret', uid: 10001 } })
+      return
+    }
+
+    if (url.pathname === '/api/customer-auth/verify') {
+      sendJson(response, {
+        ok: true,
+        data: {
+          customer: {
+            account: 'e2e',
+            avatar_url: null,
+            expires_at: '2099-12-31T00:00:00.000Z',
+            id: 'cus_workspace_e2e',
+            nickname: 'E2E 客户',
+            phone: '13800000000',
+            php_uid: 10001,
+          },
+          status: 'active',
+        },
+      })
+      return
+    }
+
     if (url.pathname === '/api/skills') {
       sendJson(response, {
         ok: true,
@@ -77,6 +106,14 @@ async function expectImageLoads(page: Page, path: string) {
   expect(result).toEqual({ ok: true, width: 1, height: 1 })
 }
 
+async function loginByPhone(page: Page) {
+  await page.getByRole('textbox', { name: '手机号' }).fill('13800000000')
+  await page.getByRole('button', { name: '发送验证码' }).click()
+  await page.getByRole('textbox', { name: '验证码' }).fill('123456')
+  await page.getByRole('button', { name: '验证登录' }).click()
+  await expect(page.getByRole('button', { name: '全部跳过' })).toBeVisible()
+}
+
 test.describe('workspace settings', () => {
   let tempRoot = ''
   let app: ElectronApplication | null = null
@@ -120,12 +157,14 @@ test.describe('workspace settings', () => {
         ...process.env,
         NODE_ENV: 'development',
         TENGYU_SERVER_URL: mockServer.baseUrl,
+        TENGYU_PHP_AUTH_BASE_URL: mockServer.baseUrl,
         ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
         TENGYU_ELECTRON_USER_DATA_DIR: userDataDir,
       },
     })
     const page = await app.firstWindow()
 
+    await loginByPhone(page)
     await page.getByRole('button', { name: '全部跳过' }).click()
     await page.getByRole('button', { name: '开始使用' }).click()
     await expect(page.getByRole('heading', { name: '请先选择工作区' })).toBeVisible()

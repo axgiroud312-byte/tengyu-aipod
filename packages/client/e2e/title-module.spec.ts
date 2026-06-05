@@ -47,6 +47,35 @@ function sendJson(response: ServerResponse, body: unknown, status = 200) {
 async function startMockServer(state: MockState) {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
+    if (url.pathname === '/user/public/send_login_sms') {
+      sendJson(response, { status: 1, info: 'ok', data: {} })
+      return
+    }
+
+    if (url.pathname === '/user/public/login') {
+      sendJson(response, { status: 1, info: 'ok', data: { secret: 'e2e-secret', uid: 10001 } })
+      return
+    }
+
+    if (url.pathname === '/api/customer-auth/verify') {
+      sendJson(response, {
+        ok: true,
+        data: {
+          customer: {
+            account: 'e2e',
+            avatar_url: null,
+            expires_at: '2099-12-31T00:00:00.000Z',
+            id: 'cus_title_e2e',
+            nickname: 'E2E 客户',
+            phone: '13800000000',
+            php_uid: 10001,
+          },
+          status: 'active',
+        },
+      })
+      return
+    }
+
     if (url.pathname === '/api/skills') {
       sendJson(response, { ok: true, data: [titleSkill] })
       return
@@ -144,7 +173,7 @@ async function setupBatch(root: string) {
   await createSku(batchDir, 'SKU001')
   await createSku(batchDir, 'SKU002')
   await createSku(batchDir, 'SKU003')
-  await createWorkbook(join(batchDir, 'titles.xlsx'), [['SKU002', 'Existing SKU002 Title']])
+  await createWorkbook(join(batchDir, '标题.xlsx'), [['SKU002', 'Existing SKU002 Title']])
   return batchDir
 }
 
@@ -157,6 +186,7 @@ async function launchApp(mockBaseUrl: string, userDataDir: string) {
       ...process.env,
       NODE_ENV: 'development',
       TENGYU_SERVER_URL: mockBaseUrl,
+      TENGYU_PHP_AUTH_BASE_URL: mockBaseUrl,
       TENGYU_BAILIAN_BASE_URL: `${mockBaseUrl}/compatible-mode/v1`,
       TENGYU_SKIP_TITLE_DB_REGISTER: '1',
       ELECTRON_DISABLE_SECURITY_WARNINGS: 'true',
@@ -167,10 +197,19 @@ async function launchApp(mockBaseUrl: string, userDataDir: string) {
 
 async function prepareApp(page: Page, workbenchRoot: string) {
   await page.evaluate(async (root) => {
+    await window.api.customerAuth.loginByPhone({ phone: '13800000000', code: '123456' })
     await window.api.onboarding.saveWorkbenchRoot(root)
     await window.api.onboarding.saveApiKeys({ bailian: 'sk-e2e' })
+    await window.api.generationSettings.save({
+      config: { default_concurrency: 1, grsai_concurrency: 1 },
+    })
     await window.api.onboarding.complete()
   }, workbenchRoot)
+}
+
+async function openTitlePage(page: Page) {
+  await page.getByRole('link', { name: '标题生成' }).click()
+  await expect(page.getByRole('heading', { name: '标题生成模块' })).toBeVisible()
 }
 
 test.describe('title module E2E', () => {
@@ -201,13 +240,12 @@ test.describe('title module E2E', () => {
     const page = await app.firstWindow()
     await prepareApp(page, workbenchRoot)
     await page.reload()
-    await expect(page.getByText('标题生成模块')).toBeVisible()
+    await openTitlePage(page)
 
-    await page.getByPlaceholder('选择上架工作区中的一个套版批次目录').fill(batchDir)
+    await page.getByPlaceholder('选择货号文件夹所在的父目录').fill(batchDir)
     await page.getByRole('button', { name: '高级参数' }).click()
-    await page.getByRole('spinbutton', { name: '并发数' }).fill('1')
     await page.getByRole('button', { name: '扫描' }).click()
-    await expect(page.getByText('待生成张数').locator('..')).toContainText('2')
+    await expect(page.getByText('生成', { exact: true }).locator('..')).toContainText('2')
 
     await page.evaluate(() => {
       window.__titleProgressEvents = []
@@ -217,8 +255,9 @@ test.describe('title module E2E', () => {
     })
 
     await page.getByRole('button', { name: '开始生成标题' }).click()
-    await expect(page.getByText('完成')).toBeVisible({ timeout: 30_000 })
-    await expect(page.getByText('成功 2 个，失败 0 个，跳过 1 个')).toBeVisible()
+    await expect(page.getByText('成功 2 个，失败 0 个，跳过 1 个')).toBeVisible({
+      timeout: 30_000,
+    })
 
     const progressEvents = await page.evaluate(() => window.__titleProgressEvents)
     expect(progressEvents).toEqual(
@@ -229,7 +268,7 @@ test.describe('title module E2E', () => {
     )
     expect(state.bailianCalls).toBe(3)
 
-    const rows = await readWorkbookRows(join(batchDir, 'titles.xlsx'))
+    const rows = await readWorkbookRows(join(batchDir, '标题.xlsx'))
     expect(rows).toEqual([
       ['货号', '标题'],
       ['SKU001', 'Mock Title 2 qwen3.6-flash'],
@@ -247,14 +286,13 @@ test.describe('title module E2E', () => {
 
     app = await launchApp(mockServer.baseUrl, join(tempRoot, 'user-data'))
     const page = await app.firstWindow()
-    await prepareApp(app, page, workbenchRoot)
+    await prepareApp(page, workbenchRoot)
     await page.reload()
-    await expect(page.getByText('标题生成模块')).toBeVisible()
+    await openTitlePage(page)
 
     await rm(join(batchDir, 'SKU003', '1.png'))
-    await page.getByPlaceholder('选择上架工作区中的一个套版批次目录').fill(batchDir)
+    await page.getByPlaceholder('选择货号文件夹所在的父目录').fill(batchDir)
     await page.getByRole('button', { name: '高级参数' }).click()
-    await page.getByRole('spinbutton', { name: '并发数' }).fill('1')
     await page.getByRole('button', { name: '扫描' }).click()
     await page.getByRole('button', { name: '开始生成标题' }).click()
     await expect(page.getByText('成功 1 个，失败 1 个，跳过 1 个')).toBeVisible({
@@ -268,7 +306,7 @@ test.describe('title module E2E', () => {
       timeout: 30_000,
     })
 
-    const rows = await readWorkbookRows(join(batchDir, 'titles.xlsx'))
+    const rows = await readWorkbookRows(join(batchDir, '标题.xlsx'))
     expect(rows).toEqual([
       ['货号', '标题'],
       ['SKU001', 'Mock Title 1 qwen3.6-flash'],

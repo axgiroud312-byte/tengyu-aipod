@@ -1,8 +1,11 @@
+import { createRequire } from 'node:module'
 import { AppErrorClass } from '@tengyu-aipod/shared'
-import { ipcMain } from 'electron'
+import type { ipcMain as ElectronIpcMain } from 'electron'
 import { z } from 'zod'
 import { getSecret, setSecret } from './keychain'
 import { type GenerationLocalConfig, readAppConfig, writeAppConfig } from './workbench-config'
+
+const nodeRequire = createRequire(import.meta.url)
 
 export type LocalModelModality = 'text' | 'vision'
 
@@ -268,7 +271,12 @@ export async function saveGenerationLocalSettings(input: SaveGenerationLocalSett
   return readGenerationLocalSettings()
 }
 
+function electronIpcMain(): typeof ElectronIpcMain {
+  return (nodeRequire('electron') as typeof import('electron')).ipcMain
+}
+
 export function registerGenerationLocalConfigIpc() {
+  const ipcMain = electronIpcMain()
   ipcMain.handle('generation-settings:get', () => readGenerationLocalSettings())
   ipcMain.handle('generation-settings:save', (_event, input: unknown) =>
     saveGenerationLocalSettings(

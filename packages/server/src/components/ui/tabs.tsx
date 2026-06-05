@@ -3,13 +3,13 @@
 import { cn } from '@/lib/utils'
 import {
   Children,
+  type ComponentProps,
+  type ReactNode,
   createContext,
   isValidElement,
   useContext,
   useMemo,
   useState,
-  type ComponentProps,
-  type ReactNode,
 } from 'react'
 
 type TabsContextValue = {
@@ -49,10 +49,7 @@ export function Tabs({
 export function TabsList({ children, className, ...props }: ComponentProps<'div'>) {
   return (
     <div
-      className={cn(
-        'flex w-full flex-wrap gap-1 rounded-md border bg-muted/70 p-1',
-        className,
-      )}
+      className={cn('flex w-full flex-wrap gap-1 rounded-md border bg-muted/70 p-1', className)}
       role="tablist"
       {...props}
     >

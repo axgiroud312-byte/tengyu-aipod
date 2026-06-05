@@ -1,7 +1,9 @@
+import { ImageLightbox, type ImageLightboxItem } from '@/components/image-lightbox'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -15,11 +17,12 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import type { TitleExistingStrategy } from '@/features/title/TitlePage'
 import {
-  type PipelinePreviewImage,
   type PipelinePrintMode,
   type PipelineProgress,
   type PipelinePromptConfig,
   type PipelinePromptMode,
+  type PipelineResultImage,
+  type PipelineResultSection,
   type PipelineRunConfig,
   type PipelineRunRecord,
   type PipelineSourceMode,
@@ -29,7 +32,10 @@ import {
 import {
   Check,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   FolderOpen,
+  Loader2,
   Play,
   RefreshCw,
   Settings2,
@@ -53,22 +59,12 @@ type Img2imgReferenceMode = 'layout' | 'style' | 'layout-style' | 'manual'
 type DetectionPassRule = 'allow-review' | 'pass-only'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
-type GenerationImageSource = Awaited<
-  ReturnType<typeof window.api.generation.scanImageFolder>
->[number]
-
 type ReferenceImageDraft = {
   id: string
   name: string
   dataUrl: string
   base64: string
   mime_type: string
-}
-
-type SourcePreviewItem = {
-  id: string
-  name: string
-  src: string
 }
 
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
@@ -104,6 +100,31 @@ const DEFAULT_DETECTION_PREPROCESS = {
   maxSize: 1024,
   format: 'jpg' as const,
   quality: 85,
+}
+
+const FULL_TASK_SESSION_PREFIX = 'tengyu-aipod:full-task:'
+
+function readSessionState<T>(key: string, fallback: T): T {
+  try {
+    const value = window.sessionStorage.getItem(`${FULL_TASK_SESSION_PREFIX}${key}`)
+    return value ? (JSON.parse(value) as T) : fallback
+  } catch {
+    return fallback
+  }
+}
+
+function useFullTaskSessionState<T>(key: string, fallback: T) {
+  const [value, setValue] = useState<T>(() => readSessionState(key, fallback))
+
+  useEffect(() => {
+    try {
+      window.sessionStorage.setItem(`${FULL_TASK_SESSION_PREFIX}${key}`, JSON.stringify(value))
+    } catch {
+      // 会话草稿只是便利功能，写入失败时不阻断完整任务。
+    }
+  }, [key, value])
+
+  return [value, setValue] as const
 }
 
 const promptSkillCategories: Record<
@@ -346,6 +367,25 @@ function optionFromSkill(skill: SkillSummary): Option {
   }
 }
 
+function detectionSkillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
+  return `${skill.id}@@${skill.version}`
+}
+
+function parseDetectionSkillKey(value: string) {
+  const [id, version] = value.split('@@')
+  if (!id || !version) {
+    return null
+  }
+  return { id, version }
+}
+
+function optionFromDetectionSkill(skill: SkillSummary): Option {
+  return {
+    key: detectionSkillOptionKey(skill),
+    label: `${skillTitle(skill)}${skill.version ? ` · ${skill.version}` : ''}`,
+  }
+}
+
 function skillTitle(skill: SkillSummary) {
   const noteTitle = skill.notes?.split('：')[0]?.trim()
   if (noteTitle && !noteTitle.startsWith('用于')) {
@@ -451,49 +491,53 @@ function fileUrlLocalPath(url: string) {
   }
 }
 
-function pipelinePreviewSrc(image: PipelinePreviewImage) {
-  const localPath = image.local_path ?? fileUrlLocalPath(image.url)
-  return localPath ? localImageUrl(localPath) : image.url
+function pipelineResultImageSrc(image: PipelineResultImage) {
+  const localPath = image.local_path ?? image.source_path ?? fileUrlLocalPath(image.url ?? '')
+  return localPath ? localImageUrl(localPath) : (image.url ?? '')
 }
 
-function previewTitleForSource(
-  sourceMode: TaskSourceMode,
-  currentStep: PipelineProgress['current_step'],
-) {
-  if (currentStep === 'extract') {
-    return '提取结果'
+function pipelineResultLightboxItem(image: PipelineResultImage): ImageLightboxItem {
+  const riskLabel =
+    image.risk_level === 'pass'
+      ? '无风险'
+      : image.risk_level === 'review'
+        ? '疑似'
+        : image.risk_level === 'block'
+          ? '高风险'
+          : null
+  return {
+    alt: image.label,
+    title: image.label,
+    src: pipelineResultImageSrc(image),
+    ...(riskLabel
+      ? {
+          eyebrow: `${image.allowed ? '通过' : '未通过'} · ${riskLabel}${
+            image.risk_score === undefined ? '' : ` · 风险值 ${image.risk_score}`
+          }`,
+        }
+      : {}),
+    ...(image.reason
+      ? {
+          note: (
+            <div>
+              <p className="text-xs font-medium text-muted-foreground">判断原因</p>
+              <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{image.reason}</p>
+            </div>
+          ),
+        }
+      : {}),
+    details: [
+      ...(image.print_id ? [{ label: '印花 ID', value: image.print_id, mono: true }] : []),
+      ...(image.artifact_id
+        ? [{ label: 'Artifact ID', value: image.artifact_id, mono: true }]
+        : []),
+      ...(image.risk_level ? [{ label: '风险等级', value: riskLabel ?? image.risk_level }] : []),
+      ...(image.risk_score === undefined ? [] : [{ label: '风险值', value: image.risk_score }]),
+      ...(image.local_path ? [{ label: '图片路径', value: image.local_path, mono: true }] : []),
+      ...(image.source_path ? [{ label: '来源路径', value: image.source_path, mono: true }] : []),
+      ...(image.prompt ? [{ label: '提示词', value: image.prompt, preserve: true }] : []),
+    ],
   }
-  if (currentStep === 'matting') {
-    return '抠图结果'
-  }
-  if (currentStep === 'detection') {
-    return '检测后放行'
-  }
-  if (currentStep === 'photoshop') {
-    return '套版执行'
-  }
-  if (currentStep === 'title') {
-    return '标题生成'
-  }
-  if (sourceMode === 'collection') {
-    return '采集来源'
-  }
-  return sourceMode === 'txt2img' ? '文生图预览' : '图生图预览'
-}
-
-function compactPath(value: string) {
-  return value.split(/[\\/]/).filter(Boolean).slice(-3).join(' / ') || value
-}
-
-function promptPreviewLines(
-  promptMode: PipelinePromptMode,
-  manualPrompts: string,
-  requirement: string,
-) {
-  if (promptMode === 'manual') {
-    return splitLines(manualPrompts)
-  }
-  return requirement.trim() ? [requirement.trim()] : []
 }
 
 function AdvancedDisclosure({
@@ -514,296 +558,327 @@ function AdvancedDisclosure({
   )
 }
 
-function SourceImagePreviewGrid({
-  collapsed,
-  images,
-  onCollapsedChange,
-  title,
-}: {
-  collapsed: boolean
-  images: SourcePreviewItem[]
-  onCollapsedChange: (collapsed: boolean) => void
-  title: string
-}) {
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <div className="flex items-center gap-2">
-          <span className="text-xs tabular-nums text-muted-foreground">{images.length} 张</span>
-          <Button
-            className="h-7 px-2 text-xs"
-            onClick={() => onCollapsedChange(!collapsed)}
-            variant="ghost"
-          >
-            {collapsed ? '展开' : '折叠'}
-          </Button>
-        </div>
-      </div>
-      {images.length === 0 ? (
-        <div className="mt-3 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-          选择图片后显示预览
-        </div>
-      ) : collapsed ? null : (
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {images.slice(0, 12).map((image) => (
-            <div className="min-w-0 rounded-md border bg-muted/30 p-2" key={image.id}>
-              <img
-                alt={image.name}
-                className="aspect-square w-full rounded-sm object-cover"
-                src={image.src}
-              />
-              <span className="mt-2 block truncate text-xs font-medium">{image.name}</span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  )
+function formatPipelineLogDetails(details?: Record<string, unknown>) {
+  if (!details) {
+    return ''
+  }
+  const entries = Object.entries(details).filter(([, value]) => value !== undefined && value !== '')
+  if (!entries.length) {
+    return ''
+  }
+  return entries.map(([key, value]) => `${key}=${String(value)}`).join(' ')
 }
 
-function PipelineImagePreviewGrid({ images }: { images: PipelinePreviewImage[] }) {
-  return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">运行产物</h3>
-        <span className="text-xs tabular-nums text-muted-foreground">{images.length} 张</span>
-      </div>
-      {images.length ? (
-        <div className="mt-3 grid grid-cols-2 gap-2">
-          {images.slice(0, 12).map((image, index) => (
-            <div
-              className="min-w-0 rounded-md border bg-muted/30 p-2"
-              key={image.local_path ?? image.url}
-            >
-              <img
-                alt={`产物 ${index + 1}`}
-                className="aspect-square w-full rounded-sm object-cover"
-                src={pipelinePreviewSrc(image)}
-              />
-              <span className="mt-2 block truncate text-xs font-medium">
-                {image.print_id ?? image.artifact_id ?? `产物 ${index + 1}`}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-3 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-          启动后逐张显示生成结果
-        </div>
-      )}
-    </div>
-  )
-}
-
-function PromptPreview({
-  lines,
-  modeLabel,
+function PipelineLogDialog({
+  logs,
+  open,
+  onOpenChange,
 }: {
-  lines: string[]
-  modeLabel: string
+  logs: NonNullable<PipelineProgress['logs']>
+  open: boolean
+  onOpenChange: (open: boolean) => void
 }) {
   return (
-    <div>
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="text-sm font-semibold">提示词</h3>
-        <span className="text-xs text-muted-foreground">{modeLabel}</span>
-      </div>
-      {lines.length ? (
-        <div className="mt-3 space-y-2">
-          {lines.slice(0, 6).map((line, index) => (
-            <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm" key={line}>
-              <div className="mb-1 text-xs tabular-nums text-muted-foreground">
-                {String(index + 1).padStart(2, '0')}
+    <Dialog onOpenChange={onOpenChange} open={open}>
+      <DialogContent className="max-w-5xl gap-0 p-0">
+        <DialogHeader className="border-b px-4 py-3 pr-12">
+          <DialogTitle className="text-base">完整任务日志</DialogTitle>
+        </DialogHeader>
+        <div className="max-h-[68vh] overflow-auto bg-zinc-950 p-4 font-mono text-xs text-zinc-100">
+          {logs.length ? (
+            logs.map((entry) => (
+              <div
+                className={
+                  entry.level === 'error'
+                    ? 'text-red-300'
+                    : entry.level === 'warn'
+                      ? 'text-amber-300'
+                      : 'text-zinc-100'
+                }
+                key={entry.id}
+              >
+                {new Date(entry.created_at).toLocaleTimeString()} [{entry.level.toUpperCase()}]{' '}
+                {entry.step_key ? `[${entry.step_key}] ` : ''}
+                {entry.message}
+                {formatPipelineLogDetails(entry.details)
+                  ? ` ${formatPipelineLogDetails(entry.details)}`
+                  : ''}
               </div>
-              <p className="line-clamp-3 text-pretty">{line}</p>
-            </div>
-          ))}
+            ))
+          ) : (
+            <div className="text-zinc-500">暂无日志</div>
+          )}
         </div>
-      ) : (
-        <div className="mt-3 rounded-md bg-muted px-3 py-6 text-center text-sm text-muted-foreground">
-          填写提示词或印花要求后显示
-        </div>
-      )}
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
-function PipelineEffectPreview({
-  currentStep,
+function PipelineResultsPanel({
   message,
-  previewImages,
   progress,
-  promptLines,
-  promptMode,
-  sourceFolder,
-  sourceLoading,
-  sourceError,
-  sourceImagesCollapsed,
-  sourceImages,
-  onSourceImagesCollapsedChange,
-  sourceMode,
 }: {
-  currentStep: PipelineProgress['current_step']
   message: string
-  previewImages: PipelinePreviewImage[]
   progress: PipelineProgress | null
-  promptLines: string[]
-  promptMode: PipelinePromptMode
-  sourceFolder: string
-  sourceLoading: boolean
-  sourceError: string | null
-  sourceImagesCollapsed: boolean
-  sourceImages: SourcePreviewItem[]
-  onSourceImagesCollapsedChange: (collapsed: boolean) => void
-  sourceMode: TaskSourceMode
 }) {
-  const showPrompt = sourceMode === 'txt2img' || sourceMode === 'img2img'
-  const title = previewTitleForSource(sourceMode, currentStep)
+  const sections = progress?.result_sections ?? []
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
+  const [pages, setPages] = useState<Record<string, number>>({})
+  const [lightbox, setLightbox] = useState<{
+    title: string
+    items: ImageLightboxItem[]
+    index: number
+  } | null>(null)
+
+  function toggleSection(key: string) {
+    setCollapsed((current) => ({ ...current, [key]: !current[key] }))
+  }
+
+  function updatePage(key: string, delta: number, maxPage: number) {
+    setPages((current) => {
+      const next = Math.max(0, Math.min(maxPage, (current[key] ?? 0) + delta))
+      return { ...current, [key]: next }
+    })
+  }
+
+  function openLightbox(section: PipelineResultSection, image: PipelineResultImage) {
+    const items = section.items
+      .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
+      .map(pipelineResultLightboxItem)
+    const index = section.items
+      .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
+      .findIndex((item) => item.id === image.id)
+    setLightbox({ title: section.title, items, index: Math.max(0, index) })
+  }
+
   return (
-    <div className="space-y-4 xl:sticky xl:top-4">
-      <div className="rounded-md border bg-background p-4 shadow-sm">
-        <div className="flex items-start justify-between gap-3">
+    <Card>
+      <CardHeader className="pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-muted-foreground">实际效果</p>
-            <h2 className="mt-1 text-lg font-semibold text-balance">{title}</h2>
+            <CardTitle className="text-lg text-balance">结果预览</CardTitle>
+            <CardDescription>{message}</CardDescription>
           </div>
-          <Badge variant="secondary">{currentStep ?? '配置中'}</Badge>
+          <Badge variant="secondary">{progress?.status ?? '未启动'}</Badge>
         </div>
-        <p className="mt-2 text-sm text-pretty text-muted-foreground">{message}</p>
-
-        <div className="mt-4 space-y-5">
-          {showPrompt ? (
-            <PromptPreview
-              lines={promptLines}
-              modeLabel={promptMode === 'manual' ? '手写' : 'AI 生成'}
-            />
-          ) : null}
-
-          {sourceMode === 'collection' || sourceMode === 'img2img' ? (
-            <div>
-              <SourceImagePreviewGrid
-                collapsed={sourceImagesCollapsed}
-                images={sourceImages}
-                onCollapsedChange={onSourceImagesCollapsedChange}
-                title={sourceMode === 'img2img' ? '参考图' : '采集图'}
-              />
-              {sourceLoading ? (
-                <p className="mt-2 text-xs text-muted-foreground">正在检索图片...</p>
-              ) : null}
-              {sourceError ? <p className="mt-2 text-xs text-red-600">{sourceError}</p> : null}
-            </div>
-          ) : null}
-
-          <PipelineImagePreviewGrid images={previewImages} />
-        </div>
-      </div>
-
-      <div className="rounded-md border bg-background p-4">
-        <div className="flex items-center justify-between gap-3">
-          <h3 className="text-sm font-semibold">运行摘要</h3>
-          <span className="text-xs text-muted-foreground">{progress?.status ?? '未启动'}</span>
-        </div>
-        <div className="mt-3 grid grid-cols-2 gap-2 text-sm">
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">印花</div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
-              {progress?.stats.prints ?? 0}
-            </div>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {sections.length ? (
+          sections.map((section) => {
+            const isCollapsed = collapsed[section.key] ?? false
+            const pageSize = 12
+            const maxPage = Math.max(0, Math.ceil(section.items.length / pageSize) - 1)
+            const page = Math.min(pages[section.key] ?? 0, maxPage)
+            const visibleItems = section.paginated
+              ? section.items.slice(page * pageSize, page * pageSize + pageSize)
+              : section.items
+            return (
+              <section className="rounded-md border bg-background p-4" key={section.key}>
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <button
+                    className="flex min-w-0 items-center gap-2 text-left"
+                    onClick={() => toggleSection(section.key)}
+                    type="button"
+                  >
+                    <ChevronDown
+                      className={`size-4 shrink-0 transition-transform ${
+                        isCollapsed ? '-rotate-90' : ''
+                      }`}
+                    />
+                    <span className="truncate font-semibold">{section.title}</span>
+                    <span className="text-sm tabular-nums text-muted-foreground">
+                      {section.completed}/{section.total}
+                    </span>
+                  </button>
+                  {section.paginated && !isCollapsed ? (
+                    <div className="flex items-center gap-2">
+                      <Button
+                        aria-label="上一页"
+                        className="size-8 p-0"
+                        disabled={page === 0}
+                        onClick={() => updatePage(section.key, -1, maxPage)}
+                        type="button"
+                        variant="outline"
+                      >
+                        <ChevronLeft className="size-4" />
+                      </Button>
+                      <span className="min-w-14 text-center text-xs tabular-nums text-muted-foreground">
+                        {page + 1}/{maxPage + 1}
+                      </span>
+                      <Button
+                        aria-label="下一页"
+                        className="size-8 p-0"
+                        disabled={page >= maxPage}
+                        onClick={() => updatePage(section.key, 1, maxPage)}
+                        type="button"
+                        variant="outline"
+                      >
+                        <ChevronRight className="size-4" />
+                      </Button>
+                    </div>
+                  ) : null}
+                </div>
+                {isCollapsed ? null : visibleItems.length ? (
+                  <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                    {visibleItems.map((image) =>
+                      image.status === 'loading' ? (
+                        <div
+                          className="flex aspect-square items-center justify-center rounded-md border border-dashed bg-muted/30 text-sm text-muted-foreground"
+                          key={image.id}
+                        >
+                          <Loader2 className="mr-2 size-4 animate-spin" />
+                          图像加载中
+                        </div>
+                      ) : (
+                        <button
+                          className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                          key={image.id}
+                          onClick={() => openLightbox(section, image)}
+                          type="button"
+                        >
+                          <img
+                            alt={image.label}
+                            className="aspect-square w-full rounded-sm bg-muted object-cover"
+                            src={pipelineResultImageSrc(image)}
+                          />
+                          <div className="mt-2 truncate text-xs font-medium">{image.label}</div>
+                          {image.risk_level ? (
+                            <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                              风险值 {image.risk_score ?? '-'}
+                            </div>
+                          ) : null}
+                        </button>
+                      ),
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-4 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+                    等待结果
+                  </div>
+                )}
+              </section>
+            )
+          })
+        ) : (
+          <div className="rounded-md bg-muted px-3 py-12 text-center text-sm text-muted-foreground">
+            启动完整任务后，这里会按阶段显示全部预览。
           </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">疑似放行</div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
-              {progress?.stats.detectionReview ?? 0}
-            </div>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">高风险拦截</div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
-              {progress?.stats.detectionBlock ?? 0}
-            </div>
-          </div>
-          <div className="rounded-md border p-3">
-            <div className="text-xs text-muted-foreground">标题成功</div>
-            <div className="mt-1 text-lg font-semibold tabular-nums">
-              {progress?.stats.titleSucceeded ?? 0}
-            </div>
-          </div>
-        </div>
-        {sourceFolder ? (
-          <p className="mt-3 truncate text-xs text-muted-foreground">{compactPath(sourceFolder)}</p>
-        ) : null}
-      </div>
-    </div>
+        )}
+      </CardContent>
+      <ImageLightbox
+        activeIndex={lightbox?.index ?? null}
+        items={lightbox?.items ?? []}
+        onActiveIndexChange={(index) =>
+          setLightbox((current) => {
+            if (!current || index === null) {
+              return null
+            }
+            return { ...current, index }
+          })
+        }
+        title={lightbox?.title ?? '图片预览'}
+      />
+    </Card>
   )
 }
 
 export function FullTaskPage() {
-  const [name, setName] = useState('')
-  const [printSkuCode, setPrintSkuCode] = useState('')
-  const [sourceMode, setSourceMode] = useState<TaskSourceMode>('collection')
-  const [printMode, setPrintMode] = useState<PipelinePrintMode>('local')
-  const [sourceFolder, setSourceFolder] = useState('')
-  const [referenceImages, setReferenceImages] = useState<ReferenceImageDraft[]>([])
-  const [extractProvider, setExtractProvider] = useState<ExtractProvider>('grsai')
-  const [promptMode, setPromptMode] = useState<PipelinePromptMode>('manual')
+  const [name, setName] = useFullTaskSessionState('name', '')
+  const [printSkuCode, setPrintSkuCode] = useFullTaskSessionState('printSkuCode', '')
+  const [sourceMode, setSourceMode] = useFullTaskSessionState<TaskSourceMode>(
+    'sourceMode',
+    'collection',
+  )
+  const [printMode, setPrintMode] = useFullTaskSessionState<PipelinePrintMode>('printMode', 'local')
+  const [sourceFolder, setSourceFolder] = useFullTaskSessionState('sourceFolder', '')
+  const [referenceImages, setReferenceImages] = useFullTaskSessionState<ReferenceImageDraft[]>(
+    'referenceImages',
+    [],
+  )
+  const [extractProvider, setExtractProvider] = useFullTaskSessionState<ExtractProvider>(
+    'extractProvider',
+    'grsai',
+  )
+  const [promptMode, setPromptMode] = useFullTaskSessionState<PipelinePromptMode>(
+    'promptMode',
+    'manual',
+  )
   const [img2imgReferenceMode, setImg2imgReferenceMode] =
-    useState<Img2imgReferenceMode>('layout-style')
-  const [manualPrompts, setManualPrompts] = useState('')
-  const [promptRequirement, setPromptRequirement] = useState('')
+    useFullTaskSessionState<Img2imgReferenceMode>('img2imgReferenceMode', 'layout-style')
+  const [manualPrompts, setManualPrompts] = useFullTaskSessionState('manualPrompts', '')
+  const [promptRequirement, setPromptRequirement] = useFullTaskSessionState('promptRequirement', '')
   const [promptRequirementOpen, setPromptRequirementOpen] = useState(false)
-  const [promptCount, setPromptCount] = useState('5')
-  const [promptSkillId, setPromptSkillId] = useState('')
-  const [promptModel, setPromptModel] = useState('')
-  const [grsaiModel, setGrsaiModel] = useState('gpt-image-2')
-  const [aspectRatio, setAspectRatio] = useState('1024x1024')
-  const [grsaiConcurrency, setGrsaiConcurrency] = useState('20')
-  const [extractSkillId, setExtractSkillId] = useState('')
-  const [extractWorkflowId, setExtractWorkflowId] = useState('')
-  const [extractInstanceUuid, setExtractInstanceUuid] = useState('')
-  const [width, setWidth] = useState('1024')
-  const [height, setHeight] = useState('1024')
-  const [mattingEnabled, setMattingEnabled] = useState(true)
-  const [mattingWorkflowId, setMattingWorkflowId] = useState('')
-  const [mattingInstanceUuid, setMattingInstanceUuid] = useState('')
-  const [skipCompleted, setSkipCompleted] = useState(true)
-  const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
-  const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
-  const [format, setFormat] = useState<'jpg' | 'png'>('jpg')
-  const [photoshopMaxRetries, setPhotoshopMaxRetries] = useState('1')
-  const [templatePaths, setTemplatePaths] = useState<string[]>([])
-  const [outputRoot, setOutputRoot] = useState('')
-  const [photoshopEnabled, setPhotoshopEnabled] = useState(false)
-  const [detectionEnabled, setDetectionEnabled] = useState(true)
+  const [promptCount, setPromptCount] = useFullTaskSessionState('promptCount', '5')
+  const [promptSkillId, setPromptSkillId] = useFullTaskSessionState('promptSkillId', '')
+  const [promptModel, setPromptModel] = useFullTaskSessionState('promptModel', '')
+  const [grsaiModel, setGrsaiModel] = useFullTaskSessionState('grsaiModel', 'gpt-image-2')
+  const [aspectRatio, setAspectRatio] = useFullTaskSessionState('aspectRatio', '1024x1024')
+  const [grsaiConcurrency, setGrsaiConcurrency] = useFullTaskSessionState('grsaiConcurrency', '20')
+  const [extractSkillId, setExtractSkillId] = useFullTaskSessionState('extractSkillId', '')
+  const [extractWorkflowId, setExtractWorkflowId] = useFullTaskSessionState('extractWorkflowId', '')
+  const [extractInstanceUuid, setExtractInstanceUuid] = useFullTaskSessionState(
+    'extractInstanceUuid',
+    '',
+  )
+  const [width, setWidth] = useFullTaskSessionState('width', '1024')
+  const [height, setHeight] = useFullTaskSessionState('height', '1024')
+  const [mattingEnabled, setMattingEnabled] = useFullTaskSessionState('mattingEnabled', true)
+  const [mattingWorkflowId, setMattingWorkflowId] = useFullTaskSessionState('mattingWorkflowId', '')
+  const [mattingInstanceUuid, setMattingInstanceUuid] = useFullTaskSessionState(
+    'mattingInstanceUuid',
+    '',
+  )
+  const [skipCompleted, setSkipCompleted] = useFullTaskSessionState('skipCompleted', true)
+  const [replaceRange, setReplaceRange] = useFullTaskSessionState<'auto' | 'top' | 'all'>(
+    'replaceRange',
+    'auto',
+  )
+  const [clipMode, setClipMode] = useFullTaskSessionState<'auto' | 'guides' | 'none'>(
+    'clipMode',
+    'auto',
+  )
+  const [format, setFormat] = useFullTaskSessionState<'jpg' | 'png'>('format', 'jpg')
+  const [photoshopMaxRetries, setPhotoshopMaxRetries] = useFullTaskSessionState(
+    'photoshopMaxRetries',
+    '1',
+  )
+  const [templatePaths, setTemplatePaths] = useFullTaskSessionState<string[]>('templatePaths', [])
+  const [outputRoot, setOutputRoot] = useFullTaskSessionState('outputRoot', '')
+  const [photoshopEnabled, setPhotoshopEnabled] = useFullTaskSessionState('photoshopEnabled', false)
+  const [detectionEnabled, setDetectionEnabled] = useFullTaskSessionState('detectionEnabled', true)
   const [detectionConfig, setDetectionConfig] = useState<DetectionConfig | null>(null)
-  const [detectionPassRule, setDetectionPassRule] = useState<DetectionPassRule>('allow-review')
-  const [detectionCompression, setDetectionCompression] = useState(true)
-  const [titlePlatform, setTitlePlatform] = useState('temu')
-  const [titleLanguage, setTitleLanguage] = useState('en')
-  const [titleModel, setTitleModel] = useState('qwen3.6-flash')
-  const [titleFileName, setTitleFileName] = useState('标题')
-  const [titleImageIndex, setTitleImageIndex] = useState('1')
-  const [titlePrefix, setTitlePrefix] = useState('')
-  const [titleSuffix, setTitleSuffix] = useState('')
-  const [titleSeparator, setTitleSeparator] = useState(' ')
-  const [titleExistingStrategy, setTitleExistingStrategy] = useState<TitleExistingStrategy>('skip')
-  const [titleMaxRetries, setTitleMaxRetries] = useState('2')
-  const [titleCompression, setTitleCompression] = useState(true)
-  const [titleMaxSize, setTitleMaxSize] = useState('1024')
-  const [titleEnabled, setTitleEnabled] = useState(false)
-  const [extraRequirement, setExtraRequirement] = useState('')
+  const [detectionPassRule, setDetectionPassRule] = useFullTaskSessionState<DetectionPassRule>(
+    'detectionPassRule',
+    'allow-review',
+  )
+  const [detectionCompression, setDetectionCompression] = useFullTaskSessionState(
+    'detectionCompression',
+    true,
+  )
+  const [detectionModel, setDetectionModel] = useFullTaskSessionState('detectionModel', '')
+  const [detectionSkillKey, setDetectionSkillKey] = useFullTaskSessionState('detectionSkillKey', '')
+  const [titlePlatform, setTitlePlatform] = useFullTaskSessionState('titlePlatform', 'temu')
+  const [titleLanguage, setTitleLanguage] = useFullTaskSessionState('titleLanguage', 'en')
+  const [titleModel, setTitleModel] = useFullTaskSessionState('titleModel', 'qwen3.6-flash')
+  const [titleFileName, setTitleFileName] = useFullTaskSessionState('titleFileName', '标题')
+  const [titleImageIndex, setTitleImageIndex] = useFullTaskSessionState('titleImageIndex', '1')
+  const [titlePrefix, setTitlePrefix] = useFullTaskSessionState('titlePrefix', '')
+  const [titleSuffix, setTitleSuffix] = useFullTaskSessionState('titleSuffix', '')
+  const [titleSeparator, setTitleSeparator] = useFullTaskSessionState('titleSeparator', ' ')
+  const [titleExistingStrategy, setTitleExistingStrategy] =
+    useFullTaskSessionState<TitleExistingStrategy>('titleExistingStrategy', 'skip')
+  const [titleMaxRetries, setTitleMaxRetries] = useFullTaskSessionState('titleMaxRetries', '2')
+  const [titleCompression, setTitleCompression] = useFullTaskSessionState('titleCompression', true)
+  const [titleMaxSize, setTitleMaxSize] = useFullTaskSessionState('titleMaxSize', '1024')
+  const [titleEnabled, setTitleEnabled] = useFullTaskSessionState('titleEnabled', false)
+  const [extraRequirement, setExtraRequirement] = useFullTaskSessionState('extraRequirement', '')
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
   const [currentRunId, setCurrentRunId] = useState<string | null>(null)
   const [recentRuns, setRecentRuns] = useState<PipelineRunRecord[]>([])
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
-  const [sourcePreviewImages, setSourcePreviewImages] = useState<GenerationImageSource[]>([])
-  const [sourceImagesCollapsed, setSourceImagesCollapsed] = useState(true)
-  const [sourcePreviewLoading, setSourcePreviewLoading] = useState(false)
-  const [sourcePreviewError, setSourcePreviewError] = useState<string | null>(null)
-  const [pipelinePreviewImages, setPipelinePreviewImages] = useState<PipelinePreviewImage[]>([])
-
+  const [isLogOpen, setIsLogOpen] = useState(false)
   const [generationSettings, setGenerationSettings] = useState<GenerationSettingsSnapshot | null>(
     null,
   )
@@ -814,6 +889,8 @@ export function FullTaskPage() {
   const [platforms, setPlatforms] = useState<Option[]>([])
   const [languages, setLanguages] = useState<Option[]>([])
   const [titleModels, setTitleModels] = useState<Option[]>([])
+  const [detectionModels, setDetectionModels] = useState<string[]>([])
+  const [detectionSkills, setDetectionSkills] = useState<SkillSummary[]>([])
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const grsaiModelOptions = useMemo(() => grsaiModelsFor(generationSettings), [generationSettings])
@@ -870,25 +947,21 @@ export function FullTaskPage() {
     { key: 'manual', label: '手写提示词' },
     { key: 'ai', label: 'AI 生成提示词' },
   ]
+  const detectionModelOptions = useMemo(
+    () => (detectionModels.length ? detectionModels : ['qwen3.6-flash']),
+    [detectionModels],
+  )
+  const detectionSkillOptions = useMemo(
+    () => detectionSkills.map(optionFromDetectionSkill),
+    [detectionSkills],
+  )
+  const selectedDetectionSkill = useMemo(
+    () => parseDetectionSkillKey(detectionSkillKey),
+    [detectionSkillKey],
+  )
   const selectedImg2imgReferenceMode =
     img2imgReferenceModes.find((item) => item.key === img2imgReferenceMode) ??
     img2imgReferenceModes[0]
-  const promptLines = promptPreviewLines(promptMode, manualPrompts, promptRequirement)
-  const workflowPreviewImages = progress?.preview_images ?? pipelinePreviewImages
-  const sourcePreviewItems = useMemo<SourcePreviewItem[]>(() => {
-    if (sourceMode === 'img2img') {
-      return referenceImages.map((image) => ({
-        id: image.id,
-        name: image.name,
-        src: image.dataUrl,
-      }))
-    }
-    return sourcePreviewImages.map((image) => ({
-      id: image.path,
-      name: image.name,
-      src: localImageUrl(image.path),
-    }))
-  }, [referenceImages, sourceMode, sourcePreviewImages])
   const sourceBadgeLabel =
     sourceMode === 'collection'
       ? '采集 + 提取'
@@ -966,8 +1039,13 @@ export function FullTaskPage() {
         issues.push('请先选择抠图晨羽实例')
       }
     }
-    if (detectionEnabled && !detectionConfig) {
-      issues.push('请先完成侵权检测设置加载')
+    if (detectionEnabled) {
+      if (!detectionModel.trim()) {
+        issues.push('请先选择侵权检测模型')
+      }
+      if (!selectedDetectionSkill) {
+        issues.push('请先选择侵权检测 Skill')
+      }
     }
     if (titleEnabled && !photoshopEnabled) {
       issues.push('标题生成需要先启用 PS 套版')
@@ -982,8 +1060,8 @@ export function FullTaskPage() {
     extractSkillOptions.length,
     extractInstanceUuid,
     extractWorkflowId,
-    detectionConfig,
     detectionEnabled,
+    detectionModel,
     isMac,
     manualPrompts,
     mattingEnabled,
@@ -998,6 +1076,7 @@ export function FullTaskPage() {
     printSkuCode,
     referenceImages.length,
     runningInstances.length,
+    selectedDetectionSkill,
     sourceFolder,
     sourceMode,
     templatePaths.length,
@@ -1020,6 +1099,8 @@ export function FullTaskPage() {
       window.api.generationSettings.get(),
       window.api.pipeline.listRuns(),
       window.api.detection.getConfig(),
+      window.api.detection.listModels(),
+      window.api.skill.list({ module: 'detection' }),
     ])
     const failed = results
       .map((result, index) => ({ result, index }))
@@ -1038,6 +1119,8 @@ export function FullTaskPage() {
       '生图设置',
       '最近任务',
       '检测配置',
+      '检测模型',
+      '检测 Skill',
     ]
 
     if (failed.length) {
@@ -1054,6 +1137,8 @@ export function FullTaskPage() {
     const nextGenerationSettings = results[7].status === 'fulfilled' ? results[7].value : null
     const runs = results[8].status === 'fulfilled' ? results[8].value : []
     const nextDetectionConfig = results[9].status === 'fulfilled' ? results[9].value : null
+    const nextDetectionModels = results[10].status === 'fulfilled' ? results[10].value : []
+    const nextDetectionSkills = results[11].status === 'fulfilled' ? results[11].value : []
 
     setGenerationSkills(skills)
     setExtractWorkflows(nextExtractWorkflows.map(optionFromWorkflow))
@@ -1065,6 +1150,8 @@ export function FullTaskPage() {
     setGenerationSettings(nextGenerationSettings)
     setRecentRuns(runs)
     setDetectionConfig(nextDetectionConfig)
+    setDetectionModels(nextDetectionModels)
+    setDetectionSkills(nextDetectionSkills)
   }, [])
 
   useEffect(() => {
@@ -1077,7 +1164,6 @@ export function FullTaskPage() {
     return window.api.pipeline.onProgress((nextProgress) => {
       if (!currentRunId || nextProgress.run_id === currentRunId) {
         setProgress(nextProgress)
-        setPipelinePreviewImages(nextProgress.preview_images ?? [])
         setMessage(nextProgress.message)
       }
     })
@@ -1110,7 +1196,7 @@ export function FullTaskPage() {
     if (!grsaiModelOptions.some((item) => item.id === grsaiModel)) {
       setGrsaiModel(grsaiModelOptions[0]?.id ?? 'gpt-image-2')
     }
-  }, [grsaiModel, grsaiModelOptions])
+  }, [grsaiModel, grsaiModelOptions, setGrsaiModel])
 
   useEffect(() => {
     if (!selectedGrsaiModel?.sizes.length) {
@@ -1119,7 +1205,7 @@ export function FullTaskPage() {
     if (!selectedGrsaiModel.sizes.includes(aspectRatio)) {
       setAspectRatio(selectedGrsaiModel.sizes[0] ?? '1024x1024')
     }
-  }, [aspectRatio, selectedGrsaiModel])
+  }, [aspectRatio, selectedGrsaiModel, setAspectRatio])
 
   useEffect(() => {
     if (promptMode !== 'ai' || promptModelOptions.length === 0) {
@@ -1131,7 +1217,7 @@ export function FullTaskPage() {
     if (!promptModelOptions.some((item) => item.key === promptModel)) {
       setPromptModel(promptModelOptions[0]?.key ?? '')
     }
-  }, [promptModel, promptModelOptions, promptMode])
+  }, [promptModel, promptModelOptions, promptMode, setPromptModel])
 
   useEffect(() => {
     if (
@@ -1151,7 +1237,7 @@ export function FullTaskPage() {
     if (!extractSkillOptions.some((item) => item.key === extractSkillId)) {
       setExtractSkillId(extractSkillOptions[0]?.key ?? '')
     }
-  }, [extractProvider, extractSkillId, extractSkillOptions, sourceMode])
+  }, [extractProvider, extractSkillId, extractSkillOptions, setExtractSkillId, sourceMode])
 
   useEffect(() => {
     if (sourceMode !== 'collection' || extractProvider !== 'comfyui-chenyu') {
@@ -1165,7 +1251,14 @@ export function FullTaskPage() {
     if (!runningInstances.some((instance) => instance.instanceUuid === extractInstanceUuid)) {
       setExtractInstanceUuid(fallback.instanceUuid)
     }
-  }, [chenyuInstances, extractInstanceUuid, extractProvider, runningInstances, sourceMode])
+  }, [
+    chenyuInstances,
+    extractInstanceUuid,
+    extractProvider,
+    runningInstances,
+    setExtractInstanceUuid,
+    sourceMode,
+  ])
 
   useEffect(() => {
     if (!mattingEnabled) {
@@ -1179,7 +1272,13 @@ export function FullTaskPage() {
     if (!runningInstances.some((instance) => instance.instanceUuid === mattingInstanceUuid)) {
       setMattingInstanceUuid(fallback.instanceUuid)
     }
-  }, [chenyuInstances, mattingEnabled, mattingInstanceUuid, runningInstances])
+  }, [
+    chenyuInstances,
+    mattingEnabled,
+    mattingInstanceUuid,
+    runningInstances,
+    setMattingInstanceUuid,
+  ])
 
   useEffect(() => {
     if (sourceMode === 'collection' || promptMode !== 'ai' || promptSkillOptions.length === 0) {
@@ -1191,43 +1290,66 @@ export function FullTaskPage() {
     if (!promptSkillOptions.some((item) => item.key === promptSkillId)) {
       setPromptSkillId(promptSkillOptions[0]?.key ?? '')
     }
-  }, [promptMode, promptSkillId, promptSkillOptions, sourceMode])
+  }, [promptMode, promptSkillId, promptSkillOptions, setPromptSkillId, sourceMode])
 
   useEffect(() => {
     const firstPlatform = platforms[0]
     if (firstPlatform && !platforms.some((item) => item.key === titlePlatform)) {
       setTitlePlatform(firstPlatform.key)
     }
-  }, [platforms, titlePlatform])
+  }, [platforms, setTitlePlatform, titlePlatform])
 
   useEffect(() => {
     const firstLanguage = languages[0]
     if (firstLanguage && !languages.some((item) => item.key === titleLanguage)) {
       setTitleLanguage(firstLanguage.key)
     }
-  }, [languages, titleLanguage])
+  }, [languages, setTitleLanguage, titleLanguage])
 
   useEffect(() => {
     const firstTitleModel = titleModels[0]
     if (firstTitleModel && !titleModels.some((item) => item.key === titleModel)) {
       setTitleModel(firstTitleModel.key)
     }
-  }, [titleModel, titleModels])
+  }, [setTitleModel, titleModel, titleModels])
+
+  useEffect(() => {
+    if (detectionModelOptions.length === 0) {
+      return
+    }
+    if (!detectionModel || !detectionModelOptions.includes(detectionModel)) {
+      setDetectionModel(detectionConfig?.model ?? detectionModelOptions[0] ?? 'qwen3.6-flash')
+    }
+  }, [detectionConfig, detectionModel, detectionModelOptions, setDetectionModel])
+
+  useEffect(() => {
+    if (detectionSkillOptions.length === 0) {
+      return
+    }
+    const configSkillKey =
+      detectionConfig?.skillId && detectionConfig.skillVersion
+        ? detectionSkillOptionKey({
+            id: detectionConfig.skillId,
+            version: detectionConfig.skillVersion,
+          })
+        : ''
+    if (
+      !detectionSkillKey ||
+      !detectionSkillOptions.some((item) => item.key === detectionSkillKey)
+    ) {
+      setDetectionSkillKey(
+        detectionSkillOptions.some((item) => item.key === configSkillKey)
+          ? configSkillKey
+          : (detectionSkillOptions[0]?.key ?? ''),
+      )
+    }
+  }, [detectionConfig, detectionSkillKey, detectionSkillOptions, setDetectionSkillKey])
 
   useEffect(() => {
     if (!photoshopEnabled && titleEnabled) {
       setTitleEnabled(false)
     }
-  }, [photoshopEnabled, titleEnabled])
-
-  useEffect(() => {
-    if (sourceMode !== 'collection' || !sourceFolder.trim()) {
-      setSourcePreviewImages([])
-      setSourcePreviewError(null)
-      return
-    }
-    void scanSourcePreview(sourceFolder)
-  }, [sourceFolder, sourceMode])
+  }, [photoshopEnabled, setTitleEnabled, titleEnabled])
 
   function updatePrintMode(nextMode: PipelinePrintMode) {
     setPrintMode(nextMode)
@@ -1269,30 +1391,10 @@ export function FullTaskPage() {
       }),
     )
     setReferenceImages((current) => [...current, ...nextImages])
-    setSourceImagesCollapsed(false)
   }
 
   function removeReferenceImage(id: string) {
     setReferenceImages((current) => current.filter((image) => image.id !== id))
-  }
-
-  async function scanSourcePreview(folder = sourceFolder) {
-    if (!folder.trim() || sourceMode === 'txt2img') {
-      setSourcePreviewImages([])
-      return
-    }
-    setSourcePreviewLoading(true)
-    setSourcePreviewError(null)
-    try {
-      const images = await window.api.generation.scanImageFolder({ folder })
-      setSourcePreviewImages(images)
-      setSourceImagesCollapsed(true)
-    } catch (scanError) {
-      setSourcePreviewImages([])
-      setSourcePreviewError(scanError instanceof Error ? scanError.message : '检索图片失败')
-    } finally {
-      setSourcePreviewLoading(false)
-    }
   }
 
   async function chooseTemplates() {
@@ -1387,12 +1489,13 @@ export function FullTaskPage() {
       model: 'qwen3.6-flash',
       variables: {},
     }
+    const selectedSkill = selectedDetectionSkill
     return {
       enabled: detectionEnabled,
       allowReview: detectionPassRule === 'allow-review',
-      skillId: base.skillId,
-      skillVersion: base.skillVersion,
-      model: base.model,
+      skillId: selectedSkill?.id ?? base.skillId,
+      skillVersion: selectedSkill?.version ?? base.skillVersion,
+      model: detectionModel || base.model,
       variables: base.variables,
       threshold: base.threshold,
       concurrency: 20,
@@ -1458,7 +1561,6 @@ export function FullTaskPage() {
       return
     }
     setError(null)
-    setPipelinePreviewImages([])
     setMessage('正在提交完整任务')
     try {
       const runId = await window.api.pipeline.run(buildConfig())
@@ -1483,7 +1585,7 @@ export function FullTaskPage() {
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_520px]">
+    <div className="space-y-5">
       <div className="space-y-5">
         {isMac && photoshopEnabled ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
@@ -1504,7 +1606,7 @@ export function FullTaskPage() {
                   <WandSparkles className="size-5" />
                   完整任务
                 </CardTitle>
-                <CardDescription>少配参数，右侧直接看来源和运行产物。</CardDescription>
+                <CardDescription>上方配置，下方按阶段查看全部结果。</CardDescription>
               </div>
               <Badge variant="secondary">可视化</Badge>
             </div>
@@ -1986,26 +2088,43 @@ export function FullTaskPage() {
 
                 {detectionEnabled ? (
                   <div className="space-y-4">
-                    <SelectField
-                      label="通过要求"
-                      onValueChange={(value) => setDetectionPassRule(value as DetectionPassRule)}
-                      options={[
-                        { key: 'allow-review', label: '无风险 + 疑似通过' },
-                        { key: 'pass-only', label: '仅无风险通过' },
-                      ]}
-                      value={detectionPassRule}
-                    />
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <SelectField
+                        label="检测模型"
+                        onValueChange={setDetectionModel}
+                        options={detectionModelOptions.map((item) => ({
+                          key: item,
+                          label: item,
+                        }))}
+                        value={detectionModel}
+                      />
+                      <SelectField
+                        label="检测 Skill"
+                        onValueChange={setDetectionSkillKey}
+                        options={detectionSkillOptions}
+                        value={detectionSkillKey}
+                      />
+                      <SelectField
+                        label="通过要求"
+                        onValueChange={(value) => setDetectionPassRule(value as DetectionPassRule)}
+                        options={[
+                          { key: 'allow-review', label: '无风险 + 疑似通过' },
+                          { key: 'pass-only', label: '仅无风险通过' },
+                        ]}
+                        value={detectionPassRule}
+                      />
+                    </div>
                     <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground md:grid-cols-3">
                       <div>
-                        <p className="text-xs">检测模型</p>
+                        <p className="text-xs">默认配置</p>
                         <p className="mt-1 truncate font-medium text-foreground">
                           {detectionConfig?.model || '未加载'}
                         </p>
                       </div>
                       <div>
-                        <p className="text-xs">检测 Skill</p>
+                        <p className="text-xs">本次 Skill</p>
                         <p className="mt-1 truncate font-medium text-foreground">
-                          {detectionConfig?.skillId || '未选择'}
+                          {selectedDetectionSkill?.id || '未选择'}
                         </p>
                       </div>
                       <label className="flex items-center gap-2" htmlFor="detection-compression">
@@ -2367,52 +2486,40 @@ export function FullTaskPage() {
                 <RefreshCw className="mr-2 h-4 w-4" />
                 刷新选项
               </Button>
+              <Button onClick={() => setIsLogOpen(true)} variant="secondary">
+                <Settings2 className="mr-2 h-4 w-4" />
+                日志 {progress?.logs?.length ?? 0}
+              </Button>
               <span className="text-sm text-muted-foreground">{message}</span>
             </div>
           </CardContent>
         </Card>
       </div>
 
-      <aside className="space-y-5">
-        <PipelineEffectPreview
-          currentStep={progress?.current_step ?? null}
-          message={message}
-          previewImages={workflowPreviewImages}
-          progress={progress}
-          promptLines={promptLines}
-          promptMode={promptMode}
-          sourceError={sourcePreviewError}
-          sourceFolder={sourceMode === 'collection' ? sourceFolder : ''}
-          sourceImages={sourcePreviewItems}
-          sourceImagesCollapsed={sourceImagesCollapsed}
-          sourceLoading={sourcePreviewLoading}
-          sourceMode={sourceMode}
-          onSourceImagesCollapsedChange={setSourceImagesCollapsed}
-        />
+      <PipelineResultsPanel message={message} progress={progress} />
 
-        <Card>
-          <CardHeader className="pb-4">
-            <CardTitle className="text-base">最近完整任务</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {recentRuns.length === 0 ? (
-              <div className="text-sm text-muted-foreground">暂无历史记录。</div>
-            ) : (
-              recentRuns.slice(0, 8).map((run) => (
-                <div className="rounded-md border px-3 py-2 text-sm" key={run.id}>
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="truncate font-medium">{run.name}</span>
-                    <span className="shrink-0 text-xs text-muted-foreground">{run.status}</span>
-                  </div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">
-                    {run.source_mode}
-                  </div>
+      <Card>
+        <CardHeader className="pb-4">
+          <CardTitle className="text-base">最近完整任务</CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {recentRuns.length === 0 ? (
+            <div className="text-sm text-muted-foreground">暂无历史记录。</div>
+          ) : (
+            recentRuns.slice(0, 8).map((run) => (
+              <div className="rounded-md border px-3 py-2 text-sm" key={run.id}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate font-medium">{run.name}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">{run.status}</span>
                 </div>
-              ))
-            )}
-          </CardContent>
-        </Card>
-      </aside>
+                <div className="mt-1 truncate text-xs text-muted-foreground">{run.source_mode}</div>
+              </div>
+            ))
+          )}
+        </CardContent>
+      </Card>
+
+      <PipelineLogDialog logs={progress?.logs ?? []} onOpenChange={setIsLogOpen} open={isLogOpen} />
     </div>
   )
 }

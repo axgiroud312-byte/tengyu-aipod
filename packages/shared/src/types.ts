@@ -218,6 +218,8 @@ export interface PipelineProgress {
   stats: PipelineRunStats
   steps: PipelineStepRecord[]
   preview_images?: PipelinePreviewImage[]
+  result_sections?: PipelineResultSection[]
+  logs?: PipelineRuntimeLogEntry[]
 }
 
 export interface PipelinePreviewImage {
@@ -228,6 +230,51 @@ export interface PipelinePreviewImage {
   source_path?: string
   artifact_id?: string
   print_id?: string
+}
+
+export type PipelineResultSectionKey =
+  | 'source_images'
+  | 'reference_images'
+  | 'print_products'
+  | 'detection_passed'
+  | 'detection_blocked'
+
+export type PipelineResultImageStatus = 'loading' | 'success'
+
+export interface PipelineResultImage {
+  id: string
+  status: PipelineResultImageStatus
+  step_key: PipelineStepKey
+  label: string
+  url?: string
+  local_path?: string
+  source_path?: string
+  prompt?: string
+  artifact_id?: string
+  print_id?: string
+  risk_score?: number
+  risk_level?: RiskLevel
+  reason?: string
+  allowed?: boolean
+}
+
+export interface PipelineResultSection {
+  key: PipelineResultSectionKey
+  title: string
+  total: number
+  completed: number
+  collapsible: boolean
+  paginated: boolean
+  items: PipelineResultImage[]
+}
+
+export interface PipelineRuntimeLogEntry {
+  id: string
+  created_at: number
+  level: 'info' | 'warn' | 'error'
+  step_key?: PipelineStepKey
+  message: string
+  details?: Record<string, unknown>
 }
 
 export interface PipelineRunDetail {
