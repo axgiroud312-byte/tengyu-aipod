@@ -214,6 +214,8 @@ export interface PipelineRunRecord {
   status: PipelineRunStatus
   config_json: string
   stats_json: string
+  result_sections_json: string | null
+  logs_json: string | null
   error_summary: string | null
   created_at: number
   started_at: number | null
@@ -243,6 +245,7 @@ export interface PipelinePreviewImage {
 }
 
 export type PipelineResultSectionKey =
+  | 'image_processing'
   | 'source_images'
   | 'reference_images'
   | 'print_products'
@@ -273,7 +276,9 @@ export interface PipelineResultSection {
   title: string
   total: number
   completed: number
+  failed?: number
   collapsible: boolean
+  default_collapsed?: boolean
   paginated: boolean
   items: PipelineResultImage[]
 }
@@ -290,6 +295,8 @@ export interface PipelineRuntimeLogEntry {
 export interface PipelineRunDetail {
   run: PipelineRunRecord
   steps: PipelineStepRecord[]
+  result_sections?: PipelineResultSection[]
+  logs?: PipelineRuntimeLogEntry[]
 }
 
 export type PipelineTaskEvent =

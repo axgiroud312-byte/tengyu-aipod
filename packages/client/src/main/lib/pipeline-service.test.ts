@@ -3,15 +3,32 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import {
   type PhotoshopPrintAsset,
+  type PipelineProgress,
+  type PipelineResultSection,
   type PipelineRunConfig,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { collectionFolderLock } from './collection-folder-lock'
+import type {
+  GenerationProgress,
+  GenerationRunImage,
+  GenerationRunResult,
+} from './generation-service'
 import { PipelineService, registerPipelineIpc } from './pipeline-service'
 import type { TitleBatchResult } from './title-service'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+
+type GenerationBatchDependencies = {
+  emitProgress?: (progress: GenerationProgress) => void
+}
+
+type Txt2imgMockInput = {
+  capability?: 'txt2img' | 'img2img'
+  prompts: string[]
+  taskId?: string
+}
 
 const mocks = vi.hoisted(() => ({
   workbenchRoot: '',
@@ -86,20 +103,25 @@ const mocks = vi.hoisted(() => ({
     await mkdir(taskDir, { recursive: true })
     return taskDir
   }),
-  runTxt2imgBatch: vi.fn(async () => ({
-    taskId: 'txt2img-task',
-    capability: 'img2img' as const,
-    total: 1,
-    succeeded: 1,
-    failed: 0,
-    images: [
-      {
-        prompt: 'new print',
-        url: 'file://generated.png',
-        localPath: join(mocks.workbenchRoot, 'generated.png'),
-      },
-    ],
-  })),
+  runTxt2imgBatch: vi.fn(
+    async (
+      input: Txt2imgMockInput,
+      _dependencies?: GenerationBatchDependencies,
+    ): Promise<GenerationRunResult> => ({
+      taskId: 'txt2img-task',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: input.prompts[0] ?? 'new print',
+          url: 'file://generated.png',
+          localPath: join(mocks.workbenchRoot, 'generated.png'),
+        },
+      ],
+      failures: [],
+    }),
+  ),
   runExtractBatch: vi.fn(async (input: { sourceImagePaths: string[]; taskId: string }) => ({
     taskId: input.taskId,
     capability: 'extract' as const,
@@ -111,6 +133,20 @@ const mocks = vi.hoisted(() => ({
       url: `file://extracted-${index + 1}.png`,
       localPath: sourcePath,
     })),
+    failures: [],
+  })),
+  runComfyuiMattingBatch: vi.fn(async (input: { sourceImagePaths: string[]; taskId: string }) => ({
+    taskId: input.taskId,
+    capability: 'matting' as const,
+    total: input.sourceImagePaths.length,
+    succeeded: input.sourceImagePaths.length,
+    failed: 0,
+    images: input.sourceImagePaths.map((sourcePath, index) => ({
+      prompt: 'matting print',
+      url: `file://matted-${index + 1}.png`,
+      localPath: join(dirname(sourcePath), `matted-${index + 1}.png`),
+    })),
+    failures: [],
   })),
   runDetectionBatch: vi.fn(),
 }))
@@ -165,7 +201,7 @@ vi.mock('./detection-service', () => ({
 vi.mock('./generation-service', () => ({
   generateTxt2imgPrompts: vi.fn(),
   runComfyuiExtractBatch: vi.fn(),
-  runComfyuiMattingBatch: vi.fn(),
+  runComfyuiMattingBatch: mocks.runComfyuiMattingBatch,
   runExtractBatch: mocks.runExtractBatch,
   runMixedMattingBatch: vi.fn(),
   runTxt2imgBatch: mocks.runTxt2imgBatch,
@@ -224,6 +260,22 @@ function createPhotoshopBatchResult(
   }
 }
 
+function progressEvents() {
+  return mocks.sentEvents
+    .filter((event) => event.channel === 'pipeline:progress')
+    .map((event) => event.payload as PipelineProgress)
+}
+
+function imageProcessingSections() {
+  return progressEvents()
+    .map((event) => event.result_sections?.find((section) => section.key === 'image_processing'))
+    .filter((section): section is PipelineResultSection => Boolean(section))
+}
+
+function imageProcessingSection(detail: Awaited<ReturnType<PipelineService['getRun']>>) {
+  return detail?.result_sections?.find((section) => section.key === 'image_processing')
+}
+
 function baseConfig(printFolder: string): PipelineRunConfig {
   return {
     name: '完整任务测试',
@@ -270,6 +322,7 @@ describe('PipelineService', () => {
     mocks.createTaskDir.mockClear()
     mocks.runTxt2imgBatch.mockClear()
     mocks.runExtractBatch.mockClear()
+    mocks.runComfyuiMattingBatch.mockClear()
     mocks.runDetectionBatch.mockReset()
     mocks.sentEvents = []
   })
@@ -587,6 +640,7 @@ describe('PipelineService', () => {
           total: input.sourceImagePaths.length,
           succeeded: input.sourceImagePaths.length,
           failed: 0,
+          failures: [],
           images: input.sourceImagePaths.map((sourcePath, index) => ({
             prompt: 'extract print',
             url: `file://extracted-${index + 1}.png`,
@@ -771,17 +825,12 @@ describe('PipelineService', () => {
       },
     })
 
-    const progressEvents = mocks.sentEvents.filter((event) => event.channel === 'pipeline:progress')
-    const lastProgress = progressEvents.at(-1)?.payload as
-      | {
-          result_sections?: Array<{ key: string; completed: number; items: unknown[] }>
-          logs?: Array<{ message: string }>
-        }
-      | undefined
+    const lastProgress = progressEvents().at(-1)
 
     expect(
-      lastProgress?.result_sections?.find((section) => section.key === 'print_products'),
+      lastProgress?.result_sections?.find((section) => section.key === 'image_processing'),
     ).toMatchObject({
+      total: 1,
       completed: 1,
       items: [
         expect.objectContaining({
@@ -790,7 +839,309 @@ describe('PipelineService', () => {
         }),
       ],
     })
+    expect(lastProgress?.result_sections?.some((section) => section.key === 'print_products')).toBe(
+      false,
+    )
     expect(lastProgress?.logs?.map((entry) => entry.message)).toContain('完整任务完成')
+
+    const detail = await service.getRun('run-result-sections')
+    expect(imageProcessingSection(detail)).toMatchObject({
+      total: 1,
+      completed: 1,
+      items: [expect.objectContaining({ local_path: expect.stringContaining('existing.png') })],
+    })
+    expect(detail?.logs?.map((entry) => entry.message)).toContain('完整任务完成')
+  })
+
+  it('creates expected loading slots, replaces successes in completion order, and hides failures', async () => {
+    const prompts = Array.from({ length: 100 }, (_item, index) => `prompt ${index + 1}`)
+    const completedImages: GenerationRunImage[] = [
+      {
+        prompt: 'prompt 42',
+        url: 'file://done-42.png',
+        localPath: join(mocks.workbenchRoot, 'done-42.png'),
+      },
+      {
+        prompt: 'prompt 7',
+        url: 'file://done-7.png',
+        localPath: join(mocks.workbenchRoot, 'done-7.png'),
+      },
+    ]
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        expect(input.prompts).toHaveLength(100)
+        dependencies?.emitProgress?.({
+          task_id: input.taskId ?? 'run-loading-slots-txt2img',
+          capability: 'txt2img',
+          processed: 1,
+          total: 100,
+          succeeded: 1,
+          failed: 0,
+          images: completedImages.slice(0, 1),
+        })
+        dependencies?.emitProgress?.({
+          task_id: input.taskId ?? 'run-loading-slots-txt2img',
+          capability: 'txt2img',
+          processed: 100,
+          total: 100,
+          succeeded: 2,
+          failed: 98,
+          images: completedImages,
+        })
+        return {
+          taskId: input.taskId ?? 'run-loading-slots-txt2img',
+          total: 100,
+          succeeded: 2,
+          failed: 98,
+          images: completedImages,
+          failures: prompts.slice(2).map((prompt) => ({ prompt, error: 'content policy' })),
+        }
+      },
+    )
+
+    const service = new PipelineService()
+    await service.runPipeline('run-loading-slots', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    const sections = imageProcessingSections()
+    const initialLoading = sections.find(
+      (section) =>
+        section.total === 100 &&
+        section.items.length === 100 &&
+        section.items.every((item) => item.status === 'loading'),
+    )
+    expect(initialLoading).toMatchObject({
+      completed: 0,
+      failed: 0,
+    })
+
+    const firstSuccess = sections.find(
+      (section) =>
+        section.total === 100 &&
+        section.completed === 1 &&
+        section.items.filter((item) => item.status === 'loading').length === 99,
+    )
+    expect(firstSuccess?.items[0]).toMatchObject({
+      status: 'success',
+      local_path: completedImages[0]?.localPath,
+    })
+
+    const detail = await service.getRun('run-loading-slots')
+    const finalSection = imageProcessingSection(detail)
+    expect(finalSection).toMatchObject({
+      total: 100,
+      completed: 2,
+      failed: 98,
+    })
+    expect(finalSection?.items).toHaveLength(2)
+    expect(finalSection?.items.map((item) => item.local_path)).toEqual([
+      completedImages[0]?.localPath,
+      completedImages[1]?.localPath,
+    ])
+    expect(finalSection?.items.every((item) => item.status === 'success')).toBe(true)
+  })
+
+  it('keeps only the final matting group after collection extract then matting', async () => {
+    const sourceFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.collection,
+      'temu-20260605-120000',
+    )
+    await createPrint(join(sourceFolder, 'source-a.png'))
+    await createPrint(join(sourceFolder, 'source-b.png'))
+
+    const service = new PipelineService()
+    await service.runPipeline('run-extract-then-matting', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'collection',
+        sourceFolder,
+        extract: {
+          provider: 'grsai',
+          skillId: 'extract-skill',
+          grsai: {
+            model: 'gpt-image-2',
+            aspectRatio: '1024x1024',
+          },
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(mocks.runExtractBatch).toHaveBeenCalledOnce()
+    expect(mocks.runComfyuiMattingBatch).toHaveBeenCalledOnce()
+    const detail = await service.getRun('run-extract-then-matting')
+    const finalSection = imageProcessingSection(detail)
+    expect(finalSection).toMatchObject({
+      total: 2,
+      completed: 2,
+      failed: 0,
+    })
+    expect(finalSection?.items).toHaveLength(2)
+    expect(finalSection?.items.every((item) => item.step_key === 'matting')).toBe(true)
+    expect(finalSection?.items.map((item) => item.local_path)).toEqual([
+      join(sourceFolder, 'matted-1.png'),
+      join(sourceFolder, 'matted-2.png'),
+    ])
+    expect(
+      detail?.result_sections?.find((section) => section.key === 'source_images'),
+    ).toMatchObject({
+      default_collapsed: true,
+      total: 2,
+    })
+  })
+
+  it('runs detection against img2img outputs and splits passed and blocked sections', async () => {
+    const generatedImages: GenerationRunImage[] = [
+      {
+        prompt: 'pass prompt',
+        url: 'file://img2img-pass.png',
+        localPath: join(mocks.workbenchRoot, 'img2img-pass.png'),
+        artifactId: 'art-img2img-pass',
+        printId: 'pri-img2img-pass',
+      },
+      {
+        prompt: 'block prompt',
+        url: 'file://img2img-block.png',
+        localPath: join(mocks.workbenchRoot, 'img2img-block.png'),
+        artifactId: 'art-img2img-block',
+        printId: 'pri-img2img-block',
+      },
+    ]
+    mocks.runTxt2imgBatch.mockResolvedValueOnce({
+      taskId: 'run-img2img-detection-img2img',
+      total: 2,
+      succeeded: 2,
+      failed: 0,
+      images: generatedImages,
+      failures: [],
+    })
+    mocks.runDetectionBatch.mockImplementationOnce(async (input: { imagePaths: string[] }) => {
+      expect(input.imagePaths).toEqual(generatedImages.map((image) => image.localPath))
+      return {
+        taskId: 'run-img2img-detection-detection',
+        total: 2,
+        succeeded: 2,
+        failed: 0,
+        skipped: 0,
+        results: [
+          {
+            imagePath: generatedImages[0]?.localPath ?? '',
+            thumbnailUrl: '',
+            artifactId: 'art-img2img-pass',
+            printId: 'pri-img2img-pass',
+            status: 'success' as const,
+            riskScore: 12,
+            riskLevel: 'pass' as const,
+            reason: '低风险',
+            outputPath: join(mocks.workbenchRoot, 'detected-pass.png'),
+            cached: false,
+          },
+          {
+            imagePath: generatedImages[1]?.localPath ?? '',
+            thumbnailUrl: '',
+            artifactId: 'art-img2img-block',
+            printId: 'pri-img2img-block',
+            status: 'success' as const,
+            riskScore: 92,
+            riskLevel: 'block' as const,
+            reason: '高风险',
+            outputPath: join(mocks.workbenchRoot, 'detected-block.png'),
+            cached: false,
+          },
+        ],
+      }
+    })
+
+    const service = new PipelineService()
+    await service.runPipeline('run-img2img-detection', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'grsai',
+        referenceImages: [
+          {
+            name: 'reference.png',
+            base64: Buffer.from('reference-image').toString('base64'),
+            mime_type: 'image/png',
+          },
+        ],
+        prompt: {
+          mode: 'manual',
+          prompts: ['pass prompt', 'block prompt'],
+        },
+        sendReferenceImages: true,
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      detection: {
+        enabled: true,
+        allowReview: false,
+        skillId: 'infringement-detection',
+        skillVersion: 'v1',
+        model: 'qwen3-vl-flash',
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    const detail = await service.getRun('run-img2img-detection')
+    expect(imageProcessingSection(detail)?.items.map((item) => item.local_path)).toEqual(
+      generatedImages.map((image) => image.localPath),
+    )
+    expect(
+      detail?.result_sections?.find((section) => section.key === 'detection_passed'),
+    ).toMatchObject({
+      completed: 1,
+      items: [expect.objectContaining({ print_id: 'pri-img2img-pass' })],
+    })
+    expect(
+      detail?.result_sections?.find((section) => section.key === 'detection_blocked'),
+    ).toMatchObject({
+      completed: 1,
+      items: [expect.objectContaining({ print_id: 'pri-img2img-block' })],
+    })
   })
 
   it('emits detection passed and blocked sections using the full task pass rule', async () => {

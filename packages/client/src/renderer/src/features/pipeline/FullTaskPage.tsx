@@ -15,7 +15,11 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import type { TitleExistingStrategy } from '@/features/title/TitlePage'
+import {
+  type TitleExistingStrategy,
+  type TitleKeywordGroupDraft,
+  createTitleKeywordGroupDraft,
+} from '@/features/title/TitlePage'
 import {
   type PipelinePrintMode,
   type PipelineProgress,
@@ -24,7 +28,9 @@ import {
   type PipelineResultImage,
   type PipelineResultSection,
   type PipelineRunConfig,
+  type PipelineRunDetail,
   type PipelineRunRecord,
+  type PipelineRunStats,
   type PipelineSourceMode,
   type SkillSummary,
   SkuCodeSchema,
@@ -104,6 +110,17 @@ const DEFAULT_DETECTION_PREPROCESS = {
   quality: 85,
 }
 
+const DEFAULT_PIPELINE_STATS: PipelineRunStats = {
+  sourceImages: 0,
+  prints: 0,
+  detectionPass: 0,
+  detectionReview: 0,
+  detectionBlock: 0,
+  photoshopGroups: 0,
+  titleSucceeded: 0,
+  titleFailed: 0,
+}
+
 const FULL_TASK_SESSION_PREFIX = 'tengyu-aipod:full-task:'
 
 function readSessionState<T>(key: string, fallback: T): T {
@@ -127,6 +144,31 @@ function useFullTaskSessionState<T>(key: string, fallback: T) {
   }, [key, value])
 
   return [value, setValue] as const
+}
+
+function parsePipelineStats(value: string): PipelineRunStats {
+  try {
+    return { ...DEFAULT_PIPELINE_STATS, ...(JSON.parse(value) as Partial<PipelineRunStats>) }
+  } catch {
+    return { ...DEFAULT_PIPELINE_STATS }
+  }
+}
+
+function progressFromRunDetail(detail: PipelineRunDetail): PipelineProgress {
+  const runningStep = detail.steps.find((step) => step.status === 'running')
+  const stats = parsePipelineStats(detail.run.stats_json)
+  return {
+    run_id: detail.run.id,
+    status: detail.run.status,
+    current_step: runningStep?.step_key ?? null,
+    message:
+      detail.run.error_summary ??
+      (detail.run.status === 'running' ? '完整任务运行中' : '完整任务已结束'),
+    stats,
+    steps: detail.steps,
+    result_sections: detail.result_sections ?? [],
+    logs: detail.logs ?? [],
+  }
 }
 
 const promptSkillCategories: Record<
@@ -667,7 +709,7 @@ function PipelineResultsPanel({
       <CardContent className="space-y-4">
         {sections.length ? (
           sections.map((section) => {
-            const isCollapsed = collapsed[section.key] ?? false
+            const isCollapsed = collapsed[section.key] ?? section.default_collapsed ?? false
             const pageSize = 12
             const maxPage = Math.max(0, Math.ceil(section.items.length / pageSize) - 1)
             const page = Math.min(pages[section.key] ?? 0, maxPage)
@@ -691,6 +733,11 @@ function PipelineResultsPanel({
                     <span className="text-sm tabular-nums text-muted-foreground">
                       {section.completed}/{section.total}
                     </span>
+                    {section.failed ? (
+                      <span className="text-sm tabular-nums text-muted-foreground">
+                        失败 {section.failed}
+                      </span>
+                    ) : null}
                   </button>
                   {section.paginated && !isCollapsed ? (
                     <div className="flex items-center gap-2">
@@ -763,7 +810,7 @@ function PipelineResultsPanel({
           })
         ) : (
           <div className="rounded-md bg-muted px-3 py-12 text-center text-sm text-muted-foreground">
-            启动完整任务后，这里会按阶段显示全部预览。
+            启动完整任务后，这里会按模块显示预览。
           </div>
         )}
       </CardContent>
@@ -864,10 +911,9 @@ export function FullTaskPage() {
   const [titleModel, setTitleModel] = useFullTaskSessionState('titleModel', 'qwen3.6-flash')
   const [titleFileName, setTitleFileName] = useFullTaskSessionState('titleFileName', '标题')
   const [titleImageIndex, setTitleImageIndex] = useFullTaskSessionState('titleImageIndex', '1')
-  const [titleKeywordGroups, setTitleKeywordGroups] = useFullTaskSessionState<TitleKeywordGroup[]>(
-    'titleKeywordGroups',
-    [{ prefix: '', suffix: '' }],
-  )
+  const [titleKeywordGroups, setTitleKeywordGroups] = useFullTaskSessionState<
+    TitleKeywordGroupDraft[]
+  >('titleKeywordGroups', [createTitleKeywordGroupDraft()])
   const [titleKeywordGroupSeparator, setTitleKeywordGroupSeparator] = useFullTaskSessionState(
     'titleKeywordGroupSeparator',
     ' ',
@@ -880,7 +926,10 @@ export function FullTaskPage() {
   const [titleEnabled, setTitleEnabled] = useFullTaskSessionState('titleEnabled', false)
   const [extraRequirement, setExtraRequirement] = useFullTaskSessionState('extraRequirement', '')
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
-  const [currentRunId, setCurrentRunId] = useState<string | null>(null)
+  const [currentRunId, setCurrentRunId] = useFullTaskSessionState<string | null>(
+    'currentRunId',
+    null,
+  )
   const [recentRuns, setRecentRuns] = useState<PipelineRunRecord[]>([])
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
@@ -1168,6 +1217,33 @@ export function FullTaskPage() {
   }, [refreshOptions])
 
   useEffect(() => {
+    if (!currentRunId) {
+      return
+    }
+    let disposed = false
+    void window.api.pipeline
+      .getRun({ run_id: currentRunId })
+      .then((detail) => {
+        if (disposed || !detail) {
+          return
+        }
+        const restoredProgress = progressFromRunDetail(detail)
+        setProgress(restoredProgress)
+        setMessage(restoredProgress.message)
+        setRunning(detail.run.status === 'running')
+        setError(detail.run.error_summary)
+      })
+      .catch((nextError) => {
+        if (!disposed) {
+          setError(nextError instanceof Error ? nextError.message : '恢复完整任务状态失败')
+        }
+      })
+    return () => {
+      disposed = true
+    }
+  }, [currentRunId])
+
+  useEffect(() => {
     return window.api.pipeline.onProgress((nextProgress) => {
       if (!currentRunId || nextProgress.run_id === currentRunId) {
         setProgress(nextProgress)
@@ -1180,11 +1256,7 @@ export function FullTaskPage() {
     return window.api.pipeline.onCompleted((event) => {
       if (event.ok) {
         setCurrentRunId(event.result.run.id)
-        setProgress((current) =>
-          current
-            ? { ...current, status: event.result.run.status, steps: event.result.steps }
-            : current,
-        )
+        setProgress(progressFromRunDetail(event.result))
         setMessage(event.result.run.status === 'completed' ? '完整任务完成' : '完整任务已结束')
         setError(event.result.run.error_summary)
       } else {
@@ -1194,7 +1266,7 @@ export function FullTaskPage() {
       setRunning(false)
       void refreshOptions()
     })
-  }, [refreshOptions])
+  }, [refreshOptions, setCurrentRunId])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
@@ -1523,13 +1595,13 @@ export function FullTaskPage() {
   }
 
   function addTitleKeywordGroup() {
-    setTitleKeywordGroups((current) => [...current, { prefix: '', suffix: '' }])
+    setTitleKeywordGroups((current) => [...current, createTitleKeywordGroupDraft()])
   }
 
   function removeTitleKeywordGroup(index: number) {
     setTitleKeywordGroups((current) => {
       const nextGroups = current.filter((_, groupIndex) => groupIndex !== index)
-      return nextGroups.length ? nextGroups : [{ prefix: '', suffix: '' }]
+      return nextGroups.length ? nextGroups : [createTitleKeywordGroupDraft()]
     })
   }
 
@@ -1631,7 +1703,7 @@ export function FullTaskPage() {
                   <WandSparkles className="size-5" />
                   完整任务
                 </CardTitle>
-                <CardDescription>上方配置，下方按阶段查看全部结果。</CardDescription>
+                <CardDescription>上方配置，下方按模块查看预览和日志。</CardDescription>
               </div>
               <Badge variant="secondary">可视化</Badge>
             </div>
@@ -2411,7 +2483,7 @@ export function FullTaskPage() {
                         {titleKeywordGroups.map((group, index) => (
                           <div
                             className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
-                            key={`${group.prefix ?? ''}:${group.suffix ?? ''}`}
+                            key={group.id}
                           >
                             <div className="flex items-center text-sm font-medium text-muted-foreground">
                               第 {index + 1} 组

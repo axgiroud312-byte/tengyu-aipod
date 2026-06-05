@@ -61,6 +61,15 @@ import { assertPathInsideWorkbench } from './workbench-path-guard'
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const PIPELINE_RUNS_FOLDER = 'pipeline-runs'
+const IMAGE_PROCESSING_SECTION_KEY = 'image_processing'
+const RESULT_SECTION_ORDER: PipelineResultSectionKey[] = [
+  IMAGE_PROCESSING_SECTION_KEY,
+  'detection_passed',
+  'detection_blocked',
+  'source_images',
+  'reference_images',
+  'print_products',
+]
 const DEFAULT_STATS: PipelineRunStats = {
   sourceImages: 0,
   prints: 0,
@@ -79,6 +88,7 @@ type PipelineImage = {
 }
 
 type ActivePipelineRun = {
+  db: Pick<SqliteDatabase, 'prepare'>
   cancelled: boolean
   currentCancel: (() => void | Promise<void>) | null
   previewImages: PipelinePreviewImage[]
@@ -288,7 +298,20 @@ function openWorkbenchDatabase(workbenchRoot: string) {
   return openSqliteDatabase(workbenchDbPath(workbenchRoot))
 }
 
-function ensurePipelineTables(db: Pick<SqliteDatabase, 'exec'>) {
+function ensurePipelineColumn(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  table: 'pipeline_runs',
+  column: string,
+  definition: string,
+) {
+  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>
+  if (rows.some((row) => row.name === column)) {
+    return
+  }
+  db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
+}
+
+function ensurePipelineTables(db: Pick<SqliteDatabase, 'exec' | 'prepare'>) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS pipeline_runs (
       id TEXT PRIMARY KEY,
@@ -297,6 +320,8 @@ function ensurePipelineTables(db: Pick<SqliteDatabase, 'exec'>) {
       status TEXT NOT NULL,
       config_json TEXT NOT NULL,
       stats_json TEXT NOT NULL,
+      result_sections_json TEXT DEFAULT '[]',
+      logs_json TEXT DEFAULT '[]',
       error_summary TEXT,
       created_at INTEGER NOT NULL,
       started_at INTEGER,
@@ -323,6 +348,13 @@ function ensurePipelineTables(db: Pick<SqliteDatabase, 'exec'>) {
     CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);
     CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run ON pipeline_steps(run_id);
   `)
+  ensurePipelineColumn(
+    db,
+    'pipeline_runs',
+    'result_sections_json',
+    "result_sections_json TEXT DEFAULT '[]'",
+  )
+  ensurePipelineColumn(db, 'pipeline_runs', 'logs_json', "logs_json TEXT DEFAULT '[]'")
 }
 
 function appErrorMessage(error: unknown) {
@@ -515,7 +547,9 @@ function resultSection(input: {
   title: string
   items: PipelineResultImage[]
   total?: number
+  failed?: number
   paginated?: boolean
+  defaultCollapsed?: boolean
 }): PipelineResultSection {
   return {
     key: input.key,
@@ -523,7 +557,9 @@ function resultSection(input: {
     items: input.items,
     total: input.total ?? input.items.length,
     completed: input.items.filter((item) => item.status === 'success').length,
+    failed: input.failed ?? 0,
     collapsible: true,
+    default_collapsed: input.defaultCollapsed ?? false,
     paginated: input.paginated ?? false,
   }
 }
@@ -644,25 +680,52 @@ function runConfigSourceHasReferences(
   return source.mode === 'img2img' && Boolean(source.referenceImagePaths?.length)
 }
 
-function readRunRow(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
-  const row = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId)
-  return isPipelineRunRecord(row) ? row : null
+function optionalJsonText(value: unknown) {
+  return typeof value === 'string' ? value : null
 }
 
-function isPipelineRunRecord(value: unknown): value is PipelineRunRecord {
+function readRunRow(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
+  const row = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId)
+  return normalizePipelineRunRecord(row)
+}
+
+function normalizePipelineRunRecord(value: unknown): PipelineRunRecord | null {
   if (!value || typeof value !== 'object') {
-    return false
+    return null
   }
   const row = value as Record<string, unknown>
-  return (
-    typeof row.id === 'string' &&
-    typeof row.name === 'string' &&
-    typeof row.source_mode === 'string' &&
-    typeof row.status === 'string' &&
-    typeof row.config_json === 'string' &&
-    typeof row.stats_json === 'string' &&
-    typeof row.created_at === 'number'
-  )
+  const id = row.id
+  const name = row.name
+  const sourceMode = row.source_mode
+  const status = row.status
+  const configJson = row.config_json
+  const statsJson = row.stats_json
+  const createdAt = row.created_at
+  const isValid =
+    typeof id === 'string' &&
+    typeof name === 'string' &&
+    typeof sourceMode === 'string' &&
+    typeof status === 'string' &&
+    typeof configJson === 'string' &&
+    typeof statsJson === 'string' &&
+    typeof createdAt === 'number'
+  if (!isValid) {
+    return null
+  }
+  return {
+    id,
+    name,
+    source_mode: sourceMode as PipelineSourceConfig['mode'],
+    status: status as PipelineRunStatus,
+    config_json: configJson,
+    stats_json: statsJson,
+    result_sections_json: optionalJsonText(row.result_sections_json),
+    logs_json: optionalJsonText(row.logs_json),
+    error_summary: typeof row.error_summary === 'string' ? row.error_summary : null,
+    created_at: createdAt,
+    started_at: typeof row.started_at === 'number' ? row.started_at : null,
+    completed_at: typeof row.completed_at === 'number' ? row.completed_at : null,
+  }
 }
 
 function isPipelineStepRecord(value: unknown): value is PipelineStepRecord {
@@ -695,6 +758,34 @@ function readStepRows(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
     )
     .all(runId) as unknown[]
   return rows.filter(isPipelineStepRecord)
+}
+
+function parseJsonArray<T>(value: string | null | undefined): T[] {
+  if (!value) {
+    return []
+  }
+  try {
+    const parsed = JSON.parse(value)
+    return Array.isArray(parsed) ? (parsed as T[]) : []
+  } catch {
+    return []
+  }
+}
+
+function readRunDetail(
+  db: Pick<SqliteDatabase, 'prepare'>,
+  runId: string,
+): PipelineRunDetail | null {
+  const run = readRunRow(db, runId)
+  if (!run) {
+    return null
+  }
+  return {
+    run,
+    steps: readStepRows(db, runId),
+    result_sections: parseJsonArray<PipelineResultSection>(run.result_sections_json),
+    logs: parseJsonArray<PipelineRuntimeLogEntry>(run.logs_json),
+  }
 }
 
 function defaultOutputRoot(workbenchRoot: string) {
@@ -832,11 +923,11 @@ function emitGenerationProgressAsPipeline(
   runId: string,
   stepKey: PipelineStepKey,
   emitProgress: (message: string) => void,
-  emitPreviewImages?: (images: GenerationRunImage[], total: number) => void,
+  emitPreviewImages?: (images: GenerationRunImage[], total: number, failed: number) => void,
 ) {
   return (progress: GenerationProgress) => {
     if (progress.images) {
-      emitPreviewImages?.(progress.images, progress.total)
+      emitPreviewImages?.(progress.images, progress.total, progress.failed)
     }
     emitProgress(
       `${stepKey}：${progress.processed}/${progress.total}，成功 ${progress.succeeded}，失败 ${progress.failed}`,
@@ -877,7 +968,9 @@ export class PipelineService {
       const rows = db
         .prepare('SELECT * FROM pipeline_runs ORDER BY created_at DESC LIMIT 100')
         .all() as unknown[]
-      return rows.filter(isPipelineRunRecord)
+      return rows
+        .map(normalizePipelineRunRecord)
+        .filter((row): row is PipelineRunRecord => Boolean(row))
     } finally {
       db.close()
     }
@@ -888,11 +981,7 @@ export class PipelineService {
     const db = openWorkbenchDatabase(workbenchRoot)
     try {
       ensurePipelineTables(db)
-      const run = readRunRow(db, runId)
-      if (!run) {
-        return null
-      }
-      return { run, steps: readStepRows(db, runId) }
+      return readRunDetail(db, runId)
     } finally {
       db.close()
     }
@@ -914,6 +1003,7 @@ export class PipelineService {
       const runConfig = await this.normalizeRunConfig(workbenchRoot, runId, parsedConfig)
       const db = openWorkbenchDatabase(workbenchRoot)
       const active: ActivePipelineRun = {
+        db,
         cancelled: false,
         currentCancel: null,
         previewImages: [],
@@ -1147,11 +1237,13 @@ export class PipelineService {
           status,
           config_json,
           stats_json,
+          result_sections_json,
+          logs_json,
           error_summary,
           created_at,
           started_at,
           completed_at
-        ) VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, NULL)
       `,
     ).run(
       runId,
@@ -1160,6 +1252,8 @@ export class PipelineService {
       'running',
       JSON.stringify(config),
       JSON.stringify(DEFAULT_STATS),
+      '[]',
+      '[]',
       now,
       now,
     )
@@ -1186,11 +1280,35 @@ export class PipelineService {
   }
 
   private requireRunDetail(db: Pick<SqliteDatabase, 'prepare'>, runId: string): PipelineRunDetail {
-    const run = readRunRow(db, runId)
-    if (!run) {
+    const detail = readRunDetail(db, runId)
+    if (!detail) {
       throw new AppErrorClass('HTTP_5XX', '完整任务记录缺失', true, { runId })
     }
-    return { run, steps: readStepRows(db, runId) }
+    return detail
+  }
+
+  private persistRunUiState(runId: string, active: ActivePipelineRun) {
+    active.db
+      .prepare(
+        `
+          UPDATE pipeline_runs
+          SET result_sections_json = ?,
+              logs_json = ?
+          WHERE id = ?
+        `,
+      )
+      .run(JSON.stringify(active.resultSections), JSON.stringify(active.logs), runId)
+  }
+
+  private sortResultSections(sections: PipelineResultSection[]) {
+    return [...sections].sort((left, right) => {
+      const leftIndex = RESULT_SECTION_ORDER.indexOf(left.key)
+      const rightIndex = RESULT_SECTION_ORDER.indexOf(right.key)
+      return (
+        (leftIndex === -1 ? RESULT_SECTION_ORDER.length : leftIndex) -
+        (rightIndex === -1 ? RESULT_SECTION_ORDER.length : rightIndex)
+      )
+    })
   }
 
   private emitRunProgress(
@@ -1203,6 +1321,7 @@ export class PipelineService {
   ) {
     const active = this.activeRuns.get(runId)
     const previewImages = active?.previewImages
+    const persistedDetail = active ? null : readRunDetail(db, runId)
     emitPipelineProgress({
       run_id: runId,
       status,
@@ -1211,8 +1330,8 @@ export class PipelineService {
       stats: { ...stats },
       steps: readStepRows(db, runId),
       ...(previewImages ? { preview_images: previewImages } : {}),
-      ...(active?.resultSections ? { result_sections: active.resultSections } : {}),
-      ...(active?.logs ? { logs: active.logs } : {}),
+      result_sections: active?.resultSections ?? persistedDetail?.result_sections ?? [],
+      logs: active?.logs ?? persistedDetail?.logs ?? [],
     })
   }
 
@@ -1225,6 +1344,8 @@ export class PipelineService {
       ...active.resultSections.filter((item) => item.key !== section.key),
       section,
     ]
+    active.resultSections = this.sortResultSections(active.resultSections)
+    this.persistRunUiState(runId, active)
   }
 
   private appendLog(runId: string, input: Omit<PipelineRuntimeLogEntry, 'id' | 'created_at'>) {
@@ -1240,6 +1361,7 @@ export class PipelineService {
         ...input,
       },
     ].slice(-1000)
+    this.persistRunUiState(runId, active)
   }
 
   private updateGenerationPreviewImages(
@@ -1250,6 +1372,7 @@ export class PipelineService {
     message: string,
     images: GenerationRunImage[],
     expectedTotal?: number | undefined,
+    failedCount = 0,
   ) {
     const active = this.activeRuns.get(runId)
     if (!active) {
@@ -1267,14 +1390,16 @@ export class PipelineService {
     const items = images.map((image, index) =>
       resultImageFromGenerationImage(stepKey, image, index),
     )
-    const loadingCount = Math.max(0, (expectedTotal ?? items.length) - items.length)
+    const total = expectedTotal ?? items.length + failedCount
+    const loadingCount = Math.max(0, total - items.length - failedCount)
     this.updateResultSection(
       runId,
       resultSection({
-        key: 'print_products',
-        title: '印花产物',
+        key: IMAGE_PROCESSING_SECTION_KEY,
+        title: '图像处理',
         items: [...items, ...loadingResultImages(stepKey, '图像加载中', loadingCount)],
-        total: expectedTotal ?? items.length,
+        total,
+        failed: failedCount,
       }),
     )
     this.emitRunProgress(db, runId, 'running', stepKey, stats, message)
@@ -1351,6 +1476,11 @@ export class PipelineService {
     this.emitRunProgress(db, input.runId, 'running', input.stepKey, input.stats, input.message)
 
     const emitMessage = (message: string) => {
+      this.appendLog(input.runId, {
+        level: 'info',
+        step_key: input.stepKey,
+        message,
+      })
       this.emitRunProgress(db, input.runId, 'running', input.stepKey, input.stats, message)
     }
 
@@ -1473,6 +1603,12 @@ export class PipelineService {
       now,
       now,
     )
+    this.appendLog(runId, {
+      level: 'info',
+      step_key: stepKey,
+      message: `${label}已跳过`,
+      details: { inputCount },
+    })
   }
 
   private async runSourceStep(
@@ -1502,19 +1638,25 @@ export class PipelineService {
                 resultImageFromPath('source', basename(path), path, index),
               ),
               paginated: true,
+              defaultCollapsed: true,
             }),
           )
         }
-        const output = await this.resolveSourceImages(runId, config, emitMessage, (images, total) =>
-          this.updateGenerationPreviewImages(
-            db,
-            runId,
-            'source',
-            stats,
-            '正在生成来源图片',
-            images,
-            total,
-          ),
+        const output = await this.resolveSourceImages(
+          runId,
+          config,
+          emitMessage,
+          (images, total, failed) =>
+            this.updateGenerationPreviewImages(
+              db,
+              runId,
+              'source',
+              stats,
+              '正在生成来源图片',
+              images,
+              total,
+              failed,
+            ),
         )
         stats.sourceImages = output.extractSources.length
         stats.prints = output.prints.length
@@ -1528,18 +1670,20 @@ export class PipelineService {
                 resultImageFromPipelineImage('source', basename(image.path), image, index),
               ),
               paginated: true,
+              defaultCollapsed: true,
             }),
           )
         }
-        if (output.prints.length > 0) {
+        if (output.prints.length > 0 && config.source.mode === 'existing_prints') {
           this.updateResultSection(
             runId,
             resultSection({
-              key: 'print_products',
-              title: '印花产物',
+              key: IMAGE_PROCESSING_SECTION_KEY,
+              title: '图像处理',
               items: output.prints.map((image, index) =>
                 resultImageFromPipelineImage('source', basename(image.path), image, index),
               ),
+              total: output.prints.length,
             }),
           )
         }
@@ -1559,7 +1703,7 @@ export class PipelineService {
     runId: string,
     config: PipelineRunConfig,
     emitMessage: (message: string) => void,
-    emitPreviewImages: (images: GenerationRunImage[], total: number) => void,
+    emitPreviewImages: (images: GenerationRunImage[], total: number, failed: number) => void,
   ): Promise<{ extractSources: PipelineImage[]; prints: PipelineImage[] }> {
     const source = config.source
     if (source.mode === 'collection') {
@@ -1584,7 +1728,7 @@ export class PipelineService {
       if (!source.grsai) {
         throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
       }
-      emitPreviewImages([], prompts.length)
+      emitPreviewImages([], prompts.length, 0)
       const result = await runTxt2imgBatch(
         {
           capability: 'txt2img',
@@ -1604,6 +1748,7 @@ export class PipelineService {
           ),
         },
       )
+      emitPreviewImages(result.images, result.total, result.failed)
       return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
     }
 
@@ -1630,7 +1775,7 @@ export class PipelineService {
       config.printMode,
       promptReferences,
     )
-    emitPreviewImages([], prompts.length)
+    emitPreviewImages([], prompts.length, 0)
     const result = await runTxt2imgBatch(
       {
         capability: 'img2img',
@@ -1651,6 +1796,7 @@ export class PipelineService {
         ),
       },
     )
+    emitPreviewImages(result.images, result.total, result.failed)
     return { extractSources: [], prints: usableGenerationImages(result, '图生图') }
   }
 
@@ -1677,8 +1823,8 @@ export class PipelineService {
         this.updateResultSection(
           runId,
           resultSection({
-            key: 'print_products',
-            title: '印花产物',
+            key: IMAGE_PROCESSING_SECTION_KEY,
+            title: '图像处理',
             items: loadingResultImages('extract', '图像加载中', sourceImages.length),
             total: sourceImages.length,
           }),
@@ -1689,7 +1835,7 @@ export class PipelineService {
           source.extract,
           sourceImages,
           emitMessage,
-          (images, total) =>
+          (images, total, failed) =>
             this.updateGenerationPreviewImages(
               db,
               runId,
@@ -1698,6 +1844,7 @@ export class PipelineService {
               '正在提取印花',
               images,
               total,
+              failed,
             ),
         )
         const prints = usableGenerationImages(result, '提取')
@@ -1705,11 +1852,13 @@ export class PipelineService {
         this.updateResultSection(
           runId,
           resultSection({
-            key: 'print_products',
-            title: '印花产物',
+            key: IMAGE_PROCESSING_SECTION_KEY,
+            title: '图像处理',
             items: prints.map((image, index) =>
               resultImageFromPipelineImage('extract', basename(image.path), image, index),
             ),
+            total: result.total,
+            failed: result.failed,
           }),
         )
         return {
@@ -1726,7 +1875,7 @@ export class PipelineService {
     config: PipelineExtractConfig,
     sourceImages: PipelineImage[],
     emitMessage: (message: string) => void,
-    emitPreviewImages: (images: GenerationRunImage[], total: number) => void,
+    emitPreviewImages: (images: GenerationRunImage[], total: number, failed: number) => void,
   ): Promise<GenerationRunResult> {
     const sourceImagePaths = sourceImages.map((image) => image.path)
     if (config.provider === 'grsai') {
@@ -1799,8 +1948,8 @@ export class PipelineService {
         this.updateResultSection(
           runId,
           resultSection({
-            key: 'print_products',
-            title: '印花产物',
+            key: IMAGE_PROCESSING_SECTION_KEY,
+            title: '图像处理',
             items: loadingResultImages('matting', '图像加载中', prints.length),
             total: prints.length,
           }),
@@ -1823,7 +1972,7 @@ export class PipelineService {
                 runId,
                 'matting',
                 emitMessage,
-                (images, total) =>
+                (images, total, failed) =>
                   this.updateGenerationPreviewImages(
                     db,
                     runId,
@@ -1832,6 +1981,7 @@ export class PipelineService {
                     '正在抠图',
                     images,
                     total,
+                    failed,
                   ),
               ),
             },
@@ -1852,7 +2002,7 @@ export class PipelineService {
                 runId,
                 'matting',
                 emitMessage,
-                (images, total) =>
+                (images, total, failed) =>
                   this.updateGenerationPreviewImages(
                     db,
                     runId,
@@ -1861,6 +2011,7 @@ export class PipelineService {
                     '正在抠图',
                     images,
                     total,
+                    failed,
                   ),
               ),
             },
@@ -1871,11 +2022,13 @@ export class PipelineService {
         this.updateResultSection(
           runId,
           resultSection({
-            key: 'print_products',
-            title: '印花产物',
+            key: IMAGE_PROCESSING_SECTION_KEY,
+            title: '图像处理',
             items: output.map((image, index) =>
               resultImageFromPipelineImage('matting', basename(image.path), image, index),
             ),
+            total: result.total,
+            failed: result.failed,
           }),
         )
         return {

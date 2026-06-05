@@ -35,6 +35,20 @@ export type TitleOption = {
   label: string
 }
 
+export type TitleKeywordGroupDraft = TitleKeywordGroup & {
+  id: string
+}
+
+export function createTitleKeywordGroupDraft(
+  group: TitleKeywordGroup = {},
+): TitleKeywordGroupDraft {
+  return {
+    id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+    prefix: group.prefix ?? '',
+    suffix: group.suffix ?? '',
+  }
+}
+
 export type TitleScanSummary = {
   skuCount: number
   skuCodes: string[]
@@ -47,7 +61,7 @@ export type TitleFormState = {
   language: string
   model: string
   titleFileName: string
-  keywordGroups: TitleKeywordGroup[]
+  keywordGroups: TitleKeywordGroupDraft[]
   keywordGroupSeparator: string
   imageIndex: string
   extraRequirement: string
@@ -206,12 +220,15 @@ export function TitlePage({
   }
 
   const addKeywordGroup = () => {
-    onStateChange('keywordGroups', [...state.keywordGroups, { prefix: '', suffix: '' }])
+    onStateChange('keywordGroups', [...state.keywordGroups, createTitleKeywordGroupDraft()])
   }
 
   const removeKeywordGroup = (index: number) => {
     const nextGroups = state.keywordGroups.filter((_, groupIndex) => groupIndex !== index)
-    onStateChange('keywordGroups', nextGroups.length ? nextGroups : [{ prefix: '', suffix: '' }])
+    onStateChange(
+      'keywordGroups',
+      nextGroups.length ? nextGroups : [createTitleKeywordGroupDraft()],
+    )
   }
 
   return (
@@ -412,7 +429,7 @@ export function TitlePage({
                         {state.keywordGroups.map((group, index) => (
                           <div
                             className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
-                            key={`${group.prefix ?? ''}:${group.suffix ?? ''}`}
+                            key={group.id}
                           >
                             <div className="flex items-center text-sm font-medium text-muted-foreground">
                               第 {index + 1} 组

@@ -25,8 +25,10 @@ import { SettingsPage } from '@/features/settings/SettingsPage'
 import {
   type TitleExistingStrategy,
   type TitleFormState,
+  type TitleKeywordGroupDraft,
   TitlePage,
   type TitlePageState,
+  createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
 import { TutorialPage } from '@/features/tutorial/TutorialPage'
 import { Shell } from '@/layout/Shell'
@@ -69,7 +71,6 @@ import type { CustomerAuthState } from '../../main/lib/customer-auth'
 import type {
   TitleBatchConfig,
   TitleBatchResult,
-  TitleKeywordGroup,
   TitleProgress,
   TitleTaskEvent,
 } from '../../main/lib/title-service'
@@ -250,8 +251,8 @@ function MainWorkbench() {
   const [language, setLanguage] = useState('en')
   const [model, setModel] = useState('qwen3.6-flash')
   const [titleFileName, setTitleFileName] = useState('标题')
-  const [keywordGroups, setKeywordGroups] = useState<TitleKeywordGroup[]>([
-    { prefix: '', suffix: '' },
+  const [keywordGroups, setKeywordGroups] = useState<TitleKeywordGroupDraft[]>(() => [
+    createTitleKeywordGroupDraft(),
   ])
   const [keywordGroupSeparator, setKeywordGroupSeparator] = useState(' ')
   const [imageIndex, setImageIndex] = useState('1')
