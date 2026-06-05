@@ -159,6 +159,7 @@ async function createPrint(path: string) {
 function baseConfig(printFolder: string): PipelineRunConfig {
   return {
     name: '完整任务测试',
+    printSkuCode: 'TY-BASE',
     printMode: 'local',
     source: {
       mode: 'existing_prints',
@@ -281,6 +282,102 @@ describe('PipelineService', () => {
         join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, 'shirt', 'TY-001', '01.jpg'),
       ],
       result_groups: [expect.objectContaining({ sku_folder: 'TY-001' })],
+    })
+  })
+
+  it('rejects Photoshop runs without a print sku code before starting work', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    const config = (({ printSkuCode: _printSkuCode, ...rest }) => rest)(baseConfig(printFolder))
+
+    const service = new PipelineService()
+    await expect(service.runPipeline('run-missing-print-sku', config)).rejects.toThrow(
+      '完整任务参数无效',
+    )
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects Photoshop runs without PSD templates before starting work', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    const service = new PipelineService()
+    await expect(
+      service.runPipeline('run-missing-templates', {
+        ...baseConfig(printFolder),
+        photoshop: {
+          ...baseConfig(printFolder).photoshop,
+          templates: [],
+        },
+      }),
+    ).rejects.toThrow('完整任务参数无效')
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+  })
+
+  it('rejects concurrent Photoshop runs with the same print sku code', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    let resolvePhotoshop: (() => void) | undefined
+    mocks.runBatch.mockImplementationOnce(
+      async (
+        prints: PhotoshopPrintAsset[],
+        _templates: unknown,
+        config: {
+          taskId: string
+          outputRoot: string
+          outputLayout: 'template_first' | 'sku_first'
+        },
+      ) => {
+        await new Promise<void>((resolve) => {
+          resolvePhotoshop = resolve
+        })
+        const printId = prints[0]?.id ?? 'print'
+        const outputPath = join(config.outputRoot, 'shirt', printId, '01.jpg')
+        return {
+          ok: true,
+          task_id: config.taskId,
+          output_layout: config.outputLayout,
+          templates_total: 1,
+          groups_total: 1,
+          groups_completed: 1,
+          outputs: [outputPath],
+          templates: [
+            {
+              template_id: 'tpl-shirt',
+              template_name: 'shirt',
+              groups_total: 1,
+              groups_completed: 1,
+              outputs: [outputPath],
+            },
+          ],
+          result_groups: [
+            {
+              template_id: 'tpl-shirt',
+              template_name: 'shirt',
+              group_index: 0,
+              sku_folder: printId,
+              print_ids: [printId],
+              outputs: [outputPath],
+            },
+          ],
+        }
+      },
+    )
+
+    const service = new PipelineService()
+    const config = {
+      ...baseConfig(printFolder),
+      printSkuCode: 'TY-LOCK',
+    }
+    const firstRun = service.runPipeline('run-lock-1', config)
+    await vi.waitUntil(() => mocks.runBatch.mock.calls.length === 1)
+
+    await expect(service.runPipeline('run-lock-2', config)).rejects.toThrow('已有进行中完整任务')
+
+    resolvePhotoshop?.()
+    await expect(firstRun).resolves.toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
     })
   })
 

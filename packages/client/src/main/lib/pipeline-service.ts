@@ -145,7 +145,7 @@ const sourceSchema = z.discriminatedUnion('mode', [
   }),
 ])
 
-const pipelineRunConfigSchema = z.object({
+const pipelineRunConfigBaseSchema = z.object({
   name: z.string().optional(),
   printSkuCode: SkuCodeSchema.optional(),
   printMode: z.enum(['local', 'full']),
@@ -221,6 +221,26 @@ const pipelineRunConfigSchema = z.object({
       })
       .optional(),
   }),
+})
+
+const pipelineRunConfigSchema = pipelineRunConfigBaseSchema.superRefine((config, context) => {
+  if (config.photoshop.enabled === false) {
+    return
+  }
+  if (!config.printSkuCode) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '启用 PS 套版时必须填写印花货号',
+      path: ['printSkuCode'],
+    })
+  }
+  if (config.photoshop.templates.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '启用 PS 套版时必须选择 PSD 模板',
+      path: ['photoshop', 'templates'],
+    })
+  }
 })
 
 function workbenchDbPath(workbenchRoot: string) {
@@ -458,6 +478,23 @@ function parseStats(value: string): PipelineRunStats {
   }
 }
 
+function parsePipelineRunConfig(input: unknown): PipelineRunConfig {
+  const parsed = pipelineRunConfigSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', '完整任务参数无效', false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data as PipelineRunConfig
+}
+
+function printSkuLockKey(config: PipelineRunConfig) {
+  if (config.photoshop.enabled === false || !config.printSkuCode) {
+    return null
+  }
+  return config.printSkuCode.trim().toLowerCase()
+}
+
 function readRunRow(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
   const row = db.prepare('SELECT * FROM pipeline_runs WHERE id = ?').get(runId)
   return isPipelineRunRecord(row) ? row : null
@@ -660,6 +697,7 @@ function emitGenerationProgressAsPipeline(
 
 export class PipelineService {
   private readonly activeRuns = new Map<string, ActivePipelineRun>()
+  private readonly activePrintSkuRuns = new Map<string, string>()
 
   startRun(config: PipelineRunConfig) {
     const runId = randomUUID()
@@ -711,89 +749,130 @@ export class PipelineService {
   }
 
   async runPipeline(runId: string, config: PipelineRunConfig): Promise<PipelineRunDetail> {
-    if (process.platform === 'darwin' && config.photoshop.enabled !== false) {
+    const parsedConfig = parsePipelineRunConfig(config)
+    if (process.platform === 'darwin' && parsedConfig.photoshop.enabled !== false) {
       throw new AppErrorClass(
         'HTTP_4XX',
         '完整任务包含 PS 套版，当前 v1 仅支持在 Windows 执行',
         false,
       )
     }
-    const workbenchRoot = await this.readWorkbenchRoot()
-    const runConfig = await this.normalizeRunConfig(workbenchRoot, runId, config)
-    const db = openWorkbenchDatabase(workbenchRoot)
-    const active: ActivePipelineRun = { cancelled: false, currentCancel: null, previewImages: [] }
-    this.activeRuns.set(runId, active)
-    const stats: PipelineRunStats = { ...DEFAULT_STATS }
-    const runName = runConfig.name?.trim() || `完整任务-${timestampSlug()}`
-
+    const activePrintSkuLock = this.acquirePrintSkuLock(runId, parsedConfig)
     try {
-      ensurePipelineTables(db)
-      this.createRun(db, runId, runName, runConfig)
-      this.emitRunProgress(db, runId, 'running', null, stats, '完整任务已启动')
-
-      const sourceImages = await this.runSourceStep(db, active, runId, runConfig, stats)
-      let prints = sourceImages.prints
-
-      if (sourceImages.extractSources.length > 0) {
-        prints = await this.runExtractStep(
-          db,
-          active,
-          runId,
-          runConfig.source,
-          sourceImages.extractSources,
-          stats,
-        )
+      const workbenchRoot = await this.readWorkbenchRoot()
+      const runConfig = await this.normalizeRunConfig(workbenchRoot, runId, parsedConfig)
+      const db = openWorkbenchDatabase(workbenchRoot)
+      const active: ActivePipelineRun = {
+        cancelled: false,
+        currentCancel: null,
+        previewImages: [],
       }
+      this.activeRuns.set(runId, active)
+      const stats: PipelineRunStats = { ...DEFAULT_STATS }
+      const runName = runConfig.name?.trim() || `完整任务-${timestampSlug()}`
 
-      if (runConfig.matting.enabled) {
-        prints = await this.runMattingStep(db, active, runId, runConfig.matting, prints, stats)
-      } else {
-        this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', prints.length)
-      }
+      try {
+        ensurePipelineTables(db)
+        this.createRun(db, runId, runName, runConfig)
+        this.emitRunProgress(db, runId, 'running', null, stats, '完整任务已启动')
 
-      if (runConfig.detection.enabled) {
-        prints = await this.runDetectionStep(db, active, runId, runConfig.detection, prints, stats)
-      } else {
-        this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', prints.length)
-      }
+        const sourceImages = await this.runSourceStep(db, active, runId, runConfig, stats)
+        let prints = sourceImages.prints
 
-      if (runConfig.photoshop.enabled === false) {
-        this.recordSkippedStep(db, runId, 'photoshop', 'photoshop', 'PS 套版', prints.length)
-        this.recordSkippedStep(db, runId, 'title', 'title', '标题生成', prints.length)
-      } else {
-        const photoshopResult = await this.runPhotoshopStep(
-          db,
-          active,
-          runId,
-          workbenchRoot,
-          runConfig,
-          prints,
-          stats,
-        )
-        if (runConfig.title.enabled === false) {
-          this.recordSkippedStep(
+        if (sourceImages.extractSources.length > 0) {
+          prints = await this.runExtractStep(
             db,
+            active,
             runId,
-            'title',
-            'title',
-            '标题生成',
-            photoshopResult.result.templates.length,
+            runConfig.source,
+            sourceImages.extractSources,
+            stats,
+          )
+        }
+
+        if (runConfig.matting.enabled) {
+          prints = await this.runMattingStep(db, active, runId, runConfig.matting, prints, stats)
+        } else {
+          this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', prints.length)
+        }
+
+        if (runConfig.detection.enabled) {
+          prints = await this.runDetectionStep(
+            db,
+            active,
+            runId,
+            runConfig.detection,
+            prints,
+            stats,
           )
         } else {
-          await this.runTitleStep(db, active, runId, runConfig, photoshopResult, stats)
+          this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', prints.length)
         }
-      }
 
-      this.assertNotCancelled(active)
-      this.completeRun(db, runId, 'completed', stats, null)
-      return this.requireRunDetail(db, runId)
-    } catch (error) {
-      const status: PipelineRunStatus = active.cancelled ? 'cancelled' : 'failed'
-      this.completeRun(db, runId, status, stats, appErrorMessage(error))
-      throw error
+        if (runConfig.photoshop.enabled === false) {
+          this.recordSkippedStep(db, runId, 'photoshop', 'photoshop', 'PS 套版', prints.length)
+          this.recordSkippedStep(db, runId, 'title', 'title', '标题生成', prints.length)
+        } else {
+          const photoshopResult = await this.runPhotoshopStep(
+            db,
+            active,
+            runId,
+            workbenchRoot,
+            runConfig,
+            prints,
+            stats,
+          )
+          if (runConfig.title.enabled === false) {
+            this.recordSkippedStep(
+              db,
+              runId,
+              'title',
+              'title',
+              '标题生成',
+              photoshopResult.result.templates.length,
+            )
+          } else {
+            await this.runTitleStep(db, active, runId, runConfig, photoshopResult, stats)
+          }
+        }
+
+        this.assertNotCancelled(active)
+        this.completeRun(db, runId, 'completed', stats, null)
+        return this.requireRunDetail(db, runId)
+      } catch (error) {
+        const status: PipelineRunStatus = active.cancelled ? 'cancelled' : 'failed'
+        this.completeRun(db, runId, status, stats, appErrorMessage(error))
+        throw error
+      } finally {
+        db.close()
+        this.activeRuns.delete(runId)
+      }
     } finally {
-      db.close()
-      this.activeRuns.delete(runId)
+      this.releasePrintSkuLock(activePrintSkuLock, runId)
+    }
+  }
+
+  private acquirePrintSkuLock(runId: string, config: PipelineRunConfig) {
+    const lockKey = printSkuLockKey(config)
+    if (!lockKey) {
+      return null
+    }
+    const activeRunId = this.activePrintSkuRuns.get(lockKey)
+    if (activeRunId) {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        `印花货号 ${config.printSkuCode} 已有进行中完整任务，请等待或取消后再启动`,
+        false,
+        { activeRunId, printSkuCode: config.printSkuCode },
+      )
+    }
+    this.activePrintSkuRuns.set(lockKey, runId)
+    return lockKey
+  }
+
+  private releasePrintSkuLock(lockKey: string | null, runId: string) {
+    if (lockKey && this.activePrintSkuRuns.get(lockKey) === runId) {
+      this.activePrintSkuRuns.delete(lockKey)
     }
   }
 
@@ -1670,13 +1749,7 @@ export const pipelineService = new PipelineService()
 
 export function registerPipelineIpc() {
   ipcMain.handle('pipeline:run', (_event, input: unknown) => {
-    const parsed = pipelineRunConfigSchema.safeParse(input)
-    if (!parsed.success) {
-      throw new AppErrorClass('INVALID_INPUT', '完整任务参数无效', false, {
-        issues: parsed.error.issues,
-      })
-    }
-    return pipelineService.startRun(parsed.data as PipelineRunConfig)
+    return pipelineService.startRun(parsePipelineRunConfig(input))
   })
   ipcMain.handle('pipeline:cancel', (_event, input: { run_id: string }) => ({
     ok: pipelineService.cancelRun(input.run_id),
