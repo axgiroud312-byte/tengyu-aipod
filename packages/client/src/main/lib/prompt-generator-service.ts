@@ -91,7 +91,7 @@ export class PromptGeneratorService {
             skill,
             { ...input.variables, count: chunkCount },
             input.refImages,
-            withChunkPromptCountInstruction(input.userMessage, chunkCount),
+            withPromptRunInstructions(input.userMessage, chunkCount, input.variables),
           )
           const request = {
             model,
@@ -329,9 +329,30 @@ export function createPromptMessages(
   ]
 }
 
-function withChunkPromptCountInstruction(userMessage: string | undefined, count: number) {
-  const instruction = `本批必须生成 ${count} 条 prompts / ${count} 组提示词；prompts 数组长度必须等于 ${count}，不能少于 ${count}。`
-  return userMessage ? `${userMessage}\n\n${instruction}` : instruction
+function withPromptRunInstructions(
+  userMessage: string | undefined,
+  count: number,
+  variables: Record<string, unknown> | undefined,
+) {
+  return [
+    userMessage,
+    printModeInstruction(variables?.printMode),
+    `本批必须生成 ${count} 条 prompts / ${count} 组提示词；prompts 数组长度必须等于 ${count}，不能少于 ${count}。`,
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+}
+
+function printModeInstruction(printMode: unknown) {
+  if (printMode === '满印' || printMode === 'full') {
+    return '本次必须生成满印印花提示词：图案要铺满整个画面，适合连续平铺或全幅印刷；不要生成白底居中的单个独立主体，不要做成局部胸前小图。'
+  }
+
+  if (printMode === '局部' || printMode === 'local') {
+    return '本次必须生成独立局部印花提示词：单个主体或紧凑组合，干净白色背景，主体居中且边缘留白；不要做成满印，不要铺满整个画面，不要生成重复平铺图案或整幅场景。'
+  }
+
+  return ''
 }
 
 export function injectVariables(template: string, variables: Record<string, unknown>) {

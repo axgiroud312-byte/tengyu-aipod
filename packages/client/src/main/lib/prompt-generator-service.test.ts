@@ -313,6 +313,50 @@ describe('PromptGeneratorService', () => {
     ])
   })
 
+  it('sends explicit print mode instructions to the model', async () => {
+    const chatCompletion = vi.fn().mockResolvedValue({
+      text: '{"prompts":["Prompt A","Prompt B"]}',
+      model: 'qwen3.6-flash',
+      finishReason: 'stop' as const,
+      raw: {} as never,
+    })
+    const service = new PromptGeneratorService()
+
+    await service.generatePrompts(
+      {
+        skill: skill({ systemPrompt: 'Generate JSON prompts.' }),
+        variables: { printMode: '局部' },
+        count: 2,
+      },
+      {
+        getSecret: async () => 'sk-test',
+        readConfig: async () => ({}),
+        createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+      },
+    )
+    await service.generatePrompts(
+      {
+        skill: skill({ systemPrompt: 'Generate JSON prompts.' }),
+        variables: { printMode: '满印' },
+        count: 2,
+      },
+      {
+        getSecret: async () => 'sk-test',
+        readConfig: async () => ({}),
+        createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+      },
+    )
+
+    const userMessages = chatCompletion.mock.calls.map(([request]) => {
+      const userMessage = request.messages[1]
+      return typeof userMessage.content === 'string' ? userMessage.content : ''
+    })
+    expect(userMessages[0]).toContain('独立局部印花')
+    expect(userMessages[0]).toContain('不要做成满印')
+    expect(userMessages[1]).toContain('满印印花')
+    expect(userMessages[1]).toContain('铺满整个画面')
+  })
+
   it('splits 1000 prompts into ten 100-prompt model calls', async () => {
     const chatCompletion = vi.fn(async (request) => {
       const systemMessage = request.messages[0]
