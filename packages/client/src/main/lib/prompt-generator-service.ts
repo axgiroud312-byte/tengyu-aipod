@@ -91,7 +91,7 @@ export class PromptGeneratorService {
             skill,
             { ...input.variables, count: chunkCount },
             input.refImages,
-            input.userMessage,
+            withChunkPromptCountInstruction(input.userMessage, chunkCount),
           )
           const request = {
             model,
@@ -327,6 +327,11 @@ export function createPromptMessages(
       ],
     },
   ]
+}
+
+function withChunkPromptCountInstruction(userMessage: string | undefined, count: number) {
+  const instruction = `本批必须生成 ${count} 条 prompts / ${count} 组提示词；prompts 数组长度必须等于 ${count}，不能少于 ${count}。`
+  return userMessage ? `${userMessage}\n\n${instruction}` : instruction
 }
 
 export function injectVariables(template: string, variables: Record<string, unknown>) {

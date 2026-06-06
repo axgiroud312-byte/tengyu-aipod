@@ -257,6 +257,62 @@ describe('PromptGeneratorService', () => {
     ])
   })
 
+  it('sends explicit per-chunk prompt count instructions to the model', async () => {
+    const chatCompletion = vi.fn(async (request) => {
+      const userMessage = request.messages[1]
+      const content = typeof userMessage.content === 'string' ? userMessage.content : ''
+      const count = Number(content.match(/本批必须生成 (\d+) 条/)?.[1] ?? 0)
+      return {
+        text: JSON.stringify({
+          prompts: Array.from({ length: count }, (_, index) => `Prompt ${index + 1}`),
+        }),
+        model: 'qwen3.6-flash',
+        finishReason: 'stop' as const,
+        raw: {} as never,
+      }
+    })
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill({ systemPrompt: 'Generate JSON prompts.' }),
+          count: 50,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).resolves.toHaveLength(50)
+
+    await expect(
+      service.generatePrompts(
+        {
+          skill: skill({ systemPrompt: 'Generate JSON prompts.' }),
+          count: 200,
+        },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).resolves.toHaveLength(200)
+
+    expect(
+      chatCompletion.mock.calls.map(([request]) => {
+        const userMessage = request.messages[1]
+        return typeof userMessage.content === 'string' ? userMessage.content : ''
+      }),
+    ).toEqual([
+      expect.stringContaining('本批必须生成 50 条 prompts'),
+      expect.stringContaining('本批必须生成 100 条 prompts'),
+      expect.stringContaining('本批必须生成 100 条 prompts'),
+    ])
+  })
+
   it('splits 1000 prompts into ten 100-prompt model calls', async () => {
     const chatCompletion = vi.fn(async (request) => {
       const systemMessage = request.messages[0]
