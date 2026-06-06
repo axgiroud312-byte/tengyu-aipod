@@ -718,6 +718,58 @@ describe('generation comfyui service', () => {
     )
   })
 
+  it('advances ComfyUI txt2img visible filename indexes by actual output count', async () => {
+    const fakeDb = createFakeDb()
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [
+          { url: 'file:///first-1.png', local_path: '/first-1.png' },
+          { url: 'file:///first-2.png', local_path: '/first-2.png' },
+        ],
+      })
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [{ url: 'file:///second-1.png', local_path: '/second-1.png' }],
+      })
+
+    const result = await runComfyuiTxt2imgBatch(
+      {
+        prompts: ['first prompt', 'second prompt'],
+        workflowId: 'txt2img-v1',
+        taskId: 'txt2img-comfy-visible-index',
+        concurrency: 2,
+        filenamePrefix: 'gyx',
+        filenameSeparator: '-',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'txt2img-comfy-visible-index',
+      succeeded: 3,
+      failed: 0,
+    })
+    expect(generate).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        options: expect.objectContaining({ filenameIndex: 0 }),
+      }),
+    )
+    expect(generate).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        options: expect.objectContaining({ filenameIndex: 2 }),
+      }),
+    )
+  })
+
   it('passes the selected running instance to the ComfyUI adapter without reading the default instance', async () => {
     const fakeDb = createDbWithoutComfyuiInstance()
     const adapterInputs: unknown[] = []

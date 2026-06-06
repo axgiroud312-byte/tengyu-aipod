@@ -473,6 +473,61 @@ describe('PipelineService', () => {
     })
   })
 
+  it('keeps the visible print sku folder when generated prints still carry internal print ids', async () => {
+    const generatedPath = join(mocks.workbenchRoot, 'generated-with-print-id.png')
+    await createPrint(generatedPath)
+    mocks.runTxt2imgBatch.mockResolvedValueOnce({
+      taskId: 'run-generated-print-sku-txt2img',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'new print',
+          url: 'file://generated-with-print-id.png',
+          localPath: generatedPath,
+          printId: 'pri_generated_internal',
+        },
+      ],
+      failures: [],
+    })
+
+    const service = new PipelineService()
+    await service.runPipeline('run-generated-print-sku', {
+      ...baseConfig('/unused'),
+      printSkuCode: 'GYX',
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['new print'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+    })
+
+    const waitingPrintPath = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      '等待套版',
+      'run-generated-print-sku',
+      'GYX-0001.png',
+    )
+    expect(mocks.runBatch.mock.calls[0]?.[0]).toEqual([
+      {
+        id: 'GYX-0001',
+        file_path: waitingPrintPath,
+      },
+    ])
+    await expect(mocks.runBatch.mock.results[0]?.value).resolves.toMatchObject({
+      outputs: [
+        join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, 'shirt', 'GYX-0001', '01.jpg'),
+      ],
+      result_groups: [expect.objectContaining({ sku_folder: 'GYX-0001' })],
+    })
+  })
+
   it('uses the configured filename separator and four digit sequence for multiple waiting Photoshop prints', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing-1.png'))

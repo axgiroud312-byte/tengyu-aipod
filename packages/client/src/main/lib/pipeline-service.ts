@@ -89,6 +89,7 @@ type PipelineImage = {
   path: string
   artifactId?: string
   printId?: string
+  printSkuId?: string
 }
 
 type PipelineVisibleFilenameFields = {
@@ -608,7 +609,9 @@ function usableGenerationImages(result: GenerationRunResult, stepName: string): 
 }
 
 function printAssetId(image: PipelineImage, index: number) {
-  const raw = (image.printId ?? basename(image.path, extname(image.path))) || `print-${index + 1}`
+  const raw =
+    (image.printSkuId ?? image.printId ?? basename(image.path, extname(image.path))) ||
+    `print-${index + 1}`
   return safePathSegment(raw)
 }
 
@@ -661,6 +664,7 @@ async function preparePhotoshopPrints(
         path: targetPath,
         ...(image.artifactId ? { artifactId: image.artifactId } : {}),
         ...(image.printId ? { printId: image.printId } : {}),
+        printSkuId: basename(targetPath, extname(targetPath)),
       }
     }),
   )

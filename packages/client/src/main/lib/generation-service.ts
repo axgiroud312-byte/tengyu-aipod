@@ -56,6 +56,7 @@ import { type TempFileManager, tempFileManager } from './temp-file-manager'
 import {
   assertTargetDoesNotExist,
   nextVisibleImageName,
+  visibleImageNamingEnabled,
 } from './user-visible-filename'
 
 export type Txt2imgPromptDraft = {
@@ -3382,7 +3383,11 @@ export async function runComfyuiTxt2imgBatch(
 
     try {
       ensureGenerationTables(db)
-      const concurrency = clampInt(input.concurrency ?? 1, 1, 20, 1)
+      const useVisibleFilenames = visibleImageNamingEnabled({
+        prefix: input.filenamePrefix,
+        separator: input.filenameSeparator,
+      })
+      const concurrency = useVisibleFilenames ? 1 : clampInt(input.concurrency ?? 1, 1, 20, 1)
       const controller = new GenerationConcurrencyController({ workers: concurrency })
       const adapter = await createComfyuiAdapterForRun(
         input,
@@ -3416,8 +3421,6 @@ export async function runComfyuiTxt2imgBatch(
                 width,
                 height,
               })
-              const filenameIndex = outputIndex
-              outputIndex += 1
               const response = await adapter.generate({
                 capability: 'txt2img',
                 prompt,
@@ -3430,7 +3433,7 @@ export async function runComfyuiTxt2imgBatch(
                   taskId,
                   width,
                   height,
-                  filenameIndex,
+                  filenameIndex: outputIndex,
                   filenamePrefix: input.filenamePrefix,
                   filenameSeparator: input.filenameSeparator,
                   ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
@@ -3439,6 +3442,7 @@ export async function runComfyuiTxt2imgBatch(
               if (response.status !== 'succeeded') {
                 throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 文生图失败', true)
               }
+              outputIndex += response.images.length
               result.succeeded += response.images.length
               result.images.push(
                 ...response.images.map((image) => ({

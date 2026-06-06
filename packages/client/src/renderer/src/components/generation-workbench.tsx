@@ -1545,9 +1545,7 @@ function GrsaiPromptGenerationPanel({
           workflowName: selectedComfyuiTxt2imgWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-          ...(filenamePrefix.trim() && filenameSeparator !== '-'
-            ? { filenameSeparator }
-            : {}),
+          ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
           ...(selectedComfyuiTxt2imgWorkflow.version
             ? { workflowVersion: selectedComfyuiTxt2imgWorkflow.version }
             : {}),
@@ -1564,9 +1562,7 @@ function GrsaiPromptGenerationPanel({
           aspectRatio,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-          ...(filenamePrefix.trim() && filenameSeparator !== '-'
-            ? { filenameSeparator }
-            : {}),
+          ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
           ...(sendsReferenceToImageModel
             ? {
                 referenceImages: promptReferenceImages(),
@@ -2230,7 +2226,7 @@ function GrsaiExtractPanel() {
         concurrency: defaultConcurrency,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
+        ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
       })
       if (!taskEvents.activateTask(taskId)) {
         setProgress({
@@ -2503,7 +2499,7 @@ function ComfyuiImg2imgPanel() {
         workflowVersion: selectedWorkflow.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
+        ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
         ...(promptMode === 'custom' ? { prompt: customPrompt } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
@@ -2793,7 +2789,7 @@ function ComfyuiExtractPanel() {
         skillVersion: selectedSkill.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
+        ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
         ...comfyuiInstanceSelection.runTarget,
@@ -3079,7 +3075,7 @@ function ComfyuiExtractMattingPanel() {
         skillVersion: selectedSkill.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
+        ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
         ...comfyuiInstanceSelection.runTarget,
@@ -3379,7 +3375,7 @@ function ComfyuiMattingPanel() {
           workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-          ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
+          ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
           ...comfyuiInstanceSelection.runTarget,
         })
@@ -3390,7 +3386,7 @@ function ComfyuiMattingPanel() {
           workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
           ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
-          ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
+          ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
           ...comfyuiInstanceSelection.runTarget,
         })
