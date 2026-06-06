@@ -219,7 +219,7 @@ function onboardingPath(step: OnboardingStep) {
 
 function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
   return (
-    <div className="mt-20 max-w-xl space-y-5 rounded-md border bg-background p-6 shadow-sm">
+    <div className="mt-20 max-w-xl space-y-5 rounded-md border border-white/70 bg-card/90 p-6 shadow-[0_22px_56px_rgba(30,64,175,0.1)] backdrop-blur-xl">
       <div className="flex items-start gap-3">
         <AlertTriangle className="mt-1 h-5 w-5 shrink-0 text-amber-600" />
         <div className="space-y-2">

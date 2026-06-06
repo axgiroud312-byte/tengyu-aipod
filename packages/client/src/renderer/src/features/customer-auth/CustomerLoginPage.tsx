@@ -31,14 +31,14 @@ type PlatformLogo = {
 }
 
 const PLATFORM_LOGOS: PlatformLogo[] = [
-  { alt: 'Temu', src: '/brand/platforms/temu.svg' },
-  { alt: 'Shein', src: '/brand/platforms/shein.svg' },
-  { alt: 'TikTok Shop', src: '/brand/platforms/tiktok-shop.svg' },
-  { alt: 'Amazon Global Selling', src: '/brand/platforms/amazon-global-selling.svg' },
-  { alt: 'eBay', src: '/brand/platforms/ebay.svg' },
-  { alt: 'Shopee', src: '/brand/platforms/shopee.svg' },
-  { alt: 'AliExpress', src: '/brand/platforms/aliexpress.svg' },
-  { alt: 'Lazada', src: '/brand/platforms/lazada.svg' },
+  { alt: 'Temu', src: 'brand/platforms/temu.svg' },
+  { alt: 'Shein', src: 'brand/platforms/shein.svg' },
+  { alt: 'TikTok Shop', src: 'brand/platforms/tiktok-shop.svg' },
+  { alt: 'Amazon Global Selling', src: 'brand/platforms/amazon-global-selling.svg' },
+  { alt: 'eBay', src: 'brand/platforms/ebay.svg' },
+  { alt: 'Shopee', src: 'brand/platforms/shopee.svg' },
+  { alt: 'AliExpress', src: 'brand/platforms/aliexpress.svg' },
+  { alt: 'Lazada', src: 'brand/platforms/lazada.svg' },
 ]
 
 const FLOW_STEPS = ['采集', '生图', '检测', '套版', '标题', '上架']
@@ -241,28 +241,28 @@ export function CustomerLoginPage({
   }
 
   return (
-    <main className="min-h-dvh bg-[#f3f7fc] text-foreground">
+    <main className="auth-brand-surface min-h-dvh text-foreground">
       <div className="grid min-h-dvh lg:grid-cols-[minmax(420px,0.95fr)_minmax(0,1.05fr)]">
-        <section className="flex flex-col justify-between bg-card px-6 py-8 sm:px-10 lg:min-h-dvh lg:px-12 lg:py-10">
+        <section className="relative z-10 flex flex-col justify-between border-r border-white/70 bg-white/90 px-6 py-8 shadow-[14px_0_48px_rgba(30,64,175,0.08)] backdrop-blur-xl sm:px-10 lg:min-h-dvh lg:px-12 lg:py-10">
           <div className="space-y-10">
             <div className="flex items-center gap-4">
               <img
                 alt="腾域 aipod"
-                className="size-14 rounded-md border bg-background object-cover shadow-sm"
-                src="/brand/tengyu-ai-icon-256.png"
+                className="size-14 rounded-md border border-white/70 bg-white object-contain shadow-[0_14px_28px_rgba(37,99,235,0.14)]"
+                src="brand/brand-logo.svg"
               />
               <div>
-                <p className="text-xl font-semibold leading-6">腾域 aipod</p>
+                <p className="brand-wordmark bg-clip-text text-2xl font-black leading-7">腾域Ai</p>
                 <p className="mt-1 text-sm text-muted-foreground">跨境 POD 生产工作台</p>
               </div>
             </div>
 
             <div className="max-w-xl space-y-5">
-              <Badge className="rounded-sm" variant="secondary">
+              <Badge className="border-primary/20 bg-primary/10 text-primary" variant="outline">
                 云端授权登录
               </Badge>
               <div className="space-y-4">
-                <h1 className="text-4xl font-semibold leading-tight text-balance sm:text-5xl">
+                <h1 className="bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 bg-clip-text text-4xl font-semibold leading-tight text-transparent text-balance sm:text-5xl">
                   从素材到上架
                 </h1>
                 <p className="text-base leading-8 text-muted-foreground text-pretty">
@@ -272,7 +272,7 @@ export function CustomerLoginPage({
               <div className="flex flex-wrap gap-2">
                 {FLOW_STEPS.map((step) => (
                   <span
-                    className="rounded-sm border bg-background px-3 py-1.5 text-sm text-muted-foreground"
+                    className="rounded-sm border border-white/70 bg-white/75 px-3 py-1.5 text-sm text-muted-foreground shadow-xs"
                     key={step}
                   >
                     {step}
@@ -329,7 +329,7 @@ export function CustomerLoginPage({
               ) : null}
 
               <form
-                className="rounded-md border bg-background p-4"
+                className="rounded-md border border-white/70 bg-white/80 p-4 shadow-[0_18px_42px_rgba(30,64,175,0.08)] backdrop-blur"
                 onSubmit={(event) => void handlePhoneLogin(event)}
               >
                 <div className="mb-3 flex items-center gap-2 text-sm font-medium">
@@ -391,17 +391,20 @@ export function CustomerLoginPage({
           </div>
         </section>
 
-        <section className="flex items-center px-6 py-8 sm:px-10 sm:py-10 lg:min-h-dvh">
-          <div className="w-full space-y-5">
-            <div className="overflow-hidden rounded-md border bg-card shadow-lg">
-              <img
-                alt="POD 商品生产与上架工作流"
-                className="aspect-video w-full object-cover"
-                src="/brand/pod-login-hero.png"
-              />
-            </div>
+        <section className="relative flex items-center overflow-hidden px-6 py-8 sm:px-10 sm:py-10 lg:min-h-dvh">
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-cover bg-center"
+            style={{ backgroundImage: 'url("brand/visuals/entrance-hero.png")' }}
+          />
+          <div
+            aria-hidden="true"
+            className="absolute inset-0 bg-[linear-gradient(90deg,_rgba(248,251,255,0.44),_rgba(248,251,255,0.08)_42%,_rgba(248,251,255,0.7))]"
+          />
+          <div className="relative w-full space-y-5">
+            <div aria-hidden="true" className="min-h-[min(46vh,420px)]" />
 
-            <div className="rounded-md border bg-card p-5 shadow-sm">
+            <div className="rounded-md border border-white/70 bg-white/75 p-5 shadow-[0_18px_42px_rgba(30,64,175,0.1)] backdrop-blur-xl">
               <div className="mb-4 flex items-center justify-between gap-4">
                 <div>
                   <p className="font-medium">跨境平台场景</p>
@@ -414,7 +417,7 @@ export function CustomerLoginPage({
               <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
                 {PLATFORM_LOGOS.map((logo) => (
                   <div
-                    className="flex h-12 items-center justify-center rounded-sm border bg-background px-3"
+                    className="flex h-12 items-center justify-center rounded-sm border border-white/70 bg-white/80 px-3 shadow-xs"
                     key={logo.src}
                   >
                     <img

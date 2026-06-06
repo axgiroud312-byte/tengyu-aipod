@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Brand Logo</title>
+  <desc id="desc">A simplified triangular loop logo in blue and violet gradients on a transparent background.</desc>
+  <defs>
+    <path id="outer-shape" d="M31 219C13 210 8 190 20 166L67 77C82 49 103 35 129 35C156 35 177 49 193 77L241 165C253 188 247 210 229 220C217 227 198 228 172 226L128 222L84 226C58 228 39 226 31 219Z"/>
+    <path id="inner-hole" d="M128 84C152 112 168 141 173 166C180 196 155 219 128 219C101 219 76 196 83 166C88 141 104 112 128 84Z"/>
+
+    <linearGradient id="blue-gradient" x1="35" y1="220" x2="213" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2FC0F0"/>
+      <stop offset="0.48" stop-color="#126CC8"/>
+      <stop offset="1" stop-color="#38B2EA"/>
+    </linearGradient>
+
+    <linearGradient id="violet-gradient" x1="36" y1="220" x2="120" y2="42" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F7F8FF"/>
+      <stop offset="0.58" stop-color="#8370C2"/>
+      <stop offset="1" stop-color="#532B9A"/>
+    </linearGradient>
+
+    <linearGradient id="edge-gradient" x1="42" y1="40" x2="224" y2="220" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0D2C74"/>
+      <stop offset="0.52" stop-color="#0A5DB8"/>
+      <stop offset="1" stop-color="#05275A"/>
+    </linearGradient>
+
+    <linearGradient id="right-light" x1="167" y1="217" x2="226" y2="127" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#1DB9EE" stop-opacity="0"/>
+      <stop offset="1" stop-color="#82E7FF" stop-opacity=".72"/>
+    </linearGradient>
+
+    <mask id="ring-mask" maskUnits="userSpaceOnUse" x="0" y="0" width="256" height="256">
+      <rect width="256" height="256" fill="black"/>
+      <use href="#outer-shape" fill="white"/>
+      <use href="#inner-hole" fill="black"/>
+    </mask>
+  </defs>
+
+  <g mask="url(#ring-mask)">
+    <use href="#outer-shape" fill="url(#blue-gradient)"/>
+    <path d="M31 219C13 210 8 190 20 166L67 77C76 60 88 47 101 40C111 35 120 38 128 48L94 87C68 118 51 153 43 193L39 214Z" fill="url(#violet-gradient)"/>
+    <path d="M171 226C195 228 217 226 229 220C247 210 253 188 241 165L218 123C211 158 193 189 158 215Z" fill="url(#right-light)"/>
+    <path d="M102 65C80 92 62 123 52 158" fill="none" stroke="#FFFFFF" stroke-width="7" stroke-linecap="round" opacity=".9"/>
+    <path d="M210 112C205 139 192 161 172 180" fill="none" stroke="#BCEFFF" stroke-width="6" stroke-linecap="round" opacity=".84"/>
+    <path d="M118 207C144 211 167 196 172 169" fill="none" stroke="#0D56B4" stroke-width="8" stroke-linecap="round" opacity=".42"/>
+  </g>
+
+  <use href="#outer-shape" fill="none" stroke="url(#edge-gradient)" stroke-width="4.5" stroke-linejoin="round"/>
+  <use href="#inner-hole" fill="none" stroke="#0B2A5E" stroke-width="3.2" stroke-linejoin="round"/>
+</svg>

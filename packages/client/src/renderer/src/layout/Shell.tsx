@@ -34,15 +34,17 @@ export function Shell({ children, rightSlot }: ShellProps) {
   }, [location.pathname])
 
   return (
-    <div className="flex h-screen overflow-hidden bg-muted/40 text-foreground">
+    <div className="workbench-shell flex h-screen overflow-hidden text-foreground">
       <Sidebar
         collapsed={collapsed}
         onToggleCollapsed={() => setCollapsed((current) => !current)}
       />
-      <div className="flex min-w-0 flex-1 flex-col">
+      <div className="relative z-10 flex min-w-0 flex-1 flex-col">
         <Header module={module} rightSlot={rightSlot} />
         <main className="min-h-0 flex-1 overflow-auto">
-          <section className="mx-auto w-full max-w-7xl px-6 py-6">{children ?? <Outlet />}</section>
+          <section className="mx-auto w-full max-w-[1440px] px-6 py-6">
+            {children ?? <Outlet />}
+          </section>
         </main>
       </div>
     </div>

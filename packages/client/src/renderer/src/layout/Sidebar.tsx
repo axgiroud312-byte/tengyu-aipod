@@ -38,24 +38,31 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-150',
+        'relative z-20 flex h-screen shrink-0 flex-col border-r border-white/70 bg-card/90 shadow-[10px_0_34px_rgba(30,64,175,0.08)] backdrop-blur-xl transition-[width] duration-150',
         collapsed ? 'w-[60px]' : 'w-[180px]',
       )}
     >
-      <div className="flex h-16 items-center gap-3 px-4">
+      <div
+        className={cn(
+          'flex shrink-0',
+          collapsed
+            ? 'h-16 items-center justify-center px-0'
+            : 'h-[116px] flex-col items-center justify-center px-5 py-4',
+        )}
+      >
         <img
           alt=""
           aria-hidden="true"
-          className="h-8 w-8 shrink-0 rounded-md object-cover shadow-xs"
-          src="/brand/tengyu-ai-icon-256.png"
+          className={cn(
+            'shrink-0 rounded-md border border-white/70 bg-white/80 object-contain shadow-[0_12px_28px_rgba(37,99,235,0.14)]',
+            collapsed ? 'h-10 w-10' : 'h-16 w-16',
+          )}
+          src="brand/brand-logo.svg"
         />
         {collapsed ? null : (
-          <div className="min-w-0">
-            <p className="truncate text-base font-semibold tracking-normal text-foreground">
-              腾域 aipod
-            </p>
-            <p className="text-xs text-muted-foreground">运营工作台</p>
-          </div>
+          <p className="brand-wordmark mt-2 bg-clip-text text-center text-xl font-black leading-none tracking-normal">
+            腾域Ai
+          </p>
         )}
       </div>
 
@@ -69,8 +76,8 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
                   'flex h-10 items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
                   collapsed ? 'justify-center px-0' : null,
                   isActive
-                    ? 'bg-primary text-primary-foreground shadow-xs'
-                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                    ? 'bg-[linear-gradient(135deg,_hsl(var(--primary)),_hsl(var(--brand-deep)))] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)]'
+                    : 'text-muted-foreground hover:bg-white/75 hover:text-foreground hover:shadow-xs',
                 )
               }
               key={module.key}
@@ -91,8 +98,8 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
               'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
               collapsed ? 'justify-center px-0' : null,
               isActive
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                ? 'bg-[linear-gradient(135deg,_hsl(var(--primary)),_hsl(var(--brand-deep)))] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)]'
+                : 'text-muted-foreground hover:bg-white/75 hover:text-foreground hover:shadow-xs',
             )
           }
           title={collapsed ? '设置' : undefined}
@@ -107,8 +114,8 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
               'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
               collapsed ? 'justify-center px-0' : null,
               isActive
-                ? 'bg-primary text-primary-foreground shadow-xs'
-                : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground',
+                ? 'bg-[linear-gradient(135deg,_hsl(var(--primary)),_hsl(var(--brand-deep)))] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)]'
+                : 'text-muted-foreground hover:bg-white/75 hover:text-foreground hover:shadow-xs',
             )
           }
           title={collapsed ? '教程' : undefined}

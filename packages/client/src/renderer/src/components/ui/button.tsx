@@ -4,16 +4,19 @@ import { Slot } from 'radix-ui'
 import type { ComponentProps, ReactNode } from 'react'
 
 const buttonVariants = cva(
-  'inline-flex h-10 items-center justify-center rounded-sm px-4 py-2 text-sm font-medium transition-colors duration-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
+  'inline-flex h-10 items-center justify-center rounded-sm px-4 py-2 text-sm font-medium transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50',
   {
     variants: {
       variant: {
-        default: 'bg-primary text-primary-foreground shadow-xs hover:bg-primary/90',
-        secondary: 'bg-secondary text-secondary-foreground hover:bg-secondary/80',
+        default:
+          'bg-[linear-gradient(135deg,_hsl(var(--primary))_0%,_hsl(var(--brand-deep))_100%)] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)] hover:-translate-y-px hover:shadow-[0_14px_30px_rgba(37,99,235,0.28)]',
+        secondary:
+          'border border-white/70 bg-secondary/80 text-secondary-foreground shadow-xs hover:bg-white/90 hover:text-foreground',
         outline:
-          'border border-input bg-background shadow-xs hover:bg-accent hover:text-accent-foreground',
-        ghost: 'hover:bg-accent hover:text-accent-foreground',
-        destructive: 'bg-destructive text-destructive-foreground shadow-xs hover:bg-destructive/90',
+          'border border-input bg-white/80 shadow-xs backdrop-blur hover:border-primary/30 hover:bg-white hover:text-foreground',
+        ghost: 'hover:bg-white/75 hover:text-foreground',
+        destructive:
+          'bg-destructive text-destructive-foreground shadow-xs hover:-translate-y-px hover:bg-destructive/90',
       },
     },
     defaultVariants: {

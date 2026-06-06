@@ -99,10 +99,10 @@ function StepRail({ step }: { step: OnboardingStep }) {
             className={cn(
               'flex items-start gap-3 rounded-md border p-3 transition-colors duration-150',
               isCurrent
-                ? 'border-primary bg-primary/5 text-foreground shadow-xs'
+                ? 'border-primary/30 bg-primary/10 text-foreground shadow-[0_10px_28px_rgba(37,99,235,0.1)]'
                 : isDone
                   ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'border-border bg-background/70 text-muted-foreground',
+                  : 'border-white/70 bg-white/70 text-muted-foreground',
             )}
             key={item.number}
           >
@@ -142,20 +142,31 @@ export function OnboardingPage({
   const meta = currentStepMeta(step)
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[radial-gradient(circle_at_top_left,_rgba(37,99,235,0.16),_transparent_32%),linear-gradient(135deg,_hsl(var(--background))_0%,_hsl(var(--muted))_100%)] px-8 py-8 text-foreground">
+    <main className="auth-brand-surface relative min-h-screen overflow-hidden px-8 py-8 text-foreground">
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-cover bg-center opacity-40"
+        style={{ backgroundImage: 'url("brand/visuals/entrance-hero.png")' }}
+      />
+      <div
+        aria-hidden="true"
+        className="absolute inset-0 bg-[linear-gradient(90deg,_rgba(248,251,255,0.94),_rgba(248,251,255,0.78)_48%,_rgba(248,251,255,0.58))]"
+      />
       <section className="mx-auto grid min-h-[calc(100vh-64px)] max-w-6xl gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="flex flex-col justify-between rounded-lg border bg-background/80 p-6 shadow-sm backdrop-blur">
+        <aside className="relative flex flex-col justify-between rounded-md border border-white/70 bg-white/80 p-6 shadow-[0_22px_56px_rgba(30,64,175,0.1)] backdrop-blur-xl">
           <div className="space-y-6">
             <div className="space-y-4">
               <div className="flex items-center gap-3">
                 <img
                   alt=""
                   aria-hidden="true"
-                  className="h-10 w-10 rounded-md object-cover shadow-xs"
-                  src="/brand/tengyu-ai-icon-256.png"
+                  className="h-10 w-10 rounded-md border border-white/70 bg-white object-contain shadow-[0_12px_24px_rgba(37,99,235,0.12)]"
+                  src="brand/brand-logo.svg"
                 />
                 <div>
-                  <p className="text-lg font-semibold tracking-normal">腾域 aipod</p>
+                  <p className="brand-wordmark bg-clip-text text-lg font-black tracking-normal">
+                    腾域Ai
+                  </p>
                   <p className="text-xs text-muted-foreground">跨境电商生产工作台</p>
                 </div>
               </div>
@@ -185,18 +196,18 @@ export function OnboardingPage({
           </div>
 
           <div className="mt-6 grid gap-2 text-xs text-muted-foreground">
-            <div className="flex items-center gap-2 rounded-sm bg-muted px-3 py-2">
+            <div className="flex items-center gap-2 rounded-sm border border-white/70 bg-white/70 px-3 py-2">
               <ShieldCheck className="h-4 w-4 text-primary" />
               服务端不接触用户图片和任务数据
             </div>
-            <div className="flex items-center gap-2 rounded-sm bg-muted px-3 py-2">
+            <div className="flex items-center gap-2 rounded-sm border border-white/70 bg-white/70 px-3 py-2">
               <LockKeyhole className="h-4 w-4 text-primary" />
               密钥写入系统加密存储
             </div>
           </div>
         </aside>
 
-        <Card className="self-center rounded-lg border bg-card/95 shadow-sm backdrop-blur">
+        <Card className="relative self-center border-white/70 bg-card/95 shadow-[0_28px_72px_rgba(30,64,175,0.12)]">
           <CardHeader className="space-y-4 p-6">
             <div className="flex items-start justify-between gap-4">
               <div className="min-w-0 space-y-1">
