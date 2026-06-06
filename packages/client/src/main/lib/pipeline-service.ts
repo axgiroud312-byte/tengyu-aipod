@@ -2119,6 +2119,11 @@ export class PipelineService {
         })
         const result = await detectionService.runDetectionBatch({
           imagePaths: prints.map((image) => image.path),
+          imageInputs: prints.map((image) => ({
+            path: image.path,
+            ...(image.artifactId ? { artifactId: image.artifactId } : {}),
+            ...(image.printId ? { printId: image.printId } : {}),
+          })),
           skillId: config.skillId,
           model: config.model,
           taskId,
@@ -2245,46 +2250,56 @@ export class PipelineService {
         const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
         const cancelFilePath = join(taskDir, 'cancel.flag')
         active.currentCancel = () => writeFile(cancelFilePath, String(Date.now()), 'utf8')
-        const photoshopPrints = await preparePhotoshopPrints(
-          workbenchRoot,
-          runId,
-          prints,
-          config.printSkuCode,
-        )
-        emitMessage('正在等待 Photoshop 空闲')
-        const result = await this.photoshopMutex.runExclusive(async () => {
-          this.assertNotCancelled(active)
-          return runBatch(printAssetsFromImages(photoshopPrints), config.photoshop.templates, {
-            taskId,
-            outputRoot,
-            outputLayout: 'template_first',
-            replaceRange: config.photoshop.replaceRange ?? 'auto',
-            format: config.photoshop.format ?? 'jpg',
-            clipMode: config.photoshop.clipMode ?? 'auto',
-            skipCompleted: config.photoshop.skipCompleted ?? true,
-            maxRetries: config.photoshop.maxRetries ?? 1,
-            cancelFilePath,
+        let completed = false
+        try {
+          const photoshopPrints = await preparePhotoshopPrints(
+            workbenchRoot,
+            runId,
+            prints,
+            config.printSkuCode,
+          )
+          emitMessage('正在等待 Photoshop 空闲')
+          const result = await this.photoshopMutex.runExclusive(async () => {
+            this.assertNotCancelled(active)
+            return runBatch(printAssetsFromImages(photoshopPrints), config.photoshop.templates, {
+              taskId,
+              outputRoot,
+              outputLayout: 'template_first',
+              replaceRange: config.photoshop.replaceRange ?? 'auto',
+              format: config.photoshop.format ?? 'jpg',
+              clipMode: config.photoshop.clipMode ?? 'auto',
+              skipCompleted: config.photoshop.skipCompleted ?? true,
+              maxRetries: config.photoshop.maxRetries ?? 1,
+              cancelFilePath,
+            })
           })
-        })
-        active.currentCancel = null
-        stats.photoshopGroups = result.groups_completed
-        return {
-          output: { result, outputRoot },
-          outputCount: result.groups_completed,
-          outputJson: {
-            outputRoot,
-            waitingPrintFolder: config.printSkuCode
-              ? join(
-                  workbenchRoot,
-                  WORKBENCH_DIRECTORIES.generation,
-                  WAITING_PHOTOSHOP_PRINT_FOLDER,
-                  safePathSegment(runId),
-                )
-              : null,
-            templatesTotal: result.templates_total,
-            groupsCompleted: result.groups_completed,
-            outputs: result.outputs.length,
-          },
+          completed = true
+          stats.photoshopGroups = result.groups_completed
+          return {
+            output: { result, outputRoot },
+            outputCount: result.groups_completed,
+            outputJson: {
+              outputRoot,
+              waitingPrintFolder: config.printSkuCode
+                ? join(
+                    workbenchRoot,
+                    WORKBENCH_DIRECTORIES.generation,
+                    WAITING_PHOTOSHOP_PRINT_FOLDER,
+                    safePathSegment(runId),
+                  )
+                : null,
+              templatesTotal: result.templates_total,
+              groupsCompleted: result.groups_completed,
+              outputs: result.outputs.length,
+            },
+          }
+        } finally {
+          active.currentCancel = null
+          if (completed) {
+            await tempFileManager.cleanupTask('photoshop', taskId)
+          } else {
+            await tempFileManager.cleanupTask('photoshop', taskId, { keepIfFailed: true })
+          }
         }
       },
     })

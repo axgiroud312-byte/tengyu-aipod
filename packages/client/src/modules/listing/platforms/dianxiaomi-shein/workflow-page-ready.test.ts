@@ -59,6 +59,25 @@ describe('Shein workflow page_ready', () => {
       ),
     ).toBe(true)
   })
+
+  it('fails production publish mode when the submit executor is not available', async () => {
+    tempDir = await mkdtemp(join(tmpdir(), 'shein-workflow-'))
+    parser.parseDraftPage.mockResolvedValue(createState())
+    const page = createPage()
+
+    await expect(
+      runListingItem(page as never, createItem(), createConfig({ submitMode: 'publish' }), {
+        actions: createActions(),
+        allowMutation: true,
+        allowPublish: true,
+        now: createClock(),
+      }),
+    ).rejects.toMatchObject({
+      code: 'PUBLISH_FAILED',
+      retryable: false,
+      stage: 'submit_publish',
+    })
+  })
 })
 
 function createItem(): ListingItem {
@@ -83,18 +102,23 @@ function createItem(): ListingItem {
   }
 }
 
-function createConfig(): ListingConfig {
+function createConfig(overrides: Partial<ListingConfig> = {}): ListingConfig {
   if (!tempDir) {
     throw new Error('tempDir must be created before createConfig')
   }
   return {
     batchId: 'batch-1',
     profileId: '2-1111',
-    template: SLICE_8_LISTING_TEMPLATES[2],
+    template: {
+      ...SLICE_8_LISTING_TEMPLATES[2],
+      uploadVideo: false,
+      skuMode: 'manual',
+    },
     submitMode: 'save-draft',
     maxAttempts: 1,
     timeoutMs: 1_000,
     evidenceDir: tempDir,
+    ...overrides,
   }
 }
 

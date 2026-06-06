@@ -230,6 +230,8 @@ export interface ListingConfig {
   maxAttempts: number
   timeoutMs: number
   evidenceDir: string
+  allowMutation?: boolean
+  allowPublish?: boolean
 }
 
 export interface StageResult {

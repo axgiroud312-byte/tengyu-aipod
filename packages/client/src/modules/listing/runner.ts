@@ -141,6 +141,13 @@ export type ListingRunnerDependencies = {
   sleep?: (ms: number) => Promise<void>
 }
 
+export type ListingBackgroundRunDependencies = {
+  runner?: Pick<ListingRunner, 'runLocalListingBatch'>
+  readConfig?: () => Promise<{ workbench_root?: string | undefined }>
+  openTaskStore?: (workbenchRoot: string) => ListingTaskStore
+  randomId?: () => string
+}
+
 type ListingTempFiles = {
   createTaskDir(module: 'listing', taskId: string): Promise<string>
 }
@@ -890,11 +897,9 @@ export function registerListingRunnerIpc() {
         label: '上架证据目录',
       })
     }
-    const taskId = runRequest.config.task_id ?? randomUUID()
-    void listingRunner
-      .runLocalListingBatch({ ...runRequest.config, task_id: taskId }, runRequest.items)
-      .catch(() => null)
-    return taskId
+    return startListingRunInBackground(runRequest.config, runRequest.items, {
+      randomId: randomUUID,
+    })
   })
 }
 
@@ -919,6 +924,10 @@ function hasTaskBindings(workspaces: ListingWorkspace[]) {
 
 function workspaceBindingFor(config: ResolvedRunConfig, profileId: string) {
   const workspace = config.workspaces.find((item) => item.profile_id === profileId)
+  return workspaceBindingForConfig(workspace)
+}
+
+function workspaceBindingForConfig(workspace: ListingWorkspace | undefined) {
   if (!workspace?.workspace_id || !workspace.task_id) {
     return null
   }
@@ -1010,6 +1019,51 @@ function toListingConfig(
     maxAttempts: config.max_attempts,
     timeoutMs: config.timeout_ms,
     evidenceDir: evidenceDirFor(config, profileId, item),
+    allowMutation: true,
+    allowPublish: config.submit_mode === 'publish',
+  }
+}
+
+export function startListingRunInBackground(
+  config: ListingRunConfig,
+  items: ListingItem[],
+  dependencies: ListingBackgroundRunDependencies = {},
+): string {
+  const taskId = config.task_id ?? dependencies.randomId?.() ?? randomUUID()
+  const runConfig = { ...config, task_id: taskId }
+  const runner = dependencies.runner ?? listingRunner
+  void runner.runLocalListingBatch(runConfig, items).catch((error: unknown) =>
+    markBoundListingTasksFailed(runConfig, taskId, dependencies).catch(() => {
+      console.error('Failed to mark background listing run as failed', error)
+    }),
+  )
+  return taskId
+}
+
+async function markBoundListingTasksFailed(
+  config: ListingRunConfig,
+  runTaskId: string,
+  dependencies: ListingBackgroundRunDependencies,
+): Promise<void> {
+  const bindings = config.workspaces
+    .map((workspace) => workspaceBindingForConfig(workspace))
+    .filter((binding): binding is NonNullable<ReturnType<typeof workspaceBindingForConfig>> =>
+      Boolean(binding),
+    )
+  if (bindings.length === 0) {
+    return
+  }
+
+  const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig ?? readAppConfig)
+  const store =
+    dependencies.openTaskStore?.(workbenchRoot) ?? openWorkbenchListingTaskStore(workbenchRoot)
+  try {
+    for (const binding of bindings) {
+      await store.updateTaskStatus(binding.taskId, 'failed', runTaskId)
+      await store.updateWorkspaceStatus(binding.workspaceId, 'failed', null)
+    }
+  } finally {
+    store.close?.()
   }
 }
 

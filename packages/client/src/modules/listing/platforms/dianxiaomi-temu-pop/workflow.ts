@@ -72,6 +72,8 @@ export async function runListingItem(
   const startedAt = now()
   const stages: StageResult[] = []
   const actions = { ...DEFAULT_ACTIONS, ...dependencies.actions }
+  const allowMutation = dependencies.allowMutation ?? config.allowMutation === true
+  const allowPublish = dependencies.allowPublish ?? config.allowPublish === true
 
   for (const [stageIndex, stage] of TEMU_POP_WORKFLOW_STAGES.entries()) {
     const result = await runStage({
@@ -81,8 +83,8 @@ export async function runListingItem(
       stage,
       stageIndex: stageIndex + 1,
       actions,
-      allowMutation: dependencies.allowMutation === true,
-      allowPublish: dependencies.allowPublish === true,
+      allowMutation,
+      allowPublish,
       now,
     })
     stages.push(result)
@@ -367,6 +369,14 @@ async function executeStage(args: {
   }
   if (stage === 'submit_publish') {
     const state = await parseDraftPage(page)
+    if (config.submitMode === 'publish' && args.allowPublish) {
+      throw createListingFailure({
+        code: 'PUBLISH_FAILED',
+        message: 'Temu workflow 缺少真实发布执行器，不能标记为发布成功',
+        stage,
+        url: state.url,
+      })
+    }
     const reason =
       config.submitMode === 'save-draft'
         ? 'save_draft_mode'

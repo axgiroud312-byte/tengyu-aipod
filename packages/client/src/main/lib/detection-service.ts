@@ -37,8 +37,15 @@ export type DetectionThreshold = {
   reviewMax?: number | undefined
 }
 
+export type DetectionImageInput = {
+  path: string
+  artifactId?: string | undefined
+  printId?: string | undefined
+}
+
 export type DetectionBatchConfig = {
   imagePaths: string[]
+  imageInputs?: DetectionImageInput[] | undefined
   skillId: string
   skillVersion?: string | undefined
   model: string
@@ -224,6 +231,11 @@ const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const riskLevelSchema = z.enum(['pass', 'review', 'block'])
 const detectionStringArraySchema = z.array(z.string())
+const detectionImageInputSchema = z.object({
+  path: z.string(),
+  artifactId: z.string().optional(),
+  printId: z.string().optional(),
+})
 const detectionThresholdSchema = z.object({
   passMax: z.number().optional(),
   reviewMax: z.number().optional(),
@@ -236,6 +248,7 @@ const detectionPreprocessSchema = z.object({
 })
 const detectionBatchConfigSchema = z.object({
   imagePaths: detectionStringArraySchema,
+  imageInputs: z.array(detectionImageInputSchema).optional(),
   skillId: z.string(),
   skillVersion: z.string().optional(),
   model: z.string(),
@@ -453,6 +466,13 @@ function fileUrl(path: string) {
   return pathToFileURL(path).toString()
 }
 
+function normalizeDetectionImageInputs(config: DetectionBatchConfig): DetectionImageInput[] {
+  if (config.imageInputs?.length) {
+    return config.imageInputs.map((image) => ({ ...image }))
+  }
+  return config.imagePaths.map((path) => ({ path }))
+}
+
 async function imageIdentity(imagePath: string): Promise<ImageIdentity> {
   const [fileHash, info] = await Promise.all([hashFile(imagePath), stat(imagePath)])
   const shortHash = fileHash.slice(0, 16)
@@ -461,6 +481,15 @@ async function imageIdentity(imagePath: string): Promise<ImageIdentity> {
     printId: `pri_${shortHash}`,
     fileHash,
     fileSize: info.size,
+  }
+}
+
+async function detectionImageIdentity(input: DetectionImageInput): Promise<ImageIdentity> {
+  const identity = await imageIdentity(input.path)
+  return {
+    ...identity,
+    ...(input.artifactId ? { artifactId: input.artifactId } : {}),
+    ...(input.printId ? { printId: input.printId } : {}),
   }
 }
 
@@ -877,7 +906,7 @@ function detectionErrorCode(error: unknown): DetectionErrorCode {
 
 type IndexedImage = {
   index: number
-  imagePath: string
+  image: DetectionImageInput
 }
 
 type DetectionResultRow = {
@@ -1258,12 +1287,13 @@ export class DetectionService {
         throw new Error('请先在设置里选择工作区')
       }
       const workbenchRoot = workbenchConfig.workbench_root
+      const imageInputs = normalizeDetectionImageInputs(config)
       diagnostics = await createOptionalDiagnosticLogWriter({
         module: 'detection',
         taskId,
         workbenchRoot,
         meta: {
-          imageCount: config.imagePaths.length,
+          imageCount: imageInputs.length,
           skillId: config.skillId,
           skillVersion: config.skillVersion ?? null,
           model: config.model || DEFAULT_MODEL,
@@ -1275,7 +1305,7 @@ export class DetectionService {
         },
       })
 
-      if (config.imagePaths.length === 0) {
+      if (imageInputs.length === 0) {
         const emptyResult: DetectionBatchResult = {
           taskId,
           total: 0,
@@ -1328,7 +1358,7 @@ export class DetectionService {
       const progress: DetectionProgress = {
         task_id: taskId,
         processed: 0,
-        total: config.imagePaths.length,
+        total: imageInputs.length,
         succeeded: 0,
         failed: 0,
         skipped: 0,
@@ -1337,7 +1367,7 @@ export class DetectionService {
         status: 'running',
       }
       const results: Array<DetectionImageResult | undefined> = Array.from({
-        length: config.imagePaths.length,
+        length: imageInputs.length,
       })
       const emitProgress = (currentImage?: string) => {
         dependencies.emitProgress?.({
@@ -1348,7 +1378,7 @@ export class DetectionService {
 
       emitProgress()
 
-      const indexedImages = config.imagePaths.map((imagePath, index) => ({ index, imagePath }))
+      const indexedImages = imageInputs.map((image, index) => ({ index, image }))
       await runWithConcurrency(
         indexedImages,
         concurrency,
@@ -1376,7 +1406,7 @@ export class DetectionService {
           } else {
             progress.failed += 1
           }
-          emitProgress(basename(item.imagePath))
+          emitProgress(basename(item.image.path))
         },
         () => !this.isCancelled(taskId),
       )
@@ -1465,9 +1495,10 @@ export class DetectionService {
     diagnostics: DiagnosticLogWriter | null
   }): Promise<DetectionImageResult> {
     let identity: ImageIdentity
-    const itemKey = basename(input.item.imagePath)
+    const imagePath = input.item.image.path
+    const itemKey = basename(imagePath)
     try {
-      identity = await imageIdentity(input.item.imagePath)
+      identity = await detectionImageIdentity(input.item.image)
       await appendDiagnosticLog(input.diagnostics, {
         type: 'item_started',
         provider: 'aliyun-bailian',
@@ -1475,8 +1506,8 @@ export class DetectionService {
         itemKey,
         data: {
           index: input.item.index,
-          image: await fileDiagnosticMetadata(input.item.imagePath).catch(() => ({
-            path: input.item.imagePath,
+          image: await fileDiagnosticMetadata(imagePath).catch(() => ({
+            path: imagePath,
             name: itemKey,
           })),
           identity,
@@ -1491,8 +1522,8 @@ export class DetectionService {
         error: errorForDiagnosticLog(error),
       })
       return {
-        imagePath: input.item.imagePath,
-        thumbnailUrl: fileUrl(input.item.imagePath),
+        imagePath,
+        thumbnailUrl: fileUrl(imagePath),
         status: 'failed',
         errorCode: 'preprocess_failed',
         error: appErrorMessage(error),
@@ -1501,12 +1532,14 @@ export class DetectionService {
 
     const db = input.openDatabase(input.workbenchRoot)
     try {
-      registerSourceArtifact(db, {
-        identity,
-        imagePath: input.item.imagePath,
-        taskId: input.taskId,
-        createdAt: Date.now(),
-      })
+      if (!input.item.image.artifactId) {
+        registerSourceArtifact(db, {
+          identity,
+          imagePath,
+          taskId: input.taskId,
+          createdAt: Date.now(),
+        })
+      }
 
       if (!input.config.forceRetest) {
         const cached = readCachedDetection(db, {
@@ -1527,8 +1560,8 @@ export class DetectionService {
             },
           })
           return {
-            imagePath: input.item.imagePath,
-            thumbnailUrl: fileUrl(input.item.imagePath),
+            imagePath,
+            thumbnailUrl: fileUrl(imagePath),
             artifactId: identity.artifactId,
             printId: identity.printId,
             status: 'skipped',
@@ -1548,8 +1581,8 @@ export class DetectionService {
           module: 'detection',
           taskId: input.taskId,
           workbenchRoot: input.workbenchRoot,
-          input: input.item.imagePath,
-          inputName: basename(input.item.imagePath),
+          input: imagePath,
+          inputName: basename(imagePath),
           ...(input.config.preprocess?.maxSize !== undefined
             ? { maxSize: input.config.preprocess.maxSize }
             : {}),
@@ -1661,7 +1694,7 @@ export class DetectionService {
         input.taskId,
         riskLevel,
         identity.printId,
-        input.item.imagePath,
+        imagePath,
       )
       await mkdir(
         join(
@@ -1672,7 +1705,7 @@ export class DetectionService {
         ),
         { recursive: true },
       )
-      await copyFile(input.item.imagePath, outputPath)
+      await copyFile(imagePath, outputPath)
       registerDetectionResult(db, {
         taskId: input.taskId,
         identity,
@@ -1701,8 +1734,8 @@ export class DetectionService {
       })
 
       return {
-        imagePath: input.item.imagePath,
-        thumbnailUrl: fileUrl(input.item.imagePath),
+        imagePath,
+        thumbnailUrl: fileUrl(imagePath),
         artifactId: identity.artifactId,
         printId: identity.printId,
         status: 'success',
@@ -1721,8 +1754,8 @@ export class DetectionService {
         error: errorForDiagnosticLog(error),
       })
       return {
-        imagePath: input.item.imagePath,
-        thumbnailUrl: fileUrl(input.item.imagePath),
+        imagePath,
+        thumbnailUrl: fileUrl(imagePath),
         artifactId: identity.artifactId,
         printId: identity.printId,
         status: 'failed',

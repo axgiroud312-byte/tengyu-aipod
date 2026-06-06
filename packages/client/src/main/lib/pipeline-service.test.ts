@@ -103,6 +103,7 @@ const mocks = vi.hoisted(() => ({
     await mkdir(taskDir, { recursive: true })
     return taskDir
   }),
+  cleanupTask: vi.fn(async () => undefined),
   runTxt2imgBatch: vi.fn(
     async (
       input: Txt2imgMockInput,
@@ -188,6 +189,7 @@ vi.mock('./title-service', () => ({
 vi.mock('./temp-file-manager', () => ({
   tempFileManager: {
     createTaskDir: mocks.createTaskDir,
+    cleanupTask: mocks.cleanupTask,
   },
 }))
 
@@ -320,6 +322,7 @@ describe('PipelineService', () => {
     mocks.runBatch.mockClear()
     mocks.runTitleBatch.mockClear()
     mocks.createTaskDir.mockClear()
+    mocks.cleanupTask.mockClear()
     mocks.runTxt2imgBatch.mockClear()
     mocks.runExtractBatch.mockClear()
     mocks.runComfyuiMattingBatch.mockClear()
@@ -353,6 +356,44 @@ describe('PipelineService', () => {
       expect.objectContaining({
         batchDir: join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, 'shirt'),
       }),
+    )
+  })
+
+  it('cleans the Photoshop temp task directory after a successful Photoshop step', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    const service = new PipelineService()
+    await service.runPipeline('run-clean-photoshop-temp', baseConfig(printFolder))
+
+    expect(mocks.createTaskDir).toHaveBeenCalledWith(
+      'photoshop',
+      'run-clean-photoshop-temp-photoshop',
+    )
+    expect(mocks.cleanupTask).toHaveBeenCalledWith(
+      'photoshop',
+      'run-clean-photoshop-temp-photoshop',
+    )
+  })
+
+  it('keeps failed Photoshop temp task directories on the delayed cleanup path', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    mocks.runBatch.mockRejectedValueOnce(new Error('Photoshop failed'))
+
+    const service = new PipelineService()
+    await expect(
+      service.runPipeline('run-failed-photoshop-temp', baseConfig(printFolder)),
+    ).rejects.toThrow('Photoshop failed')
+
+    expect(mocks.createTaskDir).toHaveBeenCalledWith(
+      'photoshop',
+      'run-failed-photoshop-temp-photoshop',
+    )
+    expect(mocks.cleanupTask).toHaveBeenCalledWith(
+      'photoshop',
+      'run-failed-photoshop-temp-photoshop',
+      { keepIfFailed: true },
     )
   })
 
@@ -1205,8 +1246,24 @@ describe('PipelineService', () => {
       images: generatedImages,
       failures: [],
     })
-    mocks.runDetectionBatch.mockImplementationOnce(async (input: { imagePaths: string[] }) => {
+    mocks.runDetectionBatch.mockImplementationOnce(
+      async (input: {
+        imagePaths: string[]
+        imageInputs?: Array<{ path: string; artifactId?: string; printId?: string }>
+      }) => {
       expect(input.imagePaths).toEqual(generatedImages.map((image) => image.localPath))
+      expect(input.imageInputs).toEqual([
+        {
+          path: generatedImages[0]?.localPath,
+          artifactId: 'art-img2img-pass',
+          printId: 'pri-img2img-pass',
+        },
+        {
+          path: generatedImages[1]?.localPath,
+          artifactId: 'art-img2img-block',
+          printId: 'pri-img2img-block',
+        },
+      ])
       return {
         taskId: 'run-img2img-detection-detection',
         total: 2,

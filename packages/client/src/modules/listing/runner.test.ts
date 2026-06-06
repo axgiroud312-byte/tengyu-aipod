@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import {
   AppErrorClass,
   type ListingConfig,
@@ -15,6 +16,7 @@ import {
   type ListingStatusStore,
   type ListingTaskStore,
   runLocalListingBatch,
+  startListingRunInBackground,
 } from './runner'
 
 class FakeStatusStore implements ListingStatusStore {
@@ -447,7 +449,7 @@ describe('listing runner', () => {
       status: 'success',
       retry_count: 1,
       last_error_code: null,
-      evidence_dir: '/tmp/evidence/evidence/profile-a/SKU-2',
+      evidence_dir: join('/tmp/evidence', 'evidence', 'profile-a', 'SKU-2'),
     })
   })
 
@@ -553,13 +555,15 @@ describe('listing runner', () => {
       },
     )
 
-    expect(result.results[0]?.evidenceDir).toBe('/tmp/evidence/evidence/profile-a/SKU-1')
+    expect(result.results[0]?.evidenceDir).toBe(
+      join('/tmp/evidence', 'evidence', 'profile-a', 'SKU-1'),
+    )
     expect(workflow.runListingItem).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ sku: 'SKU-1' }),
       expect.objectContaining({
         profileId: 'profile-a',
-        evidenceDir: '/tmp/evidence/evidence/profile-a/SKU-1',
+        evidenceDir: join('/tmp/evidence', 'evidence', 'profile-a', 'SKU-1'),
       }),
     )
     expect(progress).toEqual(
@@ -579,6 +583,77 @@ describe('listing runner', () => {
         }),
       ]),
     )
+  })
+
+  it('runs platform workflows in production mutation mode', async () => {
+    const store = new FakeStatusStore()
+    const { cdp } = createBrowserRuntime()
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) =>
+        successResult(item, config),
+      ),
+    }
+
+    await runLocalListingBatch(
+      createConfig({
+        submit_mode: 'publish',
+        workspaces: [{ profile_id: 'profile-a' }],
+      }),
+      [createItem('SKU-1')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        cdp,
+        locks: new BrowserProfileLockManager(),
+        workflows: { 'temu-pop': workflow },
+        sleep: vi.fn().mockResolvedValue(undefined),
+        now: () => 1000,
+      },
+    )
+
+    expect(workflow.runListingItem).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ sku: 'SKU-1' }),
+      expect.objectContaining({
+        allowMutation: true,
+        allowPublish: true,
+      }),
+    )
+  })
+
+  it('marks persisted workspace tasks as failed when a background run rejects', async () => {
+    const taskStore = new FakeTaskStore()
+    const runLocalListingBatch = vi.fn().mockRejectedValue(new Error('connect failed'))
+
+    const taskId = startListingRunInBackground(
+      createConfig({
+        task_id: 'run-background',
+        workspaces: [
+          {
+            profile_id: 'profile-a',
+            task_id: 'listing-task-a',
+            workspace_id: 'workspace-a',
+          },
+        ],
+      }),
+      [createItem('SKU-1')],
+      {
+        runner: { runLocalListingBatch },
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openTaskStore: () => taskStore,
+      },
+    )
+
+    expect(taskId).toBe('run-background')
+    await vi.waitFor(() => {
+      expect(taskStore.taskStatuses).toEqual([
+        { taskId: 'listing-task-a', status: 'failed', lastRunTaskId: 'run-background' },
+      ])
+    })
+    expect(taskStore.workspaceStatuses).toEqual([
+      { workspaceId: 'workspace-a', status: 'failed', currentTaskId: null },
+    ])
+    expect(taskStore.closed).toBe(true)
   })
 
   it('updates persisted workspace tasks as running and completed', async () => {
@@ -704,7 +779,12 @@ describe('listing runner', () => {
 
     expect(createTaskDir).toHaveBeenCalledWith('listing', 'task-1')
     expect(result.results[0]?.evidenceDir).toBe(
-      '/tmp/workbench/.workbench/tmp/listing/task-1/evidence/profile-a/SKU-1',
+      join(
+        '/tmp/workbench/.workbench/tmp/listing/task-1',
+        'evidence',
+        'profile-a',
+        'SKU-1',
+      ),
     )
   })
 

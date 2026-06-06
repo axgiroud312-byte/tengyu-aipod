@@ -456,6 +456,71 @@ describe('DetectionService', () => {
     ).rejects.toThrow()
   })
 
+  it('preserves upstream artifact and print identity when detecting pipeline prints', async () => {
+    const imagePath = join(tempRoot, 'inputs', 'pipeline-print.png')
+    await createImage(imagePath, 'pipeline-print')
+    const fakeDb = createFakeDb()
+    const visionCompletion = vi
+      .fn()
+      .mockResolvedValue({ text: '{"risk_score": 12, "reason": "原创图案"}' })
+    const preprocess = vi.fn(async (options: { taskId: string; inputName?: string }) => {
+      const outputPath = join(
+        workbenchRoot,
+        '.workbench',
+        'tmp',
+        'detection',
+        options.taskId,
+        `${options.inputName ?? 'image'}_processed.jpg`,
+      )
+      await mkdir(dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, 'processed')
+      return {
+        outputPath,
+        mimeType: 'image/jpeg',
+        sizeBytes: 9,
+        dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+      }
+    })
+    const service = new DetectionService()
+
+    const result = await service.runDetectionBatch(
+      {
+        imagePaths: [imagePath],
+        imageInputs: [
+          {
+            path: imagePath,
+            artifactId: 'art-upstream-print',
+            printId: 'pri-upstream-print',
+          },
+        ],
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+        threshold: { passMax: 39, reviewMax: 69 },
+        concurrency: 1,
+        taskId: 'pipeline-detection',
+      } satisfies DetectionBatchConfig,
+      {
+        skillCache: { getSkill: vi.fn().mockResolvedValue(detectionSkill()) },
+        createBailianAdapter: () => ({ visionCompletion }),
+        preprocessPool: { process: preprocess, close: vi.fn() },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(result.results[0]).toMatchObject({
+      status: 'success',
+      artifactId: 'art-upstream-print',
+      printId: 'pri-upstream-print',
+    })
+    expect(fakeDb.detectionRows[0]).toMatchObject({
+      artifactId: 'art-upstream-print',
+    })
+    expect(fakeDb.artifacts.get('art-upstream-print')).toBeUndefined()
+  })
+
   it('keeps the localized default task id', async () => {
     const service = new DetectionService()
 

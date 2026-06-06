@@ -11,6 +11,7 @@ import {
   workbenchSubdirectories,
   writeAppConfig,
 } from './lib/workbench-config'
+import { closeDefaultWorkbenchDatabase } from './lib/workbench-db'
 
 export { readAppConfig }
 
@@ -80,6 +81,9 @@ export function registerOnboardingIpc() {
     await ensureWorkbenchDirectories(nextRoot)
     const config = await readAppConfig()
     await writeAppConfig({ ...config, workbench_root: nextRoot })
+    if (config.workbench_root !== nextRoot) {
+      closeDefaultWorkbenchDatabase()
+    }
 
     return {
       ok: true,
@@ -111,6 +115,9 @@ export function registerOnboardingIpc() {
     await ensureWorkbenchDirectories(nextRoot)
     const config = await readAppConfig()
     await writeAppConfig({ ...config, workbench_root: nextRoot })
+    if (config.workbench_root !== nextRoot) {
+      closeDefaultWorkbenchDatabase()
+    }
 
     return { ok: true, data: { path: nextRoot } }
   })
