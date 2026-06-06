@@ -7,6 +7,24 @@ directories:
 files:
   - out/**/*
   - package.json
+  - from: ../../node_modules/util-deprecate
+    to: node_modules/util-deprecate
+  - from: ../../node_modules/string_decoder
+    to: node_modules/string_decoder
+  - from: ../../node_modules/safe-buffer
+    to: node_modules/safe-buffer
+  - from: ../../node_modules/brace-expansion
+    to: node_modules/brace-expansion
+  - from: ../../node_modules/lazystream/node_modules/readable-stream
+    to: node_modules/lazystream/node_modules/readable-stream
+  - from: ../../node_modules/core-util-is
+    to: node_modules/core-util-is
+  - from: ../../node_modules/isarray
+    to: node_modules/isarray
+  - from: ../../node_modules/process-nextick-args
+    to: node_modules/process-nextick-args
+  - from: ../../node_modules/zip-stream/node_modules/archiver-utils
+    to: node_modules/zip-stream/node_modules/archiver-utils
 asar: true
 asarUnpack:
   - "**/*.node"
