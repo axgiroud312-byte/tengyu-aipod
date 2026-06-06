@@ -1,3 +1,4 @@
+import { localImageUrl } from '@/components/detection-image-url'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -639,7 +640,7 @@ export function CollectionPage({
                       <img
                         alt=""
                         className="h-10 w-10 rounded border object-cover"
-                        src={`file://${item.savedPath}`}
+                        src={localImageUrl(item.savedPath)}
                       />
                       <div className="min-w-0 text-xs">
                         <div className="truncate font-medium">
