@@ -20,19 +20,18 @@ import {
   type TitleKeywordGroupDraft,
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
-import {
-  type PipelinePrintMode,
-  type PipelineProgress,
-  type PipelinePromptConfig,
-  type PipelineResultImage,
-  type PipelineResultSection,
-  type PipelineRunConfig,
-  type PipelineRunDetail,
-  type PipelineRunRecord,
-  type PipelineRunStats,
-  type PipelineSourceMode,
-  type SkillSummary,
-  SkuCodeSchema,
+import type {
+  PipelinePrintMode,
+  PipelineProgress,
+  PipelinePromptConfig,
+  PipelineResultImage,
+  PipelineResultSection,
+  PipelineRunConfig,
+  PipelineRunDetail,
+  PipelineRunRecord,
+  PipelineRunStats,
+  PipelineSourceMode,
+  SkillSummary,
 } from '@tengyu-aipod/shared'
 import {
   Check,
@@ -840,6 +839,10 @@ function PipelineResultsPanel({
 export function FullTaskPage() {
   const [name, setName] = useFullTaskSessionState('name', '')
   const [printSkuCode, setPrintSkuCode] = useFullTaskSessionState('printSkuCode', '')
+  const [filenameSeparator, setFilenameSeparator] = useFullTaskSessionState(
+    'filenameSeparator',
+    '-',
+  )
   const [sourceMode, setSourceMode] = useFullTaskSessionState<TaskSourceMode>(
     'sourceMode',
     'collection',
@@ -1031,8 +1034,6 @@ export function FullTaskPage() {
     const normalizedPrintSkuCode = printSkuCode.trim()
     if (photoshopEnabled && !normalizedPrintSkuCode) {
       issues.push('请先填写印花货号')
-    } else if (normalizedPrintSkuCode && !SkuCodeSchema.safeParse(normalizedPrintSkuCode).success) {
-      issues.push('印花货号只能使用英文、数字、短横线和下划线，长度 1-60')
     }
     if (photoshopEnabled && isMac) {
       issues.push('PS 套版仅支持 Windows，关闭 PS 套版后可在当前电脑运行前置步骤')
@@ -1595,6 +1596,7 @@ export function FullTaskPage() {
     return {
       ...(nonEmpty(name) ? { name: name.trim() } : {}),
       ...(nonEmpty(printSkuCode) ? { printSkuCode: printSkuCode.trim() } : {}),
+      ...(filenameSeparator !== '-' ? { filenameSeparator } : {}),
       printMode,
       source: buildSourceConfig(),
       matting: {
@@ -1695,7 +1697,7 @@ export function FullTaskPage() {
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_220px]">
+            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_120px_220px]">
               <Field label="任务名">
                 <Input
                   onChange={(event) => setName(event.target.value)}
@@ -1706,8 +1708,15 @@ export function FullTaskPage() {
               <Field label="印花货号">
                 <Input
                   onChange={(event) => setPrintSkuCode(event.target.value)}
-                  placeholder="例如 TY-001"
+                  placeholder="例如 gyxkj"
                   value={printSkuCode}
+                />
+              </Field>
+              <Field label="分隔符">
+                <Input
+                  onChange={(event) => setFilenameSeparator(event.target.value)}
+                  placeholder="-"
+                  value={filenameSeparator}
                 />
               </Field>
               <SelectField

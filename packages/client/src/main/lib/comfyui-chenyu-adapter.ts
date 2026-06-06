@@ -13,6 +13,7 @@ import type { CachedComfyuiWorkflow, ComfyuiWorkflowCategory } from './comfyui-w
 import type { DiagnosticLogWriter } from './diagnostic-log-service'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
 import type { SqliteDatabase } from './sqlite'
+import { assertTargetDoesNotExist, nextVisibleImageName } from './user-visible-filename'
 
 export type ComfyuiWorkflowCache = {
   get(
@@ -215,13 +216,22 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
           ...(output.type ? { type: output.type } : {}),
         })
         const printId = printIdFromRequest(input.req) ?? newPrintId()
-        const targetPath =
-          input.req.capability === 'img2img'
+        const ext =
+          input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)
+        const visibleName = nextVisibleImageName({
+          prefix: stringOption(input.req.options?.filenamePrefix) ?? undefined,
+          separator: stringOption(input.req.options?.filenameSeparator) ?? undefined,
+          index: (numberOption(input.req.options?.filenameIndex) ?? 0) + images.length,
+          ext,
+        })
+        const targetPath = visibleName
+          ? join(outputFolder, visibleName)
+          : input.req.capability === 'img2img'
             ? await uniqueVersionedTargetPath(outputFolder, printId, '.png')
-            : join(
-                outputFolder,
-                `${printId}${input.req.capability === 'matting' ? '.png' : extensionFromFilename(output.filename)}`,
-              )
+            : join(outputFolder, `${printId}${ext}`)
+        if (visibleName) {
+          await assertTargetDoesNotExist(targetPath)
+        }
         await writeFile(targetPath, buffer)
         let artifactId: string | undefined
         if (shouldRegisterArtifact) {
@@ -375,6 +385,10 @@ function providerFromParams(params: Record<string, unknown>) {
 
 function stringOption(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : null
+}
+
+function numberOption(value: unknown) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 function clampOutputCount(outputs: ComfyImageOutput[], value: unknown) {

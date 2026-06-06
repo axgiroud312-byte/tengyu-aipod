@@ -493,6 +493,51 @@ describe('generation Grsai paid image service', () => {
       }),
     )
   })
+
+  it('uses user visible filenames without changing generated print ids', async () => {
+    const fakeDb = createFakeDb()
+    const generate = vi
+      .fn()
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [{ url: 'https://example.test/first.png' }],
+      })
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [{ url: 'https://example.test/second.png' }],
+      })
+    const input = {
+      prompts: ['first print', 'second print'],
+      model: 'gpt-image-2',
+      aspectRatio: '1024x1024',
+      concurrency: 1,
+      taskId: 'named-task',
+      filenamePrefix: 'gyx<k:j',
+      filenameSeparator: '-',
+    }
+
+    const result = await runTxt2imgBatch(input, {
+      readConfig: async () => ({ workbench_root: workbenchRoot }),
+      getSecret: async () => 'sk-grsai',
+      openDatabase: fakeDb.openDatabase,
+      createGrsaiAdapter: () => ({ generate }),
+      downloadImage: vi.fn().mockResolvedValue(Buffer.from('named-image')),
+    })
+
+    expect(result.images.map((image) => image.localPath?.split(/[\\/]/).pop())).toEqual([
+      'gyx_k_j-0001.png',
+      'gyx_k_j-0002.png',
+    ])
+    expect(result.images.map((image) => image.printId)).toEqual([
+      expect.stringMatching(/^pri_/),
+      expect.stringMatching(/^pri_/),
+    ])
+    expect(result.images[0]?.printId).not.toBe('gyx_k_j-0001')
+    expect(fakeDb.artifacts.map((row) => row[2])).toEqual([
+      expect.stringMatching(/^pri_/),
+      expect.stringMatching(/^pri_/),
+    ])
+  })
 })
 
 describe('generation extract service', () => {

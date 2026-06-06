@@ -1206,6 +1206,44 @@ function TaskNameField({
   )
 }
 
+function VisibleFilenameFields({
+  prefix,
+  separator,
+  onPrefixChange,
+  onSeparatorChange,
+}: {
+  prefix: string
+  separator: string
+  onPrefixChange: (value: string) => void
+  onSeparatorChange: (value: string) => void
+}) {
+  const prefixId = useId()
+  const separatorId = useId()
+
+  return (
+    <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
+      <label className="block space-y-2 text-sm font-medium" htmlFor={prefixId}>
+        <span>图片名前缀</span>
+        <Input
+          id={prefixId}
+          onChange={(event) => onPrefixChange(event.target.value)}
+          placeholder="不填则使用默认命名"
+          value={prefix}
+        />
+      </label>
+      <label className="block space-y-2 text-sm font-medium" htmlFor={separatorId}>
+        <span>分隔符</span>
+        <Input
+          id={separatorId}
+          onChange={(event) => onSeparatorChange(event.target.value)}
+          placeholder="-"
+          value={separator}
+        />
+      </label>
+    </div>
+  )
+}
+
 function capabilityCopy(capability: GenerationUiCapability, provider: GenerationProvider) {
   if (!isGenerationProviderAvailable(capability, provider)) {
     return {
@@ -1275,6 +1313,8 @@ function GrsaiPromptGenerationPanel({
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [taskName, setTaskName] = useState('')
+  const [filenamePrefix, setFilenamePrefix] = useState('')
+  const [filenameSeparator, setFilenameSeparator] = useState('-')
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -1504,6 +1544,10 @@ function GrsaiPromptGenerationPanel({
           workflowId: selectedComfyuiTxt2imgWorkflow.id,
           workflowName: selectedComfyuiTxt2imgWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+          ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+          ...(filenamePrefix.trim() && filenameSeparator !== '-'
+            ? { filenameSeparator }
+            : {}),
           ...(selectedComfyuiTxt2imgWorkflow.version
             ? { workflowVersion: selectedComfyuiTxt2imgWorkflow.version }
             : {}),
@@ -1519,6 +1563,10 @@ function GrsaiPromptGenerationPanel({
           model: generationModel,
           aspectRatio,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+          ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+          ...(filenamePrefix.trim() && filenameSeparator !== '-'
+            ? { filenameSeparator }
+            : {}),
           ...(sendsReferenceToImageModel
             ? {
                 referenceImages: promptReferenceImages(),
@@ -1975,6 +2023,12 @@ function GrsaiPromptGenerationPanel({
                 placeholder={`默认：${capability === 'txt2img' ? '文生图' : '图生图'}-时间`}
                 value={taskName}
               />
+              <VisibleFilenameFields
+                onPrefixChange={setFilenamePrefix}
+                onSeparatorChange={setFilenameSeparator}
+                prefix={filenamePrefix}
+                separator={filenameSeparator}
+              />
               <Button
                 disabled={
                   running ||
@@ -2078,6 +2132,8 @@ function GrsaiExtractPanel() {
   const [generationModel, setGenerationModel] = useState('gpt-image-2')
   const [aspectRatio, setAspectRatio] = useState('1024x1024')
   const [taskName, setTaskName] = useState('')
+  const [filenamePrefix, setFilenamePrefix] = useState('')
+  const [filenameSeparator, setFilenameSeparator] = useState('-')
   const [progress, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -2173,6 +2229,8 @@ function GrsaiExtractPanel() {
         aspectRatio,
         concurrency: defaultConcurrency,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+        ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
       })
       if (!taskEvents.activateTask(taskId)) {
         setProgress({
@@ -2265,6 +2323,12 @@ function GrsaiExtractPanel() {
                 placeholder="默认：提取-时间"
                 value={taskName}
               />
+              <VisibleFilenameFields
+                onPrefixChange={setFilenamePrefix}
+                onSeparatorChange={setFilenameSeparator}
+                prefix={filenamePrefix}
+                separator={filenameSeparator}
+              />
               <Button disabled={running} onClick={() => void startExtract()} type="button">
                 {running ? <Loader2 className="mr-2 h-4 w-4" /> : <Play className="mr-2 h-4 w-4" />}
                 开始提取
@@ -2340,6 +2404,8 @@ function ComfyuiImg2imgPanel() {
   const [promptMode, setPromptMode] = useState<ComfyuiImg2imgPromptMode>('workflow')
   const [prompt, setPrompt] = useState('')
   const [taskName, setTaskName] = useState('')
+  const [filenamePrefix, setFilenamePrefix] = useState('')
+  const [filenameSeparator, setFilenameSeparator] = useState('-')
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -2436,6 +2502,8 @@ function ComfyuiImg2imgPanel() {
         workflowName: selectedWorkflow.name,
         workflowVersion: selectedWorkflow.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+        ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
         ...(promptMode === 'custom' ? { prompt: customPrompt } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
@@ -2576,6 +2644,12 @@ function ComfyuiImg2imgPanel() {
                 placeholder="默认：图生图-时间"
                 value={taskName}
               />
+              <VisibleFilenameFields
+                onPrefixChange={setFilenamePrefix}
+                onSeparatorChange={setFilenameSeparator}
+                prefix={filenamePrefix}
+                separator={filenameSeparator}
+              />
             </div>
             <Button
               className="mt-4 w-full"
@@ -2617,6 +2691,8 @@ function ComfyuiExtractPanel() {
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
+  const [filenamePrefix, setFilenamePrefix] = useState('')
+  const [filenameSeparator, setFilenameSeparator] = useState('-')
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -2716,6 +2792,8 @@ function ComfyuiExtractPanel() {
         skillId: selectedSkill.id,
         skillVersion: selectedSkill.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+        ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
         ...comfyuiInstanceSelection.runTarget,
@@ -2832,6 +2910,12 @@ function ComfyuiExtractPanel() {
                 placeholder="默认：提取-时间"
                 value={taskName}
               />
+              <VisibleFilenameFields
+                onPrefixChange={setFilenamePrefix}
+                onSeparatorChange={setFilenameSeparator}
+                prefix={filenamePrefix}
+                separator={filenameSeparator}
+              />
             </div>
             <Button
               className="mt-4 w-full"
@@ -2872,6 +2956,8 @@ function ComfyuiExtractMattingPanel() {
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
+  const [filenamePrefix, setFilenamePrefix] = useState('')
+  const [filenameSeparator, setFilenameSeparator] = useState('-')
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -2992,6 +3078,8 @@ function ComfyuiExtractMattingPanel() {
         skillId: selectedSkill.id,
         skillVersion: selectedSkill.version,
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+        ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+        ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
         ...comfyuiInstanceSelection.runTarget,
@@ -3137,6 +3225,12 @@ function ComfyuiExtractMattingPanel() {
                 placeholder="默认：提取后抠图-时间"
                 value={taskName}
               />
+              <VisibleFilenameFields
+                onPrefixChange={setFilenamePrefix}
+                onSeparatorChange={setFilenameSeparator}
+                prefix={filenamePrefix}
+                separator={filenameSeparator}
+              />
             </div>
             <Button
               className="mt-4 w-full"
@@ -3176,6 +3270,8 @@ function ComfyuiMattingPanel() {
   const [mixedWorkflows, setMixedWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
   const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [taskName, setTaskName] = useState('')
+  const [filenamePrefix, setFilenamePrefix] = useState('')
+  const [filenameSeparator, setFilenameSeparator] = useState('-')
   const [, setProgress] = useState<GenerationProgress | null>(null)
   const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
   const [result, setResult] = useState<GenerationRunResult | null>(null)
@@ -3282,6 +3378,8 @@ function ComfyuiMattingPanel() {
           workflowId: selectedWorkflow.id,
           workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+          ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+          ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
           ...comfyuiInstanceSelection.runTarget,
         })
@@ -3291,6 +3389,8 @@ function ComfyuiMattingPanel() {
           workflowId: selectedWorkflow.id,
           workflowName: selectedWorkflow.name,
           ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
+          ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
+          ...(filenamePrefix.trim() && filenameSeparator !== '-' ? { filenameSeparator } : {}),
           ...(workflowVersion ? { workflowVersion } : {}),
           ...comfyuiInstanceSelection.runTarget,
         })
@@ -3407,6 +3507,12 @@ function ComfyuiMattingPanel() {
                 onChange={setTaskName}
                 placeholder="默认：抠图-时间"
                 value={taskName}
+              />
+              <VisibleFilenameFields
+                onPrefixChange={setFilenamePrefix}
+                onSeparatorChange={setFilenameSeparator}
+                prefix={filenamePrefix}
+                separator={filenameSeparator}
               />
             </div>
             <Button

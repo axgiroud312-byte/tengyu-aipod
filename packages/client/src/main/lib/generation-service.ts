@@ -53,6 +53,10 @@ import {
 import { skillCacheManager } from './skill-cache'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { type TempFileManager, tempFileManager } from './temp-file-manager'
+import {
+  assertTargetDoesNotExist,
+  nextVisibleImageName,
+} from './user-visible-filename'
 
 export type Txt2imgPromptDraft = {
   id: string
@@ -81,6 +85,8 @@ export type Txt2imgRunInput = {
   referenceImages?: Array<{ base64: string; mime_type: string }> | undefined
   concurrency: number
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type ComfyuiInstanceRunInput = {
@@ -96,6 +102,8 @@ export type ComfyuiTxt2imgRunInput = ComfyuiInstanceRunInput & {
   height?: number | undefined
   concurrency?: number | undefined
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type GenerationProgress = {
@@ -198,6 +206,8 @@ export type ExtractRunInput = {
   imageSize?: '1K' | '2K' | '4K' | undefined
   concurrency: number
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
@@ -210,6 +220,8 @@ export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
@@ -223,6 +235,8 @@ export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
@@ -235,6 +249,8 @@ export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & {
@@ -258,6 +274,8 @@ export type ComfyuiExtractMattingRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  filenamePrefix?: string | undefined
+  filenameSeparator?: string | undefined
 }
 
 export type ChenyuWorkflowMarketListInput = {
@@ -379,6 +397,8 @@ const txt2imgRunInputSchema = z.object({
   referenceImages: z.array(referenceImageSchema).optional(),
   concurrency: z.number(),
   taskId: optionalStringSchema,
+  filenamePrefix: optionalStringSchema,
+  filenameSeparator: optionalStringSchema,
 })
 
 const comfyuiInstanceRunInputSchema = z.object({
@@ -394,6 +414,8 @@ const comfyuiTxt2imgRunInputSchema = comfyuiInstanceRunInputSchema.extend({
   height: positiveNumberSchema,
   concurrency: positiveNumberSchema,
   taskId: optionalStringSchema,
+  filenamePrefix: optionalStringSchema,
+  filenameSeparator: optionalStringSchema,
 })
 
 const extractRunInputSchema = z.object({
@@ -406,6 +428,8 @@ const extractRunInputSchema = z.object({
   imageSize: imageSizeSchema.optional(),
   concurrency: z.number(),
   taskId: optionalStringSchema,
+  filenamePrefix: optionalStringSchema,
+  filenameSeparator: optionalStringSchema,
 })
 
 const comfyuiSourceInputSchema = comfyuiInstanceRunInputSchema.extend({
@@ -418,6 +442,8 @@ const comfyuiSourceInputSchema = comfyuiInstanceRunInputSchema.extend({
   width: positiveNumberSchema,
   height: positiveNumberSchema,
   taskId: optionalStringSchema,
+  filenamePrefix: optionalStringSchema,
+  filenameSeparator: optionalStringSchema,
 })
 
 const comfyuiExtractRunInputSchema = comfyuiInstanceRunInputSchema.extend({
@@ -431,6 +457,8 @@ const comfyuiExtractRunInputSchema = comfyuiInstanceRunInputSchema.extend({
   width: positiveNumberSchema,
   height: positiveNumberSchema,
   taskId: optionalStringSchema,
+  filenamePrefix: optionalStringSchema,
+  filenameSeparator: optionalStringSchema,
 })
 
 const comfyuiExtractMattingRunInputSchema = comfyuiInstanceRunInputSchema.extend({
@@ -447,6 +475,8 @@ const comfyuiExtractMattingRunInputSchema = comfyuiInstanceRunInputSchema.extend
   width: positiveNumberSchema,
   height: positiveNumberSchema,
   taskId: optionalStringSchema,
+  filenamePrefix: optionalStringSchema,
+  filenameSeparator: optionalStringSchema,
 })
 
 const mixedMattingRunInputSchema = comfyuiSourceInputSchema.extend({
@@ -918,6 +948,38 @@ async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
   }
 }
 
+async function generationTargetPath(
+  folder: string,
+  fallbackBaseName: string,
+  ext: string,
+  naming: { filenamePrefix?: string | undefined; filenameSeparator?: string | undefined },
+  outputIndex: number,
+) {
+  const visibleName = nextVisibleImageName({
+    prefix: naming.filenamePrefix,
+    separator: naming.filenameSeparator,
+    index: outputIndex,
+    ext,
+  })
+  if (!visibleName) {
+    return uniqueTargetPath(folder, fallbackBaseName, ext)
+  }
+  const targetPath = join(folder, visibleName)
+  await assertTargetDoesNotExist(targetPath)
+  return targetPath
+}
+
+function visibleFilenameOptions(
+  input: { filenamePrefix?: string | undefined; filenameSeparator?: string | undefined },
+  index: number,
+) {
+  return {
+    filenameIndex: index,
+    ...(input.filenamePrefix ? { filenamePrefix: input.filenamePrefix } : {}),
+    ...(input.filenameSeparator ? { filenameSeparator: input.filenameSeparator } : {}),
+  }
+}
+
 async function scanImageFolderRecursive(root: string): Promise<GenerationImageSource[]> {
   const images: GenerationImageSource[] = []
 
@@ -933,7 +995,7 @@ async function scanImageFolderRecursive(root: string): Promise<GenerationImageSo
         continue
       }
       const info = await stat(entryPath)
-      const relativePath = relative(root, entryPath)
+      const relativePath = relative(root, entryPath).replace(/\\/g, '/')
       images.push({
         id: createHash('sha256').update(entryPath).digest('hex').slice(0, 16),
         path: entryPath,
@@ -2242,6 +2304,7 @@ async function runTxt2imgTask(
     failures: [],
     ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
   }
+  let outputIndex = 0
 
   try {
     ensureGenerationTables(db)
@@ -2286,10 +2349,14 @@ async function runTxt2imgTask(
             controller.onResponse(200)
             for (const image of response.images) {
               const printId = newPrintId()
-              const targetPath = await uniqueTargetPath(
+              const currentOutputIndex = outputIndex
+              outputIndex += 1
+              const targetPath = await generationTargetPath(
                 outputFolder,
                 printId,
                 generatedImageExtension(image),
+                input,
+                currentOutputIndex,
               )
               const imageBuffer = image.local_path
                 ? await readFile(image.local_path)
@@ -2393,6 +2460,7 @@ export async function runExtractBatch(
   let db: GenerationDatabase | null = null
   let diagnostics: DiagnosticLogWriter | null = null
   const emit = createGenerationProgressEmitter(dependencies)
+  let outputIndex = 0
 
   try {
     const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
@@ -2471,7 +2539,15 @@ export async function runExtractBatch(
             controller.onResponse(200)
             for (const image of response.images) {
               const printId = newPrintId()
-              const targetPath = await uniqueTargetPath(outputFolder, printId, '.png')
+              const currentOutputIndex = outputIndex
+              outputIndex += 1
+              const targetPath = await generationTargetPath(
+                outputFolder,
+                printId,
+                '.png',
+                input,
+                currentOutputIndex,
+              )
               const imageBuffer = image.local_path
                 ? await readFile(image.local_path)
                 : await downloadImage(image.url)
@@ -2606,6 +2682,7 @@ export async function runComfyuiExtractBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
+      let outputIndex = 0
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -2620,6 +2697,7 @@ export async function runComfyuiExtractBatch(
             taskId,
             createdAt: Date.now(),
           })
+          const filenameIndex = outputIndex
           emitComfyuiRequestLog(debug, {
             ...input,
             prompt,
@@ -2640,12 +2718,14 @@ export async function runComfyuiExtractBatch(
               sourceArtifactIds: [sourceIdentity.artifactId],
               width: sizePx.width,
               height: sizePx.height,
+              ...visibleFilenameOptions(input, filenameIndex),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
           } satisfies GenerateRequest)
           if (response.status !== 'succeeded') {
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
           }
+          outputIndex += response.images.length
           result.succeeded += response.images.length
           result.images.push(
             ...response.images.map((image) => ({
@@ -2765,6 +2845,7 @@ export async function runComfyuiExtractMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
+      let outputIndex = 0
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -2817,6 +2898,7 @@ export async function runComfyuiExtractMattingBatch(
           if (!extractedImage?.local_path) {
             throw new AppErrorClass('HTTP_5XX', 'ComfyUI 提取未返回本地图片', true)
           }
+          const filenameIndex = outputIndex
 
           emitComfyuiRequestLog(debug, {
             workflowId: input.mattingWorkflowId,
@@ -2842,6 +2924,7 @@ export async function runComfyuiExtractMattingBatch(
               width: sizePx.width,
               height: sizePx.height,
               maxOutputs: 1,
+              ...visibleFilenameOptions(input, filenameIndex),
               ...(input.mattingWorkflowVersion
                 ? { workflowVersion: input.mattingWorkflowVersion }
                 : {}),
@@ -2854,6 +2937,7 @@ export async function runComfyuiExtractMattingBatch(
           if (!finalImage) {
             throw new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图未返回结果图', true)
           }
+          outputIndex += 1
           result.succeeded += 1
           result.images.push({
             prompt: mattingPrompt,
@@ -2958,6 +3042,7 @@ export async function runComfyuiMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
+      let outputIndex = 0
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -2967,6 +3052,7 @@ export async function runComfyuiMattingBatch(
         try {
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
           const prompt = input.prompt?.trim() || 'Remove the background and output transparent PNG.'
+          const filenameIndex = outputIndex
           emitComfyuiRequestLog(debug, {
             ...input,
             prompt,
@@ -2986,12 +3072,14 @@ export async function runComfyuiMattingBatch(
               sourceArtifactIds: [artifactId],
               printId: source.printId,
               ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+              ...visibleFilenameOptions(input, filenameIndex),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
           } satisfies GenerateRequest)
           if (response.status !== 'succeeded') {
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图失败', true)
           }
+          outputIndex += response.images.length
           result.succeeded += response.images.length
           result.images.push(
             ...response.images.map((image) => ({
@@ -3114,6 +3202,7 @@ export async function runMixedMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
+      let outputIndex = 0
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3157,6 +3246,7 @@ export async function runMixedMattingBatch(
           const prompt =
             input.prompt?.trim() ||
             'Convert the black and white mask to alpha and composite it with the original print.'
+          const filenameIndex = outputIndex
           emitComfyuiRequestLog(debug, {
             ...input,
             prompt,
@@ -3176,6 +3266,7 @@ export async function runMixedMattingBatch(
               sourceArtifactIds: [artifactId],
               printId: source.printId,
               ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
+              ...visibleFilenameOptions(input, filenameIndex),
               workflowCategory: 'matting-mixed',
               artifactProvider: 'grsai+comfyui-mask',
               maskSkillId: skill.id,
@@ -3195,6 +3286,7 @@ export async function runMixedMattingBatch(
           if (response.status !== 'succeeded') {
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 混合抠图失败', true)
           }
+          outputIndex += response.images.length
           result.succeeded += response.images.length
           result.images.push(
             ...response.images.map((image) => ({
@@ -3303,6 +3395,7 @@ export async function runComfyuiTxt2imgBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
       const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
       const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
+      let outputIndex = 0
 
       await Promise.all(
         prompts.map((prompt, index) =>
@@ -3323,6 +3416,8 @@ export async function runComfyuiTxt2imgBatch(
                 width,
                 height,
               })
+              const filenameIndex = outputIndex
+              outputIndex += 1
               const response = await adapter.generate({
                 capability: 'txt2img',
                 prompt,
@@ -3335,6 +3430,9 @@ export async function runComfyuiTxt2imgBatch(
                   taskId,
                   width,
                   height,
+                  filenameIndex,
+                  filenamePrefix: input.filenamePrefix,
+                  filenameSeparator: input.filenameSeparator,
                   ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
                 },
               } satisfies GenerateRequest)
@@ -3443,6 +3541,7 @@ export async function runComfyuiImg2imgBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
+      let outputIndex = 0
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3453,6 +3552,7 @@ export async function runComfyuiImg2imgBatch(
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
           const prompt = input.prompt?.trim() ?? ''
           const preserveWorkflowPrompt = prompt.length === 0
+          const filenameIndex = outputIndex
           emitComfyuiRequestLog(debug, {
             ...input,
             prompt,
@@ -3474,6 +3574,7 @@ export async function runComfyuiImg2imgBatch(
               printId: source.printId,
               width: sizePx.width,
               height: sizePx.height,
+              ...visibleFilenameOptions(input, filenameIndex),
               ...(preserveWorkflowPrompt ? { preserveWorkflowPrompt: true } : {}),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
@@ -3481,6 +3582,7 @@ export async function runComfyuiImg2imgBatch(
           if (response.status !== 'succeeded') {
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 图生图失败', true)
           }
+          outputIndex += response.images.length
           result.succeeded += response.images.length
           result.images.push(
             ...response.images.map((image) => ({

@@ -44,13 +44,15 @@
 
 ```
 02-印花工作区/
-├─ 文生图/{任务名}/{印花ID}.png
-├─ 图生图/{任务名}/{印花ID}_v1.png ({印花ID}_v2.png ...)
-├─ 提取/{任务名}/{印花ID}.png
-└─ 抠图/{任务名}/{印花ID}.png         ← 抠图 / 提取后抠图的最终透明底图
+├─ 文生图/{任务名}/{用户可见文件名}.png
+├─ 图生图/{任务名}/{用户可见文件名}.png
+├─ 提取/{任务名}/{用户可见文件名}.png
+└─ 抠图/{任务名}/{用户可见文件名}.png  ← 抠图 / 提取后抠图的最终透明底图
 ```
 
-能力目录下按任务建子文件夹，避免多次运行的图片混在一起。文件名带印花 ID + 版本号。**目录只放最终成品图，中间产物（如黑白遮罩）走 TempFileManager 临时区**。
+能力目录下按任务建子文件夹，避免多次运行的图片混在一起。用户未填写图片名前缀时，沿用默认命名逻辑（通常以 `pri_xxx` 印花 ID 为文件名基础）。用户填写图片名前缀时，本次任务输出文件名使用 `{清洗后的前缀}{清洗后的分隔符}{四位序号}.{原扩展名}`，序号从 `0001` 开始，仅在本次启动内递增。**目录只放最终成品图，中间产物（如黑白遮罩）走 TempFileManager 临时区**。
+
+文件名自定义只影响用户可见文件名、展示名和 artifact 的 `file_path`，不改变数据库内部印花 ID。每张最终印花仍必须生成全局唯一 `print_id = pri_xxx`，不得用用户可见文件名替代 `print_id`。前缀和分隔符必须清洗 Windows 非法字符 `< > : " / \ | ? *`、控制字符、结尾空格和结尾点；清洗后前缀为空时视为未填写，回退默认命名逻辑。同一任务内目标文件已存在时不能覆盖，必须报明确错误。
 
 ### 1.4 完整任务调用边界
 
@@ -62,8 +64,8 @@
 - `existing_prints` 兼容来源：跳过生图，直接扫描已有印花文件夹。
 - 抠图是完整任务中的可选 step；局部印花默认开启，满印默认关闭。
 
-完整任务首版不新增生图 provider，不改变各能力目录的输出规则。完整任务在进入 PS 前会额外创建
-`02-印花工作区/等待套版/{runId}/`，把最终可套版印花复制为按 **印花货号** 命名的图片副本；
+完整任务首版不新增生图 provider。完整任务里的 **印花货号** 作为本次任务的用户可见图片名前缀，并按同一 `{前缀}{分隔符}{四位序号}.{ext}` 规则影响完整任务内生图、提取、抠图等最终印花产物。完整任务在进入 PS 前会额外创建
+`02-印花工作区/等待套版/{runId}/`，把最终可套版印花复制为同一用户可见命名规则的图片副本；
 这一步不回写原始印花 ID，也不改动生图模块已登记的 artifact。
 完整任务进度会把生图、提取和抠图 runner 返回的产物转成阶段化 `result_sections`，
 供完整任务页下方结果区展示；旧的 `preview_images` 字段仅作为兼容字段保留，不再作为 UI 扩展主入口。
@@ -307,6 +309,58 @@ interface SkillVariable {
 
 提取 Skill 不走百炼提示词生成，也不要求 JSON。客户端把用户选中的提取 Skill `system_prompt` 直接作为每张源图的提取 prompt，Grsai 和 ComfyUI 共用同一组提取 Skill。
 
+### 3.3 百炼提示词生成输入格式
+
+文生图和图生图在调用百炼生成提示词时，客户端必须把前端输入统一整理成编号结构，再作为 `user` 消息发送给模型。云端 Skill 仍只提供 `systemPrompt`，不承担前端字段拼接。
+
+文生图发送给百炼文本模型的 `user` 文本格式：
+
+```
+1. 印花模式：局部 | 满印
+2. 本次生成多少组提示词：{本批数量}
+3. 其他需求：{用户填写的新图要求；为空时为“无额外需求”}
+
+{印花模式强约束}
+
+本批必须生成 {本批数量} 条 prompts / {本批数量} 组提示词；prompts 数组长度必须等于 {本批数量}，不能少于 {本批数量}。
+```
+
+图生图发送给百炼视觉模型的 `user` 内容包含参考图和文本：
+
+```
+content: [
+  { type: 'image_url', image_url: { url: 'data:image/...;base64,...' } },
+  {
+    type: 'text',
+    text: `1. 印花模式：局部 | 满印
+2. 参考模式：构图 | 风格 | 构图+风格
+3. 本次生成多少组提示词：{本批数量}
+4. 其他需求：{用户填写的新图要求；为空时为“无额外需求”}
+5. 对应发送的参考图：已随本消息附带 {参考图数量} 张参考图
+
+{印花模式强约束}
+
+本批必须生成 {本批数量} 条 prompts / {本批数量} 组提示词；prompts 数组长度必须等于 {本批数量}，不能少于 {本批数量}。`
+  }
+]
+```
+
+印花模式强约束由客户端根据 `局部 / 满印` 追加：
+
+- 局部：必须生成独立局部印花，单个主体或紧凑组合，干净白色背景，主体居中且边缘留白；不要做成满印、重复平铺或整幅场景。
+- 满印：必须生成满印印花，图案铺满整个画面，适合连续平铺或全幅印刷；不要生成白底居中的单个独立主体或局部胸前小图。
+
+图生图参考模式由前端按钮映射，不把英文内部 instruction 原文作为主要输入发送给模型：
+
+| 前端按钮 | 发送给百炼的参考模式 |
+|---|---|
+| 参考构图 | `构图` |
+| 参考风格 | `风格` |
+| 构图+风格 | `构图+风格` |
+| 自己写 | 不调用百炼提示词生成 |
+
+“自己写”模式保持直接解析用户手写提示词，不调用百炼生成提示词。
+
 ```ts
 // 通用解析器
 function parsePrompts(text: string, count: number): string[] {
@@ -317,7 +371,7 @@ function parsePrompts(text: string, count: number): string[] {
 }
 ```
 
-### 3.3 提示词批量拆分
+### 3.4 提示词批量拆分
 
 百炼只负责给文生图和图生图写提示词，不参与最终生图。客户端负责把用户要求拆成批次并并发调用：
 
@@ -336,7 +390,7 @@ const model = 'qwen3.6-flash'
 - 客户端按 `100 条/批` 拆分，例如 1000 条 = 10 批。
 - 10 批并发发送给百炼；单批 10 分钟不返回则视为超时并重试。
 - 每批返回后单独解析为 100 条提示词，最后按批次顺序合并成 1000 条进入提示词审稿。
-- 程序不在 Skill 之外额外强加业务内容，只负责批次拆分、超时、重试和结果解析。
+- 程序在 Skill 之外只追加 §3.3 的结构化业务输入、印花模式强约束和本批数量强约束，不追加其他隐性业务内容。
 - 提取能力不走本节的批量提示词生成；提取是一张源图对应一次 provider 运行。
 
 兼容兜底解析：
@@ -379,7 +433,7 @@ function parsePrompts(text: string, count: number): string[] {
 }
 ```
 
-### 3.4 Skill 在云端的派发
+### 3.5 Skill 在云端的派发
 
 ```
 GET /api/skills?module=generation&category=txt2img → [PaidSkill]
@@ -472,7 +526,8 @@ GET /api/skills/{id}                                → PaidSkill (full)
 
 ```
 [AI 模式]
-  用户填变量 → 软件拉 skill → 注入变量到 systemPrompt → 调阿里云百炼
+  用户填印花类型、数量和印花要求 → 软件拉 skill → 注入变量到 systemPrompt
+    → 按 §3.3 结构化 user 输入 → 调阿里云百炼
     ↓
   LLM 返回 JSON：{ "prompts": [{ "index": 1, "prompt": "..." }] }
     ↓
@@ -527,6 +582,8 @@ GET /api/skills/{id}                                → PaidSkill (full)
 | 自己写 | - | ❌ | 跳过 LLM，仍可选择是否把参考图传给生图模型 |
 
 UI：4 个按钮。原“纯文字”选项已删除；纯文字需求应使用文生图 Tab。
+
+智能生成提示词时，参考构图 / 参考风格 / 构图+风格都会调用百炼视觉模型。客户端按 §3.3 发送结构化输入和参考图；自己写模式跳过百炼，只把用户手写提示词解析到审稿列表。
 
 ### 5.2 参考图传递
 
@@ -975,7 +1032,8 @@ CREATE TABLE prints (
 --   skill_id, skill_version
 --   source_artifact_ids = JSON 数组（图生图/提取/抠图的来源）
 --   prompt_snapshot
---   file_path = 02-印花工作区/{能力目录}/{任务名}/{印花ID}.png
+--   file_path = 02-印花工作区/{能力目录}/{任务名}/{用户可见文件名}.png
+--   id/print_id 仍为 pri_xxx；用户可见文件名不得替代内部印花 ID
 
 CREATE TABLE comfyui_instances (
   id                  INTEGER PRIMARY KEY CHECK (id = 1),  -- 默认云机记录，不是全部实例列表
@@ -1031,15 +1089,17 @@ CREATE TABLE comfyui_instances (
                                           model,
                                           aspectRatio,
                                           referenceImages?,
-                                          concurrency
+                                          concurrency,
+                                          filenamePrefix?,
+                                          filenameSeparator?
                                         } → TaskId
-'generation:run-comfyui-txt2img'      → { prompts, workflowId, workflowVersion?, width, height, concurrency, instanceUuid? } → TaskId
-'generation:run-extract'              → { sourceImagePaths, skillId, model, aspectRatio, concurrency } → TaskId
-'generation:run-comfyui-img2img'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, instanceUuid? } → TaskId
-'generation:run-comfyui-extract'      → { sourceImagePaths, workflowId, workflowVersion?, skillId, skillVersion?, instanceUuid? } → TaskId
+'generation:run-comfyui-txt2img'      → { prompts, workflowId, workflowVersion?, width, height, concurrency, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
+'generation:run-extract'              → { sourceImagePaths, skillId, model, aspectRatio, concurrency, filenamePrefix?, filenameSeparator? } → TaskId
+'generation:run-comfyui-img2img'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
+'generation:run-comfyui-extract'      → { sourceImagePaths, workflowId, workflowVersion?, skillId, skillVersion?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:run-comfyui-extract-matting'
-                                      → { sourceImagePaths, extractWorkflowId, mattingWorkflowId, skillId, skillVersion?, instanceUuid? } → TaskId
-'generation:run-comfyui-matting'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, instanceUuid? } → TaskId
+                                      → { sourceImagePaths, extractWorkflowId, mattingWorkflowId, skillId, skillVersion?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
+'generation:run-comfyui-matting'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:list-comfyui-mixed-matting-workflows'
                                       → ComfyuiWorkflowSummary[] where category='matting-mixed'
 'generation:run-mixed-matting'        → {
@@ -1051,6 +1111,8 @@ CREATE TABLE comfyui_instances (
                                           maskModel?,
                                           prompt?,
                                           instanceUuid?,
+                                          filenamePrefix?,
+                                          filenameSeparator?,
                                         } → TaskId
 
 // 完成事件 result 带 diagnosticsLogPath，可在 UI 结果区展示

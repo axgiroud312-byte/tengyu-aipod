@@ -172,6 +172,7 @@ export interface PipelineTitleConfig {
 export interface PipelineRunConfig {
   name?: string
   printSkuCode?: string
+  filenameSeparator?: string
   printMode: PipelinePrintMode
   source: PipelineSourceConfig
   matting: PipelineMattingConfig

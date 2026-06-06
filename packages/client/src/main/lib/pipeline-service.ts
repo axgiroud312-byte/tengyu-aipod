@@ -27,7 +27,6 @@ import {
   type PipelineStepRecord,
   type PipelineStepStatus,
   type PipelineTaskEvent,
-  SkuCodeSchema,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { BrowserWindow, ipcMain } from 'electron'
@@ -56,6 +55,11 @@ import { shouldPipelineDetectionAllow } from './pipeline-policy'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 import { type TitleBatchResult, titleService } from './title-service'
+import {
+  assertTargetDoesNotExist,
+  nextVisibleImageName,
+  normalizedVisibleImageNaming,
+} from './user-visible-filename'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
@@ -85,6 +89,11 @@ type PipelineImage = {
   path: string
   artifactId?: string
   printId?: string
+}
+
+type PipelineVisibleFilenameFields = {
+  filenamePrefix?: string
+  filenameSeparator?: string
 }
 
 type ActivePipelineRun = {
@@ -188,7 +197,8 @@ const sourceSchema = z.discriminatedUnion('mode', [
 
 const pipelineRunConfigBaseSchema = z.object({
   name: z.string().optional(),
-  printSkuCode: SkuCodeSchema.optional(),
+  printSkuCode: z.string().optional(),
+  filenameSeparator: z.string().optional(),
   printMode: z.enum(['local', 'full']),
   source: sourceSchema,
   matting: z.object({
@@ -274,10 +284,15 @@ const pipelineRunConfigSchema = pipelineRunConfigBaseSchema.superRefine((config,
   if (config.photoshop.enabled === false) {
     return
   }
-  if (!config.printSkuCode) {
+  if (
+    !normalizedVisibleImageNaming({
+      prefix: config.printSkuCode,
+      separator: config.filenameSeparator ?? '-',
+    })
+  ) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
-      message: '启用 PS 套版时必须填写印花货号',
+      message: '启用 PS 套版时必须填写可用的印花货号前缀',
       path: ['printSkuCode'],
     })
   }
@@ -382,13 +397,6 @@ function safePathSegment(value: string) {
 function imageFileExtension(path: string) {
   const extension = extname(path).toLowerCase()
   return /\.(?:jpe?g|png|webp)$/i.test(extension) ? extension : '.png'
-}
-
-function printSkuName(prefix: string, index: number, total: number) {
-  if (total === 1) {
-    return prefix
-  }
-  return `${prefix}-${String(index + 1).padStart(2, '0')}`
 }
 
 function naturalCompare(left: string, right: string) {
@@ -616,19 +624,14 @@ async function preparePhotoshopPrints(
   runId: string,
   prints: PipelineImage[],
   printSkuCode: string | undefined,
+  filenameSeparator: string | undefined,
 ): Promise<PipelineImage[]> {
-  const prefix = printSkuCode?.trim()
-  if (!prefix) {
+  const naming = normalizedVisibleImageNaming({
+    prefix: printSkuCode,
+    separator: filenameSeparator ?? '-',
+  })
+  if (!naming) {
     return prints
-  }
-  const parsed = SkuCodeSchema.safeParse(prefix)
-  if (!parsed.success) {
-    throw new AppErrorClass(
-      'INVALID_INPUT',
-      '印花货号只能使用英文、数字、短横线和下划线，长度 1-60',
-      false,
-      { printSkuCode },
-    )
   }
 
   const waitingFolder = join(
@@ -641,10 +644,24 @@ async function preparePhotoshopPrints(
 
   return Promise.all(
     prints.map(async (image, index) => {
-      const printName = printSkuName(parsed.data, index, prints.length)
-      const targetPath = join(waitingFolder, `${printName}${imageFileExtension(image.path)}`)
+      const filename = nextVisibleImageName({
+        ...naming,
+        index,
+        ext: imageFileExtension(image.path),
+      })
+      if (!filename) {
+        throw new AppErrorClass('INVALID_INPUT', '印花货号清洗后为空', false, {
+          printSkuCode,
+        })
+      }
+      const targetPath = join(waitingFolder, filename)
+      await assertTargetDoesNotExist(targetPath)
       await copyFile(image.path, targetPath)
-      return { path: targetPath }
+      return {
+        path: targetPath,
+        ...(image.artifactId ? { artifactId: image.artifactId } : {}),
+        ...(image.printId ? { printId: image.printId } : {}),
+      }
     }),
   )
 }
@@ -668,10 +685,28 @@ function parsePipelineRunConfig(input: unknown): PipelineRunConfig {
 }
 
 function printSkuLockKey(config: PipelineRunConfig) {
-  if (config.photoshop.enabled === false || !config.printSkuCode) {
+  if (config.photoshop.enabled === false) {
     return null
   }
-  return config.printSkuCode.trim().toLowerCase()
+  const naming = normalizedVisibleImageNaming({
+    prefix: config.printSkuCode,
+    separator: config.filenameSeparator ?? '-',
+  })
+  return naming ? `${naming.prefix}${naming.separator}`.toLowerCase() : null
+}
+
+function pipelineVisibleFilenameFields(config: PipelineRunConfig): PipelineVisibleFilenameFields {
+  const naming = normalizedVisibleImageNaming({
+    prefix: config.printSkuCode,
+    separator: config.filenameSeparator ?? '-',
+  })
+  if (!naming) {
+    return {}
+  }
+  return {
+    filenamePrefix: naming.prefix,
+    filenameSeparator: naming.separator,
+  }
 }
 
 function runConfigSourceHasReferences(
@@ -1055,11 +1090,20 @@ export class PipelineService {
             runConfig.source,
             sourceImages.extractSources,
             stats,
+            pipelineVisibleFilenameFields(runConfig),
           )
         }
 
         if (runConfig.matting.enabled) {
-          prints = await this.runMattingStep(db, active, runId, runConfig.matting, prints, stats)
+          prints = await this.runMattingStep(
+            db,
+            active,
+            runId,
+            runConfig.matting,
+            prints,
+            stats,
+            pipelineVisibleFilenameFields(runConfig),
+          )
         } else {
           this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', prints.length)
         }
@@ -1771,6 +1815,7 @@ export class PipelineService {
           aspectRatio: source.grsai.aspectRatio,
           concurrency: source.grsai.concurrency ?? 3,
           taskId: `${runId}-txt2img`,
+          ...pipelineVisibleFilenameFields(config),
           ...grsaiOptionalFields(source.grsai),
         },
         {
@@ -1823,6 +1868,7 @@ export class PipelineService {
         concurrency: source.grsai.concurrency ?? 3,
         taskId: `${runId}-img2img`,
         ...(references?.length ? { referenceImages: references } : {}),
+        ...pipelineVisibleFilenameFields(config),
         ...grsaiOptionalFields(source.grsai),
       },
       {
@@ -1846,6 +1892,7 @@ export class PipelineService {
     source: PipelineSourceConfig,
     sourceImages: PipelineImage[],
     stats: PipelineRunStats,
+    visibleFilenameFields: PipelineVisibleFilenameFields,
   ) {
     if (source.mode !== 'collection') {
       return []
@@ -1873,6 +1920,7 @@ export class PipelineService {
           runId,
           source.extract,
           sourceImages,
+          visibleFilenameFields,
           emitMessage,
           (images, total, failed) =>
             this.updateGenerationPreviewImages(
@@ -1914,6 +1962,7 @@ export class PipelineService {
     runId: string,
     config: PipelineExtractConfig,
     sourceImages: PipelineImage[],
+    visibleFilenameFields: PipelineVisibleFilenameFields,
     emitMessage: (message: string) => void,
     emitPreviewImages: (images: GenerationRunImage[], total: number, failed: number) => void,
   ): Promise<GenerationRunResult> {
@@ -1932,6 +1981,7 @@ export class PipelineService {
           taskId: `${runId}-extract`,
           ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
           ...(config.variables ? { variables: config.variables } : {}),
+          ...visibleFilenameFields,
           ...grsaiOptionalFields(config.grsai),
         },
         {
@@ -1954,6 +2004,7 @@ export class PipelineService {
         taskId: `${runId}-extract`,
         ...(config.skillId ? { skillId: config.skillId } : {}),
         ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
+        ...visibleFilenameFields,
         ...comfyuiOptionalFields(config.comfyui),
       },
       {
@@ -1974,6 +2025,7 @@ export class PipelineService {
     config: PipelineMattingConfig,
     prints: PipelineImage[],
     stats: PipelineRunStats,
+    visibleFilenameFields: PipelineVisibleFilenameFields,
   ) {
     return this.executeStep(db, active, {
       runId,
@@ -2005,6 +2057,7 @@ export class PipelineService {
               sourceImagePaths,
               workflowId: config.workflowId,
               taskId: `${runId}-matting`,
+              ...visibleFilenameFields,
               ...mattingOptionalFields(config),
             },
             {
@@ -2035,6 +2088,7 @@ export class PipelineService {
               sourceImagePaths,
               workflowId: config.workflowId,
               taskId: `${runId}-matting`,
+              ...visibleFilenameFields,
               ...mattingOptionalFields(config),
             },
             {
@@ -2257,6 +2311,7 @@ export class PipelineService {
             runId,
             prints,
             config.printSkuCode,
+            config.filenameSeparator,
           )
           emitMessage('正在等待 Photoshop 空闲')
           const result = await this.photoshopMutex.runExclusive(async () => {

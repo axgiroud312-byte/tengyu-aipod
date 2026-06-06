@@ -434,6 +434,11 @@ describe('DetectionService', () => {
     await expect(
       stat(join(workbenchRoot, '03-检测工作区', 'task-detection', '高风险')),
     ).resolves.toBeTruthy()
+    expect(result.results.map((item) => item.status === 'success' && item.outputPath)).toEqual([
+      join(workbenchRoot, '03-检测工作区', 'task-detection', '无风险', 'print-a.png'),
+      join(workbenchRoot, '03-检测工作区', 'task-detection', '疑似', 'print-b.png'),
+      join(workbenchRoot, '03-检测工作区', 'task-detection', '高风险', 'print-c.png'),
+    ])
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'task-detection', processed: 3, succeeded: 3 }),
     )

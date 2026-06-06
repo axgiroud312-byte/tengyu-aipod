@@ -29,6 +29,7 @@ import {
   SharpPreprocessPool,
 } from './preprocess-pool'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { assertTargetDoesNotExist } from './user-visible-filename'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -501,12 +502,13 @@ function detectionOutputPath(
   imagePath: string,
 ) {
   const ext = extname(imagePath).toLowerCase() || '.jpg'
+  const sourceName = basename(imagePath) || `${printId}${ext}`
   return join(
     workbenchRoot,
     WORKBENCH_DIRECTORIES.detection,
     safePathSegment(taskId),
     RISK_OUTPUT_FOLDERS[riskLevel],
-    `${printId}${ext}`,
+    sourceName,
   )
 }
 
@@ -1705,6 +1707,7 @@ export class DetectionService {
         ),
         { recursive: true },
       )
+      await assertTargetDoesNotExist(outputPath)
       await copyFile(imagePath, outputPath)
       registerDetectionResult(db, {
         taskId: input.taskId,

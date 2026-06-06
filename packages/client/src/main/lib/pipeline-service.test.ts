@@ -456,21 +456,55 @@ describe('PipelineService', () => {
       WORKBENCH_DIRECTORIES.generation,
       '等待套版',
       'run-print-sku',
-      'TY-001.png',
+      'TY-001-0001.png',
     )
     await expect(readFile(waitingPrintPath, 'utf8')).resolves.toBe('image')
     expect(mocks.runBatch.mock.calls[0]?.[0]).toEqual([
       {
-        id: 'TY-001',
+        id: 'TY-001-0001',
         file_path: waitingPrintPath,
       },
     ])
     await expect(mocks.runBatch.mock.results[0]?.value).resolves.toMatchObject({
       outputs: [
-        join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, 'shirt', 'TY-001', '01.jpg'),
+        join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, 'shirt', 'TY-001-0001', '01.jpg'),
       ],
-      result_groups: [expect.objectContaining({ sku_folder: 'TY-001' })],
+      result_groups: [expect.objectContaining({ sku_folder: 'TY-001-0001' })],
     })
+  })
+
+  it('uses the configured filename separator and four digit sequence for multiple waiting Photoshop prints', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing-1.png'))
+    await createPrint(join(printFolder, 'existing-2.png'))
+
+    const service = new PipelineService()
+    await service.runPipeline('run-print-sku-multiple', {
+      ...baseConfig(printFolder),
+      printSkuCode: 'GYX',
+      filenameSeparator: '_',
+    })
+
+    const firstWaitingPrintPath = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      '等待套版',
+      'run-print-sku-multiple',
+      'GYX_0001.png',
+    )
+    const secondWaitingPrintPath = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      '等待套版',
+      'run-print-sku-multiple',
+      'GYX_0002.png',
+    )
+    await expect(readFile(firstWaitingPrintPath, 'utf8')).resolves.toBe('image')
+    await expect(readFile(secondWaitingPrintPath, 'utf8')).resolves.toBe('image')
+    expect(mocks.runBatch.mock.calls[0]?.[0]).toEqual([
+      { id: 'GYX_0001', file_path: firstWaitingPrintPath },
+      { id: 'GYX_0002', file_path: secondWaitingPrintPath },
+    ])
   })
 
   it('rejects Photoshop runs without a print sku code before starting work', async () => {
@@ -1483,7 +1517,7 @@ describe('PipelineService', () => {
     ).toThrow('完整任务参数无效')
   })
 
-  it('rejects invalid print sku codes at the IPC schema boundary', () => {
+  it('rejects print sku codes that are empty after filename sanitization at the IPC schema boundary', () => {
     registerPipelineIpc()
     const handler = mocks.ipcHandlers.get('pipeline:run')
     if (!handler) {
@@ -1495,7 +1529,7 @@ describe('PipelineService', () => {
         {},
         {
           ...baseConfig('/prints'),
-          printSkuCode: '印花 1',
+          printSkuCode: '\u0001 . ',
         },
       ),
     ).toThrow('完整任务参数无效')
