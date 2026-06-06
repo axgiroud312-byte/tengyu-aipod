@@ -1,9 +1,15 @@
 import { extname } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { net, protocol } from 'electron'
+import {
+  allowLocalImagePath,
+  clearAllowedLocalImagePaths,
+  isAllowedLocalImagePath,
+} from './local-image-access'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 export const LOCAL_IMAGE_PROTOCOL = 'tengyu-local-image'
+export { allowLocalImagePath, clearAllowedLocalImagePaths }
 
 const ALLOWED_IMAGE_EXTENSIONS = new Set(['.jpg', '.jpeg', '.png', '.webp'])
 
@@ -49,11 +55,15 @@ export async function resolveLocalImageRequestPath(
     if (!config.workbench_root) {
       return null
     }
-    await assertPathInsideWorkbench(config.workbench_root, filePath, {
-      domain: 'local-image',
-      label: '本地图片路径',
-    })
-    return filePath
+    try {
+      await assertPathInsideWorkbench(config.workbench_root, filePath, {
+        domain: 'local-image',
+        label: '本地图片路径',
+      })
+      return filePath
+    } catch {
+      return (await isAllowedLocalImagePath(filePath)) ? filePath : null
+    }
   } catch {
     return null
   }

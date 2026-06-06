@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { LOCAL_IMAGE_PROTOCOL, resolveLocalImageRequestPath } from './local-image-protocol'
+import {
+  LOCAL_IMAGE_PROTOCOL,
+  allowLocalImagePath,
+  clearAllowedLocalImagePaths,
+  resolveLocalImageRequestPath,
+} from './local-image-protocol'
 
 vi.mock('electron', () => ({
   net: {
@@ -18,6 +23,7 @@ vi.mock('electron', () => ({
 let tempRoot = ''
 
 afterEach(async () => {
+  clearAllowedLocalImagePaths()
   if (tempRoot) {
     await rm(tempRoot, { recursive: true, force: true })
   }
@@ -27,6 +33,18 @@ afterEach(async () => {
 async function createFile(path: string) {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, 'image')
+}
+
+async function tryCreateSymlink(target: string, path: string) {
+  try {
+    await symlink(target, path)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'EPERM') {
+      return false
+    }
+    throw error
+  }
 }
 
 function localImageUrl(path: string) {
@@ -60,6 +78,20 @@ describe('local image protocol', () => {
     ).resolves.toBeNull()
   })
 
+  it('allows explicitly registered external detection input images', async () => {
+    tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-local-image-'))
+    const workbenchRoot = join(tempRoot, 'workbench')
+    const outsideImage = join(tempRoot, 'outside', 'print.png')
+    await createFile(outsideImage)
+    await allowLocalImagePath(outsideImage)
+
+    await expect(
+      resolveLocalImageRequestPath(localImageUrl(outsideImage), {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+      }),
+    ).resolves.toBe(outsideImage)
+  })
+
   it('rejects symlinks that point outside the workbench', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-local-image-'))
     const workbenchRoot = join(tempRoot, 'workbench')
@@ -67,7 +99,9 @@ describe('local image protocol', () => {
     const linkPath = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection, 'linked.png')
     await createFile(outsideImage)
     await mkdir(dirname(linkPath), { recursive: true })
-    await symlink(outsideImage, linkPath)
+    if (!(await tryCreateSymlink(outsideImage, linkPath))) {
+      return
+    }
 
     await expect(
       resolveLocalImageRequestPath(localImageUrl(linkPath), {

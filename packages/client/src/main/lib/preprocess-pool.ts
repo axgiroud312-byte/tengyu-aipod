@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module'
 import { cpus, totalmem } from 'node:os'
 import { Worker } from 'node:worker_threads'
 import { AppErrorClass } from '@tengyu-aipod/shared'
@@ -75,6 +76,8 @@ type PoolWorker = {
   job: QueuedJob | null
 }
 
+const nodeRequire = createRequire(import.meta.url)
+
 export function defaultPreprocessWorkerCount(overwrite?: number) {
   const input = {
     cpuCount: cpus().length,
@@ -137,7 +140,12 @@ export class SharpPreprocessPool {
 
   private createWorker(): PoolWorker {
     const poolWorker: PoolWorker = {
-      worker: new Worker(PREPROCESS_WORKER_SOURCE, { eval: true }),
+      worker: new Worker(PREPROCESS_WORKER_SOURCE, {
+        eval: true,
+        workerData: {
+          sharpModulePath: nodeRequire.resolve('sharp'),
+        },
+      }),
       job: null,
     }
 
@@ -204,8 +212,8 @@ const PREPROCESS_WORKER_SOURCE = String.raw`
 const { createHash } = require('node:crypto')
 const { mkdir, readFile, stat } = require('node:fs/promises')
 const { basename, join } = require('node:path')
-const { parentPort } = require('node:worker_threads')
-const sharp = require('sharp')
+const { parentPort, workerData } = require('node:worker_threads')
+const sharp = require(workerData.sharpModulePath)
 
 parentPort.on('message', async (job) => {
   try {

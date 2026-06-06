@@ -21,6 +21,7 @@ import {
   fileDiagnosticMetadata,
 } from './diagnostic-log-service'
 import { BAILIAN_VISION_MODELS } from './generation-local-config'
+import { allowLocalImagePath } from './local-image-access'
 import {
   PreprocessError,
   type PreprocessFormat,
@@ -653,7 +654,8 @@ async function scanImageFolder(
         continue
       }
       const info = await stat(entryPath)
-      const relativePath = relative(root, entryPath)
+      const relativePath = relative(root, entryPath).replace(/\\/g, '/')
+      await allowLocalImagePath(entryPath)
       images.push({
         id: createHash('sha256').update(entryPath).digest('hex').slice(0, 16),
         path: entryPath,

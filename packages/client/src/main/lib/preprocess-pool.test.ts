@@ -41,6 +41,29 @@ async function transparentPng(width = 6, height = 4) {
 }
 
 describe('SharpPreprocessPool', () => {
+  it('loads sharp when the app process cwd is outside the package folder', async () => {
+    const originalCwd = process.cwd()
+    const outsideCwd = await mkdtemp(join(tmpdir(), 'tengyu-preprocess-cwd-'))
+    process.chdir(outsideCwd)
+    try {
+      const pool = createPool()
+      const source = await transparentPng()
+
+      const result = await pool.process({
+        module: 'detection',
+        taskId: 'cwd-outside-package',
+        workbenchRoot,
+        input: source,
+        inputName: 'transparent.png',
+      })
+
+      expect(result.mimeType).toBe('image/jpeg')
+    } finally {
+      process.chdir(originalCwd)
+      await rm(outsideCwd, { recursive: true, force: true })
+    }
+  })
+
   it('preprocesses buffer input into white-flattened resized JPEG data URLs', async () => {
     const pool = createPool()
     const source = await transparentPng(8, 4)
