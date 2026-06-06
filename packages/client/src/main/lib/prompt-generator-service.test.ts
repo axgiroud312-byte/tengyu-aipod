@@ -357,6 +357,88 @@ describe('PromptGeneratorService', () => {
     expect(userMessages[1]).toContain('铺满整个画面')
   })
 
+  it('sends structured img2img prompt inputs to the vision model', async () => {
+    const visionCompletion = vi.fn().mockResolvedValue({
+      text: '{"prompts":["Prompt A","Prompt B"]}',
+      model: 'qwen3.6-flash',
+      finishReason: 'stop' as const,
+      raw: {} as never,
+    })
+    const service = new PromptGeneratorService()
+
+    await service.generatePrompts(
+      {
+        skill: skill({ systemPrompt: 'Generate JSON prompts.' }),
+        variables: {
+          printMode: '局部',
+          requirement: '生成新的复古花朵',
+          modeInstruction:
+            'Use both layout and art style from the reference image while creating a new motif.',
+        },
+        refImages: [{ base64: 'iVBORw0KGgo=', mime_type: 'image/png' }],
+        count: 2,
+      },
+      {
+        getSecret: async () => 'sk-test',
+        readConfig: async () => ({}),
+        createBailianAdapter: () => ({ chatCompletion: vi.fn(), visionCompletion }),
+      },
+    )
+
+    const message = visionCompletion.mock.calls[0]?.[0].messages[1]
+    const textPart =
+      Array.isArray(message?.content) &&
+      message.content.find(
+        (part: { type?: string; text?: string }) => part.type === 'text',
+      )
+
+    expect(textPart && 'text' in textPart ? textPart.text : '').toContain(
+      [
+        '1. 印花模式：局部',
+        '2. 参考模式：构图+风格',
+        '3. 本次生成多少组提示词：2',
+        '4. 其他需求：生成新的复古花朵',
+        '5. 对应发送的参考图：已随本消息附带 1 张参考图',
+      ].join('\n'),
+    )
+  })
+
+  it('sends structured txt2img prompt inputs without reference fields', async () => {
+    const chatCompletion = vi.fn().mockResolvedValue({
+      text: '{"prompts":["Prompt A","Prompt B"]}',
+      model: 'qwen3.6-flash',
+      finishReason: 'stop' as const,
+      raw: {} as never,
+    })
+    const service = new PromptGeneratorService()
+
+    await service.generatePrompts(
+      {
+        skill: skill({ systemPrompt: 'Generate JSON prompts.' }),
+        variables: {
+          printMode: '满印',
+          requirement: '热带叶子循环图案',
+        },
+        count: 2,
+      },
+      {
+        getSecret: async () => 'sk-test',
+        readConfig: async () => ({}),
+        createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+      },
+    )
+
+    const userMessage = chatCompletion.mock.calls[0]?.[0].messages[1]
+    const content = typeof userMessage?.content === 'string' ? userMessage.content : ''
+    expect(content).toContain(
+      ['1. 印花模式：满印', '2. 本次生成多少组提示词：2', '3. 其他需求：热带叶子循环图案'].join(
+        '\n',
+      ),
+    )
+    expect(content).not.toContain('参考模式')
+    expect(content).not.toContain('对应发送的参考图')
+  })
+
   it('splits 1000 prompts into ten 100-prompt model calls', async () => {
     const chatCompletion = vi.fn(async (request) => {
       const systemMessage = request.messages[0]

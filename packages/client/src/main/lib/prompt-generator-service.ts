@@ -91,7 +91,13 @@ export class PromptGeneratorService {
             skill,
             { ...input.variables, count: chunkCount },
             input.refImages,
-            withPromptRunInstructions(input.userMessage, chunkCount, input.variables),
+            withPromptRunInstructions(
+              input.userMessage,
+              chunkCount,
+              input.variables,
+              input.refImages?.length ?? 0,
+            ),
+            { includeVariableSummary: false },
           )
           const request = {
             model,
@@ -303,8 +309,10 @@ export function createPromptMessages(
   variables: Record<string, unknown> = {},
   refImages: PromptReferenceImage[] = [],
   userMessage = '请按要求生成印花提示词。',
+  options: { includeVariableSummary?: boolean } = {},
 ): ChatCompletionMessageParam[] {
-  const variablePrompt = renderVariables(variables)
+  const includeVariableSummary = options.includeVariableSummary ?? true
+  const variablePrompt = includeVariableSummary ? renderVariables(variables) : ''
   const text = variablePrompt ? `${userMessage}\n\n变量：\n${variablePrompt}` : userMessage
 
   if (refImages.length === 0) {
@@ -333,14 +341,94 @@ function withPromptRunInstructions(
   userMessage: string | undefined,
   count: number,
   variables: Record<string, unknown> | undefined,
+  refImageCount: number,
 ) {
   return [
-    userMessage,
+    structuredPromptInput(userMessage, count, variables, refImageCount),
     printModeInstruction(variables?.printMode),
     `本批必须生成 ${count} 条 prompts / ${count} 组提示词；prompts 数组长度必须等于 ${count}，不能少于 ${count}。`,
   ]
     .filter(Boolean)
     .join('\n\n')
+}
+
+function structuredPromptInput(
+  userMessage: string | undefined,
+  count: number,
+  variables: Record<string, unknown> | undefined,
+  refImageCount: number,
+) {
+  const referenceMode = referenceModeLabel(variables?.modeInstruction)
+  const hasReferenceMode = Boolean(referenceMode || refImageCount > 0)
+  const requirement = promptRequirement(userMessage, variables)
+
+  if (!hasReferenceMode) {
+    return [
+      `1. 印花模式：${printModeLabel(variables?.printMode)}`,
+      `2. 本次生成多少组提示词：${count}`,
+      `3. 其他需求：${requirement}`,
+    ].join('\n')
+  }
+
+  return [
+    `1. 印花模式：${printModeLabel(variables?.printMode)}`,
+    `2. 参考模式：${referenceMode || '未指定'}`,
+    `3. 本次生成多少组提示词：${count}`,
+    `4. 其他需求：${requirement}`,
+    refImageCount > 0
+      ? `5. 对应发送的参考图：已随本消息附带 ${refImageCount} 张参考图`
+      : '',
+  ]
+    .filter(Boolean)
+    .join('\n')
+}
+
+function printModeLabel(printMode: unknown) {
+  if (printMode === '满印' || printMode === 'full') {
+    return '满印'
+  }
+  return '局部'
+}
+
+function promptRequirement(
+  userMessage: string | undefined,
+  variables: Record<string, unknown> | undefined,
+) {
+  const requirement = typeof variables?.requirement === 'string' ? variables.requirement.trim() : ''
+  if (requirement) {
+    return requirement
+  }
+
+  const hasStructuredVariables = Boolean(
+    variables &&
+      ('printMode' in variables || 'requirement' in variables || 'modeInstruction' in variables),
+  )
+  const fallback = hasStructuredVariables ? '' : userMessage?.trim()
+  return fallback || '无额外需求'
+}
+
+function referenceModeLabel(modeInstruction: unknown) {
+  if (typeof modeInstruction !== 'string') {
+    return ''
+  }
+
+  const normalized = modeInstruction.trim().toLowerCase()
+  if (!normalized) {
+    return ''
+  }
+
+  const hasLayout = normalized.includes('layout') || normalized.includes('构图')
+  const hasStyle = normalized.includes('style') || normalized.includes('风格')
+  if (hasLayout && hasStyle) {
+    return '构图+风格'
+  }
+  if (hasLayout) {
+    return '构图'
+  }
+  if (hasStyle) {
+    return '风格'
+  }
+  return ''
 }
 
 function printModeInstruction(printMode: unknown) {
