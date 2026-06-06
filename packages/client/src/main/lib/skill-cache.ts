@@ -202,6 +202,7 @@ export class SkillCacheManager {
     const normalizedFilter = normalizeFilter(filter)
     const summaries = await this.fetchSkillSummaries(normalizedFilter)
     await this.saveIndex(summaries)
+    await this.refreshSkillDetails(summaries)
     if (!Object.keys(normalizedFilter).length) {
       await this.cleanupMissingSkillDetails(summaries)
     }
@@ -260,6 +261,15 @@ export class SkillCacheManager {
 
   private async saveSkill(skill: Skill) {
     await writeJson(skillFilePath(await this.rootDir(), skill.id, skill.version), skill)
+  }
+
+  private async refreshSkillDetails(items: SkillSummary[]) {
+    await Promise.all(
+      items.map(async (item) => {
+        const skill = await this.fetchSkill(item.id, item.version)
+        await this.saveSkill(skill)
+      }),
+    )
   }
 
   private async cleanupMissingSkillDetails(items: SkillSummary[]) {

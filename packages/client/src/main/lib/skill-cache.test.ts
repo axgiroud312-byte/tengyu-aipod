@@ -81,6 +81,7 @@ describe('SkillCacheManager', () => {
   it('falls back to local cached summaries while cache is fresh enough', async () => {
     vi.mocked(fetch)
       .mockResolvedValueOnce(okResponse([summary()]))
+      .mockResolvedValueOnce(okResponse(skill()))
       .mockRejectedValue(new Error('offline'))
     const manager = new SkillCacheManager()
 
@@ -89,7 +90,7 @@ describe('SkillCacheManager', () => {
     await expect(manager.listSkills({ module: 'title', platform: 'temu_pop' })).resolves.toEqual([
       summary(),
     ])
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(2)
   })
 
   it('uses generic title fallback from a fresh local index', async () => {
@@ -100,7 +101,19 @@ describe('SkillCacheManager', () => {
       language: 'generic',
       version: '1.0.0',
     })
-    vi.mocked(fetch).mockResolvedValue(okResponse([genericTitle, exactTitle]))
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl.endsWith('/api/skills')) {
+        return okResponse([genericTitle, exactTitle])
+      }
+      if (requestUrl.endsWith('/api/skills/title-generic-generic?version=1.0.0')) {
+        return okResponse(skill(genericTitle))
+      }
+      if (requestUrl.endsWith('/api/skills/title-temu-en?version=3.0.1')) {
+        return okResponse(skill(exactTitle))
+      }
+      throw new Error(`unexpected URL: ${requestUrl}`)
+    })
     const manager = new SkillCacheManager()
 
     await manager.refresh()
@@ -111,7 +124,7 @@ describe('SkillCacheManager', () => {
     await expect(
       manager.listSkills({ module: 'title', platform: 'shein', language: 'de' }),
     ).resolves.toEqual([genericTitle])
-    expect(fetch).toHaveBeenCalledTimes(1)
+    expect(fetch).toHaveBeenCalledTimes(3)
   })
 
   it('fetches and caches skill details by version', async () => {
@@ -183,6 +196,51 @@ describe('SkillCacheManager', () => {
     ).resolves.toContain('Generate local print prompts from server skill.')
   })
 
+  it('overwrites cached skill details from server during refresh', async () => {
+    const generationSummary = summary({
+      id: 'img2img-local-reference',
+      module: 'generation',
+      category: 'img2img-local-reference',
+      platform: null,
+      language: null,
+      version: '1.0.0',
+      recommendedModel: null,
+    })
+    const detailPath = join(
+      workbenchRoot,
+      '.workbench',
+      'cache',
+      'skills',
+      'img2img-local-reference',
+      '1.0.0.json',
+    )
+    await mkdir(join(workbenchRoot, '.workbench', 'cache', 'skills', 'img2img-local-reference'), {
+      recursive: true,
+    })
+    await writeFile(
+      detailPath,
+      JSON.stringify(skill({ ...generationSummary, systemPrompt: 'Old local prompt.' })),
+      'utf8',
+    )
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl.endsWith('/api/skills')) {
+        return okResponse([generationSummary])
+      }
+      if (requestUrl.endsWith('/api/skills/img2img-local-reference?version=1.0.0')) {
+        return okResponse(skill({ ...generationSummary, systemPrompt: 'Fresh server prompt.' }))
+      }
+      throw new Error(`unexpected URL: ${requestUrl}`)
+    })
+    const manager = new SkillCacheManager()
+
+    await manager.refresh()
+
+    await expect(
+      import('node:fs/promises').then(({ readFile }) => readFile(detailPath, 'utf8')),
+    ).resolves.toContain('Fresh server prompt.')
+  })
+
   it('does not use summary cache older than seven days', async () => {
     vi.useFakeTimers()
     vi.setSystemTime(new Date('2026-05-23T00:00:00.000Z'))
@@ -204,7 +262,16 @@ describe('SkillCacheManager', () => {
     await writeFile(join(root, 'txt2img-print-prompt-v3', '3.0.1.json'), '{}', 'utf8')
     await writeFile(join(root, 'title-temu-en', '1.0.0.json'), '{}', 'utf8')
     await writeFile(join(root, 'title-temu-en', '3.0.1.json'), '{}', 'utf8')
-    vi.mocked(fetch).mockResolvedValue(okResponse([summary()]))
+    vi.mocked(fetch).mockImplementation(async (url) => {
+      const requestUrl = String(url)
+      if (requestUrl.endsWith('/api/skills')) {
+        return okResponse([summary()])
+      }
+      if (requestUrl.endsWith('/api/skills/title-temu-en?version=3.0.1')) {
+        return okResponse(skill())
+      }
+      throw new Error(`unexpected URL: ${requestUrl}`)
+    })
     const manager = new SkillCacheManager()
 
     await manager.refresh()
