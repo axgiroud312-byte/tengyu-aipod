@@ -410,7 +410,7 @@ function readFileAsDataUrl(file: File) {
 
 function optionFromSkill(skill: SkillSummary): Option {
   return {
-    key: skill.id,
+    key: skillVersionOptionKey(skill),
     label: `${skillTitle(skill)}${skill.version ? ` · ${skill.version}` : ''}`,
   }
 }
@@ -1067,16 +1067,14 @@ export function FullTaskPage() {
     const pool = filtered.length > 0 ? filtered : generationSkills
     return pool.map(optionFromPromptSkill)
   }, [generationSkills, promptSkillCategory])
+  const selectedExtractSkill = useMemo(() => parseSkillVersionKey(extractSkillId), [extractSkillId])
   const extractSkillOptions = useMemo(() => {
-    if (extractProvider !== 'grsai') {
-      return []
-    }
     const filtered = generationSkills.filter((skill) =>
       skillInCategories(skill, extractSkillCategories),
     )
     const pool = filtered.length > 0 ? filtered : generationSkills
     return pool.map(optionFromSkill)
-  }, [extractProvider, generationSkills])
+  }, [generationSkills])
   const runningInstances = useMemo(
     () => chenyuInstances.filter(isRunningChenyuInstance),
     [chenyuInstances],
@@ -1145,14 +1143,13 @@ export function FullTaskPage() {
       if (!sourceFolder.trim()) {
         issues.push('请先选择采集文件夹')
       }
-      if (extractProvider === 'grsai') {
-        if (extractSkillOptions.length === 0) {
-          issues.push('请先在后台配置提取 Skill')
-        }
-        if (!extractSkillId.trim()) {
-          issues.push('请先选择提取 Skill')
-        }
-      } else {
+      if (extractSkillOptions.length === 0) {
+        issues.push('请先在后台配置提取 Skill')
+      }
+      if (!selectedExtractSkill) {
+        issues.push('请先选择提取 Skill')
+      }
+      if (extractProvider === 'comfyui-chenyu') {
         if (runningInstances.length === 0) {
           issues.push('请先开机晨羽云机')
         }
@@ -1253,7 +1250,6 @@ export function FullTaskPage() {
     return issues
   }, [
     extractProvider,
-    extractSkillId,
     extractSkillOptions.length,
     extractInstanceUuid,
     extractWorkflowId,
@@ -1271,6 +1267,7 @@ export function FullTaskPage() {
     printSkuCode,
     referenceImages.length,
     runningInstances.length,
+    selectedExtractSkill,
     selectedDetectionSkill,
     selectedPromptSkill,
     img2imgComfyuiInstanceUuid,
@@ -1456,8 +1453,8 @@ export function FullTaskPage() {
   }, [promptModel, promptModelOptions, requiresPromptGeneration, setPromptModel])
 
   useEffect(() => {
-    if (sourceMode !== 'collection' || extractProvider !== 'grsai' || extractSkillOptions.length === 0) {
-      if (sourceMode === 'collection' && extractProvider === 'grsai' && extractSkillOptions.length === 0) {
+    if (sourceMode !== 'collection' || extractSkillOptions.length === 0) {
+      if (sourceMode === 'collection' && extractSkillOptions.length === 0) {
         setExtractSkillId('')
       }
       return
@@ -1465,7 +1462,7 @@ export function FullTaskPage() {
     if (!extractSkillOptions.some((item) => item.key === extractSkillId)) {
       setExtractSkillId(extractSkillOptions[0]?.key ?? '')
     }
-  }, [extractProvider, extractSkillId, extractSkillOptions, setExtractSkillId, sourceMode])
+  }, [extractSkillId, extractSkillOptions, setExtractSkillId, sourceMode])
 
   useEffect(() => {
     if (sourceMode !== 'collection' || extractProvider !== 'comfyui-chenyu') {
@@ -1779,11 +1776,26 @@ export function FullTaskPage() {
           extractProvider === 'grsai'
             ? {
                 provider: 'grsai',
-                ...(nonEmpty(extractSkillId) ? { skillId: extractSkillId.trim() } : {}),
+                ...(selectedExtractSkill
+                  ? {
+                      skillId: selectedExtractSkill.id,
+                      ...(selectedExtractSkill.version
+                        ? { skillVersion: selectedExtractSkill.version }
+                        : {}),
+                    }
+                  : {}),
                 grsai,
               }
             : {
                 provider: 'comfyui-chenyu',
+                ...(selectedExtractSkill
+                  ? {
+                      skillId: selectedExtractSkill.id,
+                      ...(selectedExtractSkill.version
+                        ? { skillVersion: selectedExtractSkill.version }
+                        : {}),
+                    }
+                  : {}),
                 comfyui: {
                   workflowId: extractWorkflowId,
                   instanceUuid: extractInstanceUuid,
@@ -2037,8 +2049,8 @@ export function FullTaskPage() {
             <div className="rounded-md border bg-muted/20 p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
-                  <p className="text-sm font-medium text-muted-foreground">印花来源</p>
-                  <h2 className="mt-1 text-lg font-semibold">来源准备</h2>
+                  <p className="text-sm font-medium text-muted-foreground">任务起点</p>
+                  <h2 className="mt-1 text-lg font-semibold">任务起点</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
                     采集+提取、文生图、图生图、已有印花只保留各自需要的设置。
                   </p>
@@ -2091,21 +2103,12 @@ export function FullTaskPage() {
                         ]}
                         value={extractProvider}
                       />
-                      {extractProvider === 'grsai' ? (
-                        <SelectField
-                          label="提取 Skill"
-                          onValueChange={setExtractSkillId}
-                          options={extractSkillOptions}
-                          value={extractSkillId}
-                        />
-                      ) : (
-                        <SelectField
-                          label="晨羽工作流"
-                          onValueChange={setExtractWorkflowId}
-                          options={extractWorkflows}
-                          value={extractWorkflowId}
-                        />
-                      )}
+                      <SelectField
+                        label="提取 Skill"
+                        onValueChange={setExtractSkillId}
+                        options={extractSkillOptions}
+                        value={extractSkillId}
+                      />
                       {extractProvider === 'grsai' ? (
                         <SelectField
                           label="Grsai 模型"
@@ -2118,10 +2121,10 @@ export function FullTaskPage() {
                         />
                       ) : (
                         <SelectField
-                          label="晨羽实例"
-                          onValueChange={setExtractInstanceUuid}
-                          options={runningInstanceOptions}
-                          value={extractInstanceUuid}
+                          label="晨羽工作流"
+                          onValueChange={setExtractWorkflowId}
+                          options={extractWorkflows}
+                          value={extractWorkflowId}
                         />
                       )}
                     </div>
@@ -2149,6 +2152,12 @@ export function FullTaskPage() {
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-3">
+                        <SelectField
+                          label="晨羽实例"
+                          onValueChange={setExtractInstanceUuid}
+                          options={runningInstanceOptions}
+                          value={extractInstanceUuid}
+                        />
                         <Field label="宽">
                           <Input
                             className="tabular-nums"

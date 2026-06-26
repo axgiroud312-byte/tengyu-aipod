@@ -28,8 +28,8 @@ v1 先做 **完整任务最初版**，采用内置固定流程。完整任务不
 ```text
 任务起点
   ├─ collection：从采集目录读取原图并提取（Grsai / 晨羽）
-  ├─ txt2img：Grsai，先由阿里云百炼写提示词
-  ├─ img2img：Grsai
+  ├─ txt2img：Grsai / ComfyUI，先由阿里云百炼写提示词
+  ├─ img2img：Grsai / ComfyUI
   └─ existing_prints：已有印花来源，可从抠图 / 侵权检测 / PS 套版开始
   ↓
 可选抠图
