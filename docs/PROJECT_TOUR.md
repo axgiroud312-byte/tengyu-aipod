@@ -136,7 +136,7 @@ sequenceDiagram
 | 部分 | 文件 |
 |---|---|
 | **主进程业务** | `packages/client/src/main/lib/detection-service.ts` ← 检测编排 + IPC<br/>`detection-config.ts` ← 阈值 / 模型配置<br/>`aliyun-bailian-adapter.ts` ← 阿里百炼 API 适配 |
-| **UI 工作台** | `packages/client/src/renderer/src/components/detection-workbench.tsx`<br/>`detection-settings-panel.tsx` |
+| **UI 工作台** | `packages/client/src/renderer/src/components/detection-workbench.tsx` |
 | **Spec** | `docs/spec/04-detection.md` |
 | **相关归档 task** | `detection-module-service` / `module-ui` / `cost-estimator` / `thresholds` / `promote-to-matting` / `e2e` |
 

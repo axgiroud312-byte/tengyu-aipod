@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import { Slot } from 'radix-ui'
+import { Slot } from '@radix-ui/react-slot'
 import type { ComponentProps, ReactNode } from 'react'
 
 type ButtonVariant = 'default' | 'secondary' | 'outline' | 'ghost'
@@ -25,7 +25,7 @@ export function Button({
   variant = 'default',
   ...props
 }: ButtonProps) {
-  const Comp = asChild ? Slot.Root : 'button'
+  const Comp = asChild ? Slot : 'button'
 
   return (
     <Comp

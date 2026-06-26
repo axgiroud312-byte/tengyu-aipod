@@ -7,10 +7,6 @@ directories:
 files:
   - out/**/*
   - package.json
-  - from: ../../node_modules/util-deprecate
-    to: node_modules/util-deprecate
-  - from: ../../node_modules/string_decoder
-    to: node_modules/string_decoder
   - from: ../../node_modules/safe-buffer
     to: node_modules/safe-buffer
   - from: ../../node_modules/brace-expansion
