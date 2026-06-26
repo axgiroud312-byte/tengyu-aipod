@@ -44,7 +44,7 @@ graph TB
         Main[主进程 业务逻辑<br/>采集/检测/生图/PS/标题/上架]
         Preload[Preload IPC 桥]
         DB[(本地 SQLite<br/>workbench-db)]
-        Keychain[(OS Keychain<br/>加密 API Key)]
+        Keychain[(本地密钥存储<br/>API Key)]
     end
     subgraph Cloud[云端 packages/server]
         Admin[Admin 后台 UI]
@@ -75,7 +75,7 @@ graph TB
     API --> PG
 ```
 
-**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"客户账号授权与提示词控制台"（管理员账号、客户授权、Skill 系统提示词、公告、版本），不碰模型配置、图片和 Key，也不保存 PHP `secret`。用户的 API Key 一律放在自己电脑的钥匙串里，**不上服务器**。
+**用大白话讲一遍**：桌面 app 是工具人（实际干活），服务器是"客户账号授权与提示词控制台"（管理员账号、客户授权、Skill 系统提示词、公告、版本），不碰模型配置、图片和 Key，也不保存 PHP `secret`。用户的 API Key 生产环境走本地密钥存储，开发环境 safeStorage 不可用时允许 plain: 兜底，**不上服务器**。
 
 ---
 
@@ -208,7 +208,7 @@ ComfyUI 路径页面显示运行云机选择卡：运行状态、云机下拉框
 
 | 部分 | 文件 |
 |---|---|
-| **主进程业务** | `packages/client/src/main/lib/customer-auth.ts` ← 旧 PHP 登录 + Next 授权门禁<br/>`packages/client/src/main/lib/server-base-url.ts` ← 客户端后端地址解析（开发态默认云端）<br/>`packages/client/src/main/onboarding.ts` ← 首次设置 + 工作区/API Key 保存<br/>`packages/client/src/main/lib/onboarding-state.ts` ← setup 状态<br/>`keychain.ts` ← OS 钥匙串加密 |
+| **主进程业务** | `packages/client/src/main/lib/customer-auth.ts` ← 旧 PHP 登录 + Next 授权门禁<br/>`packages/client/src/main/lib/server-base-url.ts` ← 客户端后端地址解析（开发态默认云端）<br/>`packages/client/src/main/onboarding.ts` ← 首次设置 + 工作区/API Key 保存<br/>`packages/client/src/main/lib/onboarding-state.ts` ← setup 状态<br/>`keychain.ts` ← 本地密钥存储（生产环境 OS keychain / 开发环境 plain: 兜底） |
 | **后台** | `packages/server/src/app/admin/admins/`（管理员账号管理）<br/>`packages/server/src/app/admin/customers/`（客户账号授权）<br/>`packages/server/src/app/api/customer-auth/`（客户授权校验）<br/>`packages/server/src/lib/php-auth.ts`（旧 PHP 登录态校验封装）<br/>`packages/server/src/app/admin/skills/`（Skill 系统提示词） |
 | **Spec** | `docs/spec/08-server.md` + `docs/spec/09-cross-cutting.md` + `docs/adr/0011-customer-login-via-php-auth.md` |
 
@@ -280,7 +280,7 @@ flowchart LR
 | `detection_result` | 检测历史 |
 | `generation_record` | 生图记录 |
 | `collection_record` | 点击/滚动会话采集记录 + manifest（图池结果不写入该表） |
-| `listing_task` / `listing_stage` | 上架任务 + 12 阶段状态 |
+| `listing_task` / `listing_stage` | 上架任务 + stage 状态 |
 | `ps_job` | PS 套版任务 |
 | `pipeline_runs` / `pipeline_steps` | 完整任务首版运行记录和步骤状态 |
 

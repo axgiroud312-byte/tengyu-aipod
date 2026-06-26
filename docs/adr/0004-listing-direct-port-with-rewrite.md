@@ -57,7 +57,7 @@
 - `page-parser.ts` — 读 DOM 返回 observed_state
 - `action-executor.ts` — 按 parser 输出执行 + 重新 parser 验证 target_state
 - `workflow.ts` — 业务状态机
-- `smoke.ts` — 真实页面验证
+- `*.real.test.ts` — 真实页面验证
 
 ### v1 收窄到 2 个平台
 

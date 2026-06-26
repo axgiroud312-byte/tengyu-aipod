@@ -39,8 +39,8 @@ modules/listing/platforms/dianxiaomi-temu-pop/
 ├─ selectors.ts          ← 静态规则、字段语义、selector 候选定位
 ├─ page-parser.ts        ← 读真实 DOM 返回 observed_state
 ├─ action-executor.ts    ← 按 parser 输出重新定位元素 + 执行动作 + 验证 target_state
-├─ workflow.ts           ← 业务状态机，11 个 stage 顺序推进
-├─ smoke.ts              ← 真实页面验证脚本
+├─ workflow.ts           ← 业务状态机，12 个 stage 顺序推进
+├─ *.real.test.ts        ← 真实页面验证脚本
 └─ evidence/             ← 截图/DOM/日志（运行时产物）
 ```
 
@@ -152,7 +152,7 @@ export async function fillTitle(page: Page, title: string): Promise<void> {
 
 ### 2.4 workflow.ts 职责
 
-业务状态机，11 个 stage 顺序推进：
+业务状态机，12 个 stage 顺序推进：
 
 ```ts
 const STAGES = [

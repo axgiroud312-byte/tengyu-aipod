@@ -106,7 +106,7 @@ interface ComfyuiProvider {
   id: string                          // "comfyui-chenyu"
   name: string
   cloud_service: 'chenyu'             // 当前只支持晨羽
-  api_key_keychain_id: string         // 在 OS keychain 里的 key
+  api_key_keychain_id: string         // 本地密钥存储里的 key（生产环境走 OS keychain）
   fixed_pod: {
     pod_uuid: string                   // 杭州慎思 POD，主界面不让用户编辑
     default_pod_tag: string

@@ -19,7 +19,7 @@
 | 浏览器自动化 | playwright + playwright-extra |
 | 图像处理 | sharp（C++ libvips）|
 | Excel | exceljs / xlsx |
-| 加密存储 | electron.safeStorage（OS keychain）|
+| 加密存储 | 本地密钥存储（electron.safeStorage；开发环境 safeStorage 不可用时 plain: 兜底）|
 | HTTP 客户端 | undici / native fetch |
 | 日志 | pino（结构化）|
 | 测试 | vitest + playwright（E2E）|
@@ -165,7 +165,7 @@
 - Photoshop COM 调用（Windows）
 - Sharp 图像处理（在 Worker Thread 里）
 - 长任务的状态管理
-- API Key 解密（safeStorage）
+- API Key 读取/解密（safeStorage，兼容 plain: 兜底）
 
 ### 渲染进程负责
 
@@ -481,7 +481,7 @@ export interface AppError {
 5. **同一货号同时刻最多 1 个进行中任务**
 6. **同一比特浏览器 profile 同时刻最多 1 个模块占用**
 7. **服务端不接触图片/API Key/任务数据**
-8. **客户端 API Key 永远 OS keychain 加密存储**
+8. **客户端 API Key 生产环境走 OS keychain 加密存储；开发环境 safeStorage 不可用时允许 plain: 兜底，仅限本地开发/测试**
 9. **客户授权通过前不能进入 Workbench，不能启动 Skill 同步**
 10. **印花 ID 全局唯一**，跨 provider 共享同一 ID 空间
 11. **临时文件用完即删**，最长保留 24 小时

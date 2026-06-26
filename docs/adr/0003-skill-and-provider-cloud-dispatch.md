@@ -34,7 +34,7 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 腾域客户端（用户的本机）
   ├─ 缓存 Skill
   ├─ 本地保存 Provider / 模型清单 / Workflow
-  ├─ 用本地存的 API Key（OS keychain）
+  ├─ 用本地密钥存储的 API Key（生产环境走 OS keychain；开发环境 safeStorage 不可用时 plain: 兜底）
   └─ 直接调外部服务：
         ├─ 晨羽智云（用户付费）
         ├─ Grsai（用户付费）
@@ -67,7 +67,7 @@ Skill 需要持续优化，且不应该要求客户端发版；模型、API Key 
 
 - 用户的产品图、印花、生图结果**不离开他的本机**
 - 用户的 LLM 提示词、检测结果**不上传服务器**
-- 用户的 API Key**永远 OS keychain 加密存储**
+- 用户的 API Key**生产环境走 OS keychain 加密存储；开发环境 safeStorage 不可用时允许 plain: 兜底**
 - 这是腾域可对外宣传的"隐私优先"卖点
 
 ### 3. 用户自主性

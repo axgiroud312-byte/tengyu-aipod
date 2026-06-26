@@ -12,7 +12,7 @@
 - 通过 COM 调用 Photoshop（Windows）
 - 通过 CDP 操作比特浏览器（采集 + 上架）
 - 长时间运行的批量任务 + 进度反馈
-- 加密存储用户的 API Key（OS keychain）
+- 本地密钥存储用户的 API Key（生产环境走 OS keychain；开发环境 safeStorage 不可用时允许 plain: 兜底）
 - 同时支持 Windows 和 macOS
 
 旧的尝试（`腾域aipod开发/`）已经选过 Electron 栈但项目被废弃，此次重新开始。

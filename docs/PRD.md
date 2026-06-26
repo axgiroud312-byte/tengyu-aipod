@@ -301,14 +301,14 @@
 
 **关键设计**：
 - Grsai 生图只支持 `gpt-image-2` / `gpt-image-2-vip`，只走 `/v1/api/generate`
-- 百炼文本/视觉模型清单在客户端本地维护，API Key 存 OS keychain
+- 百炼文本/视觉模型清单在客户端本地维护，API Key 生产环境走 OS keychain，开发环境 safeStorage 不可用时允许 plain: 兜底
 - 云端 Skill 只保存业务系统提示词；文生图和图生图提示词生成要求百炼返回 `{ "prompts": [{ "index": 1, "prompt": "..." }] }`，客户端只取 `prompt` 字段；提取 Skill 由 Grsai 和 ComfyUI 共用，直接作为每张源图的提取 prompt；侵权检测要求返回 `{ "risk_score": 0-100, "reason": "..." }`
 - ComfyUI Workflow 由用户在客户端本地导入，不再上传云端服务器
 - **抠图无纯付费路径**（付费模型抠不好），只有 comfyui 工作流或混合路径
 - 生图结果按任务落盘：`02-印花工作区/{能力目录}/{任务名}/{印花ID}.png`；默认任务名为“能力-时间”，前端可自定义。
 
 **晨羽智云集成**：
-- 设置页只展示连接状态，不展示余额；API Key 存 OS keychain，保存后自动检测可用性
+- 设置页只展示连接状态，不展示余额；API Key 生产环境走 OS keychain，开发环境 safeStorage 不可用时允许 plain: 兜底，保存后自动检测可用性
 - 创建入口固定服务杭州慎思 POD：用户选择 POD 版本和 GPU 后创建实例
 - 实例管理列出当前 API Key 下全部实例，主操作只保留开机、关机、设为默认云机
 - 默认云机是生图页运行云机选择的默认候选；实际任务发送到用户在生图页选择的运行中云机
@@ -538,7 +538,7 @@ v1.5 再把固定完整任务升级为通用编排引擎：
 **v1 必做的基础防御**：
 1. Admin 使用独立 JWT 和管理员账号登录
 2. 客户登录复用旧 PHP `uid + secret`，Next 只做授权校验且不保存 `secret`
-3. 用户 API Key 只存 OS keychain
+3. 用户 API Key 生产环境走 OS keychain，开发环境 safeStorage 不可用时允许 plain: 兜底
 4. 服务端不保存图片、API Key、任务记录和业务文件
 5. Skill 云端版本化，客户端本地缓存
 6. 上架选择器和关键策略可随版本更新
