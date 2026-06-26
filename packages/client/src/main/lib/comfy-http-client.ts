@@ -23,6 +23,7 @@ export type ComfyHistoryEntry = {
 }
 
 export type ComfyHistoryResponse = Record<string, ComfyHistoryEntry>
+export type ComfyObjectInfo = Record<string, unknown>
 
 type ComfyUploadResponse = {
   name?: string
@@ -89,6 +90,11 @@ export class ComfyHttpClient {
     }
 
     return raw.prompt_id
+  }
+
+  async getObjectInfo() {
+    const response = await this.request('/object_info', { method: 'GET' })
+    return parseJsonBody<ComfyObjectInfo>(response)
   }
 
   async getHistory(promptId: string) {

@@ -22,7 +22,9 @@ vi.mock('../onboarding', () => ({
   readAppConfig: () => ({ workbench_root: workbenchRoot }),
 }))
 
-const { ComfyuiWorkflowCacheManager } = await import('./comfyui-workflow-cache')
+const { ComfyuiWorkflowCacheManager, comfyuiUiWorkflowToApiPrompt } = await import(
+  './comfyui-workflow-cache'
+)
 
 beforeEach(async () => {
   userDataDir = await mkdtemp(join(tmpdir(), 'tengyu-workflow-cache-'))
@@ -172,6 +174,122 @@ describe('ComfyuiWorkflowCacheManager', () => {
         { name: 'height', nodeId: '4', field: 'value' },
       ]),
       outputSlots: [{ name: 'output_1', nodeId: '6', field: 'images' }],
+    })
+  })
+
+  it('imports UI workflow JSON and detects linked batch size input nodes', async () => {
+    const manager = new ComfyuiWorkflowCacheManager()
+
+    const imported = await manager.importWorkflow({
+      name: 'UI Img2Img',
+      capability: 'img2img',
+      workflowJsonText: JSON.stringify({
+        nodes: [
+          { id: 204, type: 'LoadImage', widgets_values: ['source.png', 'image'] },
+          {
+            id: 165,
+            type: 'CLIPTextEncode',
+            title: 'CLIP Text Encode (Positive Prompt)',
+            inputs: [{ name: 'text', type: 'STRING', link: 46 }],
+          },
+          {
+            id: 194,
+            type: 'TextUtils_Merger',
+            inputs: [{ name: '文本_1', type: 'STRING', link: 54 }],
+          },
+          { id: 191, type: 'CR Prompt Text', title: '提示词', widgets_values: ['make print'] },
+          { id: 179, type: 'PrimitiveInt', title: '宽', widgets_values: [1024, 'fixed'] },
+          { id: 180, type: 'PrimitiveInt', title: '高', widgets_values: [1024, 'fixed'] },
+          { id: 213, type: 'PrimitiveInt', widgets_values: [4, 'fixed'] },
+          {
+            id: 175,
+            type: 'EmptyImage',
+            inputs: [
+              { name: 'width', type: 'INT', link: 50 },
+              { name: 'height', type: 'INT', link: 51 },
+              { name: 'batch_size', type: 'INT', link: 70 },
+            ],
+            widgets_values: [512, 512, 4, 0],
+          },
+          { id: 187, type: 'Image Save', inputs: [{ name: 'images', type: 'IMAGE', link: 52 }] },
+        ],
+        links: [
+          [46, 194, 0, 165, 1, 'STRING'],
+          [54, 191, 0, 194, 0, 'STRING'],
+          [50, 179, 0, 175, 0, 'INT'],
+          [51, 180, 0, 175, 1, 'INT'],
+          [70, 213, 0, 175, 2, 'INT'],
+          [52, 175, 0, 187, 0, 'IMAGE'],
+        ],
+      }),
+    })
+
+    await expect(manager.get(imported.id, 'img2img')).resolves.toMatchObject({
+      workflowFormat: 'ui',
+      inputSlots: expect.arrayContaining([
+        { name: 'image_1', nodeId: '204', field: 'image', imageIndex: 0 },
+        { name: 'prompt', nodeId: '191', field: 'prompt' },
+        { name: 'width', nodeId: '179', field: 'value' },
+        { name: 'height', nodeId: '180', field: 'value' },
+        { name: 'batchSize', nodeId: '213', field: 'value' },
+      ]),
+      outputSlots: [{ name: 'output_1', nodeId: '187', field: 'images' }],
+    })
+    await expect(manager.listWorkflows('img2img')).resolves.toMatchObject([
+      expect.objectContaining({
+        detection: expect.objectContaining({ batchInputs: 1 }),
+      }),
+    ])
+  })
+
+  it('converts UI workflow JSON to API prompt with object info widget order', () => {
+    const converted = comfyuiUiWorkflowToApiPrompt(
+      {
+        nodes: [
+          { id: 179, type: 'PrimitiveInt', title: '宽', widgets_values: [1024, 'fixed'] },
+          { id: 213, type: 'PrimitiveInt', widgets_values: [4, 'fixed'] },
+          {
+            id: 175,
+            type: 'EmptyImage',
+            inputs: [
+              { name: 'width', type: 'INT', link: 50 },
+              { name: 'batch_size', type: 'INT', link: 70 },
+            ],
+            widgets_values: [512, 512, 1, 0],
+          },
+        ],
+        links: [
+          [50, 179, 0, 175, 0, 'INT'],
+          [70, 213, 0, 175, 2, 'INT'],
+        ],
+      },
+      {
+        PrimitiveInt: {
+          input: {
+            required: { value: ['INT', {}] },
+            optional: { control_after_generate: [['fixed'], {}] },
+          },
+          input_order: { required: ['value'], optional: ['control_after_generate'] },
+        },
+        EmptyImage: {
+          input: {
+            required: {
+              width: ['INT', {}],
+              height: ['INT', {}],
+              batch_size: ['INT', {}],
+              color: ['INT', {}],
+            },
+          },
+          input_order: { required: ['width', 'height', 'batch_size', 'color'] },
+        },
+      },
+      { requireObjectInfo: true },
+    )
+
+    expect(converted).toMatchObject({
+      '179': { inputs: { value: 1024, control_after_generate: 'fixed' } },
+      '213': { inputs: { value: 4, control_after_generate: 'fixed' } },
+      '175': { inputs: { width: ['179', 0], height: 512, batch_size: ['213', 0], color: 0 } },
     })
   })
 })

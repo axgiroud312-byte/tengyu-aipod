@@ -290,6 +290,159 @@ describe('ComfyuiChenyuAdapter', () => {
     )
   })
 
+  it('converts UI workflow JSON and injects img2img batch size', async () => {
+    const uiWorkflow: CachedComfyuiWorkflow = {
+      id: 'ui-img2img-v1',
+      version: '1.0.0',
+      name: 'UI Img2Img',
+      capability: 'img2img',
+      workflowFormat: 'ui',
+      workflowJson: {
+        nodes: [
+          { id: 1, type: 'LoadImage', widgets_values: ['source.png', 'image'] },
+          { id: 2, type: 'PrimitiveInt', widgets_values: [1, 'fixed'] },
+          { id: 3, type: 'CLIPTextEncode', widgets_values: ['old prompt'] },
+          {
+            id: 4,
+            type: 'EmptyImage',
+            inputs: [{ name: 'batch_size', type: 'INT', link: 20 }],
+            widgets_values: [512, 512, 1, 0],
+          },
+          { id: 9, type: 'SaveImage', inputs: [{ name: 'images', type: 'IMAGE', link: 21 }] },
+        ],
+        links: [
+          [20, 2, 0, 4, 2, 'INT'],
+          [21, 4, 0, 9, 0, 'IMAGE'],
+        ],
+      },
+      inputSlots: [
+        { name: 'image_1', nodeId: '1', field: 'image', imageIndex: 0 },
+        { name: 'batchSize', nodeId: '2', field: 'value' },
+        { name: 'prompt', nodeId: '3', field: 'text' },
+      ],
+      outputSlots: [{ name: 'result', nodeId: '9', field: 'images' }],
+      requiredModels: [],
+    }
+    const db = createDb()
+    const queuePrompt = vi.fn().mockResolvedValue('prompt-1')
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage: vi.fn().mockResolvedValue('uploaded.png'),
+        queuePrompt,
+        getHistory: vi.fn().mockResolvedValue({
+          status: { completed: true },
+          outputs: { '9': { images: [{ filename: 'result.png' }] } },
+        }),
+        viewImage: vi.fn().mockResolvedValue(Buffer.from('result-bytes')),
+        getObjectInfo: vi.fn().mockResolvedValue({
+          LoadImage: {
+            input: { required: { image: ['IMAGEUPLOAD', {}] } },
+            input_order: { required: ['image'] },
+          },
+          PrimitiveInt: {
+            input: {
+              required: { value: ['INT', {}] },
+              optional: { control_after_generate: [['fixed'], {}] },
+            },
+            input_order: { required: ['value'], optional: ['control_after_generate'] },
+          },
+          CLIPTextEncode: {
+            input: { required: { text: ['STRING', {}] } },
+            input_order: { required: ['text'] },
+          },
+          EmptyImage: {
+            input: {
+              required: {
+                width: ['INT', {}],
+                height: ['INT', {}],
+                batch_size: ['INT', {}],
+                color: ['INT', {}],
+              },
+            },
+            input_order: { required: ['width', 'height', 'batch_size', 'color'] },
+          },
+          SaveImage: {
+            input: { required: { images: ['IMAGE', {}] } },
+            input_order: { required: ['images'] },
+          },
+        }),
+      },
+      workflowCache: { get: vi.fn().mockResolvedValue(uiWorkflow) },
+      workbenchRoot: '/workbench',
+      openDatabase: () => db.db,
+    })
+
+    await adapter.generate({
+      capability: 'img2img',
+      prompt: 'variation',
+      workflow_id: 'ui-img2img-v1',
+      reference_images: [
+        { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+      ],
+      output: { format: 'png' },
+      options: { taskId: 'ui-task', batchSize: 4 },
+    })
+
+    expect(queuePrompt).toHaveBeenCalledWith(
+      expect.objectContaining({
+        '1': expect.objectContaining({
+          inputs: expect.objectContaining({ image: 'uploaded.png' }),
+        }),
+        '2': expect.objectContaining({ inputs: expect.objectContaining({ value: 4 }) }),
+        '3': expect.objectContaining({ inputs: expect.objectContaining({ text: 'variation' }) }),
+        '4': expect.objectContaining({
+          inputs: expect.objectContaining({ batch_size: ['2', 0] }),
+        }),
+      }),
+    )
+  })
+
+  it('rejects img2img multi-output runs when the workflow has no batch input', async () => {
+    const adapter = new ComfyuiChenyuAdapter({
+      instanceManager: {
+        refreshCurrentInstance: vi.fn().mockResolvedValue({
+          status: 'running',
+          instanceUuid: 'inst-1',
+          comfyuiUrl: 'https://comfy.example',
+        }),
+      },
+      comfyHttp: {
+        uploadImage: vi.fn(),
+        queuePrompt: vi.fn(),
+        getHistory: vi.fn(),
+        viewImage: vi.fn(),
+      },
+      workflowCache: {
+        get: vi.fn().mockResolvedValue({
+          ...workflow,
+          capability: 'img2img',
+        }),
+      },
+      workbenchRoot: '/workbench',
+      openDatabase: () => createDb().db,
+    })
+
+    await expect(
+      adapter.generate({
+        capability: 'img2img',
+        prompt: 'variation',
+        workflow_id: 'img2img-v1',
+        reference_images: [
+          { base64: Buffer.from('source').toString('base64'), mime_type: 'image/png' },
+        ],
+        output: { format: 'png' },
+        options: { taskId: 'task-1', batchSize: 2 },
+      }),
+    ).rejects.toThrow('当前工作流不支持一次多图')
+  })
+
   it('runs txt2img workflows without uploading reference images', async () => {
     const txt2imgWorkflow: ComfyuiWorkflow = {
       ...workflow,

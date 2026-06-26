@@ -220,6 +220,7 @@ export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   prompt?: string | undefined
   width?: number | undefined
   height?: number | undefined
+  batchSize?: number | undefined
   taskId?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
@@ -376,6 +377,7 @@ const referenceImageSchema = z.object({
 const stringArraySchema = z.array(z.string())
 const optionalStringSchema = z.string().optional()
 const positiveNumberSchema = z.number().positive().optional()
+const comfyuiImg2imgBatchSizeSchema = z.number().int().min(1).max(8).optional()
 
 const generationPromptInputSchema = z.object({
   capability: promptCapabilitySchema.optional(),
@@ -442,6 +444,7 @@ const comfyuiSourceInputSchema = comfyuiInstanceRunInputSchema.extend({
   prompt: optionalStringSchema,
   width: positiveNumberSchema,
   height: positiveNumberSchema,
+  batchSize: comfyuiImg2imgBatchSizeSchema,
   taskId: optionalStringSchema,
   filenamePrefix: optionalStringSchema,
   filenameSeparator: optionalStringSchema,
@@ -600,6 +603,10 @@ function comfyuiSizePx(input: { width?: number | undefined; height?: number | un
     width: clampInt(input.width ?? 1024, 256, 4096, 1024),
     height: clampInt(input.height ?? 1024, 256, 4096, 1024),
   }
+}
+
+function comfyuiImg2imgBatchSize(input: { batchSize?: number | undefined }) {
+  return clampInt(input.batchSize ?? 1, 1, 8, 1)
 }
 
 function comfyuiOptionalSizePx(input: {
@@ -1614,6 +1621,7 @@ function emitComfyuiRequestLog(
     total?: number | undefined
     width?: number | undefined
     height?: number | undefined
+    batchSize?: number | undefined
   },
 ) {
   debug('发送 ComfyUI 请求', 'debug', {
@@ -1626,6 +1634,7 @@ function emitComfyuiRequestLog(
     total: input.total,
     width: input.width,
     height: input.height,
+    batchSize: input.batchSize,
   })
 }
 
@@ -3512,6 +3521,7 @@ export async function runComfyuiImg2imgBatch(
       sourceCount: requestedComfyuiSourceCount(input),
       width: input.width ?? 1024,
       height: input.height ?? 1024,
+      batchSize: comfyuiImg2imgBatchSize(input),
     })
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
@@ -3528,7 +3538,7 @@ export async function runComfyuiImg2imgBatch(
       })
       const result: GenerationRunResult = {
         taskId,
-        total: sourceArtifactIds.length,
+        total: sourceArtifactIds.length * comfyuiImg2imgBatchSize(input),
         succeeded: 0,
         failed: 0,
         images: [],
@@ -3536,6 +3546,7 @@ export async function runComfyuiImg2imgBatch(
         ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
       }
       const sizePx = comfyuiSizePx(input)
+      const batchSize = comfyuiImg2imgBatchSize(input)
       const adapter = await createComfyuiAdapterForRun(
         input,
         apiKey,
@@ -3551,7 +3562,7 @@ export async function runComfyuiImg2imgBatch(
         if (isGenerationCancelled(taskId)) {
           break
         }
-        emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
+        emitImg2imgProgress(result, taskId, result.total, emit)
         try {
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
           const prompt = input.prompt?.trim() ?? ''
@@ -3565,6 +3576,7 @@ export async function runComfyuiImg2imgBatch(
             total: sourceArtifactIds.length,
             width: sizePx.width,
             height: sizePx.height,
+            batchSize,
           })
           const response = await adapter.generate({
             capability: 'img2img',
@@ -3578,6 +3590,8 @@ export async function runComfyuiImg2imgBatch(
               printId: source.printId,
               width: sizePx.width,
               height: sizePx.height,
+              batchSize,
+              maxOutputs: batchSize,
               ...visibleFilenameOptions(input, filenameIndex),
               ...(preserveWorkflowPrompt ? { preserveWorkflowPrompt: true } : {}),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
@@ -3588,6 +3602,15 @@ export async function runComfyuiImg2imgBatch(
           }
           outputIndex += response.images.length
           result.succeeded += response.images.length
+          if (response.images.length < batchSize) {
+            const missing = batchSize - response.images.length
+            result.failed += missing
+            result.failures.push({
+              prompt,
+              error: `ComfyUI 本次只返回 ${response.images.length}/${batchSize} 张图片`,
+              sourcePath: artifactId,
+            })
+          }
           result.images.push(
             ...response.images.map((image) => ({
               prompt,
@@ -3606,14 +3629,14 @@ export async function runComfyuiImg2imgBatch(
               error: errorForDiagnosticLog(error),
             })
             .catch(() => null)
-          result.failed += 1
+          result.failed += batchSize
           result.failures.push({
             prompt: input.prompt?.trim() ?? '',
             error: appErrorMessage(error),
             sourcePath: artifactId,
           })
         } finally {
-          emitImg2imgProgress(result, taskId, sourceArtifactIds.length, emit)
+          emitImg2imgProgress(result, taskId, result.total, emit)
         }
       }
 

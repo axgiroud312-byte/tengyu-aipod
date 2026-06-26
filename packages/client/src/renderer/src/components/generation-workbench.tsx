@@ -2397,6 +2397,7 @@ function ComfyuiImg2imgPanel() {
   const [workflowKey, setWorkflowKey] = useState('')
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
+  const [batchSize, setBatchSize] = useState('1')
   const [promptMode, setPromptMode] = useState<ComfyuiImg2imgPromptMode>('workflow')
   const [prompt, setPrompt] = useState('')
   const [taskName, setTaskName] = useState('')
@@ -2422,6 +2423,8 @@ function ComfyuiImg2imgPanel() {
   }, [])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
+  const outputCount = clampNumber(batchSize, 1, 8, 1)
+  const expectedOutputCount = sourceImages.length * outputCount
 
   async function chooseSourceFolder() {
     setError(null)
@@ -2503,6 +2506,7 @@ function ComfyuiImg2imgPanel() {
         ...(promptMode === 'custom' ? { prompt: customPrompt } : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
+        batchSize: outputCount,
         ...comfyuiInstanceSelection.runTarget,
       })
       if (!taskEvents.activateTask(taskId)) {
@@ -2510,7 +2514,7 @@ function ComfyuiImg2imgPanel() {
           task_id: taskId,
           capability: 'img2img',
           processed: 0,
-          total: sourceImages.length,
+          total: expectedOutputCount,
           succeeded: 0,
           failed: 0,
           images: [],
@@ -2579,6 +2583,17 @@ function ComfyuiImg2imgPanel() {
                   value={height}
                 />
               </label>
+              <label className="block space-y-2 text-sm font-medium">
+                <span>每张生成</span>
+                <input
+                  className="h-10 w-full rounded-md border px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                  max={8}
+                  min={1}
+                  onChange={(event) => setBatchSize(event.target.value)}
+                  type="number"
+                  value={batchSize}
+                />
+              </label>
               <fieldset className="rounded-md border p-3 md:col-span-2">
                 <legend className="px-1 text-sm font-medium">提示词来源</legend>
                 <div className="mt-2 flex flex-wrap gap-4 text-sm">
@@ -2632,6 +2647,10 @@ function ComfyuiImg2imgPanel() {
                 <dd className="font-medium">
                   {promptMode === 'workflow' ? '工作流默认' : '自定义'}
                 </dd>
+              </div>
+              <div>
+                <dt className="text-muted-foreground">预计输出</dt>
+                <dd className="font-medium tabular-nums">{expectedOutputCount}</dd>
               </div>
             </dl>
             <div className="mt-4">

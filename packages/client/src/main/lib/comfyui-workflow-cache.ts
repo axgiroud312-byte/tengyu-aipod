@@ -12,14 +12,17 @@ import { readAppConfig } from '../onboarding'
 const INDEX_FILE_NAME = 'index.json'
 
 export type ComfyuiWorkflowCategory = GenerationCapability | 'matting-mixed'
+export type ComfyuiWorkflowFormat = 'api' | 'ui'
 export type CachedComfyuiWorkflow = Omit<ComfyuiWorkflow, 'capability'> & {
   capability: ComfyuiWorkflowCategory
+  workflowFormat?: ComfyuiWorkflowFormat
 }
 export type ComfyuiWorkflowDetectionStatus = 'ready' | 'warning' | 'blocked'
 export type ComfyuiWorkflowDetectionSummary = {
   imageInputs: number
   promptInputs: number
   sizeInputs: number
+  batchInputs: number
   outputImages: number
   status: ComfyuiWorkflowDetectionStatus
   warnings: string[]
@@ -161,6 +164,221 @@ function normalizeSlot(raw: unknown) {
   }
 }
 
+const LINK_ONLY_COMFY_TYPES = new Set([
+  'IMAGE',
+  'MASK',
+  'LATENT',
+  'MODEL',
+  'VAE',
+  'CLIP',
+  'CONDITIONING',
+  'SAMPLER',
+  'SIGMAS',
+  'NOISE',
+  'GUIDER',
+  'CONTROL_NET',
+  'CLIP_VISION',
+  'STYLE_MODEL',
+])
+
+const UI_WIDGET_FIELD_FALLBACKS: Record<string, string[]> = {
+  CFGGuider: ['cfg'],
+  CLIPLoader: ['clip_name', 'type', 'device'],
+  CLIPTextEncode: ['text'],
+  'CR Prompt Text': ['prompt'],
+  EmptyFlux2LatentImage: ['width', 'height', 'batch_size'],
+  EmptyImage: ['width', 'height', 'batch_size', 'color'],
+  Flux2Scheduler: ['steps', 'width', 'height'],
+  KSamplerSelect: ['sampler_name'],
+  LoadImage: ['image', 'upload'],
+  PrimitiveInt: ['value', 'control_after_generate'],
+  RandomNoise: ['noise_seed', 'control_after_generate'],
+  UNETLoader: ['unet_name', 'weight_dtype'],
+  VAELoader: ['vae_name'],
+}
+
+type UiWorkflowNode = {
+  id: string
+  type: string
+  title: string
+  inputs: Array<{ name: string; link: string | null }>
+  widgetsValues: unknown[]
+}
+
+type UiWorkflowLink = {
+  fromNodeId: string
+  fromSlot: number
+}
+
+function workflowFormat(workflowJson: unknown): ComfyuiWorkflowFormat {
+  return isComfyuiUiWorkflow(workflowJson) ? 'ui' : 'api'
+}
+
+export function isComfyuiUiWorkflow(value: unknown): value is {
+  nodes: unknown[]
+  links: unknown[]
+} {
+  return isRecord(value) && Array.isArray(value.nodes) && Array.isArray(value.links)
+}
+
+function uiWorkflowNodes(workflowJson: unknown): UiWorkflowNode[] {
+  if (!isComfyuiUiWorkflow(workflowJson)) {
+    return []
+  }
+  return workflowJson.nodes
+    .filter(isRecord)
+    .map((node) => {
+      const id = String(node.id ?? '')
+      const type = stringValue(node.type)
+      return {
+        id,
+        type,
+        title: stringValue(node.title, type),
+        inputs: Array.isArray(node.inputs)
+          ? node.inputs.filter(isRecord).map((input) => ({
+              name: stringValue(input.name),
+              link: input.link === null || input.link === undefined ? null : String(input.link),
+            }))
+          : [],
+        widgetsValues: Array.isArray(node.widgets_values) ? node.widgets_values : [],
+      }
+    })
+    .filter((node) => node.id && node.type)
+}
+
+function uiWorkflowLinks(workflowJson: unknown) {
+  const links = new Map<string, UiWorkflowLink>()
+  if (!isComfyuiUiWorkflow(workflowJson)) {
+    return links
+  }
+  for (const rawLink of workflowJson.links) {
+    if (!Array.isArray(rawLink) || rawLink.length < 5) {
+      continue
+    }
+    const id = String(rawLink[0] ?? '')
+    const fromNodeId = String(rawLink[1] ?? '')
+    const fromSlot = Number(rawLink[2] ?? 0)
+    if (id && fromNodeId && Number.isFinite(fromSlot)) {
+      links.set(id, { fromNodeId, fromSlot })
+    }
+  }
+  return links
+}
+
+function objectInfoForNode(objectInfo: unknown, nodeType: string) {
+  return isRecord(objectInfo) && isRecord(objectInfo[nodeType]) ? objectInfo[nodeType] : null
+}
+
+function objectInfoInputRecord(nodeInfo: Record<string, unknown>, kind: 'required' | 'optional') {
+  const input = isRecord(nodeInfo.input) ? nodeInfo.input : {}
+  return isRecord(input[kind]) ? input[kind] : {}
+}
+
+function objectInfoInputOrder(nodeInfo: Record<string, unknown>, kind: 'required' | 'optional') {
+  const inputOrder = isRecord(nodeInfo.input_order) ? nodeInfo.input_order : {}
+  const ordered = Array.isArray(inputOrder[kind])
+    ? inputOrder[kind].filter((item): item is string => typeof item === 'string')
+    : []
+  const inputRecord = objectInfoInputRecord(nodeInfo, kind)
+  return ordered.length > 0
+    ? ordered.filter((name) => name in inputRecord)
+    : Object.keys(inputRecord)
+}
+
+function isWidgetInputSpec(raw: unknown) {
+  if (!Array.isArray(raw)) {
+    return false
+  }
+  const type = raw[0]
+  if (Array.isArray(type)) {
+    return true
+  }
+  if (typeof type !== 'string') {
+    return false
+  }
+  return !LINK_ONLY_COMFY_TYPES.has(type.toUpperCase())
+}
+
+function objectInfoWidgetFields(nodeInfo: Record<string, unknown>) {
+  const result: string[] = []
+  for (const kind of ['required', 'optional'] as const) {
+    const inputRecord = objectInfoInputRecord(nodeInfo, kind)
+    for (const name of objectInfoInputOrder(nodeInfo, kind)) {
+      if (isWidgetInputSpec(inputRecord[name])) {
+        result.push(name)
+      }
+    }
+  }
+  return result
+}
+
+function uiWidgetFields(node: UiWorkflowNode, objectInfo?: unknown, requireObjectInfo = false) {
+  const nodeInfo = objectInfoForNode(objectInfo, node.type)
+  if (nodeInfo) {
+    return objectInfoWidgetFields(nodeInfo)
+  }
+  if (requireObjectInfo) {
+    throw new Error(`ComfyUI 云机缺少节点定义：${node.type}`)
+  }
+  return UI_WIDGET_FIELD_FALLBACKS[node.type] ?? []
+}
+
+function normalizeUiWidgetValue(value: unknown) {
+  if (isRecord(value) && Object.keys(value).length === 1 && Array.isArray(value.__value__)) {
+    return undefined
+  }
+  return value
+}
+
+export function comfyuiUiWorkflowToApiPrompt(
+  workflowJson: unknown,
+  objectInfo?: unknown,
+  options: { requireObjectInfo?: boolean } = {},
+) {
+  if (!isComfyuiUiWorkflow(workflowJson)) {
+    return structuredClone(workflowJson) as Record<string, unknown>
+  }
+
+  const links = uiWorkflowLinks(workflowJson)
+  const prompt: Record<
+    string,
+    { class_type: string; inputs: Record<string, unknown>; _meta: { title: string } }
+  > = {}
+
+  for (const node of uiWorkflowNodes(workflowJson)) {
+    const inputs: Record<string, unknown> = {}
+    for (const [index, field] of uiWidgetFields(
+      node,
+      objectInfo,
+      options.requireObjectInfo === true,
+    ).entries()) {
+      if (index >= node.widgetsValues.length) {
+        continue
+      }
+      const value = normalizeUiWidgetValue(node.widgetsValues[index])
+      if (value !== undefined) {
+        inputs[field] = value
+      }
+    }
+    for (const input of node.inputs) {
+      if (!input.name || !input.link) {
+        continue
+      }
+      const link = links.get(input.link)
+      if (link) {
+        inputs[input.name] = [link.fromNodeId, link.fromSlot]
+      }
+    }
+    prompt[node.id] = {
+      class_type: node.type,
+      inputs,
+      _meta: { title: node.title },
+    }
+  }
+
+  return prompt
+}
+
 function normalizeWorkflow(raw: unknown): CachedComfyuiWorkflow {
   const record = isRecord(raw) ? raw : {}
   const workflowJson = record.workflowJson ?? record.workflow_json
@@ -170,6 +388,7 @@ function normalizeWorkflow(raw: unknown): CachedComfyuiWorkflow {
     version: stringValue(record.version),
     name: stringValue(record.name),
     capability: normalizeCapability(record.capability ?? record.category),
+    workflowFormat: workflowJson ? workflowFormat(workflowJson) : 'api',
     workflowJson,
     inputSlots: detectedSlots
       ? detectedSlots.inputSlots
@@ -346,11 +565,55 @@ function sizeSlotForInput(
   }
 }
 
+function batchSlotForInput(
+  workflowJson: unknown,
+  nodeId: string,
+  field: 'batch_size' | 'batchSize',
+  inputValue: unknown,
+) {
+  const linked = linkedNode(workflowJson, inputValue)
+  if (linked) {
+    const inputs = nodeInputs(linked.node)
+    const label = nodeLabel(linked.node)
+    if ('value' in inputs && /primitive|int|integer|number|数量|batch/.test(label)) {
+      return {
+        name: 'batchSize',
+        nodeId: linked.nodeId,
+        field: 'value',
+      }
+    }
+    return null
+  }
+
+  return {
+    name: 'batchSize',
+    nodeId,
+    field,
+  }
+}
+
+function batchInputValue(inputs: Record<string, unknown>) {
+  if ('batch_size' in inputs) {
+    return { field: 'batch_size' as const, value: inputs.batch_size }
+  }
+  if ('batchSize' in inputs) {
+    return { field: 'batchSize' as const, value: inputs.batchSize }
+  }
+  return null
+}
+
 function slotKey(slot: { name: string; nodeId: string; field: string }) {
   return `${slot.name}:${slot.nodeId}:${slot.field}`
 }
 
 function detectSlots(workflowJson: unknown) {
+  const apiWorkflowJson = isComfyuiUiWorkflow(workflowJson)
+    ? comfyuiUiWorkflowToApiPrompt(workflowJson)
+    : workflowJson
+  return detectApiSlots(apiWorkflowJson)
+}
+
+function detectApiSlots(workflowJson: unknown) {
   const inputSlots: ComfyuiWorkflowSlot[] = []
   const outputSlots: ComfyuiWorkflowSlot[] = []
   let foundPromptSlot = false
@@ -400,6 +663,13 @@ function detectSlots(workflowJson: unknown) {
         }
       }
     }
+    const batchInput = batchInputValue(inputs)
+    if (batchInput) {
+      const slot = batchSlotForInput(workflowJson, nodeId, batchInput.field, batchInput.value)
+      if (slot) {
+        pushInputSlot(slot)
+      }
+    }
     if (/save\s*image|saveimage|preview\s*image|previewimage|image\s*save/i.test(classType)) {
       outputSlots.push({
         name: `output_${outputSlots.length + 1}`,
@@ -416,7 +686,7 @@ function hasSizeInputs(classType: string, inputs: Record<string, unknown>) {
   if (!('width' in inputs) && !('height' in inputs)) {
     return false
   }
-  return /latentimage|scheduler/i.test(classType)
+  return /emptyimage|latentimage|scheduler/i.test(classType)
 }
 
 function workflowSummary(workflow: CachedComfyuiWorkflow): ComfyuiWorkflowSummary {
@@ -443,6 +713,7 @@ function workflowDetectionSummary(
   const sizeInputs = workflow.inputSlots.filter(
     (slot) => slot.name === 'width' || slot.name === 'height',
   ).length
+  const batchInputs = workflow.inputSlots.filter((slot) => slot.name === 'batchSize').length
   const outputImages = workflow.outputSlots.length
   const warnings: string[] = []
 
@@ -478,6 +749,7 @@ function workflowDetectionSummary(
     imageInputs,
     promptInputs,
     sizeInputs,
+    batchInputs,
     outputImages,
     status: hasBlockingWarning ? 'blocked' : warnings.length > 0 ? 'warning' : 'ready',
     warnings,

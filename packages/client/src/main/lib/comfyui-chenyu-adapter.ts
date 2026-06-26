@@ -7,9 +7,19 @@ import {
   type ComfyuiWorkflowSlot,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
-import type { ComfyHistoryEntry, ComfyHttpClient, ComfyViewImageInput } from './comfy-http-client'
+import type {
+  ComfyHistoryEntry,
+  ComfyHttpClient,
+  ComfyObjectInfo,
+  ComfyViewImageInput,
+} from './comfy-http-client'
 import type { ComfyuiInstanceSummary } from './comfyui-instance-manager'
-import type { CachedComfyuiWorkflow, ComfyuiWorkflowCategory } from './comfyui-workflow-cache'
+import {
+  type CachedComfyuiWorkflow,
+  type ComfyuiWorkflowCategory,
+  comfyuiUiWorkflowToApiPrompt,
+  isComfyuiUiWorkflow,
+} from './comfyui-workflow-cache'
 import type { DiagnosticLogWriter } from './diagnostic-log-service'
 import type { GenerateRequest, GenerateResponse, ImageGenerationAdapter } from './grsai-adapter'
 import type { SqliteDatabase } from './sqlite'
@@ -27,15 +37,20 @@ export type ComfyuiExecutionDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'> 
   close?: () => void
 }
 
+type ComfyHttpLike = Pick<
+  ComfyHttpClient,
+  'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'
+> & {
+  getObjectInfo?: () => Promise<ComfyObjectInfo>
+}
+
 export type ComfyuiChenyuAdapterOptions = {
   instanceManager: {
     refreshCurrentInstance(): Promise<ComfyuiInstanceSummary | null>
   }
   selectedInstance?: ComfyuiInstanceSummary
-  comfyHttp?: Pick<ComfyHttpClient, 'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'>
-  createComfyHttp?: (
-    baseUrl: string,
-  ) => Pick<ComfyHttpClient, 'uploadImage' | 'queuePrompt' | 'getHistory' | 'viewImage'>
+  comfyHttp?: ComfyHttpLike
+  createComfyHttp?: (baseUrl: string) => ComfyHttpLike
   workflowCache: ComfyuiWorkflowCache
   workbenchRoot: string
   openDatabase: (workbenchRoot: string) => ComfyuiExecutionDatabase
@@ -92,7 +107,8 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     )
     validateWorkflowForRequest(workflow, req)
     const uploadedImages = await this.uploadReferenceImages(req, comfyHttp)
-    const injectedWorkflow = injectComfyuiInputs(workflow.workflowJson, workflow.inputSlots, req, {
+    const promptWorkflow = await promptWorkflowForRun(workflow, comfyHttp)
+    const injectedWorkflow = injectComfyuiInputs(promptWorkflow, workflow.inputSlots, req, {
       uploadedImages,
     })
     await this.log({
@@ -262,6 +278,36 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
   }
 }
 
+async function promptWorkflowForRun(workflow: CachedComfyuiWorkflow, comfyHttp: ComfyHttpLike) {
+  if (!isComfyuiUiWorkflow(workflow.workflowJson)) {
+    return workflow.workflowJson
+  }
+  if (!comfyHttp.getObjectInfo) {
+    throw new AppErrorClass(
+      'HTTP_4XX',
+      '当前 ComfyUI 客户端不能读取节点定义，无法运行界面格式工作流',
+      false,
+      { provider: 'comfyui-chenyu', workflowId: workflow.id },
+    )
+  }
+  try {
+    return comfyuiUiWorkflowToApiPrompt(workflow.workflowJson, await comfyHttp.getObjectInfo(), {
+      requireObjectInfo: true,
+    })
+  } catch (error) {
+    if (error instanceof AppErrorClass) {
+      throw error
+    }
+    throw new AppErrorClass(
+      'HTTP_4XX',
+      error instanceof Error ? error.message : 'ComfyUI 界面格式工作流无法转换',
+      false,
+      { provider: 'comfyui-chenyu', workflowId: workflow.id },
+      error,
+    )
+  }
+}
+
 export function injectComfyuiInputs(
   workflowJson: unknown,
   slots: ComfyuiWorkflowSlot[],
@@ -323,6 +369,9 @@ function valueForSlot(
   }
 
   const normalizedName = `${slot.name} ${slot.field}`.toLowerCase()
+  if (isBatchSlot(slot)) {
+    return req.options?.batchSize
+  }
   if (normalizedName.includes('width')) {
     return req.output.size_px?.width
   }
@@ -350,6 +399,10 @@ function valueForSlot(
 
 function isPromptSlot(slot: ComfyuiWorkflowSlot) {
   return /prompt|text|文本|提示词/i.test(`${slot.name} ${slot.field}`)
+}
+
+function isBatchSlot(slot: ComfyuiWorkflowSlot) {
+  return /batch|数量/i.test(`${slot.name} ${slot.field}`)
 }
 
 function imageIndexForSlot(slot: ComfyuiWorkflowSlot, req: GenerateRequest) {
@@ -406,6 +459,7 @@ function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: Genera
   const promptInputCount = workflow.inputSlots.filter((slot) =>
     `${slot.name} ${slot.field}`.toLowerCase().includes('prompt'),
   ).length
+  const batchInputCount = workflow.inputSlots.filter(isBatchSlot).length
 
   if (outputCount === 0) {
     throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流未识别到保存或预览输出节点', false, {
@@ -426,6 +480,13 @@ function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: Genera
       provider: 'comfyui-chenyu',
       workflowId: workflow.id,
       capability: req.capability,
+    })
+  }
+
+  if ((numberOption(req.options?.batchSize) ?? 1) > 1 && batchInputCount === 0) {
+    throw new AppErrorClass('HTTP_4XX', '当前工作流不支持一次多图，请把每张生成改为 1', false, {
+      provider: 'comfyui-chenyu',
+      workflowId: workflow.id,
     })
   }
 }

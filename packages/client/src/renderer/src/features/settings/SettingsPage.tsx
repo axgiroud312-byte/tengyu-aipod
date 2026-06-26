@@ -1449,7 +1449,8 @@ function LocalWorkflowCard({
                         <p className="mt-1 truncate text-xs text-muted-foreground">
                           {workflow.version} · 图像 {workflow.detection.imageInputs} · 提示词{' '}
                           {workflow.detection.promptInputs} · 尺寸 {workflow.detection.sizeInputs} ·
-                          输出 {workflow.detection.outputImages}
+                          数量 {workflow.detection.batchInputs} · 输出{' '}
+                          {workflow.detection.outputImages}
                         </p>
                         {workflow.detection.warnings.length ? (
                           <p className="mt-1 line-clamp-2 text-xs text-amber-700">

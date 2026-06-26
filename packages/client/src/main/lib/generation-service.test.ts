@@ -1235,6 +1235,58 @@ describe('generation comfyui img2img service', () => {
     )
   })
 
+  it('counts ComfyUI img2img batch outputs and missing images', async () => {
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
+    await createImage(printPath, 'print-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'print-artifact',
+        print_id: 'pri_print',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [
+        { url: 'file:///result-1.png', local_path: '/result-1.png' },
+        { url: 'file:///result-2.png', local_path: '/result-2.png' },
+      ],
+    })
+
+    const result = await runComfyuiImg2imgBatch(
+      {
+        sourceArtifactIds: ['print-artifact'],
+        workflowId: 'img2img-v1',
+        taskId: 'img2img-batch-task',
+        batchSize: 4,
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'img2img-batch-task',
+      total: 4,
+      succeeded: 2,
+      failed: 2,
+    })
+    expect(result.failures[0]?.error).toContain('只返回 2/4 张图片')
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          batchSize: 4,
+          maxOutputs: 4,
+        }),
+      }),
+    )
+  })
+
   it('registers arbitrary folder images before running ComfyUI img2img', async () => {
     const printPath = join(tempRoot, 'external-prints', 'print.png')
     await createImage(printPath, 'print-image')
