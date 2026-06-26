@@ -56,17 +56,18 @@
 
 ### 1.4 完整任务调用边界
 
-完整任务最初版复用生图模块已有 runner，不通过 UI 自动点击；当前完整任务页把来源区收成三类入口，`existing_prints` 仍保留在底层兼容层，不作为主入口：
+完整任务最初版复用生图模块已有 runner，不通过 UI 自动点击；当前完整任务页把任务起点收成四类入口：
 
 - `collection` 来源：从采集目录扫描图片后调用提取能力，完整任务页里这一支可在 Grsai / 晨羽间切换。
-- `txt2img` 来源：完整任务页固定走 Grsai 付费模型直接产生印花。
-- `img2img` 来源：完整任务页固定走 Grsai 付费模型直接产生印花，并提供参考构图 / 参考风格 / 构图+风格 / 自己写四种参考方式。
-- `existing_prints` 兼容来源：跳过生图，直接扫描已有印花文件夹。
+- `txt2img` 来源：完整任务页先用阿里云百炼生成提示词；随后可走 Grsai 文生图，或走 ComfyUI 文生图工作流。
+- `img2img` 来源：完整任务页支持 Grsai 图生图和 ComfyUI 图生图。Grsai 路径提供参考构图 / 参考风格 / 构图+风格和“生图时带参考图”开关；ComfyUI 路径选择图片文件夹、工作流、运行云机和每张生成数量。
+- `existing_prints` 已有印花来源：跳过生图，直接扫描 `02-印花工作区` 下某个具体印花图片文件夹，并可从抠图、侵权检测或 PS 套版开始。
 - 抠图是完整任务中的可选 step；局部印花默认开启，满印默认关闭。
 
-完整任务首版不新增生图 provider。完整任务里的 **印花货号** 作为本次任务的用户可见图片名前缀，并按同一 `{前缀}{分隔符}{四位序号}.{ext}` 规则影响完整任务内生图、提取、抠图等最终印花产物。完整任务在进入 PS 前会额外创建
+完整任务里的 **印花货号** 作为本次任务的用户可见图片名前缀，并按同一 `{前缀}{分隔符}{四位序号}.{ext}` 规则影响完整任务内生图、提取、抠图等最终印花产物。完整任务在进入 PS 前会额外创建
 `02-印花工作区/等待套版/{runId}/`，把最终可套版印花复制为同一用户可见命名规则的图片副本；
-这一步不回写原始印花 ID，也不改动生图模块已登记的 artifact。
+这一步不回写原始印花 ID，也不改动生图模块已登记的 artifact。PS 套版使用等待套版副本作为实际输入，
+等待套版副本的文件名基名必须等于套版后对应的货号文件夹名。
 完整任务进度会把生图、提取和抠图 runner 返回的产物转成阶段化 `result_sections`，
 供完整任务页下方结果区展示；旧的 `preview_images` 字段仅作为兼容字段保留，不再作为 UI 扩展主入口。
 
@@ -1097,7 +1098,7 @@ CREATE TABLE comfyui_instances (
                                         } → TaskId
 'generation:run-comfyui-txt2img'      → { prompts, workflowId, workflowVersion?, width, height, concurrency, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:run-extract'              → { sourceImagePaths, skillId, model, aspectRatio, concurrency, filenamePrefix?, filenameSeparator? } → TaskId
-'generation:run-comfyui-img2img'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
+'generation:run-comfyui-img2img'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, batchSize?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:run-comfyui-extract'      → { sourceImagePaths, workflowId, workflowVersion?, skillId, skillVersion?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:run-comfyui-extract-matting'
                                       → { sourceImagePaths, extractWorkflowId, mattingWorkflowId, skillId, skillVersion?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId

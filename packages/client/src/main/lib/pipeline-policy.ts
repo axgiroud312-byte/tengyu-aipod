@@ -22,10 +22,12 @@ export function plannedPipelineSteps(config: PipelineRunConfig): PipelineStepKey
   if (config.source.mode === 'collection') {
     steps.push('extract')
   }
-  if (config.matting.enabled) {
+  const startStep =
+    config.source.mode === 'existing_prints' ? (config.source.startStep ?? 'photoshop') : null
+  if (config.matting.enabled && (!startStep || startStep === 'matting')) {
     steps.push('matting')
   }
-  if (config.detection.enabled) {
+  if (config.detection.enabled && startStep !== 'photoshop') {
     steps.push('detection')
   }
   if (config.photoshop.enabled !== false) {

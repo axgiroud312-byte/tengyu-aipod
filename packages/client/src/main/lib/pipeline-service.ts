@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
-import { basename, extname, isAbsolute, join } from 'node:path'
+import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
   AppErrorClass,
   type PhotoshopPrintAsset,
   type PipelineComfyuiWorkflowConfig,
+  type PipelineComfyuiImg2imgConfig,
   type PipelineDetectionConfig,
   type PipelineExtractConfig,
   type PipelineGrsaiImageConfig,
@@ -46,7 +47,9 @@ import {
   type GenerationRunResult,
   generateTxt2imgPrompts,
   runComfyuiExtractBatch,
+  runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
+  runComfyuiTxt2imgBatch,
   runExtractBatch,
   runMixedMattingBatch,
   runTxt2imgBatch,
@@ -60,7 +63,7 @@ import {
   nextVisibleImageName,
   normalizedVisibleImageNaming,
 } from './user-visible-filename'
-import { assertPathInsideWorkbench } from './workbench-path-guard'
+import { assertPathInsideWorkbench, canonicalPath } from './workbench-path-guard'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
@@ -153,6 +156,10 @@ const comfyuiWorkflowSchema = z.object({
   concurrency: z.number().optional(),
 })
 
+const comfyuiImg2imgWorkflowSchema = comfyuiWorkflowSchema.extend({
+  batchSize: z.number().optional(),
+})
+
 const extractSchema = z.object({
   provider: z.enum(['grsai', 'comfyui-chenyu']),
   skillId: z.string().optional(),
@@ -168,7 +175,7 @@ const referenceImageInputSchema = z.object({
   mime_type: z.string().min(1),
 })
 
-const sourceSchema = z.discriminatedUnion('mode', [
+const sourceSchema = z.union([
   z.object({
     mode: z.literal('collection'),
     sourceFolder: z.string(),
@@ -181,6 +188,12 @@ const sourceSchema = z.discriminatedUnion('mode', [
     grsai: grsaiImageSchema.optional(),
   }),
   z.object({
+    mode: z.literal('txt2img'),
+    provider: z.literal('comfyui-chenyu'),
+    prompt: promptConfigSchema,
+    comfyui: comfyuiWorkflowSchema,
+  }),
+  z.object({
     mode: z.literal('img2img'),
     provider: z.literal('grsai'),
     sourceFolder: z.string().optional(),
@@ -191,8 +204,15 @@ const sourceSchema = z.discriminatedUnion('mode', [
     grsai: grsaiImageSchema.optional(),
   }),
   z.object({
+    mode: z.literal('img2img'),
+    provider: z.literal('comfyui-chenyu'),
+    sourceFolder: z.string(),
+    comfyui: comfyuiImg2imgWorkflowSchema,
+  }),
+  z.object({
     mode: z.literal('existing_prints'),
     printFolder: z.string(),
+    startStep: z.enum(['matting', 'detection', 'photoshop']).optional(),
   }),
 ])
 
@@ -283,26 +303,53 @@ const pipelineRunConfigBaseSchema = z.object({
 
 const pipelineRunConfigSchema = pipelineRunConfigBaseSchema.superRefine((config, context) => {
   if (config.photoshop.enabled === false) {
-    return
+    if (
+      config.source.mode === 'existing_prints' &&
+      (config.source.startStep ?? 'photoshop') === 'photoshop'
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: '从 PS 套版开始时必须启用 PS 套版',
+        path: ['photoshop', 'enabled'],
+      })
+    }
+  } else {
+    if (
+      !normalizedVisibleImageNaming({
+        prefix: config.printSkuCode,
+        separator: config.filenameSeparator ?? '-',
+      })
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: '启用 PS 套版时必须填写可用的印花货号前缀',
+        path: ['printSkuCode'],
+      })
+    }
+    if (config.photoshop.templates.length === 0) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: '启用 PS 套版时必须选择 PSD 模板',
+        path: ['photoshop', 'templates'],
+      })
+    }
   }
-  if (
-    !normalizedVisibleImageNaming({
-      prefix: config.printSkuCode,
-      separator: config.filenameSeparator ?? '-',
-    })
-  ) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: '启用 PS 套版时必须填写可用的印花货号前缀',
-      path: ['printSkuCode'],
-    })
-  }
-  if (config.photoshop.templates.length === 0) {
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: '启用 PS 套版时必须选择 PSD 模板',
-      path: ['photoshop', 'templates'],
-    })
+  if (config.source.mode === 'existing_prints') {
+    const startStep = config.source.startStep ?? 'photoshop'
+    if (startStep === 'matting' && !config.matting.enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: '从抠图开始时必须启用抠图',
+        path: ['matting', 'enabled'],
+      })
+    }
+    if (startStep === 'detection' && !config.detection.enabled) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: '从侵权检测开始时必须启用侵权检测',
+        path: ['detection', 'enabled'],
+      })
+    }
   }
 })
 
@@ -715,8 +762,35 @@ function pipelineVisibleFilenameFields(config: PipelineRunConfig): PipelineVisib
 
 function runConfigSourceHasReferences(
   source: PipelineSourceConfig,
-): source is Extract<PipelineSourceConfig, { mode: 'img2img' }> {
-  return source.mode === 'img2img' && Boolean(source.referenceImagePaths?.length)
+): source is Extract<PipelineSourceConfig, { mode: 'img2img'; provider: 'grsai' }> {
+  return source.mode === 'img2img' && source.provider === 'grsai' && Boolean(source.referenceImagePaths?.length)
+}
+
+function existingPrintStartStep(config: PipelineRunConfig) {
+  return config.source.mode === 'existing_prints' ? (config.source.startStep ?? 'photoshop') : null
+}
+
+function shouldRunMattingStep(config: PipelineRunConfig) {
+  const startStep = existingPrintStartStep(config)
+  if (startStep && startStep !== 'matting') {
+    return false
+  }
+  return config.matting.enabled
+}
+
+function shouldRunDetectionStep(config: PipelineRunConfig) {
+  if (existingPrintStartStep(config) === 'photoshop') {
+    return false
+  }
+  return config.detection.enabled
+}
+
+function sameOrInsidePath(child: string, parent: string) {
+  if (child === parent) {
+    return true
+  }
+  const path = relative(parent, child)
+  return Boolean(path) && path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path)
 }
 
 function optionalJsonText(value: unknown) {
@@ -887,6 +961,13 @@ function comfyuiOptionalFields(config: PipelineComfyuiWorkflowConfig) {
     fields.concurrency = config.concurrency
   }
   return fields
+}
+
+function comfyuiImg2imgOptionalFields(config: PipelineComfyuiImg2imgConfig) {
+  return {
+    ...comfyuiOptionalFields(config),
+    ...(config.batchSize !== undefined ? { batchSize: config.batchSize } : {}),
+  }
 }
 
 function mattingOptionalFields(config: PipelineMattingConfig) {
@@ -1098,7 +1179,7 @@ export class PipelineService {
           )
         }
 
-        if (runConfig.matting.enabled) {
+        if (shouldRunMattingStep(runConfig)) {
           prints = await this.runMattingStep(
             db,
             active,
@@ -1112,7 +1193,7 @@ export class PipelineService {
           this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', prints.length)
         }
 
-        if (runConfig.detection.enabled) {
+        if (shouldRunDetectionStep(runConfig)) {
           prints = await this.runDetectionStep(
             db,
             active,
@@ -1213,7 +1294,11 @@ export class PipelineService {
     runId: string,
     config: PipelineRunConfig,
   ): Promise<PipelineRunConfig> {
-    if (config.source.mode !== 'img2img' || !config.source.referenceImages?.length) {
+    if (
+      config.source.mode !== 'img2img' ||
+      config.source.provider !== 'grsai' ||
+      !config.source.referenceImages?.length
+    ) {
       return config
     }
 
@@ -1226,7 +1311,7 @@ export class PipelineService {
     )
     await mkdir(referenceFolder, { recursive: true })
     const referenceImagePaths = await Promise.all(
-      config.source.referenceImages.map(async (image, index) => {
+      config.source.referenceImages.map(async (image: PipelineReferenceImageInput, index: number) => {
         const baseName = safePathSegment(basename(image.name, extname(image.name)))
         const targetPath = join(
           referenceFolder,
@@ -1255,23 +1340,37 @@ export class PipelineService {
       })
     }
     if (config.source.mode === 'existing_prints') {
-      await assertPathInsideWorkbench(workbenchRoot, config.source.printFolder, {
+      const printFolder = await assertPathInsideWorkbench(workbenchRoot, config.source.printFolder, {
         domain: 'generation',
         label: '完整任务印花来源目录',
       })
+      const generationRoot = await canonicalPath(
+        resolve(workbenchRoot, WORKBENCH_DIRECTORIES.generation),
+      )
+      const waitingRoot = await canonicalPath(join(generationRoot, WAITING_PHOTOSHOP_PRINT_FOLDER))
+      if (printFolder === generationRoot || sameOrInsidePath(printFolder, waitingRoot)) {
+        throw new AppErrorClass(
+          'HTTP_4XX',
+          '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
+          false,
+          { kind: 'invalid_existing_print_folder', printFolder },
+        )
+      }
     }
     if (config.source.mode === 'img2img') {
-      if (config.source.sourceFolder) {
+      if (config.source.provider === 'grsai' && config.source.sourceFolder) {
         await assertPathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
           domain: 'generation',
           label: '完整任务图生图来源目录',
         })
       }
-      for (const referencePath of config.source.referenceImagePaths ?? []) {
-        await assertPathInsideWorkbench(workbenchRoot, referencePath, {
-          domain: 'local-image',
-          label: '完整任务图生图参考图',
-        })
+      if (config.source.provider === 'grsai') {
+        for (const referencePath of config.source.referenceImagePaths ?? []) {
+          await assertPathInsideWorkbench(workbenchRoot, referencePath, {
+            domain: 'local-image',
+            label: '完整任务图生图参考图',
+          })
+        }
       }
     }
     if (config.photoshop.enabled !== false && config.photoshop.outputRoot) {
@@ -1716,7 +1815,7 @@ export class PipelineService {
             resultSection({
               key: 'reference_images',
               title: '参考图',
-              items: referencePaths.map((path, index) =>
+              items: referencePaths.map((path: string, index: number) =>
                 resultImageFromPath('source', basename(path), path, index),
               ),
               paginated: true,
@@ -1807,6 +1906,29 @@ export class PipelineService {
     if (source.mode === 'txt2img') {
       const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
       emitMessage(`文生图提示词 ${prompts.length} 条`)
+      if (source.provider === 'comfyui-chenyu') {
+        emitPreviewImages([], prompts.length, 0)
+        const result = await runComfyuiTxt2imgBatch(
+          {
+            prompts,
+            workflowId: source.comfyui.workflowId,
+            taskId: `${runId}-txt2img`,
+            ...pipelineVisibleFilenameFields(config),
+            ...comfyuiOptionalFields(source.comfyui),
+          },
+          {
+            emitProgress: emitGenerationProgressAsPipeline(
+              runId,
+              'source',
+              emitMessage,
+              emitPreviewImages,
+            ),
+          },
+        )
+        emitPreviewImages(result.images, result.total, result.failed)
+        this.appendGenerationFailureLog(runId, 'source', '文生图', result)
+        return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
+      }
       if (!source.grsai) {
         throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
       }
@@ -1834,6 +1956,40 @@ export class PipelineService {
       emitPreviewImages(result.images, result.total, result.failed)
       this.appendGenerationFailureLog(runId, 'source', '文生图', result)
       return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
+    }
+
+    if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
+      const sourcePaths = await scanImageFiles(source.sourceFolder)
+      if (sourcePaths.length === 0) {
+        throw new AppErrorClass('HTTP_4XX', '图生图图片文件夹里没有可用图片', false)
+      }
+      const batchSize = source.comfyui.batchSize ?? 1
+      emitMessage(`图生图来源 ${sourcePaths.length} 张，每张生成 ${batchSize} 张`)
+      emitPreviewImages([], sourcePaths.length * batchSize, 0)
+      const result = await runComfyuiImg2imgBatch(
+        {
+          sourceImagePaths: sourcePaths,
+          workflowId: source.comfyui.workflowId,
+          taskId: `${runId}-img2img`,
+          ...pipelineVisibleFilenameFields(config),
+          ...comfyuiImg2imgOptionalFields(source.comfyui),
+        },
+        {
+          emitProgress: emitGenerationProgressAsPipeline(
+            runId,
+            'source',
+            emitMessage,
+            emitPreviewImages,
+          ),
+        },
+      )
+      emitPreviewImages(result.images, result.total, result.failed)
+      this.appendGenerationFailureLog(runId, 'source', '图生图', result)
+      return { extractSources: [], prints: usableGenerationImages(result, '图生图') }
+    }
+
+    if (source.mode !== 'img2img') {
+      throw new AppErrorClass('HTTP_4XX', '完整任务来源配置无效', false)
     }
 
     const sourcePaths = source.referenceImagePaths?.length

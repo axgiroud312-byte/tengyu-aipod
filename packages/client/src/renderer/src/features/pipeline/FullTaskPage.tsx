@@ -31,6 +31,7 @@ import type {
   PipelineRunRecord,
   PipelineRunStats,
   PipelineSourceMode,
+  PipelineStartStep,
   SkillSummary,
 } from '@tengyu-aipod/shared'
 import {
@@ -50,7 +51,7 @@ import {
   WandSparkles,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { DetectionConfig } from '../../../../main/lib/detection-config'
 import type { TitleKeywordGroup } from '../../../../main/lib/title-service'
 
@@ -59,8 +60,10 @@ type Option = {
   label: string
 }
 
-type TaskSourceMode = Extract<PipelineSourceMode, 'collection' | 'txt2img' | 'img2img'>
+type TaskSourceMode = PipelineSourceMode
 type ExtractProvider = 'grsai' | 'comfyui-chenyu'
+type Txt2imgProvider = 'grsai' | 'comfyui-chenyu'
+type Img2imgProvider = 'grsai' | 'comfyui-chenyu'
 type Img2imgReferenceMode = 'layout' | 'style' | 'layout-style'
 type DetectionPassRule = 'allow-review' | 'pass-only'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
@@ -71,6 +74,12 @@ type ReferenceImageDraft = {
   dataUrl: string
   base64: string
   mime_type: string
+}
+type FullTaskToggleSnapshot = {
+  mattingEnabled: boolean
+  detectionEnabled: boolean
+  photoshopEnabled: boolean
+  titleEnabled: boolean
 }
 
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
@@ -189,6 +198,13 @@ const sourceModeOptions: Array<{ key: TaskSourceMode; label: string }> = [
   { key: 'collection', label: '采集 + 提取' },
   { key: 'txt2img', label: '文生图' },
   { key: 'img2img', label: '图生图' },
+  { key: 'existing_prints', label: '已有印花' },
+]
+
+const existingPrintStartStepOptions: Array<{ key: PipelineStartStep; label: string }> = [
+  { key: 'matting', label: '从抠图开始' },
+  { key: 'detection', label: '从侵权检测开始' },
+  { key: 'photoshop', label: '从 PS 套版开始' },
 ]
 
 const img2imgReferenceModes: Array<{
@@ -264,19 +280,21 @@ function PromptRequirementField({
   onOpenChange,
   onValueChange,
   open,
+  label = '印花要求',
   value,
 }: {
   id: string
   onOpenChange: (open: boolean) => void
   onValueChange: (value: string) => void
   open: boolean
+  label?: string
   value: string
 }) {
   const summary = value.trim().replace(/\s+/g, ' ')
 
   return (
     <div className="relative grid gap-2 text-sm font-medium">
-      <span>印花要求</span>
+      <span>{label}</span>
       <button
         aria-controls={id}
         aria-expanded={open}
@@ -500,9 +518,12 @@ function visionModelsFor(settings: GenerationSettingsSnapshot | null) {
 }
 
 function promptSkillCategoryFor(
-  sourceMode: Extract<TaskSourceMode, 'txt2img' | 'img2img'>,
+  sourceMode: TaskSourceMode,
   printMode: PipelinePrintMode,
 ) {
+  if (sourceMode !== 'txt2img' && sourceMode !== 'img2img') {
+    return null
+  }
   return promptSkillCategories[sourceMode][printMode]
 }
 
@@ -849,6 +870,13 @@ export function FullTaskPage() {
   )
   const [printMode, setPrintMode] = useFullTaskSessionState<PipelinePrintMode>('printMode', 'local')
   const [sourceFolder, setSourceFolder] = useFullTaskSessionState('sourceFolder', '')
+  const [existingPrintFolder, setExistingPrintFolder] = useFullTaskSessionState(
+    'existingPrintFolder',
+    '',
+  )
+  const [existingPrintStartStep, setExistingPrintStartStep] = useFullTaskSessionState<
+    PipelineStartStep
+  >('existingPrintStartStep', 'photoshop')
   const [referenceImages, setReferenceImages] = useFullTaskSessionState<ReferenceImageDraft[]>(
     'referenceImages',
     [],
@@ -856,6 +884,38 @@ export function FullTaskPage() {
   const [sendReferenceToImageModel, setSendReferenceToImageModel] = useFullTaskSessionState(
     'sendReferenceToImageModel',
     false,
+  )
+  const [txt2imgProvider, setTxt2imgProvider] = useFullTaskSessionState<Txt2imgProvider>(
+    'txt2imgProvider',
+    'grsai',
+  )
+  const [txt2imgComfyuiWorkflowId, setTxt2imgComfyuiWorkflowId] = useFullTaskSessionState(
+    'txt2imgComfyuiWorkflowId',
+    '',
+  )
+  const [txt2imgComfyuiInstanceUuid, setTxt2imgComfyuiInstanceUuid] = useFullTaskSessionState(
+    'txt2imgComfyuiInstanceUuid',
+    '',
+  )
+  const [img2imgProvider, setImg2imgProvider] = useFullTaskSessionState<Img2imgProvider>(
+    'img2imgProvider',
+    'grsai',
+  )
+  const [img2imgSourceFolder, setImg2imgSourceFolder] = useFullTaskSessionState(
+    'img2imgSourceFolder',
+    '',
+  )
+  const [img2imgComfyuiWorkflowId, setImg2imgComfyuiWorkflowId] = useFullTaskSessionState(
+    'img2imgComfyuiWorkflowId',
+    '',
+  )
+  const [img2imgComfyuiInstanceUuid, setImg2imgComfyuiInstanceUuid] = useFullTaskSessionState(
+    'img2imgComfyuiInstanceUuid',
+    '',
+  )
+  const [img2imgComfyuiBatchSize, setImg2imgComfyuiBatchSize] = useFullTaskSessionState(
+    'img2imgComfyuiBatchSize',
+    '1',
   )
   const [extractProvider, setExtractProvider] = useFullTaskSessionState<ExtractProvider>(
     'extractProvider',
@@ -947,6 +1007,8 @@ export function FullTaskPage() {
     null,
   )
   const [generationSkills, setGenerationSkills] = useState<SkillSummary[]>([])
+  const [txt2imgWorkflows, setTxt2imgWorkflows] = useState<Option[]>([])
+  const [img2imgWorkflows, setImg2imgWorkflows] = useState<Option[]>([])
   const [extractWorkflows, setExtractWorkflows] = useState<Option[]>([])
   const [mattingWorkflows, setMattingWorkflows] = useState<Option[]>([])
   const [chenyuInstances, setChenyuInstances] = useState<ChenyuManagedInstance[]>([])
@@ -955,8 +1017,23 @@ export function FullTaskPage() {
   const [titleModels, setTitleModels] = useState<Option[]>([])
   const [detectionModels, setDetectionModels] = useState<string[]>([])
   const [detectionSkills, setDetectionSkills] = useState<SkillSummary[]>([])
+  const previousSourceModeRef = useRef<TaskSourceMode | null>(null)
+  const existingPrintToggleSnapshotRef = useRef<FullTaskToggleSnapshot | null>(null)
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
+  const requiresPromptGeneration =
+    sourceMode === 'txt2img' || (sourceMode === 'img2img' && img2imgProvider === 'grsai')
+  const txt2imgUsesComfyui = sourceMode === 'txt2img' && txt2imgProvider === 'comfyui-chenyu'
+  const img2imgUsesComfyui = sourceMode === 'img2img' && img2imgProvider === 'comfyui-chenyu'
+  const img2imgUsesGrsai = sourceMode === 'img2img' && img2imgProvider === 'grsai'
+  const txt2imgComfyuiWorkflow = useMemo(
+    () => txt2imgWorkflows.find((workflow) => workflow.key === txt2imgComfyuiWorkflowId) ?? null,
+    [txt2imgComfyuiWorkflowId, txt2imgWorkflows],
+  )
+  const img2imgComfyuiWorkflow = useMemo(
+    () => img2imgWorkflows.find((workflow) => workflow.key === img2imgComfyuiWorkflowId) ?? null,
+    [img2imgComfyuiWorkflowId, img2imgWorkflows],
+  )
   const grsaiModelOptions = useMemo(() => grsaiModelsFor(generationSettings), [generationSettings])
   const selectedGrsaiModel = useMemo(
     () => grsaiModelOptions.find((item) => item.id === grsaiModel) ?? grsaiModelOptions[0] ?? null,
@@ -966,15 +1043,20 @@ export function FullTaskPage() {
     ? selectedGrsaiModel.sizes
     : (FALLBACK_GRSAI_MODELS[0]?.sizes ?? ['1024x1024', '1536x1024', '1024x1536'])
   const promptModelOptions = useMemo(
-    () =>
-      (sourceMode === 'img2img'
+    () => {
+      if (!requiresPromptGeneration) {
+        return []
+      }
+      return (sourceMode === 'img2img'
         ? visionModelsFor(generationSettings)
         : textModelsFor(generationSettings)
-      ).map((item) => ({ key: item.id, label: modelLabel(item) })),
-    [generationSettings, sourceMode],
+      ).map((item) => ({ key: item.id, label: modelLabel(item) }))
+    },
+    [generationSettings, requiresPromptGeneration, sourceMode],
   )
-  const promptSkillCategory =
-    sourceMode === 'collection' ? null : promptSkillCategoryFor(sourceMode, printMode)
+  const promptSkillCategory = requiresPromptGeneration
+    ? promptSkillCategoryFor(sourceMode, printMode)
+    : null
   const promptSkillOptions = useMemo(() => {
     if (!promptSkillCategory) {
       return []
@@ -1027,18 +1109,36 @@ export function FullTaskPage() {
     sourceMode === 'collection'
       ? '采集 + 提取'
       : sourceMode === 'txt2img'
-        ? '固定付费模型'
-        : '固定付费模型'
+        ? txt2imgProvider === 'grsai'
+          ? '文生图 / Grsai'
+          : '文生图 / 晨羽'
+        : sourceMode === 'img2img'
+          ? img2imgProvider === 'grsai'
+            ? '图生图 / Grsai'
+            : '图生图 / 晨羽'
+          : '已有印花来源'
+  const isExistingPrintSource = sourceMode === 'existing_prints'
+  const mattingLockedOn = isExistingPrintSource && existingPrintStartStep === 'matting'
+  const mattingLockedSkipped = isExistingPrintSource && existingPrintStartStep !== 'matting'
+  const detectionLockedOn = isExistingPrintSource && existingPrintStartStep === 'detection'
+  const detectionLockedSkipped = isExistingPrintSource && existingPrintStartStep === 'photoshop'
+  const photoshopLockedOn = isExistingPrintSource && existingPrintStartStep === 'photoshop'
+  const effectiveMattingEnabled =
+    mattingLockedOn || (!mattingLockedSkipped && mattingEnabled)
+  const effectiveDetectionEnabled =
+    detectionLockedOn || (!detectionLockedSkipped && detectionEnabled)
+  const effectivePhotoshopEnabled = photoshopLockedOn || photoshopEnabled
+  const effectiveTitleEnabled = titleEnabled && effectivePhotoshopEnabled
   const validationIssues = useMemo(() => {
     const issues: string[] = []
     const normalizedPrintSkuCode = printSkuCode.trim()
-    if (photoshopEnabled && !normalizedPrintSkuCode) {
+    if (effectivePhotoshopEnabled && !normalizedPrintSkuCode) {
       issues.push('请先填写印花货号')
     }
-    if (photoshopEnabled && isMac) {
+    if (effectivePhotoshopEnabled && isMac) {
       issues.push('PS 套版仅支持 Windows，关闭 PS 套版后可在当前电脑运行前置步骤')
     }
-    if (photoshopEnabled && templatePaths.length === 0) {
+    if (effectivePhotoshopEnabled && templatePaths.length === 0) {
       issues.push('请先选择 PSD 模板')
     }
     if (sourceMode === 'collection') {
@@ -1064,8 +1164,38 @@ export function FullTaskPage() {
         }
       }
     }
-    if (sourceMode === 'txt2img' || sourceMode === 'img2img') {
-      if (sourceMode === 'img2img' && referenceImages.length === 0) {
+    if (sourceMode === 'existing_prints') {
+      if (!existingPrintFolder.trim()) {
+        issues.push('请先选择已有印花文件夹')
+      }
+    }
+    if (sourceMode === 'txt2img') {
+      if (promptSkillOptions.length === 0) {
+        issues.push('请先在后台配置提示词 Skill')
+      }
+      if (!selectedPromptSkill) {
+        issues.push('请先选择提示词 Skill')
+      }
+      if (!promptModel.trim()) {
+        issues.push('请先选择提示词模型')
+      }
+      if (!promptRequirement.trim()) {
+        issues.push('请先填写印花要求')
+      }
+    }
+    if (sourceMode === 'txt2img' && txt2imgProvider === 'comfyui-chenyu') {
+      if (runningInstances.length === 0) {
+        issues.push('请先开机晨羽云机')
+      }
+      if (!txt2imgComfyuiWorkflowId.trim()) {
+        issues.push('请先选择晨羽文生图工作流')
+      }
+      if (!txt2imgComfyuiInstanceUuid.trim()) {
+        issues.push('请先选择晨羽文生图实例')
+      }
+    }
+    if (sourceMode === 'img2img' && img2imgProvider === 'grsai') {
+      if (referenceImages.length === 0) {
         issues.push('请先添加至少一张图生图参考图')
       }
       if (promptSkillOptions.length === 0) {
@@ -1081,7 +1211,21 @@ export function FullTaskPage() {
         issues.push('请先填写印花要求')
       }
     }
-    if (mattingEnabled) {
+    if (sourceMode === 'img2img' && img2imgProvider === 'comfyui-chenyu') {
+      if (!img2imgSourceFolder.trim()) {
+        issues.push('请先选择图生图图片文件夹')
+      }
+      if (runningInstances.length === 0) {
+        issues.push('请先开机晨羽云机')
+      }
+      if (!img2imgComfyuiWorkflowId.trim()) {
+        issues.push('请先选择晨羽图生图工作流')
+      }
+      if (!img2imgComfyuiInstanceUuid.trim()) {
+        issues.push('请先选择晨羽图生图实例')
+      }
+    }
+    if (effectiveMattingEnabled) {
       if (runningInstances.length === 0) {
         issues.push('请先开机晨羽云机')
       }
@@ -1092,7 +1236,7 @@ export function FullTaskPage() {
         issues.push('请先选择抠图晨羽实例')
       }
     }
-    if (detectionEnabled) {
+    if (effectiveDetectionEnabled) {
       if (!detectionModel.trim()) {
         issues.push('请先选择侵权检测模型')
       }
@@ -1100,10 +1244,10 @@ export function FullTaskPage() {
         issues.push('请先选择侵权检测 Skill')
       }
     }
-    if (titleEnabled && !photoshopEnabled) {
+    if (titleEnabled && !effectivePhotoshopEnabled) {
       issues.push('标题生成需要先启用 PS 套版')
     }
-    if (titleEnabled && (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim())) {
+    if (effectiveTitleEnabled && (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim())) {
       issues.push('请先完成标题设置')
     }
     return issues
@@ -1113,13 +1257,14 @@ export function FullTaskPage() {
     extractSkillOptions.length,
     extractInstanceUuid,
     extractWorkflowId,
-    detectionEnabled,
     detectionModel,
+    effectiveDetectionEnabled,
+    effectiveMattingEnabled,
+    effectivePhotoshopEnabled,
+    effectiveTitleEnabled,
     isMac,
-    mattingEnabled,
     mattingInstanceUuid,
     mattingWorkflowId,
-    photoshopEnabled,
     promptModel,
     promptRequirement,
     promptSkillOptions.length,
@@ -1128,9 +1273,18 @@ export function FullTaskPage() {
     runningInstances.length,
     selectedDetectionSkill,
     selectedPromptSkill,
+    img2imgComfyuiInstanceUuid,
+    img2imgComfyuiWorkflowId,
+    img2imgProvider,
+    img2imgSourceFolder,
     sourceFolder,
+    existingPrintFolder,
+    existingPrintStartStep,
     sourceMode,
     templatePaths.length,
+    txt2imgComfyuiInstanceUuid,
+    txt2imgComfyuiWorkflowId,
+    txt2imgProvider,
     titleEnabled,
     titleLanguage,
     titleModel,
@@ -1141,6 +1295,8 @@ export function FullTaskPage() {
   const refreshOptions = useCallback(async () => {
     const results = await Promise.allSettled([
       window.api.skill.list({ module: 'generation' }),
+      window.api.generation.listComfyuiTxt2imgWorkflows(),
+      window.api.generation.listComfyuiImg2imgWorkflows(),
       window.api.generation.listComfyuiExtractWorkflows(),
       window.api.generation.listComfyuiMattingWorkflows(),
       window.api.chenyu.listInstances(),
@@ -1161,6 +1317,8 @@ export function FullTaskPage() {
       )
     const errorLabels = [
       'Skill',
+      '文生图工作流',
+      '图生图工作流',
       '提取工作流',
       '抠图工作流',
       '晨羽实例',
@@ -1179,19 +1337,23 @@ export function FullTaskPage() {
     }
 
     const skills = results[0].status === 'fulfilled' ? results[0].value : []
-    const nextExtractWorkflows = results[1].status === 'fulfilled' ? results[1].value : []
-    const nextMattingWorkflows = results[2].status === 'fulfilled' ? results[2].value : []
-    const nextInstances = results[3].status === 'fulfilled' ? results[3].value : []
-    const nextPlatforms = results[4].status === 'fulfilled' ? results[4].value : []
-    const nextLanguages = results[5].status === 'fulfilled' ? results[5].value : []
-    const nextTitleModels = results[6].status === 'fulfilled' ? results[6].value : []
-    const nextGenerationSettings = results[7].status === 'fulfilled' ? results[7].value : null
-    const runs = results[8].status === 'fulfilled' ? results[8].value : []
-    const nextDetectionConfig = results[9].status === 'fulfilled' ? results[9].value : null
-    const nextDetectionModels = results[10].status === 'fulfilled' ? results[10].value : []
-    const nextDetectionSkills = results[11].status === 'fulfilled' ? results[11].value : []
+    const nextTxt2imgWorkflows = results[1].status === 'fulfilled' ? results[1].value : []
+    const nextImg2imgWorkflows = results[2].status === 'fulfilled' ? results[2].value : []
+    const nextExtractWorkflows = results[3].status === 'fulfilled' ? results[3].value : []
+    const nextMattingWorkflows = results[4].status === 'fulfilled' ? results[4].value : []
+    const nextInstances = results[5].status === 'fulfilled' ? results[5].value : []
+    const nextPlatforms = results[6].status === 'fulfilled' ? results[6].value : []
+    const nextLanguages = results[7].status === 'fulfilled' ? results[7].value : []
+    const nextTitleModels = results[8].status === 'fulfilled' ? results[8].value : []
+    const nextGenerationSettings = results[9].status === 'fulfilled' ? results[9].value : null
+    const runs = results[10].status === 'fulfilled' ? results[10].value : []
+    const nextDetectionConfig = results[11].status === 'fulfilled' ? results[11].value : null
+    const nextDetectionModels = results[12].status === 'fulfilled' ? results[12].value : []
+    const nextDetectionSkills = results[13].status === 'fulfilled' ? results[13].value : []
 
     setGenerationSkills(skills)
+    setTxt2imgWorkflows(nextTxt2imgWorkflows.map(optionFromWorkflow))
+    setImg2imgWorkflows(nextImg2imgWorkflows.map(optionFromWorkflow))
     setExtractWorkflows(nextExtractWorkflows.map(optionFromWorkflow))
     setMattingWorkflows(nextMattingWorkflows.map(optionFromWorkflow))
     setChenyuInstances(nextInstances)
@@ -1282,8 +1444,8 @@ export function FullTaskPage() {
   }, [aspectRatio, selectedGrsaiModel, setAspectRatio])
 
   useEffect(() => {
-    if (sourceMode === 'collection' || promptModelOptions.length === 0) {
-      if (sourceMode !== 'collection' && promptModelOptions.length === 0) {
+    if (!requiresPromptGeneration || promptModelOptions.length === 0) {
+      if (requiresPromptGeneration && promptModelOptions.length === 0) {
         setPromptModel('')
       }
       return
@@ -1291,19 +1453,11 @@ export function FullTaskPage() {
     if (!promptModelOptions.some((item) => item.key === promptModel)) {
       setPromptModel(promptModelOptions[0]?.key ?? '')
     }
-  }, [promptModel, promptModelOptions, setPromptModel, sourceMode])
+  }, [promptModel, promptModelOptions, requiresPromptGeneration, setPromptModel])
 
   useEffect(() => {
-    if (
-      sourceMode !== 'collection' ||
-      extractProvider !== 'grsai' ||
-      extractSkillOptions.length === 0
-    ) {
-      if (
-        sourceMode === 'collection' &&
-        extractProvider === 'grsai' &&
-        extractSkillOptions.length === 0
-      ) {
+    if (sourceMode !== 'collection' || extractProvider !== 'grsai' || extractSkillOptions.length === 0) {
+      if (sourceMode === 'collection' && extractProvider === 'grsai' && extractSkillOptions.length === 0) {
         setExtractSkillId('')
       }
       return
@@ -1335,6 +1489,48 @@ export function FullTaskPage() {
   ])
 
   useEffect(() => {
+    if (sourceMode !== 'txt2img' || txt2imgProvider !== 'comfyui-chenyu') {
+      return
+    }
+    const fallback = selectFallbackChenyuInstance(chenyuInstances)
+    if (!fallback) {
+      setTxt2imgComfyuiInstanceUuid('')
+      return
+    }
+    if (!runningInstances.some((instance) => instance.instanceUuid === txt2imgComfyuiInstanceUuid)) {
+      setTxt2imgComfyuiInstanceUuid(fallback.instanceUuid)
+    }
+  }, [
+    chenyuInstances,
+    runningInstances,
+    setTxt2imgComfyuiInstanceUuid,
+    sourceMode,
+    txt2imgComfyuiInstanceUuid,
+    txt2imgProvider,
+  ])
+
+  useEffect(() => {
+    if (sourceMode !== 'img2img' || img2imgProvider !== 'comfyui-chenyu') {
+      return
+    }
+    const fallback = selectFallbackChenyuInstance(chenyuInstances)
+    if (!fallback) {
+      setImg2imgComfyuiInstanceUuid('')
+      return
+    }
+    if (!runningInstances.some((instance) => instance.instanceUuid === img2imgComfyuiInstanceUuid)) {
+      setImg2imgComfyuiInstanceUuid(fallback.instanceUuid)
+    }
+  }, [
+    chenyuInstances,
+    img2imgComfyuiInstanceUuid,
+    img2imgProvider,
+    runningInstances,
+    setImg2imgComfyuiInstanceUuid,
+    sourceMode,
+  ])
+
+  useEffect(() => {
     if (!mattingEnabled) {
       return
     }
@@ -1355,8 +1551,8 @@ export function FullTaskPage() {
   ])
 
   useEffect(() => {
-    if (sourceMode === 'collection' || promptSkillOptions.length === 0) {
-      if (sourceMode !== 'collection' && promptSkillOptions.length === 0) {
+    if (!requiresPromptGeneration || promptSkillOptions.length === 0) {
+      if (requiresPromptGeneration && promptSkillOptions.length === 0) {
         setPromptSkillId('')
       }
       return
@@ -1364,7 +1560,52 @@ export function FullTaskPage() {
     if (!promptSkillOptions.some((item) => item.key === promptSkillId)) {
       setPromptSkillId(promptSkillOptions[0]?.key ?? '')
     }
-  }, [promptSkillId, promptSkillOptions, setPromptSkillId, sourceMode])
+  }, [promptSkillId, promptSkillOptions, requiresPromptGeneration, setPromptSkillId])
+
+  useEffect(() => {
+    const previousSourceMode = previousSourceModeRef.current
+    const enteredExistingPrints =
+      sourceMode === 'existing_prints' && previousSourceMode !== 'existing_prints'
+    const leftExistingPrints =
+      sourceMode !== 'existing_prints' && previousSourceMode === 'existing_prints'
+    if (leftExistingPrints && existingPrintToggleSnapshotRef.current) {
+      const snapshot = existingPrintToggleSnapshotRef.current
+      existingPrintToggleSnapshotRef.current = null
+      setMattingEnabled(snapshot.mattingEnabled)
+      setDetectionEnabled(snapshot.detectionEnabled)
+      setPhotoshopEnabled(snapshot.photoshopEnabled)
+      setTitleEnabled(snapshot.titleEnabled)
+    }
+    previousSourceModeRef.current = sourceMode
+    if (sourceMode !== 'existing_prints') {
+      return
+    }
+    if (enteredExistingPrints) {
+      setPhotoshopEnabled(true)
+      setTitleEnabled(true)
+    }
+    if (existingPrintStartStep === 'matting') {
+      setMattingEnabled(true)
+    } else if (existingPrintStartStep === 'detection') {
+      setMattingEnabled(false)
+      setDetectionEnabled(true)
+    } else {
+      setMattingEnabled(false)
+      setDetectionEnabled(false)
+      setPhotoshopEnabled(true)
+    }
+  }, [
+    existingPrintStartStep,
+    detectionEnabled,
+    mattingEnabled,
+    photoshopEnabled,
+    setDetectionEnabled,
+    setMattingEnabled,
+    setPhotoshopEnabled,
+    setTitleEnabled,
+    sourceMode,
+    titleEnabled,
+  ])
 
   useEffect(() => {
     const firstPlatform = platforms[0]
@@ -1427,18 +1668,46 @@ export function FullTaskPage() {
 
   function updatePrintMode(nextMode: PipelinePrintMode) {
     setPrintMode(nextMode)
-    setMattingEnabled(nextMode === 'local')
+    if (sourceMode !== 'existing_prints') {
+      setMattingEnabled(nextMode === 'local')
+    }
   }
 
   function updateSourceMode(nextMode: TaskSourceMode) {
     setPromptRequirementOpen(false)
     setSourceMode(nextMode)
+    if (nextMode === 'existing_prints') {
+      existingPrintToggleSnapshotRef.current = {
+        mattingEnabled,
+        detectionEnabled,
+        photoshopEnabled,
+        titleEnabled,
+      }
+      setMattingEnabled(false)
+      setDetectionEnabled(false)
+      setPhotoshopEnabled(true)
+      setTitleEnabled(true)
+    }
   }
 
   async function chooseSourceFolder() {
     const selected = await window.api.generation.chooseImageFolder()
     if (selected.ok) {
       setSourceFolder(selected.data.path)
+    }
+  }
+
+  async function chooseImg2imgSourceFolder() {
+    const selected = await window.api.generation.chooseImageFolder()
+    if (selected.ok) {
+      setImg2imgSourceFolder(selected.data.path)
+    }
+  }
+
+  async function chooseExistingPrintFolder() {
+    const selected = await window.api.photoshop.choosePrintFolder()
+    if (selected.ok) {
+      setExistingPrintFolder(selected.data.path)
     }
   }
 
@@ -1525,12 +1794,47 @@ export function FullTaskPage() {
               },
       }
     }
+    if (sourceMode === 'existing_prints') {
+      return {
+        mode: 'existing_prints',
+        printFolder: existingPrintFolder,
+        startStep: existingPrintStartStep,
+      }
+    }
     if (sourceMode === 'txt2img') {
+      if (txt2imgProvider === 'comfyui-chenyu') {
+        return {
+          mode: 'txt2img',
+          provider: 'comfyui-chenyu',
+          prompt: buildPromptConfig(),
+          comfyui: {
+            workflowId: txt2imgComfyuiWorkflowId,
+            instanceUuid: txt2imgComfyuiInstanceUuid,
+            width: numberFromText(width, 1024),
+            height: numberFromText(height, 1024),
+            concurrency: 1,
+          },
+        }
+      }
       return {
         mode: 'txt2img',
         provider: 'grsai',
         prompt: buildPromptConfig(),
         grsai,
+      }
+    }
+    if (img2imgProvider === 'comfyui-chenyu') {
+      return {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder: img2imgSourceFolder,
+        comfyui: {
+          workflowId: img2imgComfyuiWorkflowId,
+          instanceUuid: img2imgComfyuiInstanceUuid,
+          width: numberFromText(width, 1024),
+          height: numberFromText(height, 1024),
+          batchSize: numberFromText(img2imgComfyuiBatchSize, 1),
+        },
       }
     }
     return {
@@ -1557,7 +1861,7 @@ export function FullTaskPage() {
     }
     const selectedSkill = selectedDetectionSkill
     return {
-      enabled: detectionEnabled,
+      enabled: effectiveDetectionEnabled,
       allowReview: detectionPassRule === 'allow-review',
       skillId: selectedSkill?.id ?? base.skillId,
       skillVersion: selectedSkill?.version ?? base.skillVersion,
@@ -1600,7 +1904,7 @@ export function FullTaskPage() {
       printMode,
       source: buildSourceConfig(),
       matting: {
-        enabled: mattingEnabled,
+        enabled: effectiveMattingEnabled,
         mode: 'comfyui',
         ...(nonEmpty(mattingWorkflowId) ? { workflowId: mattingWorkflowId.trim() } : {}),
         ...(nonEmpty(mattingInstanceUuid) ? { instanceUuid: mattingInstanceUuid.trim() } : {}),
@@ -1609,7 +1913,7 @@ export function FullTaskPage() {
       },
       detection: buildDetectionConfig(),
       photoshop: {
-        enabled: photoshopEnabled,
+        enabled: effectivePhotoshopEnabled,
         templates: templatePaths,
         ...(nonEmpty(outputRoot) ? { outputRoot: outputRoot.trim() } : {}),
         replaceRange,
@@ -1619,7 +1923,7 @@ export function FullTaskPage() {
         maxRetries: numberFromText(photoshopMaxRetries, 1),
       },
       title: {
-        enabled: titleEnabled && photoshopEnabled,
+        enabled: effectiveTitleEnabled,
         platform: titlePlatform,
         language: titleLanguage,
         model: titleModel,
@@ -1672,7 +1976,7 @@ export function FullTaskPage() {
   return (
     <div className="space-y-5">
       <div className="space-y-5">
-        {isMac && photoshopEnabled ? (
+        {isMac && effectivePhotoshopEnabled ? (
           <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
             PS 套版 v1 仅支持 Windows，当前电脑不能启动完整任务。
           </div>
@@ -1736,7 +2040,7 @@ export function FullTaskPage() {
                   <p className="text-sm font-medium text-muted-foreground">印花来源</p>
                   <h2 className="mt-1 text-lg font-semibold">来源准备</h2>
                   <p className="mt-1 text-sm text-muted-foreground">
-                    采集+提取、文生图、图生图只保留各自需要的设置。
+                    采集+提取、文生图、图生图、已有印花只保留各自需要的设置。
                   </p>
                 </div>
                 <Badge variant="secondary">{sourceBadgeLabel}</Badge>
@@ -1747,7 +2051,7 @@ export function FullTaskPage() {
                 onValueChange={(value) => updateSourceMode(value as TaskSourceMode)}
                 value={sourceMode}
               >
-                <TabsList className="grid w-full grid-cols-3">
+                <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
                   {sourceModeOptions.map((option) => (
                     <TabsTrigger key={option.key} value={option.key}>
                       {option.label}
@@ -1872,10 +2176,43 @@ export function FullTaskPage() {
                 {sourceMode === 'txt2img' ? (
                   <>
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <Badge variant="secondary">AI 写提示词</Badge>
+                      <Badge variant="secondary">
+                        {txt2imgProvider === 'grsai' ? 'AI 写提示词' : '晨羽工作流'}
+                      </Badge>
                       <span className="text-muted-foreground">
-                        AI 生成提示词后再走 Grsai 付费生图。
+                        {txt2imgProvider === 'grsai'
+                          ? 'AI 生成提示词后再走 Grsai 付费生图。'
+                          : '提示词先走百炼，再送入晨羽文生图工作流。'}
                       </span>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(180px,220px)_1fr]">
+                      <SelectField
+                        label="生图方式"
+                        onValueChange={(value) => setTxt2imgProvider(value as Txt2imgProvider)}
+                        options={[
+                          { key: 'grsai', label: 'Grsai' },
+                          { key: 'comfyui-chenyu', label: '晨羽智云' },
+                        ]}
+                        value={txt2imgProvider}
+                      />
+                      {txt2imgUsesComfyui ? (
+                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                          <SelectField
+                            label="文生图工作流"
+                            onValueChange={setTxt2imgComfyuiWorkflowId}
+                            options={txt2imgWorkflows}
+                            value={txt2imgComfyuiWorkflowId}
+                          />
+                          <Button
+                            className="mt-7 h-10"
+                            onClick={() => void refreshOptions()}
+                            variant="outline"
+                          >
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            刷新
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                     <div className="grid gap-4 lg:grid-cols-4">
                       <SelectField
@@ -1907,32 +2244,59 @@ export function FullTaskPage() {
                       </Field>
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <SelectField
-                        label="Grsai 模型"
-                        onValueChange={setGrsaiModel}
-                        options={grsaiModelOptions.map((item) => ({
-                          key: item.id,
-                          label: item.label,
-                        }))}
-                        value={grsaiModel}
-                      />
-                      <Field label="尺寸 / 比例">
-                        <Input
-                          onChange={(event) => setAspectRatio(event.target.value)}
-                          placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
-                          value={aspectRatio}
+                    {txt2imgProvider === 'grsai' ? (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <SelectField
+                          label="Grsai 模型"
+                          onValueChange={setGrsaiModel}
+                          options={grsaiModelOptions.map((item) => ({
+                            key: item.id,
+                            label: item.label,
+                          }))}
+                          value={grsaiModel}
                         />
-                      </Field>
-                      <Field label="并发">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setGrsaiConcurrency(event.target.value)}
-                          type="number"
-                          value={grsaiConcurrency}
+                        <Field label="尺寸 / 比例">
+                          <Input
+                            onChange={(event) => setAspectRatio(event.target.value)}
+                            placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
+                            value={aspectRatio}
+                          />
+                        </Field>
+                        <Field label="并发">
+                          <Input
+                            className="tabular-nums"
+                            onChange={(event) => setGrsaiConcurrency(event.target.value)}
+                            type="number"
+                            value={grsaiConcurrency}
+                          />
+                        </Field>
+                      </div>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <SelectField
+                          label="晨羽实例"
+                          onValueChange={setTxt2imgComfyuiInstanceUuid}
+                          options={runningInstanceOptions}
+                          value={txt2imgComfyuiInstanceUuid}
                         />
-                      </Field>
-                    </div>
+                        <Field label="宽">
+                          <Input
+                            className="tabular-nums"
+                            onChange={(event) => setWidth(event.target.value)}
+                            type="number"
+                            value={width}
+                          />
+                        </Field>
+                        <Field label="高">
+                          <Input
+                            className="tabular-nums"
+                            onChange={(event) => setHeight(event.target.value)}
+                            type="number"
+                            value={height}
+                          />
+                        </Field>
+                      </div>
+                    )}
                   </>
                 ) : null}
 
@@ -1945,94 +2309,215 @@ export function FullTaskPage() {
                     />
 
                     <div className="flex flex-wrap items-center gap-2 text-sm">
-                      <Badge variant="secondary">固定付费模型</Badge>
+                      <Badge variant="secondary">
+                        {img2imgProvider === 'grsai' ? '固定付费模型' : '晨羽工作流'}
+                      </Badge>
                       <span className="text-muted-foreground">
-                        默认只用于提示词生成，勾选后才送给 Grsai 图片模型。
+                        {img2imgProvider === 'grsai'
+                          ? '默认只用于提示词生成，勾选后才送给 Grsai 图片模型。'
+                          : '选择图片文件夹、工作流、晨羽实例和每张生成数量。'}
                       </span>
                     </div>
 
-                    <label
-                      className="inline-flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                      htmlFor="send-reference-to-image-model"
-                    >
-                      <Checkbox
-                        aria-label="生图时带参考图"
-                        checked={sendReferenceToImageModel}
-                        id="send-reference-to-image-model"
-                        onCheckedChange={(checked) =>
-                          setSendReferenceToImageModel(Boolean(checked))
-                        }
-                      />
-                      生图时带参考图
-                    </label>
-
-                    <SelectField
-                      label="参考方式"
-                      onValueChange={(value) =>
-                        setImg2imgReferenceMode(value as Img2imgReferenceMode)
-                      }
-                      options={img2imgReferenceModes.map((item) => ({
-                        key: item.key,
-                        label: item.label,
-                      }))}
-                      value={img2imgReferenceMode}
-                    />
-
-                    <div className="grid gap-4 lg:grid-cols-4">
+                    <div className="grid gap-4 lg:grid-cols-[minmax(180px,220px)_1fr]">
                       <SelectField
-                        label="提示词 Skill"
-                        onValueChange={setPromptSkillId}
-                        options={promptSkillOptions}
-                        value={promptSkillId}
+                        label="生图方式"
+                        onValueChange={(value) => setImg2imgProvider(value as Img2imgProvider)}
+                        options={[
+                          { key: 'grsai', label: 'Grsai' },
+                          { key: 'comfyui-chenyu', label: '晨羽智云' },
+                        ]}
+                        value={img2imgProvider}
                       />
-                      <SelectField
-                        label="提示词模型"
-                        onValueChange={setPromptModel}
-                        options={promptModelOptions}
-                        value={promptModel}
-                      />
-                      <PromptRequirementField
-                        id="img2img-print-requirement"
-                        onOpenChange={setPromptRequirementOpen}
-                        onValueChange={setPromptRequirement}
-                        open={promptRequirementOpen}
-                        value={promptRequirement}
-                      />
-                      <Field label="数量">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setPromptCount(event.target.value)}
-                          type="number"
-                          value={promptCount}
-                        />
-                      </Field>
+                      {img2imgUsesComfyui ? (
+                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                          <Field label="图片文件夹">
+                            <Input
+                              onChange={(event) => setImg2imgSourceFolder(event.target.value)}
+                              placeholder="选择任意图片文件夹"
+                              value={img2imgSourceFolder}
+                            />
+                          </Field>
+                          <Button
+                            className="mt-7 h-10"
+                            onClick={() => void chooseImg2imgSourceFolder()}
+                            variant="outline"
+                          >
+                            <FolderOpen className="mr-2 h-4 w-4" />
+                            选择
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
 
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <SelectField
-                        label="Grsai 模型"
-                        onValueChange={setGrsaiModel}
-                        options={grsaiModelOptions.map((item) => ({
-                          key: item.id,
-                          label: item.label,
-                        }))}
-                        value={grsaiModel}
-                      />
-                      <Field label="尺寸 / 比例">
+                    {img2imgUsesGrsai ? (
+                      <>
+                        <label
+                          className="inline-flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                          htmlFor="send-reference-to-image-model"
+                        >
+                          <Checkbox
+                            aria-label="生图时带参考图"
+                            checked={sendReferenceToImageModel}
+                            id="send-reference-to-image-model"
+                            onCheckedChange={(checked) =>
+                              setSendReferenceToImageModel(Boolean(checked))
+                            }
+                          />
+                          生图时带参考图
+                        </label>
+
+                        <SelectField
+                          label="参考方式"
+                          onValueChange={(value) =>
+                            setImg2imgReferenceMode(value as Img2imgReferenceMode)
+                          }
+                          options={img2imgReferenceModes.map((item) => ({
+                            key: item.key,
+                            label: item.label,
+                          }))}
+                          value={img2imgReferenceMode}
+                        />
+
+                        <div className="grid gap-4 lg:grid-cols-4">
+                          <SelectField
+                            label="提示词 Skill"
+                            onValueChange={setPromptSkillId}
+                            options={promptSkillOptions}
+                            value={promptSkillId}
+                          />
+                          <SelectField
+                            label="提示词模型"
+                            onValueChange={setPromptModel}
+                            options={promptModelOptions}
+                            value={promptModel}
+                          />
+                          <PromptRequirementField
+                            id="img2img-print-requirement"
+                            label="印花要求"
+                            onOpenChange={setPromptRequirementOpen}
+                            onValueChange={setPromptRequirement}
+                            open={promptRequirementOpen}
+                            value={promptRequirement}
+                          />
+                          <Field label="数量">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setPromptCount(event.target.value)}
+                              type="number"
+                              value={promptCount}
+                            />
+                          </Field>
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <SelectField
+                            label="Grsai 模型"
+                            onValueChange={setGrsaiModel}
+                            options={grsaiModelOptions.map((item) => ({
+                              key: item.id,
+                              label: item.label,
+                            }))}
+                            value={grsaiModel}
+                          />
+                          <Field label="尺寸 / 比例">
+                            <Input
+                              onChange={(event) => setAspectRatio(event.target.value)}
+                              placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
+                              value={aspectRatio}
+                            />
+                          </Field>
+                          <Field label="并发">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setGrsaiConcurrency(event.target.value)}
+                              type="number"
+                              value={grsaiConcurrency}
+                            />
+                          </Field>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid gap-4 md:grid-cols-4">
+                          <SelectField
+                            label="图生图工作流"
+                            onValueChange={setImg2imgComfyuiWorkflowId}
+                            options={img2imgWorkflows}
+                            value={img2imgComfyuiWorkflowId}
+                          />
+                          <SelectField
+                            label="晨羽实例"
+                            onValueChange={setImg2imgComfyuiInstanceUuid}
+                            options={runningInstanceOptions}
+                            value={img2imgComfyuiInstanceUuid}
+                          />
+                          <Field label="宽">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setWidth(event.target.value)}
+                              type="number"
+                              value={width}
+                            />
+                          </Field>
+                          <Field label="高">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setHeight(event.target.value)}
+                              type="number"
+                              value={height}
+                            />
+                          </Field>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
+                          <Field label="每张生成">
+                            <Input
+                              className="tabular-nums"
+                              min={1}
+                              max={8}
+                              onChange={(event) => setImg2imgComfyuiBatchSize(event.target.value)}
+                              type="number"
+                              value={img2imgComfyuiBatchSize}
+                            />
+                          </Field>
+                          <div className="flex items-end rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                            直接用工作流自带提示词，不再走百炼。
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                ) : null}
+
+                {sourceMode === 'existing_prints' ? (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <Field label="已有印花文件夹">
                         <Input
-                          onChange={(event) => setAspectRatio(event.target.value)}
-                          placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
-                          value={aspectRatio}
+                          onChange={(event) => setExistingPrintFolder(event.target.value)}
+                          placeholder="选择 02-印花工作区 下的具体印花文件夹"
+                          value={existingPrintFolder}
                         />
                       </Field>
-                      <Field label="并发">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setGrsaiConcurrency(event.target.value)}
-                          type="number"
-                          value={grsaiConcurrency}
-                        />
-                      </Field>
+                      <Button
+                        className="mt-7 h-10"
+                        onClick={() => void chooseExistingPrintFolder()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择
+                      </Button>
+                    </div>
+                    <SelectField
+                      label="起始步骤"
+                      onValueChange={(value) =>
+                        setExistingPrintStartStep(value as PipelineStartStep)
+                      }
+                      options={existingPrintStartStepOptions}
+                      value={existingPrintStartStep}
+                    />
+                    <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                      不能选择 02-印花工作区 根目录或等待套版目录；启用 PS 时会按印花货号重新生成等待套版文件名。
                     </div>
                   </>
                 ) : null}
@@ -2053,15 +2538,16 @@ export function FullTaskPage() {
                     <Checkbox
                       aria-label="启用抠图"
                       id="matting-enabled"
-                      checked={mattingEnabled}
+                      checked={effectiveMattingEnabled}
+                      disabled={mattingLockedOn || mattingLockedSkipped}
                       onCheckedChange={(checked) => setMattingEnabled(Boolean(checked))}
                     />
-                    启用抠图
+                    {mattingLockedSkipped ? '跳过抠图' : '启用抠图'}
                   </label>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {mattingEnabled ? (
+                {effectiveMattingEnabled ? (
                   <AdvancedDisclosure summary="抠图设置">
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <Badge variant="secondary">仅晨羽工作流</Badge>
@@ -2107,7 +2593,9 @@ export function FullTaskPage() {
                   </AdvancedDisclosure>
                 ) : (
                   <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                    已关闭抠图，后续步骤会直接进入侵权检测和套版。
+                    {mattingLockedSkipped
+                      ? '当前起始步骤会跳过抠图。'
+                      : '已关闭抠图，后续步骤会直接进入侵权检测和套版。'}
                   </div>
                 )}
               </CardContent>
@@ -2138,14 +2626,15 @@ export function FullTaskPage() {
                     <Checkbox
                       aria-label="启用侵权检测"
                       id="detection-enabled"
-                      checked={detectionEnabled}
+                      checked={effectiveDetectionEnabled}
+                      disabled={detectionLockedOn || detectionLockedSkipped}
                       onCheckedChange={(checked) => setDetectionEnabled(Boolean(checked))}
                     />
-                    启用检测
+                    {detectionLockedSkipped ? '跳过检测' : '启用检测'}
                   </label>
                 </div>
 
-                {detectionEnabled ? (
+                {effectiveDetectionEnabled ? (
                   <div className="space-y-4">
                     <div className="grid gap-4 lg:grid-cols-3">
                       <SelectField
@@ -2198,7 +2687,9 @@ export function FullTaskPage() {
                   </div>
                 ) : (
                   <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                    已关闭侵权检测，后续会直接进入已开启的下一步。
+                    {detectionLockedSkipped
+                      ? '当前起始步骤会跳过侵权检测。'
+                      : '已关闭侵权检测，后续会直接进入已开启的下一步。'}
                   </div>
                 )}
 
@@ -2217,7 +2708,8 @@ export function FullTaskPage() {
                   >
                     <Checkbox
                       aria-label="启用 PS 套版"
-                      checked={photoshopEnabled}
+                      checked={effectivePhotoshopEnabled}
+                      disabled={photoshopLockedOn}
                       id="photoshop-enabled"
                       onCheckedChange={(checked) => setPhotoshopEnabled(Boolean(checked))}
                     />
@@ -2225,7 +2717,7 @@ export function FullTaskPage() {
                   </label>
                 </div>
 
-                {photoshopEnabled ? (
+                {effectivePhotoshopEnabled ? (
                   <AdvancedDisclosure summary="PS 套版设置">
                     <div className="flex items-center justify-between gap-3">
                       <div>
@@ -2354,8 +2846,8 @@ export function FullTaskPage() {
                   >
                     <Checkbox
                       aria-label="启用标题生成"
-                      checked={titleEnabled && photoshopEnabled}
-                      disabled={!photoshopEnabled}
+                      checked={effectiveTitleEnabled}
+                      disabled={!effectivePhotoshopEnabled}
                       id="title-enabled"
                       onCheckedChange={(checked) => setTitleEnabled(Boolean(checked))}
                     />
@@ -2363,7 +2855,7 @@ export function FullTaskPage() {
                   </label>
                 </div>
 
-                {titleEnabled && photoshopEnabled ? (
+                {effectiveTitleEnabled ? (
                   <AdvancedDisclosure summary="标题生成设置">
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">标题生成</p>
@@ -2542,7 +3034,7 @@ export function FullTaskPage() {
                   </AdvancedDisclosure>
                 ) : (
                   <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                    {photoshopEnabled
+                    {effectivePhotoshopEnabled
                       ? '已关闭标题生成，任务会在 PS 套版后结束。'
                       : '标题生成需要先启用 PS 套版。'}
                   </div>

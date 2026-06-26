@@ -87,7 +87,7 @@ export function workbenchDomainRoots(workbenchRoot: string, domain: WorkbenchPat
   }
 }
 
-async function canonicalPath(path: string): Promise<string> {
+export async function canonicalPath(path: string): Promise<string> {
   const resolved = resolve(path)
   const tail: string[] = []
   let current = resolved

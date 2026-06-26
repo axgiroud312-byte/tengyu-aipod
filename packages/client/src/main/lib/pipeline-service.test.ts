@@ -6,6 +6,7 @@ import {
   type PipelineProgress,
   type PipelineResultSection,
   type PipelineRunConfig,
+  type PipelineStartStep,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -149,6 +150,48 @@ const mocks = vi.hoisted(() => ({
     })),
     failures: [],
   })),
+  runComfyuiTxt2imgBatch: vi.fn(
+    async (input: { prompts: string[]; taskId?: string }): Promise<GenerationRunResult> => ({
+      taskId: input.taskId ?? 'comfyui-txt2img-task',
+      total: input.prompts.length,
+      succeeded: input.prompts.length,
+      failed: 0,
+      images: input.prompts.map((prompt, index) => ({
+        prompt,
+        url: `file://comfyui-txt2img-${index + 1}.png`,
+        localPath: join(mocks.workbenchRoot, `comfyui-txt2img-${index + 1}.png`),
+      })),
+      failures: [],
+    }),
+  ),
+  runComfyuiImg2imgBatch: vi.fn(
+    async (input: {
+      sourceImagePaths?: string[]
+      batchSize?: number
+      taskId?: string
+    }): Promise<GenerationRunResult> => {
+      const paths = input.sourceImagePaths ?? []
+      const batchSize = input.batchSize ?? 1
+      return {
+        taskId: input.taskId ?? 'comfyui-img2img-task',
+        total: paths.length * batchSize,
+        succeeded: paths.length * batchSize,
+        failed: 0,
+        images: paths.flatMap((sourcePath, sourceIndex) =>
+          Array.from({ length: batchSize }, (_item, batchIndex) => ({
+            prompt: '',
+            url: `file://comfyui-img2img-${sourceIndex + 1}-${batchIndex + 1}.png`,
+            localPath: join(
+              mocks.workbenchRoot,
+              `comfyui-img2img-${sourceIndex + 1}-${batchIndex + 1}.png`,
+            ),
+            sourcePath,
+          })),
+        ),
+        failures: [],
+      }
+    },
+  ),
   runDetectionBatch: vi.fn(),
 }))
 
@@ -203,7 +246,9 @@ vi.mock('./detection-service', () => ({
 vi.mock('./generation-service', () => ({
   generateTxt2imgPrompts: vi.fn(),
   runComfyuiExtractBatch: vi.fn(),
+  runComfyuiImg2imgBatch: mocks.runComfyuiImg2imgBatch,
   runComfyuiMattingBatch: mocks.runComfyuiMattingBatch,
+  runComfyuiTxt2imgBatch: mocks.runComfyuiTxt2imgBatch,
   runExtractBatch: mocks.runExtractBatch,
   runMixedMattingBatch: vi.fn(),
   runTxt2imgBatch: mocks.runTxt2imgBatch,
@@ -314,6 +359,17 @@ function baseConfig(printFolder: string): PipelineRunConfig {
   }
 }
 
+function existingPrintSource(
+  printFolder: string,
+  startStep?: PipelineStartStep,
+): Extract<PipelineRunConfig['source'], { mode: 'existing_prints' }> {
+  return {
+    mode: 'existing_prints',
+    printFolder,
+    ...(startStep ? { startStep } : {}),
+  }
+}
+
 describe('PipelineService', () => {
   beforeEach(async () => {
     setPlatform('win32')
@@ -324,6 +380,8 @@ describe('PipelineService', () => {
     mocks.createTaskDir.mockClear()
     mocks.cleanupTask.mockClear()
     mocks.runTxt2imgBatch.mockClear()
+    mocks.runComfyuiTxt2imgBatch.mockClear()
+    mocks.runComfyuiImg2imgBatch.mockClear()
     mocks.runExtractBatch.mockClear()
     mocks.runComfyuiMattingBatch.mockClear()
     mocks.runDetectionBatch.mockReset()
@@ -704,10 +762,37 @@ describe('PipelineService', () => {
   it('can complete before Photoshop and title when those stages are disabled', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing.png'))
+    mocks.runDetectionBatch.mockResolvedValueOnce({
+      taskId: 'run-source-only-detection',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: join(printFolder, 'existing.png'),
+          thumbnailUrl: '',
+          artifactId: 'art-source-only',
+          printId: 'pri-source-only',
+          status: 'success' as const,
+          riskScore: 12,
+          riskLevel: 'pass' as const,
+          reason: '低风险',
+          outputPath: join(mocks.workbenchRoot, 'source-only-output.png'),
+          cached: false,
+        },
+      ],
+    })
 
     const service = new PipelineService()
     const result = await service.runPipeline('run-source-only', {
       ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+      },
       photoshop: {
         ...baseConfig(printFolder).photoshop,
         enabled: false,
@@ -724,8 +809,8 @@ describe('PipelineService', () => {
     expect(mocks.runTitleBatch).not.toHaveBeenCalled()
     expect(result.steps.map((step) => [step.step_key, step.status])).toEqual([
       ['source', 'completed'],
+      ['detection', 'completed'],
       ['matting', 'skipped'],
-      ['detection', 'skipped'],
       ['photoshop', 'skipped'],
       ['title', 'skipped'],
     ])
@@ -768,6 +853,32 @@ describe('PipelineService', () => {
     })
 
     await expect(service.getRun('run-outside-collection-source')).resolves.toBeNull()
+  })
+
+  it('rejects existing print sources at the generation root or waiting folder', async () => {
+    const generationRoot = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation)
+    const waitingFolder = join(generationRoot, '等待套版', 'run-existing-print-root')
+    await createPrint(join(waitingFolder, 'existing.png'))
+
+    const service = new PipelineService()
+
+    await expect(
+      service.runPipeline('run-existing-print-root', {
+        ...baseConfig(generationRoot),
+      }),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      message: '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
+    })
+
+    await expect(
+      service.runPipeline('run-existing-print-waiting', {
+        ...baseConfig(waitingFolder),
+      }),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      message: '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
+    })
   })
 
   it('holds a collection folder read lock until the complete task finishes', async () => {
@@ -874,6 +985,7 @@ describe('PipelineService', () => {
     const service = new PipelineService()
     const run = service.runPipeline('run-cancel-detection', {
       ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
       detection: {
         enabled: true,
         skillId: 'infringement-v2',
@@ -934,6 +1046,7 @@ describe('PipelineService', () => {
     const service = new PipelineService()
     const result = await service.runPipeline('run-detection-only-blocked', {
       ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
       detection: {
         enabled: true,
         skillId: 'infringement-v2',
@@ -1086,13 +1199,129 @@ describe('PipelineService', () => {
     })
   })
 
+  it('routes txt2img comfyui sources to the ComfyUI batch runner', async () => {
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-txt2img-comfyui', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'comfyui-chenyu',
+        prompt: { mode: 'manual', prompts: ['flower print'] },
+        comfyui: {
+          workflowId: 'wf-txt2img',
+          instanceUuid: 'instance-a',
+          width: 1024,
+          height: 1024,
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    expect(mocks.runComfyuiTxt2imgBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompts: ['flower print'],
+        workflowId: 'wf-txt2img',
+        instanceUuid: 'instance-a',
+        width: 1024,
+        height: 1024,
+      }),
+      expect.anything(),
+    )
+    expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
+  })
+
+  it('routes img2img comfyui sources to the ComfyUI batch runner with batch size', async () => {
+    const sourceFolder = join(mocks.workbenchRoot, 'external-img2img-source')
+    await createPrint(join(sourceFolder, 'a.png'))
+    await createPrint(join(sourceFolder, 'b.png'))
+
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-img2img-comfyui', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder,
+        comfyui: {
+          workflowId: 'wf-img2img',
+          instanceUuid: 'instance-b',
+          width: 768,
+          height: 768,
+          batchSize: 3,
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    expect(mocks.runComfyuiImg2imgBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceImagePaths: expect.arrayContaining([
+          join(sourceFolder, 'a.png'),
+          join(sourceFolder, 'b.png'),
+        ]),
+        workflowId: 'wf-img2img',
+        instanceUuid: 'instance-b',
+        width: 768,
+        height: 768,
+        batchSize: 3,
+      }),
+      expect.anything(),
+    )
+    expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
+  })
+
   it('emits staged result sections and runtime logs for a complete task', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing.png'))
+    mocks.runDetectionBatch.mockResolvedValueOnce({
+      taskId: 'run-result-sections-detection',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: join(printFolder, 'existing.png'),
+          thumbnailUrl: '',
+          artifactId: 'art-existing',
+          printId: 'pri-existing',
+          status: 'success' as const,
+          riskScore: 10,
+          riskLevel: 'pass' as const,
+          reason: '低风险',
+          outputPath: join(mocks.workbenchRoot, 'existing-output.png'),
+          cached: false,
+        },
+      ],
+    })
 
     const service = new PipelineService()
     await service.runPipeline('run-result-sections', {
       ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+      },
       photoshop: {
         ...baseConfig(printFolder).photoshop,
         enabled: false,
@@ -1501,6 +1730,7 @@ describe('PipelineService', () => {
     const service = new PipelineService()
     await service.runPipeline('run-detection-sections', {
       ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
       detection: {
         enabled: true,
         allowReview: false,
@@ -1549,7 +1779,7 @@ describe('PipelineService', () => {
     })
   })
 
-  it('rejects ComfyUI txt2img/img2img sources at the IPC schema boundary', () => {
+  it('accepts ComfyUI txt2img sources at the IPC schema boundary', () => {
     registerPipelineIpc()
     const handler = mocks.ipcHandlers.get('pipeline:run')
     if (!handler) {
@@ -1567,9 +1797,18 @@ describe('PipelineService', () => {
             prompt: { mode: 'manual', prompts: ['flower'] },
             comfyui: { workflowId: 'wf' },
           },
+          photoshop: {
+            ...baseConfig('/prints').photoshop,
+            enabled: false,
+            templates: [],
+          },
+          title: {
+            ...baseConfig('/prints').title,
+            enabled: false,
+          },
         },
       ),
-    ).toThrow('完整任务参数无效')
+    ).not.toThrow()
   })
 
   it('rejects print sku codes that are empty after filename sanitization at the IPC schema boundary', () => {

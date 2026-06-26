@@ -83,7 +83,7 @@ describe('pipeline policy', () => {
           printFolder: 'C:\\work\\02-印花工作区\\抠图\\ready',
         }),
       ),
-    ).toEqual(['source', 'matting', 'detection', 'photoshop', 'title'])
+    ).toEqual(['source', 'photoshop', 'title'])
   })
 
   it('stops before downstream steps when optional stages are disabled', () => {
@@ -110,6 +110,28 @@ describe('pipeline policy', () => {
     ).toEqual(['source', 'extract'])
   })
 
+  it('respects explicit existing_prints start steps', () => {
+    expect(
+      plannedPipelineSteps(
+        baseConfig({
+          mode: 'existing_prints',
+          printFolder: 'C:\\work\\02-印花工作区\\ready',
+          startStep: 'matting',
+        }),
+      ),
+    ).toEqual(['source', 'matting', 'detection', 'photoshop', 'title'])
+
+    expect(
+      plannedPipelineSteps(
+        baseConfig({
+          mode: 'existing_prints',
+          printFolder: 'C:\\work\\02-印花工作区\\ready',
+          startStep: 'detection',
+        }),
+      ),
+    ).toEqual(['source', 'detection', 'photoshop', 'title'])
+  })
+
   it('does not plan title when Photoshop is disabled', () => {
     const defaults = baseConfig({ mode: 'existing_prints', printFolder: 'x' })
     expect(
@@ -127,6 +149,6 @@ describe('pipeline policy', () => {
           enabled: true,
         },
       }),
-    ).toEqual(['source', 'matting', 'detection'])
+    ).toEqual(['source'])
   })
 })

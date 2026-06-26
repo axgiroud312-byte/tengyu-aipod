@@ -19,6 +19,7 @@ export type PipelineProvider = 'grsai' | 'comfyui-chenyu'
 export type PipelinePrintMode = 'local' | 'full'
 export type PipelinePromptMode = 'manual' | 'ai'
 export type PipelineMattingMode = 'comfyui' | 'mixed'
+export type PipelineStartStep = 'matting' | 'detection' | 'photoshop'
 export type PipelineRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
 export type PipelineStepStatus =
   | 'pending'
@@ -48,6 +49,10 @@ export interface PipelineComfyuiWorkflowConfig {
   width?: number
   height?: number
   concurrency?: number
+}
+
+export interface PipelineComfyuiImg2imgConfig extends PipelineComfyuiWorkflowConfig {
+  batchSize?: number
 }
 
 export interface PipelineGrsaiImageConfig {
@@ -85,6 +90,12 @@ export type PipelineSourceConfig =
       grsai?: PipelineGrsaiImageConfig
     }
   | {
+      mode: 'txt2img'
+      provider: 'comfyui-chenyu'
+      prompt: PipelinePromptConfig
+      comfyui: PipelineComfyuiWorkflowConfig
+    }
+  | {
       mode: 'img2img'
       provider: 'grsai'
       sourceFolder?: string
@@ -95,8 +106,15 @@ export type PipelineSourceConfig =
       grsai?: PipelineGrsaiImageConfig
     }
   | {
+      mode: 'img2img'
+      provider: 'comfyui-chenyu'
+      sourceFolder: string
+      comfyui: PipelineComfyuiImg2imgConfig
+    }
+  | {
       mode: 'existing_prints'
       printFolder: string
+      startStep?: PipelineStartStep
     }
 
 export interface PipelineMattingConfig {
