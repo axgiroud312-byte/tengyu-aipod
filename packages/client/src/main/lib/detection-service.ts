@@ -261,6 +261,7 @@ const detectionBatchConfigSchema = z.object({
   forceRetest: z.boolean().optional(),
   taskId: z.string().optional(),
 })
+const detectionScanFolderInputSchema = z.object({ folder: z.string() })
 const detectionScanPathsInputSchema = z.object({ paths: detectionStringArraySchema })
 const detectionCancelInputSchema = z.object({ task_id: z.string() })
 const detectionListResultsInputSchema = z
@@ -1135,6 +1136,10 @@ export class DetectionService {
     return images.sort((left, right) => naturalCompare(left.relativePath, right.relativePath))
   }
 
+  async scanFolder(input: { folder: string }): Promise<DetectionImageInfo[]> {
+    return scanImageFolder(input.folder)
+  }
+
   async listResults(
     input: {
       task_id?: string | null | undefined
@@ -1890,6 +1895,11 @@ export function registerDetectionIpc() {
   const ipcMain = electronIpcMain()
   ipcMain.handle('detection:choose-input-folder', () => chooseDetectionInputFolder())
   ipcMain.handle('detection:list-input-sources', () => detectionService.listInputSources())
+  ipcMain.handle('detection:scan-folder', (_event, input: unknown) =>
+    detectionService.scanFolder(
+      parseDetectionIpcInput(detectionScanFolderInputSchema, input, '检测图片文件夹参数不正确'),
+    ),
+  )
   ipcMain.handle('detection:scan-paths', (_event, input: unknown) =>
     detectionService.scanPaths(
       parseDetectionIpcInput(detectionScanPathsInputSchema, input, '检测图片路径参数不正确'),

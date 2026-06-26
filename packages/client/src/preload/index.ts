@@ -499,6 +499,8 @@ const api = {
       ) as Promise<ChooseDetectionInputFolderResult>,
     listInputSources: () =>
       ipcRenderer.invoke('detection:list-input-sources') as Promise<DetectionInputSources>,
+    scanFolder: (input: { folder: string }) =>
+      ipcRenderer.invoke('detection:scan-folder', input) as Promise<DetectionImageInfo[]>,
     scanPaths: (input: { paths: string[] }) =>
       ipcRenderer.invoke('detection:scan-paths', input) as Promise<DetectionImageInfo[]>,
     listModels: () => ipcRenderer.invoke('detection:list-models') as Promise<string[]>,

@@ -351,14 +351,14 @@ function ImageFolderPanel({
         <div className="mt-4 grid gap-2 sm:grid-cols-2">
           {inputSources.map((source) => (
             <Button
-              disabled={loading}
+              disabled={loading || !source.count}
               key={source.key}
               onClick={() => void onUseSource(source)}
               type="button"
               variant="secondary"
             >
               <FolderOpen className="mr-2 h-4 w-4" />
-              全选 {source.label.replace('02-印花工作区 / ', '')} ({source.count})
+              全选 {source.label.replace(' / ', '/')}/ ({source.count} 张)
             </Button>
           ))}
         </div>
