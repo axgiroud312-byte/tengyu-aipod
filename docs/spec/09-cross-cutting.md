@@ -500,6 +500,8 @@ autoUpdater.on('update-downloaded', () => {
 
 Skill 同步必须在客户授权通过后启动。
 
+登录页停留在 `pending` 时，每 3 秒自动调用 `customerAuth:verify` 复查授权；管理员授权后，客户端自动进入首次设置引导或 Workbench。复查临时失败时保留 `pending` 页面并显示错误，不清空登录态。
+
 运行中每 5 分钟复查一次授权状态。发现 PHP 返回 `nologin: 1` 或 Next 返回授权失效后，客户端清空本地登录态并回登录页。
 
 ### 8.2 客户登录 IPC
@@ -528,7 +530,7 @@ customerAuth:logout
 4. 每 1.5 秒通过主进程轮询旧 PHP `/api/wxlogin/check_login`，请求里携带 `token + finger`；开始轮询后会立即先检查一次。
 5. 成功后主进程保存 `uid + secret`。
 6. 主进程调用 Next `/api/customer-auth/verify`。
-7. 授权通过后进入首次设置或 Workbench。
+7. 授权通过后进入首次设置或 Workbench；如返回 `pending`，登录页继续每 3 秒复查 Next 授权状态。
 
 二维码过期或登录失败时，结束轮询并提示用户重试。
 
@@ -543,7 +545,7 @@ customerAuth:logout
 5. 主进程调用旧 PHP `/user/public/login`，传 `method=phone`、`finger` 和可选 `invite`。
 6. 成功后主进程保存 `uid + secret`。
 7. 主进程调用 Next `/api/customer-auth/verify`。
-8. 授权通过后进入首次设置或 Workbench。
+8. 授权通过后进入首次设置或 Workbench；如返回 `pending`，登录页继续每 3 秒复查 Next 授权状态。
 
 ### 8.5 设备指纹
 
@@ -853,6 +855,6 @@ OS 原生通知用于：
 - 日志自动清理
 - 崩溃日志生成
 - 错误上报队列在离线时落磁盘
-- 客户登录、pending/disabled/expired 门禁、运行中 5 分钟复查
+- 客户登录、pending 自动复查、pending/disabled/expired 门禁、运行中 5 分钟复查
 - 首次启动引导各 Step 跳过/继续
 - 自动更新检查

@@ -38,6 +38,7 @@ PHP 登录成功后返回：
 - 首次登录客户默认为 `pending`，管理员授权后变为 `active`。
 - `active` 必须有 `expires_at`；`expires_at` 小于当前时间时按 `expired` 处理。
 - `disabled`、`pending`、`expired` 客户不能进入 Workbench。
+- 客户端停留在 `pending` 登录页时每 3 秒复查一次授权，管理员授权后自动进入 Workbench。
 - 客户端启动时强校验，运行中每 5 分钟复查一次。
 - 发现 PHP 返回 `nologin: 1` 或 Next 授权失效时，客户端清空本地登录态并回登录页。
 
@@ -147,6 +148,7 @@ Admin 登录继续使用邮箱密码和管理员 JWT，不接微信、不接 PHP
 
 - Workbench 启动依赖 PHP 登录服务和 Next 授权服务。
 - 服务端不可用时，未完成授权校验的客户不能进入 Workbench。
+- `pending` 页面会短轮询授权接口，pending 客户量异常增长时需要关注 Next/PHP 授权接口压力。
 - 同一账号在另一端重新登录后，当前 Workbench 会被踢回登录页。
 
 ## 不做

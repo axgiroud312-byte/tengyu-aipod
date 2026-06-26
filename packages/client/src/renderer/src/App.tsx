@@ -92,6 +92,7 @@ const defaultCollectionPageState: CollectionPageState = {
 const COLLECTION_SKU_PROMPT_COLLAPSE_MS = 120_000
 const COLLECTION_DEBUG_LOG_LIMIT = 1000
 const CUSTOMER_AUTH_RECHECK_MS = 5 * 60 * 1000
+const CUSTOMER_AUTH_PENDING_RECHECK_MS = 3 * 1000
 
 const anonymousCustomerAuthState: CustomerAuthState = {
   customer: null,
@@ -1582,6 +1583,48 @@ function CustomerAuthGate({ children }: { children: React.ReactNode }) {
     }, CUSTOMER_AUTH_RECHECK_MS)
     return () => window.clearInterval(timer)
   }, [authState.status])
+
+  useEffect(() => {
+    if (!initialChecked || authState.status !== 'pending') {
+      return
+    }
+
+    let inFlight = false
+    const verifyPending = () => {
+      if (inFlight) {
+        return
+      }
+      inFlight = true
+      void window.api.customerAuth
+        .verify()
+        .then((nextState) => {
+          setAuthState((current) =>
+            current.status === 'pending' && nextState.status === 'anonymous'
+              ? {
+                  ...current,
+                  message: nextState.message ?? '客户授权校验失败',
+                }
+              : nextState,
+          )
+        })
+        .catch((error) => {
+          setAuthState((current) =>
+            current.status === 'pending'
+              ? {
+                  ...current,
+                  message: error instanceof Error ? error.message : '客户授权校验失败',
+                }
+              : current,
+          )
+        })
+        .finally(() => {
+          inFlight = false
+        })
+    }
+
+    const timer = window.setInterval(verifyPending, CUSTOMER_AUTH_PENDING_RECHECK_MS)
+    return () => window.clearInterval(timer)
+  }, [authState.status, initialChecked])
 
   if (!initialChecked && authState.status === 'active') {
     return <EnteringWorkbench />

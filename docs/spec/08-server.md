@@ -373,6 +373,7 @@ v1 按以下规模设计：
 - `pending` 客户不能进入 Workbench
 - Admin 可查看 `pending` 客户账号
 - Admin 授权客户账号时必须填写到期日
+- 客户端处于 `pending` 登录页时会自动复查授权，Admin 授权后无需用户手动重新校验即可进入
 - `active` 且未到期客户可以进入 Workbench
 - `disabled` 客户不能进入 Workbench
 - 到期客户不能进入 Workbench
