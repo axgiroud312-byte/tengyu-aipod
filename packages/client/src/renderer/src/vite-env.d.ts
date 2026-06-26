@@ -358,9 +358,6 @@ declare global {
         listInputSources: () => Promise<
           import('../../main/lib/detection-service').DetectionInputSources
         >
-        scanFolder: (input: { folder: string }) => Promise<
-          import('../../main/lib/detection-service').DetectionImageInfo[]
-        >
         scanPaths: (input: { paths: string[] }) => Promise<
           import('../../main/lib/detection-service').DetectionImageInfo[]
         >

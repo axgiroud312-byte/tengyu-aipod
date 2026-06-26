@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import type { RiskLevel, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CheckCircle2,
+  CheckSquare,
   FolderOpen,
   ImageIcon,
   Loader2,
@@ -12,11 +13,13 @@ import {
   ShieldQuestion,
   Square,
   Upload,
+  X,
 } from 'lucide-react'
 import { type DragEvent as ReactDragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   DetectionImageInfo,
   DetectionImageResult,
+  DetectionInputSource,
   DetectionProgress,
   DetectionTaskEvent,
 } from '../../../main/lib/detection-service'
@@ -146,38 +149,31 @@ function riskTone(level: RiskLevel) {
   }
 }
 
-type ElectronFileWithPath = File & { path?: string }
+function droppedFilePath(file: File) {
+  return (file as File & { path?: string }).path?.trim() ?? ''
+}
+
 type DropEntry = {
   isFile: boolean
   isDirectory: boolean
 }
 type DropFileEntry = DropEntry & {
-  file: (
-    callback: (file: ElectronFileWithPath) => void,
-    errorCallback?: (error: unknown) => void,
-  ) => void
-}
-type DropDirectoryReader = {
-  readEntries: (
-    callback: (entries: DropEntry[]) => void,
-    errorCallback?: (error: unknown) => void,
-  ) => void
+  file: (callback: (file: File & { path?: string }) => void, error?: () => void) => void
 }
 type DropDirectoryEntry = DropEntry & {
-  createReader: () => DropDirectoryReader
+  createReader: () => {
+    readEntries: (callback: (entries: DropEntry[]) => void, error?: () => void) => void
+  }
 }
 type DropItem = DataTransferItem & {
   webkitGetAsEntry?: () => DropEntry | null
 }
 
-function droppedFilePath(file: File) {
-  return (file as ElectronFileWithPath).path?.trim() ?? ''
-}
+async function readAllDirectoryEntries(entry: DropDirectoryEntry): Promise<DropEntry[]> {
+  const reader = entry.createReader()
+  const entries: DropEntry[] = []
 
-function readAllDirectoryEntries(reader: DropDirectoryReader): Promise<DropEntry[]> {
-  return new Promise((resolve) => {
-    const entries: DropEntry[] = []
-
+  return await new Promise((resolve) => {
     function readNext() {
       reader.readEntries(
         (batch) => {
@@ -191,7 +187,6 @@ function readAllDirectoryEntries(reader: DropDirectoryReader): Promise<DropEntry
         () => resolve(entries),
       )
     }
-
     readNext()
   })
 }
@@ -208,18 +203,13 @@ async function readDroppedEntryPaths(entry: DropEntry): Promise<string[]> {
       )
     })
   }
-
-  if (entry.isDirectory) {
-    const nestedEntries = await readAllDirectoryEntries(
-      (entry as DropDirectoryEntry).createReader(),
-    )
-    const nestedPaths = await Promise.all(
-      nestedEntries.map(async (nestedEntry) => readDroppedEntryPaths(nestedEntry)),
-    )
-    return nestedPaths.flat()
+  if (!entry.isDirectory) {
+    return []
   }
 
-  return []
+  const nestedEntries = await readAllDirectoryEntries(entry as DropDirectoryEntry)
+  const nestedPaths = await Promise.all(nestedEntries.map(readDroppedEntryPaths))
+  return nestedPaths.flat()
 }
 
 async function collectDroppedPaths(dataTransfer: DataTransfer): Promise<string[]> {
@@ -242,29 +232,37 @@ async function collectDroppedPaths(dataTransfer: DataTransfer): Promise<string[]
     return Array.from(new Set(paths))
   }
 
-  return Array.from(
-    new Set(
-      Array.from(dataTransfer.files)
-        .map((file) => droppedFilePath(file))
-        .filter(Boolean),
-    ),
-  )
+  return Array.from(new Set(Array.from(dataTransfer.files).map(droppedFilePath).filter(Boolean)))
 }
 
 function ImageFolderPanel({
-  folder,
+  sourceLabel,
+  inputSources,
   images,
+  selectedPaths,
+  selectedCount,
   loading,
   onChoose,
   onScan,
+  onUseSource,
   onDropPaths,
+  onToggleImage,
+  onSelectAll,
+  onClearSelection,
 }: {
-  folder: string
+  sourceLabel: string
+  inputSources: DetectionInputSource[]
   images: DetectionImageInfo[]
+  selectedPaths: Set<string>
+  selectedCount: number
   loading: boolean
   onChoose: () => void
   onScan: () => void
+  onUseSource: (source: DetectionInputSource) => Promise<void> | void
   onDropPaths: (paths: string[]) => Promise<void> | void
+  onToggleImage: (path: string) => void
+  onSelectAll: () => void
+  onClearSelection: () => void
 }) {
   const [dragging, setDragging] = useState(false)
   const dragCounterRef = useRef(0)
@@ -325,7 +323,7 @@ function ImageFolderPanel({
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-balance">输入来源</h2>
             <p className="mt-1 truncate text-sm text-muted-foreground">
-              {folder || '拖入图片或文件夹，或选择文件夹'}
+              {sourceLabel || '拖入图片或文件夹，或选择文件夹'}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -333,7 +331,7 @@ function ImageFolderPanel({
               <FolderOpen className="mr-2 h-4 w-4" />
               选择文件夹
             </Button>
-            <Button disabled={!folder || loading} onClick={onScan} type="button">
+            <Button disabled={!sourceLabel || loading} onClick={onScan} type="button">
               {loading ? (
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               ) : (
@@ -345,36 +343,84 @@ function ImageFolderPanel({
         </div>
         <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
           <Upload className="h-4 w-4" />
-          <span>{dragging ? '松开后自动扫描' : '支持拖入图片文件或文件夹，文件夹会递归扫描'}</span>
+          <span>{dragging ? '松开后自动扫描' : '支持拖入图片文件或文件夹'}</span>
         </div>
       </div>
 
-      <div className="mt-4 flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-        <ImageIcon className="h-4 w-4 text-muted-foreground" />
+      {inputSources.length ? (
+        <div className="mt-4 grid gap-2 sm:grid-cols-2">
+          {inputSources.map((source) => (
+            <Button
+              disabled={loading}
+              key={source.key}
+              onClick={() => void onUseSource(source)}
+              type="button"
+              variant="secondary"
+            >
+              <FolderOpen className="mr-2 h-4 w-4" />
+              全选 {source.label.replace('02-印花工作区 / ', '')} ({source.count})
+            </Button>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm">
         <span>
-          共 <span className="font-medium tabular-nums">{images.length}</span> 张，将运行{' '}
-          <span className="font-medium tabular-nums">{images.length}</span> 次
+          <ImageIcon className="mr-2 inline h-4 w-4 text-muted-foreground" />共{' '}
+          <span className="font-medium tabular-nums">{images.length}</span> 张，将运行{' '}
+          <span className="font-medium tabular-nums">{selectedCount}</span> 次
         </span>
+        <div className="flex gap-2">
+          <Button disabled={!images.length} onClick={onSelectAll} type="button" variant="ghost">
+            <CheckSquare className="mr-2 h-4 w-4" />
+            全选
+          </Button>
+          <Button
+            disabled={!images.length}
+            onClick={onClearSelection}
+            type="button"
+            variant="ghost"
+          >
+            <X className="mr-2 h-4 w-4" />
+            清空
+          </Button>
+        </div>
       </div>
 
       <div className="mt-4 grid max-h-[430px] gap-3 overflow-auto pr-1 sm:grid-cols-2 xl:grid-cols-3">
         {images.length ? (
-          images.map((image) => (
-            <div className="min-w-0 rounded-md border bg-muted/20 p-2 text-sm" key={image.path}>
-              <img
-                alt={image.name}
-                className="h-28 w-full rounded-sm bg-muted object-cover"
-                src={detectionImageSrc({ path: image.path, thumbnailUrl: image.thumbnailUrl })}
-              />
-              <span className="mt-2 block truncate font-medium">{image.name}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {image.relativePath}
-              </span>
-            </div>
-          ))
+          images.map((image) => {
+            const selected = selectedPaths.has(image.path)
+            return (
+              <label
+                className={`min-w-0 rounded-md border p-2 text-sm transition ${
+                  selected ? 'border-primary bg-primary/5' : 'bg-muted/20'
+                }`}
+                key={image.path}
+              >
+                <img
+                  alt={image.name}
+                  className="h-28 w-full rounded-sm bg-muted object-cover"
+                  src={detectionImageSrc({ path: image.path, thumbnailUrl: image.thumbnailUrl })}
+                />
+                <span className="mt-2 flex items-center gap-2">
+                  <input
+                    checked={selected}
+                    className="h-4 w-4"
+                    onChange={() => onToggleImage(image.path)}
+                    type="checkbox"
+                  />
+                  <span className="min-w-0 truncate font-medium">{image.name}</span>
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {image.relativePath}
+                </span>
+              </label>
+            )
+          })
         ) : (
           <div className="rounded-md bg-muted px-3 py-10 text-center text-sm text-muted-foreground sm:col-span-2 xl:col-span-3">
-            {folder ? '暂无图片' : '请选择文件夹或拖入内容'}
+            {sourceLabel ? '暂无图片' : '请选择文件夹或拖入内容'}
           </div>
         )}
       </div>
@@ -619,9 +665,10 @@ function FailedResults({
 }
 
 export function DetectionWorkbench() {
-  const [sourceFolder, setSourceFolder] = useState('')
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
+  const [inputSources, setInputSources] = useState<DetectionInputSource[]>([])
   const [sourceImages, setSourceImages] = useState<DetectionImageInfo[]>([])
+  const [selectedImagePaths, setSelectedImagePaths] = useState<Set<string>>(new Set())
   const [loadingImages, setLoadingImages] = useState(false)
   const [compression, setCompression] = useState(true)
   const [models, setModels] = useState<string[]>([])
@@ -644,10 +691,11 @@ export function DetectionWorkbench() {
     async function loadSkill() {
       setSkillLoading(true)
       try {
-        const [skills, modelList, config] = await Promise.all([
+        const [skills, modelList, config, sources] = await Promise.all([
           window.api.skill.list({ module: 'detection' }),
           window.api.detection.listModels(),
           window.api.detection.getConfig(),
+          window.api.detection.listInputSources().catch(() => null),
         ])
         const summary = selectDefaultSkill(skills)
         if (!summary) {
@@ -659,6 +707,7 @@ export function DetectionWorkbench() {
         }
         setModels(modelList)
         setModel(config?.model ?? modelList[0] ?? DEFAULT_MODEL)
+        setInputSources(sources?.sources ?? [])
         setSkill(detail)
         setError(null)
       } catch (nextError) {
@@ -750,6 +799,10 @@ export function DetectionWorkbench() {
     [detectedResults],
   )
   const failedResults = useMemo(() => results.filter(isFailedResult), [results])
+  const selectedImages = useMemo(
+    () => sourceImages.filter((image) => selectedImagePaths.has(image.path)),
+    [selectedImagePaths, sourceImages],
+  )
   const previewResults = useMemo(() => detectionPreviewResults(results), [results])
   const previewItems = useMemo(
     () => previewResults.map((result) => detectionPreviewItem(result)),
@@ -771,14 +824,14 @@ export function DetectionWorkbench() {
     }
   }
 
-  async function scanSourcePaths(paths: string[], displayLabel: string) {
+  async function scanSourcePaths(paths: string[]) {
     if (!paths.length) {
       setError('请先选择输入文件夹或拖入图片')
       return
     }
-    setSourceFolder(displayLabel)
     setSourcePaths(paths)
     setSourceImages([])
+    setSelectedImagePaths(new Set())
     setResults([])
     setProgress(null)
     setMessage(null)
@@ -787,6 +840,7 @@ export function DetectionWorkbench() {
     try {
       const images = await window.api.detection.scanPaths({ paths })
       setSourceImages(images)
+      setSelectedImagePaths(new Set(images.map((image) => image.path)))
       setMessage(`已检索 ${images.length} 张图片`)
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '检索图片失败')
@@ -804,30 +858,57 @@ export function DetectionWorkbench() {
       }
       return
     }
-    setSourceFolder(result.data.path)
     setSourcePaths([result.data.path])
     setSourceImages([])
+    setSelectedImagePaths(new Set())
     setResults([])
     setProgress(null)
     setMessage(null)
   }
 
-  async function scanSourceFolder() {
+  async function scanSelectedSources() {
     if (!sourcePaths.length) {
       setError('请先选择输入文件夹或拖入图片')
       return
     }
-    await scanSourcePaths(sourcePaths, sourceFolder)
+    await scanSourcePaths(sourcePaths)
   }
 
   async function handleDroppedPaths(paths: string[]) {
-    const displayLabel = paths.length === 1 && paths[0] ? paths[0] : `已拖入 ${paths.length} 个文件`
-    await scanSourcePaths(paths, displayLabel)
+    await scanSourcePaths(paths)
+  }
+
+  async function useInputSource(source: DetectionInputSource) {
+    await scanSourcePaths([source.folder])
+  }
+
+  function toggleImageSelection(path: string) {
+    setSelectedImagePaths((current) => {
+      const next = new Set(current)
+      if (next.has(path)) {
+        next.delete(path)
+      } else {
+        next.add(path)
+      }
+      return next
+    })
+  }
+
+  function selectAllImages() {
+    setSelectedImagePaths(new Set(sourceImages.map((image) => image.path)))
+  }
+
+  function clearImageSelection() {
+    setSelectedImagePaths(new Set())
   }
 
   async function startDetection() {
     if (!sourceImages.length) {
       setError('请先检索图片')
+      return
+    }
+    if (!selectedImages.length) {
+      setError('请至少勾选 1 张图片')
       return
     }
     if (!skill) {
@@ -844,7 +925,7 @@ export function DetectionWorkbench() {
       const generationSettings = await window.api.generationSettings.get().catch(() => null)
       const concurrency = generationSettings?.config.default_concurrency ?? DEFAULT_CONCURRENCY
       const taskId = await window.api.detection.run({
-        imagePaths: sourceImages.map((image) => image.path),
+        imagePaths: selectedImages.map((image) => image.path),
         skillId: skill.id,
         skillVersion: skill.version,
         model: model || DEFAULT_MODEL,
@@ -862,7 +943,7 @@ export function DetectionWorkbench() {
       setProgress({
         task_id: taskId,
         processed: 0,
-        total: sourceImages.length,
+        total: selectedImages.length,
         succeeded: 0,
         failed: 0,
         skipped: 0,
@@ -921,17 +1002,30 @@ export function DetectionWorkbench() {
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
         <ImageFolderPanel
-          folder={sourceFolder}
+          sourceLabel={
+            sourcePaths.length === 1
+              ? (sourcePaths[0] ?? '')
+              : sourcePaths.length > 1
+                ? `已选择 ${sourcePaths.length} 个路径`
+                : ''
+          }
+          inputSources={inputSources}
           images={sourceImages}
+          selectedPaths={selectedImagePaths}
+          selectedCount={selectedImages.length}
           loading={loadingImages}
           onChoose={() => void chooseSourceFolder()}
-          onScan={() => void scanSourceFolder()}
+          onScan={() => void scanSelectedSources()}
+          onUseSource={(source) => useInputSource(source)}
           onDropPaths={(paths) => handleDroppedPaths(paths)}
+          onToggleImage={toggleImageSelection}
+          onSelectAll={selectAllImages}
+          onClearSelection={clearImageSelection}
         />
 
         <RunPanel
           compression={compression}
-          imageCount={sourceImages.length}
+          imageCount={selectedImages.length}
           model={model}
           models={models}
           progress={progress}

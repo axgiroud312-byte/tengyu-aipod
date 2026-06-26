@@ -261,7 +261,6 @@ const detectionBatchConfigSchema = z.object({
   forceRetest: z.boolean().optional(),
   taskId: z.string().optional(),
 })
-const detectionScanFolderInputSchema = z.object({ folder: z.string() })
 const detectionScanPathsInputSchema = z.object({ paths: detectionStringArraySchema })
 const detectionCancelInputSchema = z.object({ task_id: z.string() })
 const detectionListResultsInputSchema = z
@@ -702,12 +701,8 @@ function commonAncestorDirectory(paths: string[]) {
     return null
   }
 
-  const firstPath = normalizedPaths[0]
-  if (!firstPath) {
-    return null
-  }
-  let candidate = dirname(firstPath)
-  while (true) {
+  let candidate = dirname(normalizedPaths[0] ?? '')
+  while (candidate) {
     if (normalizedPaths.every((path) => pathWithinOrEqual(candidate, path))) {
       return candidate
     }
@@ -718,6 +713,7 @@ function commonAncestorDirectory(paths: string[]) {
     }
     candidate = parent
   }
+  return null
 }
 
 async function scanImageFolder(
@@ -1085,10 +1081,6 @@ export class DetectionService {
       counts: Object.fromEntries(sources.map((source) => [source.folder, source.count])),
       sources,
     }
-  }
-
-  async scanFolder(input: { folder: string }): Promise<DetectionImageInfo[]> {
-    return scanImageFolder(input.folder)
   }
 
   async scanPaths(input: { paths: string[] }): Promise<DetectionImageInfo[]> {
@@ -1898,11 +1890,6 @@ export function registerDetectionIpc() {
   const ipcMain = electronIpcMain()
   ipcMain.handle('detection:choose-input-folder', () => chooseDetectionInputFolder())
   ipcMain.handle('detection:list-input-sources', () => detectionService.listInputSources())
-  ipcMain.handle('detection:scan-folder', (_event, input: unknown) =>
-    detectionService.scanFolder(
-      parseDetectionIpcInput(detectionScanFolderInputSchema, input, '检测图片文件夹参数不正确'),
-    ),
-  )
   ipcMain.handle('detection:scan-paths', (_event, input: unknown) =>
     detectionService.scanPaths(
       parseDetectionIpcInput(detectionScanPathsInputSchema, input, '检测图片路径参数不正确'),

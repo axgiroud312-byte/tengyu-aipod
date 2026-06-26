@@ -343,7 +343,7 @@ describe('DetectionService', () => {
     await createImage(join(nestedDir, 'ignore.txt'), 'not-image')
     const service = new DetectionService()
 
-    const images = await service.scanFolder({ folder: inputDir })
+    const images = await service.scanPaths({ paths: [inputDir] })
     expect(images).toHaveLength(2)
     expect(images).toEqual(
       expect.arrayContaining([
