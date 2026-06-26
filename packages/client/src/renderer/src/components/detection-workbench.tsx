@@ -11,8 +11,9 @@ import {
   ShieldCheck,
   ShieldQuestion,
   Square,
+  Upload,
 } from 'lucide-react'
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { type DragEvent as ReactDragEvent, useEffect, useMemo, useRef, useState } from 'react'
 import type {
   DetectionImageInfo,
   DetectionImageResult,
@@ -145,39 +146,206 @@ function riskTone(level: RiskLevel) {
   }
 }
 
+type ElectronFileWithPath = File & { path?: string }
+type DropEntry = {
+  isFile: boolean
+  isDirectory: boolean
+}
+type DropFileEntry = DropEntry & {
+  file: (
+    callback: (file: ElectronFileWithPath) => void,
+    errorCallback?: (error: unknown) => void,
+  ) => void
+}
+type DropDirectoryReader = {
+  readEntries: (
+    callback: (entries: DropEntry[]) => void,
+    errorCallback?: (error: unknown) => void,
+  ) => void
+}
+type DropDirectoryEntry = DropEntry & {
+  createReader: () => DropDirectoryReader
+}
+type DropItem = DataTransferItem & {
+  webkitGetAsEntry?: () => DropEntry | null
+}
+
+function droppedFilePath(file: File) {
+  return (file as ElectronFileWithPath).path?.trim() ?? ''
+}
+
+function readAllDirectoryEntries(reader: DropDirectoryReader): Promise<DropEntry[]> {
+  return new Promise((resolve) => {
+    const entries: DropEntry[] = []
+
+    function readNext() {
+      reader.readEntries(
+        (batch) => {
+          if (!batch.length) {
+            resolve(entries)
+            return
+          }
+          entries.push(...batch)
+          readNext()
+        },
+        () => resolve(entries),
+      )
+    }
+
+    readNext()
+  })
+}
+
+async function readDroppedEntryPaths(entry: DropEntry): Promise<string[]> {
+  if (entry.isFile) {
+    return await new Promise((resolve) => {
+      ;(entry as DropFileEntry).file(
+        (file) => {
+          const path = droppedFilePath(file)
+          resolve(path ? [path] : [])
+        },
+        () => resolve([]),
+      )
+    })
+  }
+
+  if (entry.isDirectory) {
+    const nestedEntries = await readAllDirectoryEntries(
+      (entry as DropDirectoryEntry).createReader(),
+    )
+    const nestedPaths = await Promise.all(
+      nestedEntries.map(async (nestedEntry) => readDroppedEntryPaths(nestedEntry)),
+    )
+    return nestedPaths.flat()
+  }
+
+  return []
+}
+
+async function collectDroppedPaths(dataTransfer: DataTransfer): Promise<string[]> {
+  const itemPaths = await Promise.all(
+    Array.from(dataTransfer.items)
+      .filter((item) => item.kind === 'file')
+      .map(async (item) => {
+        const entry = (item as DropItem).webkitGetAsEntry?.()
+        if (entry) {
+          return readDroppedEntryPaths(entry)
+        }
+        const file = item.getAsFile()
+        const path = file ? droppedFilePath(file) : ''
+        return path ? [path] : []
+      }),
+  )
+
+  const paths = itemPaths.flat().filter(Boolean)
+  if (paths.length) {
+    return Array.from(new Set(paths))
+  }
+
+  return Array.from(
+    new Set(
+      Array.from(dataTransfer.files)
+        .map((file) => droppedFilePath(file))
+        .filter(Boolean),
+    ),
+  )
+}
+
 function ImageFolderPanel({
   folder,
   images,
   loading,
   onChoose,
   onScan,
+  onDropPaths,
 }: {
   folder: string
   images: DetectionImageInfo[]
   loading: boolean
   onChoose: () => void
   onScan: () => void
+  onDropPaths: (paths: string[]) => Promise<void> | void
 }) {
+  const [dragging, setDragging] = useState(false)
+  const dragCounterRef = useRef(0)
+
+  async function handleDrop(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    dragCounterRef.current = 0
+    setDragging(false)
+    if (loading) {
+      return
+    }
+    const paths = await collectDroppedPaths(event.dataTransfer)
+    if (!paths.length) {
+      return
+    }
+    await onDropPaths(paths)
+  }
+
+  function handleDragEnter(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    if (loading) {
+      return
+    }
+    dragCounterRef.current += 1
+    setDragging(true)
+  }
+
+  function handleDragLeave(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    if (loading) {
+      return
+    }
+    dragCounterRef.current = Math.max(0, dragCounterRef.current - 1)
+    if (dragCounterRef.current === 0) {
+      setDragging(false)
+    }
+  }
+
+  function handleDragOver(event: ReactDragEvent<HTMLDivElement>) {
+    event.preventDefault()
+    if (!loading) {
+      event.dataTransfer.dropEffect = 'copy'
+    }
+  }
+
   return (
     <section className="rounded-md border bg-background p-4 shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-lg font-semibold text-balance">输入文件夹</h2>
-          <p className="mt-1 truncate text-sm text-muted-foreground">{folder || '未选择文件夹'}</p>
+      <div
+        className={`rounded-md border border-dashed p-4 transition ${
+          dragging ? 'border-primary bg-primary/5' : 'border-border bg-muted/20'
+        }`}
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+      >
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold text-balance">输入来源</h2>
+            <p className="mt-1 truncate text-sm text-muted-foreground">
+              {folder || '拖入图片或文件夹，或选择文件夹'}
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button onClick={onChoose} type="button" variant="secondary">
+              <FolderOpen className="mr-2 h-4 w-4" />
+              选择文件夹
+            </Button>
+            <Button disabled={!folder || loading} onClick={onScan} type="button">
+              {loading ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              ) : (
+                <RefreshCw className="mr-2 h-4 w-4" />
+              )}
+              检索图片
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button onClick={onChoose} type="button" variant="secondary">
-            <FolderOpen className="mr-2 h-4 w-4" />
-            选择文件夹
-          </Button>
-          <Button disabled={!folder || loading} onClick={onScan} type="button">
-            {loading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            检索图片
-          </Button>
+        <div className="mt-3 flex items-center gap-2 text-sm text-muted-foreground">
+          <Upload className="h-4 w-4" />
+          <span>{dragging ? '松开后自动扫描' : '支持拖入图片文件或文件夹，文件夹会递归扫描'}</span>
         </div>
       </div>
 
@@ -206,7 +374,7 @@ function ImageFolderPanel({
           ))
         ) : (
           <div className="rounded-md bg-muted px-3 py-10 text-center text-sm text-muted-foreground sm:col-span-2 xl:col-span-3">
-            {folder ? '暂无图片' : '请选择文件夹'}
+            {folder ? '暂无图片' : '请选择文件夹或拖入内容'}
           </div>
         )}
       </div>
@@ -452,6 +620,7 @@ function FailedResults({
 
 export function DetectionWorkbench() {
   const [sourceFolder, setSourceFolder] = useState('')
+  const [sourcePaths, setSourcePaths] = useState<string[]>([])
   const [sourceImages, setSourceImages] = useState<DetectionImageInfo[]>([])
   const [loadingImages, setLoadingImages] = useState(false)
   const [compression, setCompression] = useState(true)
@@ -602,6 +771,30 @@ export function DetectionWorkbench() {
     }
   }
 
+  async function scanSourcePaths(paths: string[], displayLabel: string) {
+    if (!paths.length) {
+      setError('请先选择输入文件夹或拖入图片')
+      return
+    }
+    setSourceFolder(displayLabel)
+    setSourcePaths(paths)
+    setSourceImages([])
+    setResults([])
+    setProgress(null)
+    setMessage(null)
+    setLoadingImages(true)
+    setError(null)
+    try {
+      const images = await window.api.detection.scanPaths({ paths })
+      setSourceImages(images)
+      setMessage(`已检索 ${images.length} 张图片`)
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
+    } finally {
+      setLoadingImages(false)
+    }
+  }
+
   async function chooseSourceFolder() {
     setError(null)
     const result = await window.api.detection.chooseInputFolder()
@@ -612,6 +805,7 @@ export function DetectionWorkbench() {
       return
     }
     setSourceFolder(result.data.path)
+    setSourcePaths([result.data.path])
     setSourceImages([])
     setResults([])
     setProgress(null)
@@ -619,29 +813,21 @@ export function DetectionWorkbench() {
   }
 
   async function scanSourceFolder() {
-    if (!sourceFolder) {
-      setError('请先选择输入文件夹')
+    if (!sourcePaths.length) {
+      setError('请先选择输入文件夹或拖入图片')
       return
     }
-    setLoadingImages(true)
-    setError(null)
-    setMessage(null)
-    try {
-      const images = await window.api.detection.scanFolder({ folder: sourceFolder })
-      setSourceImages(images)
-      setResults([])
-      setProgress(null)
-      setMessage(`已检索 ${images.length} 张图片`)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
-    } finally {
-      setLoadingImages(false)
-    }
+    await scanSourcePaths(sourcePaths, sourceFolder)
+  }
+
+  async function handleDroppedPaths(paths: string[]) {
+    const displayLabel = paths.length === 1 && paths[0] ? paths[0] : `已拖入 ${paths.length} 个文件`
+    await scanSourcePaths(paths, displayLabel)
   }
 
   async function startDetection() {
     if (!sourceImages.length) {
-      setError('请先检索图片文件夹')
+      setError('请先检索图片')
       return
     }
     if (!skill) {
@@ -708,7 +894,9 @@ export function DetectionWorkbench() {
       <div className="flex flex-wrap items-start justify-between gap-4">
         <div className="space-y-1">
           <p className="text-sm font-medium text-primary">侵权检测</p>
-          <h1 className="text-2xl font-semibold text-balance">按文件夹批量检测印花风险</h1>
+          <h1 className="text-2xl font-semibold text-balance">
+            按文件夹或拖入内容批量检测印花风险
+          </h1>
           <p className="text-sm text-muted-foreground text-pretty">
             当前任务 {runningTaskId ?? '未开始'}
           </p>
@@ -738,6 +926,7 @@ export function DetectionWorkbench() {
           loading={loadingImages}
           onChoose={() => void chooseSourceFolder()}
           onScan={() => void scanSourceFolder()}
+          onDropPaths={(paths) => handleDroppedPaths(paths)}
         />
 
         <RunPanel

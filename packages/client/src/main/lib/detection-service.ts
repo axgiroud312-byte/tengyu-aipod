@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { createRequire } from 'node:module'
-import { basename, extname, isAbsolute, join, relative } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
@@ -262,6 +262,7 @@ const detectionBatchConfigSchema = z.object({
   taskId: z.string().optional(),
 })
 const detectionScanFolderInputSchema = z.object({ folder: z.string() })
+const detectionScanPathsInputSchema = z.object({ paths: detectionStringArraySchema })
 const detectionCancelInputSchema = z.object({ task_id: z.string() })
 const detectionListResultsInputSchema = z
   .object({
@@ -655,6 +656,70 @@ async function readWorkbenchRoot(readConfig: ReadAppConfig = readAppConfig) {
   return workbenchConfig.workbench_root
 }
 
+function buildDetectionImageInfo(
+  root: string,
+  filePath: string,
+  info: { size: number; mtimeMs: number },
+) {
+  return {
+    id: createHash('sha256').update(filePath).digest('hex').slice(0, 16),
+    path: filePath,
+    name: basename(filePath),
+    relativePath: relative(root, filePath).replace(/\\/g, '/'),
+    sizeBytes: info.size,
+    modifiedAt: info.mtimeMs,
+    thumbnailUrl: fileUrl(filePath),
+  }
+}
+
+async function scanImageFile(
+  root: string,
+  filePath: string,
+  info?: { size: number; mtimeMs: number; isFile?: () => boolean } | null,
+): Promise<DetectionImageInfo | null> {
+  if (!IMAGE_EXTENSIONS.test(basename(filePath))) {
+    return null
+  }
+  const fileInfo = info ?? (await stat(filePath).catch(() => null))
+  if (!fileInfo) {
+    return null
+  }
+  if ('isFile' in fileInfo && typeof fileInfo.isFile === 'function' && !fileInfo.isFile()) {
+    return null
+  }
+  await allowLocalImagePath(filePath)
+  return buildDetectionImageInfo(root, filePath, fileInfo)
+}
+
+function pathWithinOrEqual(root: string, candidate: string) {
+  const rel = relative(root, candidate)
+  return rel === '' || (!rel.startsWith('..') && !isAbsolute(rel))
+}
+
+function commonAncestorDirectory(paths: string[]) {
+  const normalizedPaths = paths.map((path) => path.trim()).filter(Boolean)
+  if (!normalizedPaths.length) {
+    return null
+  }
+
+  const firstPath = normalizedPaths[0]
+  if (!firstPath) {
+    return null
+  }
+  let candidate = dirname(firstPath)
+  while (true) {
+    if (normalizedPaths.every((path) => pathWithinOrEqual(candidate, path))) {
+      return candidate
+    }
+
+    const parent = dirname(candidate)
+    if (parent === candidate) {
+      return null
+    }
+    candidate = parent
+  }
+}
+
 async function scanImageFolder(
   folder: string,
   options: { allowMissing?: boolean } = {},
@@ -681,21 +746,13 @@ async function scanImageFolder(
         await visit(entryPath)
         continue
       }
-      if (!entry.isFile() || !IMAGE_EXTENSIONS.test(entry.name)) {
+      if (!entry.isFile()) {
         continue
       }
-      const info = await stat(entryPath)
-      const relativePath = relative(root, entryPath).replace(/\\/g, '/')
-      await allowLocalImagePath(entryPath)
-      images.push({
-        id: createHash('sha256').update(entryPath).digest('hex').slice(0, 16),
-        path: entryPath,
-        name: entry.name,
-        relativePath,
-        sizeBytes: info.size,
-        modifiedAt: info.mtimeMs,
-        thumbnailUrl: fileUrl(entryPath),
-      })
+      const image = await scanImageFile(root, entryPath)
+      if (image) {
+        images.push(image)
+      }
     }
   }
 
@@ -1032,6 +1089,58 @@ export class DetectionService {
 
   async scanFolder(input: { folder: string }): Promise<DetectionImageInfo[]> {
     return scanImageFolder(input.folder)
+  }
+
+  async scanPaths(input: { paths: string[] }): Promise<DetectionImageInfo[]> {
+    const uniquePaths = Array.from(
+      new Set(input.paths.map((path) => path.trim()).filter(Boolean)),
+    ).sort(naturalCompare)
+    if (!uniquePaths.length) {
+      return []
+    }
+
+    const images: DetectionImageInfo[] = []
+    const seenPaths = new Set<string>()
+    const filePaths: Array<{ path: string; info: { size: number; mtimeMs: number } }> = []
+
+    for (const inputPath of uniquePaths) {
+      const info = await stat(inputPath).catch(() => null)
+      if (!info) {
+        continue
+      }
+      if (info.isDirectory()) {
+        const scannedImages = await scanImageFolder(inputPath, { allowMissing: true })
+        for (const image of scannedImages) {
+          if (seenPaths.has(image.path)) {
+            continue
+          }
+          seenPaths.add(image.path)
+          images.push(image)
+        }
+        continue
+      }
+      if (info.isFile()) {
+        filePaths.push({
+          path: inputPath,
+          info: {
+            size: info.size,
+            mtimeMs: info.mtimeMs,
+          },
+        })
+      }
+    }
+
+    const fileRoot = commonAncestorDirectory(filePaths.map((item) => item.path))
+    for (const { path: filePath, info } of filePaths) {
+      const image = await scanImageFile(fileRoot ?? dirname(filePath), filePath, info)
+      if (!image || seenPaths.has(image.path)) {
+        continue
+      }
+      seenPaths.add(image.path)
+      images.push(image)
+    }
+
+    return images.sort((left, right) => naturalCompare(left.relativePath, right.relativePath))
   }
 
   async listResults(
@@ -1792,6 +1901,11 @@ export function registerDetectionIpc() {
   ipcMain.handle('detection:scan-folder', (_event, input: unknown) =>
     detectionService.scanFolder(
       parseDetectionIpcInput(detectionScanFolderInputSchema, input, '检测图片文件夹参数不正确'),
+    ),
+  )
+  ipcMain.handle('detection:scan-paths', (_event, input: unknown) =>
+    detectionService.scanPaths(
+      parseDetectionIpcInput(detectionScanPathsInputSchema, input, '检测图片路径参数不正确'),
     ),
   )
   ipcMain.handle('detection:list-models', () => detectionService.listModels())

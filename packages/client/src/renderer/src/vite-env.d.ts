@@ -361,6 +361,9 @@ declare global {
         scanFolder: (input: { folder: string }) => Promise<
           import('../../main/lib/detection-service').DetectionImageInfo[]
         >
+        scanPaths: (input: { paths: string[] }) => Promise<
+          import('../../main/lib/detection-service').DetectionImageInfo[]
+        >
         listModels: () => Promise<string[]>
         run: (
           input: import('../../main/lib/detection-service').DetectionBatchConfig,

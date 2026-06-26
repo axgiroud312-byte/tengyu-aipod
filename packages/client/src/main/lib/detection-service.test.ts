@@ -353,6 +353,26 @@ describe('DetectionService', () => {
     )
   })
 
+  it('scans explicit file and folder paths', async () => {
+    const inputDir = join(workbenchRoot, 'path-inputs')
+    const nestedDir = join(inputDir, 'nested')
+    await createImage(join(inputDir, 'print-a.png'), 'image-a')
+    await createImage(join(nestedDir, 'print-b.webp'), 'image-b')
+    await createImage(join(nestedDir, 'ignore.txt'), 'not-image')
+    const service = new DetectionService()
+
+    const images = await service.scanPaths({
+      paths: [join(inputDir, 'print-a.png'), inputDir],
+    })
+    expect(images).toHaveLength(2)
+    expect(images).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: 'print-a.png', relativePath: 'print-a.png' }),
+        expect.objectContaining({ name: 'print-b.webp', relativePath: 'nested/print-b.webp' }),
+      ]),
+    )
+  })
+
   it('preprocesses, calls Bailian with JSON response format, copies outputs, stores results, and emits progress', async () => {
     const imagePaths = [
       join(tempRoot, 'inputs', 'print-a.png'),

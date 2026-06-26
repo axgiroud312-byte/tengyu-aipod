@@ -7,9 +7,12 @@
 ### 1.1 输入域
 
 - `02-印花工作区` 任一能力目录下的印花（带背景或透明底）
-- 用户外部拖入的图
+- 通过“选择文件夹”递归扫描的本地图片文件夹
+- 用户外部拖入的图或文件夹
 
 ❌ `01-采集工作区` 的产品图不能直接检测（必须先提取成印花）
+
+说明：文件夹扫描和外部拖入走同一套检索逻辑，最终都汇总成待检测图片列表。
 
 ### 1.2 输出
 
@@ -323,11 +326,11 @@ class AliyunBailianAdapter {
 ```
 ┌─ 侵权检测 ────────────────────────────────────────────┐
 │                                                       │
-│ ① 选择待检测印花                                       │
+│ ① 选择待检测来源                                       │
 │    ● 全选 02-印花工作区/提取/ (30 张)                    │
 │    ● 全选 02-印花工作区/抠图/ (12 张)                    │
 │    ○ 手动勾选（缩略图网格多选）                         │
-│    ○ 从外部拖入                                        │
+│    ○ 从外部拖入图片或文件夹                             │
 │                                                       │
 │ ② 检测设置                                             │
 │    模型：[qwen3-vl-flash ▼]                           │
@@ -499,6 +502,7 @@ CREATE TABLE detection_config (
 'detection:save-config'              → DetectionConfig → DetectionConfig
 'detection:list-input-sources'        → { dirs: string[], counts: Record<string, number> }
 'detection:scan-folder'               → { folder } → ImageInfo[]
+'detection:scan-paths'                → { paths: string[] } → ImageInfo[]
 'detection:list-models'               → string[]
 'detection:run'                       → { 
                                           image_paths: string[],
