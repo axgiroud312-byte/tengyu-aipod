@@ -26,6 +26,7 @@ import { ComfyHttpClient } from './comfy-http-client'
 import { ComfyuiChenyuAdapter } from './comfyui-chenyu-adapter'
 import {
   ComfyuiInstanceManager,
+  type ComfyuiInstanceRecord,
   type ComfyuiInstanceSummary,
   comfyuiUrlCandidates,
 } from './comfyui-instance-manager'
@@ -727,6 +728,7 @@ async function createComfyuiAdapterForRun(
   diagnostics?: DiagnosticLogWriter | null,
 ) {
   const instance = await selectedComfyuiInstance(input, apiKey, dependencies)
+  const currentInstance = instance ? null : readCurrentComfyuiInstanceRecord(db)
   return (
     dependencies.createComfyuiAdapter?.({
       apiKey,
@@ -736,6 +738,15 @@ async function createComfyuiAdapterForRun(
     }) ??
     new ComfyuiChenyuAdapter({
       ...(instance ? { selectedInstance: instance } : {}),
+      ...(currentInstance
+        ? {
+            selectedInstance: {
+              ...currentInstance,
+              runningMinutes: 0,
+              estimatedCost: 0,
+            } satisfies ComfyuiInstanceSummary,
+          }
+        : {}),
       instanceManager: new ComfyuiInstanceManager({
         chenyu: new ChenyuCloudClient(apiKey),
       }),
@@ -3666,6 +3677,37 @@ function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prep
     provider: 'comfyui-chenyu',
     workbenchRoot,
   })
+}
+
+function readCurrentComfyuiInstanceRecord(
+  db: Pick<SqliteDatabase, 'prepare'>,
+): ComfyuiInstanceRecord | null {
+  try {
+    const row = db
+      .prepare(
+        `
+          SELECT
+            provider,
+            instance_uuid AS instanceUuid,
+            comfyui_url AS comfyuiUrl,
+            pod_uuid AS podUuid,
+            gpu_uuid AS gpuUuid,
+            gpu_name AS gpuName,
+            status,
+            pod_price_hour AS podPriceHour,
+            gpu_price_hour AS gpuPriceHour,
+            auto_shutdown_at AS autoShutdownAt,
+            created_at AS createdAt,
+            last_used_at AS lastUsedAt
+          FROM comfyui_instances
+          WHERE id = 1
+        `,
+      )
+      .get() as ComfyuiInstanceRecord | undefined
+    return row?.status === 'running' ? row : null
+  } catch {
+    return null
+  }
 }
 
 export async function listChenyuWorkflowMarket(

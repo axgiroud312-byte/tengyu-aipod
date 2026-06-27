@@ -175,9 +175,12 @@ class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
   ) {}
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
-    // 1. 使用本次任务选择的运行云机；未选择时回退到默认云机
+    // 1. 优先使用本次任务选择的运行云机；
+    //    未选择时先尝试本地默认云机记录，必要时再刷新当前默认云机
     const instance =
-      this.options.selectedInstance ?? (await this.instanceManager.refreshCurrentInstance())
+      this.options.selectedInstance ??
+      this.options.currentInstance ??
+      (await this.instanceManager.refreshCurrentInstance())
     if (!instance || instance.status !== 'running') {
       throw new AppError({
         code: 'CHENYU_INSTANCE_DOWN',
@@ -916,6 +919,7 @@ async function shutdownFromSettings(instanceUuid: string) {
 - `chenyu:set-active-instance` 把某个实例保存为默认云机。
 - 生图页 ComfyUI 路径读取当前 API Key 下的实例列表，只展示 `running` 且有 ComfyUI 地址的云机。
 - 默认云机作为运行云机选择的默认候选；如果默认云机不在可运行列表内，客户端自动选第一个运行中云机。
+- 运行时如果本次没有显式选择运行云机，客户端优先复用本地 `comfyui_instances` 里状态为 `running` 的默认云机记录和已保存的 ComfyUI 地址；只有缺少本地记录或需要刷新状态时，才再请求晨羽实例详情。
 - 没有运行中云机时，生图模块提示用户先去设置页开机。
 - 运行云机没有可用 ComfyUI 地址时，不进入可选列表。
 - 生图模块不自动开机，避免用户无感产生云 GPU 费用。
