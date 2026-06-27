@@ -176,10 +176,10 @@ class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
 
   async generate(req: GenerateRequest): Promise<GenerateResponse> {
     // 1. 优先使用本次任务选择的运行云机；
-    //    未选择时先尝试本地默认云机记录，必要时再刷新当前默认云机
+    //    未选择时先尝试本地默认云机记录（同样通过 selectedInstance 传入），
+    //    必要时再刷新当前默认云机
     const instance =
       this.options.selectedInstance ??
-      this.options.currentInstance ??
       (await this.instanceManager.refreshCurrentInstance())
     if (!instance || instance.status !== 'running') {
       throw new AppError({
