@@ -85,6 +85,7 @@ export type TitleSkuResult =
       skuCode: string
       status: 'success'
       title: string
+      baseTitle?: string | undefined
       imagePath: string
       warning?: string | undefined
     }
@@ -123,7 +124,7 @@ export type TitleScanResult = {
   existingTitles: Record<string, string>
 }
 
-type TitleServiceDependencies = {
+export type TitleServiceDependencies = {
   skillCache?: Pick<typeof skillCacheManager, 'listSkills' | 'getSkill'>
   createBailianAdapter?: (apiKey: string) => Pick<AliyunBailianAdapter, 'visionCompletion'>
   preprocessPool?: Pick<SharpPreprocessPool, 'process' | 'close'>
@@ -144,6 +145,52 @@ type SkuFolder = {
   path: string
 }
 
+export type TitleGeneratedSkuResult =
+  | {
+      skuCode: string
+      status: 'success'
+      baseTitle: string
+      imagePath: string
+      warning?: string | undefined
+    }
+  | {
+      skuCode: string
+      status: 'failed'
+      error: string
+      imagePath?: string | undefined
+      warning?: string | undefined
+    }
+
+type TitleProcessingResources = {
+  config: TitleBatchConfig
+  taskId: string
+  model: string
+  skill: Skill
+  adapter: Pick<AliyunBailianAdapter, 'visionCompletion'>
+  maxRetries: number
+  imageIndex: number
+  workbenchRoot: string
+  preprocessPool: Pick<SharpPreprocessPool, 'process'>
+  diagnostics: DiagnosticLogWriter | null
+}
+
+export type TitleProcessingSession = {
+  taskId: string
+  model: string
+  skill: Skill
+  workbenchRoot: string
+  diagnosticsLogPath?: string | undefined
+  appendDiagnosticLog: (
+    event: Parameters<NonNullable<DiagnosticLogWriter>['append']>[0],
+  ) => Promise<void>
+  generateSku: (input: {
+    skuCode: string
+    skuFolder: string
+    keywordGroup?: TitleKeywordGroupAssignment | undefined
+  }) => Promise<TitleGeneratedSkuResult>
+  close: (options?: { keepFailedTemp?: boolean | undefined }) => Promise<void>
+}
+
 type ImageSelection =
   | {
       imagePath: string
@@ -156,6 +203,7 @@ type ImageSelection =
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_TITLE_FILE_BASENAME = '标题'
+const LEGACY_TITLE_FILE_BASENAME = 'titles'
 const PLATFORM_TITLE_MAX_LEN: Record<string, number> = {
   temu: 150,
   shein: 200,
@@ -389,6 +437,21 @@ export function normalizeTitleFileBaseName(value?: string) {
 
 export function titleXlsxPath(batchDir: string, titleFileName?: string) {
   return join(batchDir, `${normalizeTitleFileBaseName(titleFileName)}.xlsx`)
+}
+
+export async function resolveTitleXlsxPath(batchDir: string, titleFileName?: string) {
+  const preferredPath = titleXlsxPath(batchDir, titleFileName)
+  if (normalizeTitleFileBaseName(titleFileName) !== DEFAULT_TITLE_FILE_BASENAME) {
+    return preferredPath
+  }
+  if (await exists(preferredPath)) {
+    return preferredPath
+  }
+  const legacyPath = join(batchDir, `${LEGACY_TITLE_FILE_BASENAME}.xlsx`)
+  if (await exists(legacyPath)) {
+    return legacyPath
+  }
+  return preferredPath
 }
 
 export function normalizeTitleKeywordGroups(groups?: TitleKeywordGroup[]) {
@@ -638,7 +701,7 @@ function createVisionMessages(
   ]
 }
 
-async function selectTitleSkill(
+export async function selectTitleSkill(
   skillCache: Pick<typeof skillCacheManager, 'listSkills' | 'getSkill'>,
   platform: string,
   language: string,
@@ -658,7 +721,7 @@ async function selectTitleSkill(
   throw new AppErrorClass('HTTP_4XX', '未找到标题生成 Skill，请先在后台配置', false)
 }
 
-function appErrorMessage(error: unknown) {
+export function appErrorMessage(error: unknown) {
   if (error instanceof AppErrorClass) {
     return error.message
   }
@@ -673,6 +736,30 @@ async function appendDiagnosticLog(
   event: Parameters<DiagnosticLogWriter['append']>[0],
 ) {
   await diagnostics?.append(event).catch(() => null)
+}
+
+export async function registerSkuTitle(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    batchDir: string
+    skuCode: string
+    title: string
+    language: string
+    platform: string
+    skill: SkillSummary
+    model: string
+    generatedAt: number
+  },
+) {
+  registerSkuTitles(db, {
+    templateBatch: basename(input.batchDir),
+    titles: new Map([[input.skuCode, input.title]]),
+    language: input.language,
+    platform: input.platform,
+    skill: input.skill,
+    model: input.model,
+    generatedAt: input.generatedAt,
+  })
 }
 
 function canRetry(error: unknown) {
@@ -863,7 +950,9 @@ export class TitleService {
 
   async scanBatchDir(batchDir: string, titleFileName?: string): Promise<TitleScanResult> {
     const skuFolders = await scanSkuFolders(batchDir)
-    const existingTitles = await readExistingTitles(titleXlsxPath(batchDir, titleFileName))
+    const existingTitles = await readExistingTitles(
+      await resolveTitleXlsxPath(batchDir, titleFileName),
+    )
     return {
       skuCount: skuFolders.length,
       skuCodes: skuFolders.map((folder) => folder.skuCode),
@@ -943,6 +1032,157 @@ export class TitleService {
     }
   }
 
+  async createProcessingSession(
+    config: TitleBatchConfig,
+    dependencies: TitleServiceDependencies = {},
+  ): Promise<TitleProcessingSession> {
+    const taskId = config.taskId ?? randomUUID()
+    this.activeTasks.add(taskId)
+    this.cancelledTasks.delete(taskId)
+    const ownsPool = !dependencies.preprocessPool
+    let tempDirCreated = false
+    let cleanedUp = false
+    const resolved = {
+      skillCache: dependencies.skillCache ?? skillCacheManager,
+      createBailianAdapter: dependencies.createBailianAdapter,
+      preprocessPool: dependencies.preprocessPool ?? new SharpPreprocessPool(),
+      readConfig: dependencies.readConfig ?? readAppConfig,
+      getSecret: dependencies.getSecret ?? getSecret,
+      tempFileManager: dependencies.tempFileManager ?? tempFileManager,
+    }
+
+    const close = async (options?: { keepFailedTemp?: boolean | undefined }) => {
+      if (cleanedUp) {
+        return
+      }
+      cleanedUp = true
+      if (ownsPool && 'close' in resolved.preprocessPool) {
+        await resolved.preprocessPool.close()
+      }
+      if (tempDirCreated) {
+        await resolved.tempFileManager.cleanupTask(
+          'title',
+          taskId,
+          options?.keepFailedTemp !== undefined
+            ? { keepIfFailed: options.keepFailedTemp }
+            : undefined,
+        )
+      }
+      this.activeTasks.delete(taskId)
+      this.cancelledTasks.delete(taskId)
+    }
+
+    try {
+      const workbenchConfig = await resolved.readConfig()
+      if (!workbenchConfig.workbench_root) {
+        throw new Error('workbench_root is required before title generation can run')
+      }
+      const workbenchRoot = workbenchConfig.workbench_root
+      const diagnostics = await createOptionalDiagnosticLogWriter({
+        module: 'title',
+        taskId,
+        workbenchRoot,
+        meta: {
+          batchDir: config.batchDir,
+          titleFileName: config.titleFileName ?? null,
+          platform: config.platform,
+          language: config.language,
+          model: config.model || DEFAULT_MODEL,
+          imageIndex: config.imageIndex ?? 1,
+          existingStrategy: config.existingStrategy ?? 'skip',
+          maxRetries: config.maxRetries ?? null,
+          concurrency: config.concurrency ?? null,
+          preprocess: config.preprocess ?? null,
+          keywordGroups: normalizeTitleKeywordGroups(config.keywordGroups),
+          keywordGroupSeparator: config.keywordGroupSeparator ?? ' ',
+        },
+      })
+
+      await resolved.tempFileManager.createTaskDir('title', taskId)
+      tempDirCreated = true
+
+      const skill = await selectTitleSkill(resolved.skillCache, config.platform, config.language)
+      const model = config.model || skill.recommendedModel || DEFAULT_MODEL
+      const apiKey = await resolved.getSecret('bailian')
+      if (!apiKey) {
+        throw new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key，请先在设置中填写', false)
+      }
+      const adapter = resolved.createBailianAdapter?.(apiKey) ?? createDefaultBailianAdapter(apiKey)
+      const maxRetries = clampInt(config.maxRetries, 0, 5, 2)
+      const imageIndex = clampInt(config.imageIndex, 1, Number.MAX_SAFE_INTEGER, 1)
+
+      await appendDiagnosticLog(diagnostics, {
+        type: 'config_resolved',
+        provider: 'aliyun-bailian',
+        operation: 'batch',
+        data: {
+          model,
+          skill: {
+            id: skill.id,
+            version: skill.version,
+            recommendedModel: skill.recommendedModel ?? null,
+            platform: skill.platform ?? null,
+            language: skill.language ?? null,
+            systemPrompt: skill.systemPrompt,
+            variables: skill.variables,
+          },
+          maxRetries,
+          concurrency: config.concurrency ?? null,
+          imageIndex,
+          pendingCount: 1,
+          keywordGroups: normalizeTitleKeywordGroups(config.keywordGroups),
+          keywordGroupSeparator: config.keywordGroupSeparator ?? ' ',
+        },
+      })
+
+      const resources: TitleProcessingResources = {
+        config,
+        taskId,
+        model,
+        skill,
+        adapter,
+        maxRetries,
+        imageIndex,
+        workbenchRoot,
+        preprocessPool: resolved.preprocessPool,
+        diagnostics,
+      }
+
+      return {
+        taskId,
+        model,
+        skill,
+        workbenchRoot,
+        ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
+        appendDiagnosticLog: async (event) => appendDiagnosticLog(diagnostics, event),
+        generateSku: async (input) => {
+          const result = await this.processSku({
+            skuFolder: {
+              skuCode: input.skuCode,
+              path: input.skuFolder,
+            },
+            keywordGroup: input.keywordGroup,
+            ...resources,
+          })
+          if (result.status === 'success') {
+            return {
+              skuCode: result.skuCode,
+              status: 'success',
+              baseTitle: parseTitle(result.title, config.language, config.platform),
+              imagePath: result.imagePath,
+              ...(result.warning ? { warning: result.warning } : {}),
+            }
+          }
+          return result
+        },
+        close,
+      }
+    } catch (error) {
+      await close({ keepFailedTemp: false })
+      throw error
+    }
+  }
+
   async runTitleBatch(
     config: TitleBatchConfig,
     dependencies: TitleServiceDependencies = {},
@@ -998,7 +1238,7 @@ export class TitleService {
         throw new Error('batchDir must be a directory')
       }
 
-      const xlsxPath = titleXlsxPath(config.batchDir, config.titleFileName)
+      const xlsxPath = await resolveTitleXlsxPath(config.batchDir, config.titleFileName)
       const existingTitles = await readExistingTitles(xlsxPath)
       const existingStrategy = config.existingStrategy ?? 'skip'
       const skuFilter = config.skuCodes ? new Set(config.skuCodes) : null
@@ -1231,7 +1471,7 @@ export class TitleService {
     preprocessPool: Pick<SharpPreprocessPool, 'process'>
     diagnostics: DiagnosticLogWriter | null
     keywordGroup: TitleKeywordGroupAssignment | undefined
-  }): Promise<TitleSkuResult> {
+  }): Promise<Exclude<TitleSkuResult, { status: 'skipped' }>> {
     const selection = await getNthImageFromSkuFolder(input.skuFolder.path, input.imageIndex)
     if (!selection.imagePath) {
       await appendDiagnosticLog(input.diagnostics, {
@@ -1269,7 +1509,7 @@ export class TitleService {
         },
       })
       let attempt = 0
-      const title = await withRetries(input.maxRetries, async () => {
+      const generated = await withRetries(input.maxRetries, async () => {
         attempt += 1
         const preprocessOptions: PreprocessOptions = {
           module: 'title',
@@ -1344,12 +1584,8 @@ export class TitleService {
             },
           })
 
-          const title = joinTitleWithKeywordGroup(
-            parseTitle(response.text, input.config.language, input.config.platform),
-            input.keywordGroup,
-            input.config.keywordGroupSeparator,
-          )
-          if (!title) {
+          const baseTitle = parseTitle(response.text, input.config.language, input.config.platform)
+          if (!baseTitle) {
             await appendDiagnosticLog(input.diagnostics, {
               type: 'parse_failed',
               provider: 'aliyun-bailian',
@@ -1362,6 +1598,11 @@ export class TitleService {
             })
             throw new AppErrorClass('HTTP_5XX', '模型返回空标题', true)
           }
+          const title = joinTitleWithKeywordGroup(
+            baseTitle,
+            input.keywordGroup,
+            input.config.keywordGroupSeparator,
+          )
           await appendDiagnosticLog(input.diagnostics, {
             type: 'parse_result',
             provider: 'aliyun-bailian',
@@ -1374,7 +1615,7 @@ export class TitleService {
               keywordGroup: input.keywordGroup ?? null,
             },
           })
-          return title
+          return { title, baseTitle }
         } catch (error) {
           await appendDiagnosticLog(input.diagnostics, {
             type: 'attempt_failed',
@@ -1393,7 +1634,7 @@ export class TitleService {
         operation: 'title',
         itemKey: input.skuFolder.skuCode,
         data: {
-          title,
+          title: generated.title,
           imagePath: selection.imagePath,
           warning: selection.warning ?? null,
         },
@@ -1402,7 +1643,8 @@ export class TitleService {
       return {
         skuCode: input.skuFolder.skuCode,
         status: 'success',
-        title,
+        title: generated.title,
+        baseTitle: generated.baseTitle,
         imagePath: selection.imagePath,
         ...(selection.warning ? { warning: selection.warning } : {}),
       }

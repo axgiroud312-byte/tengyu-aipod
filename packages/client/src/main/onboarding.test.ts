@@ -2,12 +2,12 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { writeAppConfig } from './lib/workbench-config'
 import {
   closeDefaultWorkbenchDatabase,
   getDefaultWorkbenchDatabase,
   openWorkbenchDatabase,
 } from './lib/workbench-db'
-import { writeAppConfig } from './lib/workbench-config'
 
 type IpcHandler = (event: unknown, input?: unknown) => unknown
 

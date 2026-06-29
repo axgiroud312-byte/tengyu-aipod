@@ -20,7 +20,7 @@ export type PipelinePrintMode = 'local' | 'full'
 export type PipelinePromptMode = 'manual' | 'ai'
 export type PipelineMattingMode = 'comfyui' | 'mixed'
 export type PipelineStartStep = 'matting' | 'detection' | 'photoshop'
-export type PipelineRunStatus = 'running' | 'completed' | 'failed' | 'cancelled'
+export type PipelineRunStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
 export type PipelineStepStatus =
   | 'pending'
   | 'running'
@@ -28,6 +28,7 @@ export type PipelineStepStatus =
   | 'failed'
   | 'skipped'
   | 'cancelled'
+  | 'interrupted'
 export type PipelineStepKey = 'source' | 'extract' | 'matting' | 'detection' | 'photoshop' | 'title'
 
 export interface PipelinePromptConfig {
@@ -226,6 +227,32 @@ export interface PipelineStepRecord {
   updated_at: number
 }
 
+export type PipelineItemStatus =
+  | 'pending'
+  | 'running'
+  | 'completed'
+  | 'failed'
+  | 'filtered'
+  | 'skipped'
+  | 'interrupted'
+
+export interface PipelineItemRecord {
+  id: string
+  run_id: string
+  item_key: string
+  step_key: PipelineStepKey
+  status: PipelineItemStatus
+  source_path: string | null
+  output_path: string | null
+  artifact_id: string | null
+  print_id: string | null
+  source_artifact_ids_json: string | null
+  error_message: string | null
+  created_at: number
+  updated_at: number
+  completed_at: number | null
+}
+
 export interface PipelineRunRecord {
   id: string
   name: string
@@ -248,6 +275,7 @@ export interface PipelineProgress {
   message: string
   stats: PipelineRunStats
   steps: PipelineStepRecord[]
+  items?: PipelineItemRecord[]
   preview_images?: PipelinePreviewImage[]
   result_sections?: PipelineResultSection[]
   logs?: PipelineRuntimeLogEntry[]
@@ -314,6 +342,7 @@ export interface PipelineRuntimeLogEntry {
 export interface PipelineRunDetail {
   run: PipelineRunRecord
   steps: PipelineStepRecord[]
+  items?: PipelineItemRecord[]
   result_sections?: PipelineResultSection[]
   logs?: PipelineRuntimeLogEntry[]
 }

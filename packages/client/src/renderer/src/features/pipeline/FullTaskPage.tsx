@@ -21,6 +21,7 @@ import {
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
 import type {
+  PipelineItemRecord,
   PipelinePrintMode,
   PipelineProgress,
   PipelinePromptConfig,
@@ -161,6 +162,41 @@ function parsePipelineStats(value: string): PipelineRunStats {
   }
 }
 
+function pipelineRunStatusLabel(status: PipelineRunRecord['status']) {
+  if (status === 'running') {
+    return '运行中'
+  }
+  if (status === 'completed') {
+    return '已完成'
+  }
+  if (status === 'cancelled') {
+    return '已取消'
+  }
+  if (status === 'interrupted') {
+    return '已中断'
+  }
+  return '失败'
+}
+
+function pipelineRunMessage(detail: Pick<PipelineRunDetail['run'], 'status' | 'error_summary'>) {
+  if (detail.error_summary) {
+    return detail.error_summary
+  }
+  if (detail.status === 'running') {
+    return '完整任务运行中'
+  }
+  if (detail.status === 'completed') {
+    return '完整任务已完成'
+  }
+  if (detail.status === 'cancelled') {
+    return '完整任务已取消，已完成产物已保留'
+  }
+  if (detail.status === 'interrupted') {
+    return '完整任务已中断，已完成产物已保留'
+  }
+  return '完整任务已结束'
+}
+
 function progressFromRunDetail(detail: PipelineRunDetail): PipelineProgress {
   const runningStep = detail.steps.find((step) => step.status === 'running')
   const stats = parsePipelineStats(detail.run.stats_json)
@@ -168,11 +204,10 @@ function progressFromRunDetail(detail: PipelineRunDetail): PipelineProgress {
     run_id: detail.run.id,
     status: detail.run.status,
     current_step: runningStep?.step_key ?? null,
-    message:
-      detail.run.error_summary ??
-      (detail.run.status === 'running' ? '完整任务运行中' : '完整任务已结束'),
+    message: pipelineRunMessage(detail.run),
     stats,
     steps: detail.steps,
+    items: detail.items ?? [],
     result_sections: detail.result_sections ?? [],
     logs: detail.logs ?? [],
   }
@@ -517,10 +552,7 @@ function visionModelsFor(settings: GenerationSettingsSnapshot | null) {
     : FALLBACK_BAILIAN_VISION_MODELS
 }
 
-function promptSkillCategoryFor(
-  sourceMode: TaskSourceMode,
-  printMode: PipelinePrintMode,
-) {
+function promptSkillCategoryFor(sourceMode: TaskSourceMode, printMode: PipelinePrintMode) {
   if (sourceMode !== 'txt2img' && sourceMode !== 'img2img') {
     return null
   }
@@ -857,6 +889,98 @@ function PipelineResultsPanel({
   )
 }
 
+function itemStatusVariant(
+  status: PipelineItemRecord['status'],
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'failed') {
+    return 'destructive'
+  }
+  if (status === 'completed') {
+    return 'default'
+  }
+  if (status === 'running') {
+    return 'secondary'
+  }
+  return 'outline'
+}
+
+function itemStatusLabel(status: PipelineItemRecord['status']) {
+  if (status === 'running') {
+    return '进行中'
+  }
+  if (status === 'completed') {
+    return '已完成'
+  }
+  if (status === 'failed') {
+    return '失败'
+  }
+  if (status === 'filtered') {
+    return '已拦截'
+  }
+  if (status === 'skipped') {
+    return '已跳过'
+  }
+  if (status === 'interrupted') {
+    return '已中断'
+  }
+  return status
+}
+
+function PipelineItemsPanel({ progress }: { progress: PipelineProgress | null }) {
+  const items = (progress?.items ?? [])
+    .slice()
+    .sort((left, right) => right.updated_at - left.updated_at)
+
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">逐项状态</CardTitle>
+            <CardDescription>每张印花在各节的当前状态。</CardDescription>
+          </div>
+          <Badge variant="secondary">{items.length}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {items.length ? (
+          <div className="space-y-2">
+            {items.slice(0, 24).map((item) => (
+              <div
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+                key={item.id}
+              >
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="font-medium">{item.item_key}</span>
+                    <Badge variant="outline">{item.step_key}</Badge>
+                    <Badge variant={itemStatusVariant(item.status)}>
+                      {itemStatusLabel(item.status)}
+                    </Badge>
+                  </div>
+                  <div className="truncate text-xs text-muted-foreground">
+                    {item.output_path ?? item.source_path ?? '-'}
+                  </div>
+                  {item.error_message ? (
+                    <div className="text-xs text-red-600">{item.error_message}</div>
+                  ) : null}
+                </div>
+                <div className="shrink-0 text-xs text-muted-foreground">
+                  {new Date(item.updated_at).toLocaleTimeString()}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+            启动完整任务后，这里会显示逐项状态。
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 export function FullTaskPage() {
   const [name, setName] = useFullTaskSessionState('name', '')
   const [printSkuCode, setPrintSkuCode] = useFullTaskSessionState('printSkuCode', '')
@@ -874,9 +998,8 @@ export function FullTaskPage() {
     'existingPrintFolder',
     '',
   )
-  const [existingPrintStartStep, setExistingPrintStartStep] = useFullTaskSessionState<
-    PipelineStartStep
-  >('existingPrintStartStep', 'photoshop')
+  const [existingPrintStartStep, setExistingPrintStartStep] =
+    useFullTaskSessionState<PipelineStartStep>('existingPrintStartStep', 'photoshop')
   const [referenceImages, setReferenceImages] = useFullTaskSessionState<ReferenceImageDraft[]>(
     'referenceImages',
     [],
@@ -1042,18 +1165,16 @@ export function FullTaskPage() {
   const grsaiSizeOptions = selectedGrsaiModel?.sizes.length
     ? selectedGrsaiModel.sizes
     : (FALLBACK_GRSAI_MODELS[0]?.sizes ?? ['1024x1024', '1536x1024', '1024x1536'])
-  const promptModelOptions = useMemo(
-    () => {
-      if (!requiresPromptGeneration) {
-        return []
-      }
-      return (sourceMode === 'img2img'
+  const promptModelOptions = useMemo(() => {
+    if (!requiresPromptGeneration) {
+      return []
+    }
+    return (
+      sourceMode === 'img2img'
         ? visionModelsFor(generationSettings)
         : textModelsFor(generationSettings)
-      ).map((item) => ({ key: item.id, label: modelLabel(item) }))
-    },
-    [generationSettings, requiresPromptGeneration, sourceMode],
-  )
+    ).map((item) => ({ key: item.id, label: modelLabel(item) }))
+  }, [generationSettings, requiresPromptGeneration, sourceMode])
   const promptSkillCategory = requiresPromptGeneration
     ? promptSkillCategoryFor(sourceMode, printMode)
     : null
@@ -1121,8 +1242,7 @@ export function FullTaskPage() {
   const detectionLockedOn = isExistingPrintSource && existingPrintStartStep === 'detection'
   const detectionLockedSkipped = isExistingPrintSource && existingPrintStartStep === 'photoshop'
   const photoshopLockedOn = isExistingPrintSource && existingPrintStartStep === 'photoshop'
-  const effectiveMattingEnabled =
-    mattingLockedOn || (!mattingLockedSkipped && mattingEnabled)
+  const effectiveMattingEnabled = mattingLockedOn || (!mattingLockedSkipped && mattingEnabled)
   const effectiveDetectionEnabled =
     detectionLockedOn || (!detectionLockedSkipped && detectionEnabled)
   const effectivePhotoshopEnabled = photoshopLockedOn || photoshopEnabled
@@ -1244,7 +1364,10 @@ export function FullTaskPage() {
     if (titleEnabled && !effectivePhotoshopEnabled) {
       issues.push('标题生成需要先启用 PS 套版')
     }
-    if (effectiveTitleEnabled && (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim())) {
+    if (
+      effectiveTitleEnabled &&
+      (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim())
+    ) {
       issues.push('请先完成标题设置')
     }
     return issues
@@ -1276,7 +1399,6 @@ export function FullTaskPage() {
     img2imgSourceFolder,
     sourceFolder,
     existingPrintFolder,
-    existingPrintStartStep,
     sourceMode,
     templatePaths.length,
     txt2imgComfyuiInstanceUuid,
@@ -1411,7 +1533,7 @@ export function FullTaskPage() {
       if (event.ok) {
         setCurrentRunId(event.result.run.id)
         setProgress(progressFromRunDetail(event.result))
-        setMessage(event.result.run.status === 'completed' ? '完整任务完成' : '完整任务已结束')
+        setMessage(pipelineRunMessage(event.result.run))
         setError(event.result.run.error_summary)
       } else {
         setError(event.error)
@@ -1494,7 +1616,9 @@ export function FullTaskPage() {
       setTxt2imgComfyuiInstanceUuid('')
       return
     }
-    if (!runningInstances.some((instance) => instance.instanceUuid === txt2imgComfyuiInstanceUuid)) {
+    if (
+      !runningInstances.some((instance) => instance.instanceUuid === txt2imgComfyuiInstanceUuid)
+    ) {
       setTxt2imgComfyuiInstanceUuid(fallback.instanceUuid)
     }
   }, [
@@ -1515,7 +1639,9 @@ export function FullTaskPage() {
       setImg2imgComfyuiInstanceUuid('')
       return
     }
-    if (!runningInstances.some((instance) => instance.instanceUuid === img2imgComfyuiInstanceUuid)) {
+    if (
+      !runningInstances.some((instance) => instance.instanceUuid === img2imgComfyuiInstanceUuid)
+    ) {
       setImg2imgComfyuiInstanceUuid(fallback.instanceUuid)
     }
   }, [
@@ -1593,15 +1719,11 @@ export function FullTaskPage() {
     }
   }, [
     existingPrintStartStep,
-    detectionEnabled,
-    mattingEnabled,
-    photoshopEnabled,
     setDetectionEnabled,
     setMattingEnabled,
     setPhotoshopEnabled,
     setTitleEnabled,
     sourceMode,
-    titleEnabled,
   ])
 
   useEffect(() => {
@@ -2526,7 +2648,8 @@ export function FullTaskPage() {
                       value={existingPrintStartStep}
                     />
                     <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                      不能选择 02-印花工作区 根目录或等待套版目录；启用 PS 时会按印花货号重新生成等待套版文件名。
+                      不能选择 02-印花工作区 根目录或等待套版目录；启用 PS
+                      时会按印花货号重新生成等待套版文件名。
                     </div>
                   </>
                 ) : null}
@@ -3094,6 +3217,7 @@ export function FullTaskPage() {
       </div>
 
       <PipelineResultsPanel message={message} progress={progress} />
+      <PipelineItemsPanel progress={progress} />
 
       <Card>
         <CardHeader className="pb-4">
@@ -3107,7 +3231,9 @@ export function FullTaskPage() {
               <div className="rounded-md border px-3 py-2 text-sm" key={run.id}>
                 <div className="flex items-center justify-between gap-3">
                   <span className="truncate font-medium">{run.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">{run.status}</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {pipelineRunStatusLabel(run.status)}
+                  </span>
                 </div>
                 <div className="mt-1 truncate text-xs text-muted-foreground">{run.source_mode}</div>
               </div>

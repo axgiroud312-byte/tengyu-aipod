@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   type PhotoshopPrintAsset,
   type PipelineProgress,
@@ -23,6 +23,14 @@ const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 type GenerationBatchDependencies = {
   emitProgress?: (progress: GenerationProgress) => void
+  onImageComplete?: (payload: {
+    taskId: string
+    capability: 'txt2img' | 'img2img' | 'extract' | 'matting'
+    path: string
+    printId: string
+    artifactId?: string
+    sourceArtifactIds: string[]
+  }) => void | Promise<void>
 }
 
 type Txt2imgMockInput = {
@@ -99,6 +107,33 @@ const mocks = vi.hoisted(() => ({
       ],
     }),
   ),
+  createTitleProcessingSession: vi.fn(async () => ({
+    taskId: 'title-session',
+    model: 'qwen3.6-flash',
+    skill: {
+      id: 'title-temu-en',
+      module: 'title',
+      category: null,
+      platform: 'temu',
+      language: 'en',
+      version: '1',
+      enabled: true,
+      recommendedModel: 'qwen3.6-flash',
+      notes: null,
+      systemPrompt: 'prompt',
+      variables: [],
+    },
+    workbenchRoot: '',
+    appendDiagnosticLog: vi.fn(async () => undefined),
+    generateSku: vi.fn(async ({ skuCode }: { skuCode: string }) => ({
+      skuCode,
+      status: 'success' as const,
+      baseTitle: `Base ${skuCode}`,
+      imagePath: '',
+    })),
+    close: vi.fn(async () => undefined),
+  })),
+  cancelTitleTask: vi.fn(),
   createTaskDir: vi.fn(async (module: string, taskId: string) => {
     const taskDir = join(mocks.workbenchRoot, '.workbench', 'tmp', module, taskId)
     await mkdir(taskDir, { recursive: true })
@@ -222,12 +257,17 @@ vi.mock('../photoshop/multi-batch', () => ({
   runBatch: mocks.runBatch,
 }))
 
-vi.mock('./title-service', () => ({
-  titleService: {
-    runTitleBatch: mocks.runTitleBatch,
-    cancelTask: vi.fn(),
-  },
-}))
+vi.mock('./title-service', async () => {
+  const actual = await vi.importActual<typeof import('./title-service')>('./title-service')
+  return {
+    ...actual,
+    titleService: {
+      runTitleBatch: mocks.runTitleBatch,
+      createProcessingSession: mocks.createTitleProcessingSession,
+      cancelTask: mocks.cancelTitleTask,
+    },
+  }
+})
 
 vi.mock('./temp-file-manager', () => ({
   tempFileManager: {
@@ -245,6 +285,7 @@ vi.mock('./detection-service', () => ({
 
 vi.mock('./generation-service', () => ({
   generateTxt2imgPrompts: vi.fn(),
+  requestGenerationCancel: vi.fn(),
   runComfyuiExtractBatch: vi.fn(),
   runComfyuiImg2imgBatch: mocks.runComfyuiImg2imgBatch,
   runComfyuiMattingBatch: mocks.runComfyuiMattingBatch,
@@ -265,6 +306,20 @@ function setPlatform(value: NodeJS.Platform) {
 async function createPrint(path: string) {
   await mkdir(dirname(path), { recursive: true })
   await writeFile(path, 'image')
+}
+
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, resolve, reject }
+}
+
+function createTitleProductImage(path: string) {
+  return mkdir(dirname(path), { recursive: true }).then(() => writeFile(path, 'product-image'))
 }
 
 function createPhotoshopBatchResult(
@@ -370,6 +425,10 @@ function existingPrintSource(
   }
 }
 
+function windowsBaseName(value: string) {
+  return value.split(/[/\\]/).pop() ?? value
+}
+
 describe('PipelineService', () => {
   beforeEach(async () => {
     setPlatform('win32')
@@ -377,6 +436,40 @@ describe('PipelineService', () => {
     mocks.ipcHandlers.clear()
     mocks.runBatch.mockClear()
     mocks.runTitleBatch.mockClear()
+    mocks.createTitleProcessingSession.mockReset()
+    mocks.createTitleProcessingSession.mockResolvedValue({
+      taskId: 'title-session',
+      model: 'qwen3.6-flash',
+      skill: {
+        id: 'title-temu-en',
+        module: 'title',
+        category: null,
+        platform: 'temu',
+        language: 'en',
+        version: '1',
+        enabled: true,
+        recommendedModel: 'qwen3.6-flash',
+        notes: null,
+        systemPrompt: 'prompt',
+        variables: [],
+      },
+      workbenchRoot: mocks.workbenchRoot,
+      appendDiagnosticLog: vi.fn(async () => undefined),
+      generateSku: vi.fn(async ({ skuCode }: { skuCode: string }) => ({
+        skuCode,
+        status: 'success' as const,
+        baseTitle: `Base ${skuCode}`,
+        imagePath: join(
+          mocks.workbenchRoot,
+          WORKBENCH_DIRECTORIES.listing,
+          'shirt',
+          skuCode,
+          '01.jpg',
+        ),
+      })),
+      close: vi.fn(async () => undefined),
+    })
+    mocks.cancelTitleTask.mockReset()
     mocks.createTaskDir.mockClear()
     mocks.cleanupTask.mockClear()
     mocks.runTxt2imgBatch.mockClear()
@@ -868,7 +961,8 @@ describe('PipelineService', () => {
       }),
     ).rejects.toMatchObject({
       code: 'HTTP_4XX',
-      message: '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
+      message:
+        '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
     })
 
     await expect(
@@ -877,7 +971,8 @@ describe('PipelineService', () => {
       }),
     ).rejects.toMatchObject({
       code: 'HTTP_4XX',
-      message: '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
+      message:
+        '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
     })
   })
 
@@ -951,70 +1046,232 @@ describe('PipelineService', () => {
     expect(() => collectionFolderLock.assertWritable(sourceFolder)).not.toThrow()
   })
 
-  it('marks the active step as cancelled when a complete task is cancelled mid-step', async () => {
-    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
-    await createPrint(join(printFolder, 'existing.png'))
-    let finishDetection: (() => void) | undefined
-    mocks.runDetectionBatch.mockImplementationOnce(async () => {
-      await new Promise<void>((resolve) => {
-        finishDetection = resolve
-      })
-      return {
-        taskId: 'run-cancel-detection-detection',
-        total: 1,
-        succeeded: 1,
-        failed: 0,
-        skipped: 0,
-        results: [
-          {
-            imagePath: join(printFolder, 'existing.png'),
-            thumbnailUrl: '',
-            artifactId: 'art-cancel',
-            printId: 'pri-cancel',
-            status: 'success' as const,
-            riskScore: 10,
-            riskLevel: 'pass' as const,
-            reason: '低风险',
-            outputPath: join(mocks.workbenchRoot, 'cancel-output.png'),
-            cached: false,
-          },
-        ],
-      }
-    })
+  it('soft-cancels a streaming run after the in-flight item finishes', async () => {
+    const sourceStarted = createDeferred<void>()
+    const finishSource = createDeferred<GenerationRunResult>()
+    const mattingStarted = createDeferred<void>()
+    const finishMatting = createDeferred<GenerationRunResult>()
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        sourceStarted.resolve()
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-soft-cancel-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'soft-cancel-source-1.png'),
+          printId: 'pri-soft-cancel-source-1',
+          artifactId: 'art-soft-cancel-source-1',
+          sourceArtifactIds: [],
+        })
+        return finishSource.promise
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementationOnce(
+      async (input: { sourceImagePaths: string[]; taskId: string }) => {
+        mattingStarted.resolve()
+        expect(input.sourceImagePaths).toEqual([
+          join(mocks.workbenchRoot, 'soft-cancel-source-1.png'),
+        ])
+        return finishMatting.promise as Promise<GenerationRunResult>
+      },
+    )
 
     const service = new PipelineService()
-    const run = service.runPipeline('run-cancel-detection', {
-      ...baseConfig(printFolder),
-      source: existingPrintSource(printFolder, 'detection'),
-      detection: {
+    const runPromise = service.runPipeline('run-soft-cancel', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['p1', 'p2'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: {
         enabled: true,
-        skillId: 'infringement-v2',
-        model: 'qwen3.6-flash',
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      detection: {
+        enabled: false,
       },
       photoshop: {
-        ...baseConfig(printFolder).photoshop,
+        ...baseConfig('/unused').photoshop,
         enabled: false,
         templates: [],
       },
       title: {
-        ...baseConfig(printFolder).title,
+        ...baseConfig('/unused').title,
         enabled: false,
       },
     })
-    await vi.waitUntil(() => mocks.runDetectionBatch.mock.calls.length === 1)
 
-    expect(service.cancelRun('run-cancel-detection')).toBe(true)
-    finishDetection?.()
-    await expect(run).rejects.toThrow('完整任务已取消')
+    await sourceStarted.promise
+    await mattingStarted.promise
+    expect(service.cancelRun('run-soft-cancel')).toBe(true)
 
-    const detail = await service.getRun('run-cancel-detection')
-    expect(detail?.run.status).toBe('cancelled')
-    expect(detail?.steps.find((step) => step.step_key === 'detection')?.status).toBe('cancelled')
+    finishMatting.resolve({
+      taskId: 'run-soft-cancel-matting-pri-soft-cancel-source-1',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'matted',
+          url: 'file://soft-cancel-matted-1.png',
+          localPath: join(mocks.workbenchRoot, 'soft-cancel-matted-1.png'),
+          artifactId: 'art-soft-cancel-matted-1',
+          printId: 'pri-soft-cancel-matted-1',
+        },
+      ],
+      failures: [],
+    })
+    finishSource.resolve({
+      taskId: 'run-soft-cancel-txt2img',
+      total: 2,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'p1',
+          url: 'file://soft-cancel-source-1.png',
+          localPath: join(mocks.workbenchRoot, 'soft-cancel-source-1.png'),
+          artifactId: 'art-soft-cancel-source-1',
+          printId: 'pri-soft-cancel-source-1',
+        },
+      ],
+      failures: [],
+      cancelled: true,
+    })
+
+    const detail = await runPromise
+    expect(detail.run.status).toBe('cancelled')
+    expect(detail.run.error_summary).toBe('完整任务已取消')
+    expect(detail.steps.find((step) => step.step_key === 'matting')?.status).toBe('completed')
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'matting' && item.item_key === 'pri-soft-cancel-source-1',
+      ),
+    ).toMatchObject({
+      status: 'completed',
+      output_path: join(mocks.workbenchRoot, 'soft-cancel-matted-1.png'),
+    })
     const progressEvents = mocks.sentEvents.filter((event) => event.channel === 'pipeline:progress')
     const lastProgress = progressEvents.at(-1)?.payload as
       | { logs?: Array<{ message: string }> }
       | undefined
-    expect(lastProgress?.logs?.some((log) => log.message === '侵权检测已取消')).toBe(true)
+    expect(lastProgress?.logs?.some((log) => log.message === '完整任务已取消')).toBe(true)
+  })
+
+  it('marks active streaming records interrupted and keeps the interrupted status after in-flight work settles', async () => {
+    const sourceStarted = createDeferred<void>()
+    const finishSource = createDeferred<GenerationRunResult>()
+    const mattingStarted = createDeferred<void>()
+    const finishMatting = createDeferred<GenerationRunResult>()
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        sourceStarted.resolve()
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-interrupted-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'interrupted-source-1.png'),
+          printId: 'pri-interrupted-source-1',
+          artifactId: 'art-interrupted-source-1',
+          sourceArtifactIds: [],
+        })
+        return finishSource.promise
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementationOnce(async () => {
+      mattingStarted.resolve()
+      return finishMatting.promise as Promise<GenerationRunResult>
+    })
+
+    const service = new PipelineService()
+    const runPromise = service.runPipeline('run-interrupted', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['p1'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      detection: {
+        enabled: false,
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    await sourceStarted.promise
+    await mattingStarted.promise
+    await service.markActiveRunsInterrupted()
+
+    let detail = await service.getRun('run-interrupted')
+    expect(detail?.run.status).toBe('interrupted')
+    expect(detail?.run.error_summary).toBe('完整任务已中断，已完成产物已保留')
+    expect(detail?.steps.find((step) => step.step_key === 'matting')?.status).toBe('interrupted')
+    expect(
+      detail?.items?.find(
+        (item) => item.step_key === 'matting' && item.item_key === 'pri-interrupted-source-1',
+      ),
+    ).toMatchObject({ status: 'interrupted' })
+
+    finishMatting.resolve({
+      taskId: 'run-interrupted-matting-pri-interrupted-source-1',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'matted',
+          url: 'file://interrupted-matted-1.png',
+          localPath: join(mocks.workbenchRoot, 'interrupted-matted-1.png'),
+          artifactId: 'art-interrupted-matted-1',
+          printId: 'pri-interrupted-matted-1',
+        },
+      ],
+      failures: [],
+    })
+    finishSource.resolve({
+      taskId: 'run-interrupted-txt2img',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'p1',
+          url: 'file://interrupted-source-1.png',
+          localPath: join(mocks.workbenchRoot, 'interrupted-source-1.png'),
+          artifactId: 'art-interrupted-source-1',
+          printId: 'pri-interrupted-source-1',
+        },
+      ],
+      failures: [],
+    })
+
+    await runPromise
+    await service.markPersistedRunningRunsInterrupted()
+    detail = await service.getRun('run-interrupted')
+    expect(detail?.run.status).toBe('interrupted')
+    expect(detail?.run.error_summary).toBe('完整任务已中断，已完成产物已保留')
   })
 
   it('completes a detection-only run when every print is blocked', async () => {
@@ -1539,6 +1796,929 @@ describe('PipelineService', () => {
     })
   })
 
+  it('streams txt2img outputs into matting without waiting for the whole source batch', async () => {
+    const sourceStarted = createDeferred<void>()
+    const finishSource = createDeferred<GenerationRunResult>()
+    const mattingStarted = createDeferred<void>()
+    const finishMatting = createDeferred<GenerationRunResult>()
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        sourceStarted.resolve()
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-source-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-source-1.png'),
+          printId: 'pri-stream-source-1',
+          artifactId: 'art-stream-source-1',
+          sourceArtifactIds: [],
+        })
+        return finishSource.promise
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementationOnce(
+      async (input: { sourceImagePaths: string[]; taskId: string }) => {
+        mattingStarted.resolve()
+        expect(input.sourceImagePaths).toEqual([join(mocks.workbenchRoot, 'stream-source-1.png')])
+        return finishMatting.promise as Promise<{
+          taskId: string
+          capability: 'matting'
+          total: number
+          succeeded: number
+          failed: number
+          images: Array<{ prompt: string; url: string; localPath: string }>
+          failures: never[]
+        }>
+      },
+    )
+
+    const service = new PipelineService()
+    const runPromise = service.runPipeline('run-stream-source-matting', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['p1', 'p2'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      detection: {
+        enabled: false,
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    await sourceStarted.promise
+    await mattingStarted.promise
+    expect(mocks.runComfyuiMattingBatch).toHaveBeenCalledTimes(1)
+
+    finishMatting.resolve({
+      taskId: 'run-stream-source-matting-matting-pri-stream-source-1',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'matted',
+          url: 'file://stream-matted-1.png',
+          localPath: join(mocks.workbenchRoot, 'stream-matted-1.png'),
+          artifactId: 'art-stream-matted-1',
+          printId: 'pri-stream-matted-1',
+        },
+      ],
+      failures: [],
+    })
+    finishSource.resolve({
+      taskId: 'run-stream-source-matting-txt2img',
+      total: 2,
+      succeeded: 1,
+      failed: 1,
+      images: [
+        {
+          prompt: 'p1',
+          url: 'file://stream-source-1.png',
+          localPath: join(mocks.workbenchRoot, 'stream-source-1.png'),
+          artifactId: 'art-stream-source-1',
+          printId: 'pri-stream-source-1',
+        },
+      ],
+      failures: [{ prompt: 'p2', error: 'second image failed' }],
+    })
+
+    const detail = await runPromise
+    expect(detail.run.status).toBe('completed')
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'source' && item.item_key === 'pri-stream-source-1',
+      ),
+    ).toMatchObject({
+      status: 'completed',
+      output_path: join(mocks.workbenchRoot, 'stream-source-1.png'),
+    })
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'matting' && item.item_key === 'pri-stream-source-1',
+      ),
+    ).toMatchObject({
+      status: 'completed',
+      output_path: join(mocks.workbenchRoot, 'stream-matted-1.png'),
+    })
+    expect(
+      detail.result_sections?.find((section) => section.key === 'source_images')?.items[0]
+        ?.local_path,
+    ).toBe(join(mocks.workbenchRoot, 'stream-source-1.png'))
+    expect(imageProcessingSection(detail)?.items[0]?.local_path).toBe(
+      join(mocks.workbenchRoot, 'stream-matted-1.png'),
+    )
+  })
+
+  it('serializes source and matting on the same ComfyUI instance instead of failing with a lock conflict', async () => {
+    const sourceCalls: string[] = []
+    const mattingCalls: string[] = []
+    mocks.runComfyuiTxt2imgBatch.mockImplementationOnce(
+      async (input, dependencies?: GenerationBatchDependencies) => {
+        sourceCalls.push(input.taskId ?? 'txt2img')
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-same-instance-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'same-instance-source.png'),
+          printId: 'pri-same-instance-source',
+          artifactId: 'art-same-instance-source',
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-same-instance-txt2img',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [
+            {
+              prompt: input.prompts[0] ?? '',
+              url: 'file://same-instance-source.png',
+              localPath: join(mocks.workbenchRoot, 'same-instance-source.png'),
+              artifactId: 'art-same-instance-source',
+              printId: 'pri-same-instance-source',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementationOnce(async (input) => {
+      mattingCalls.push(input.taskId)
+      return {
+        taskId: input.taskId,
+        capability: 'matting' as const,
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        images: [
+          {
+            prompt: 'matted',
+            url: 'file://same-instance-matted.png',
+            localPath: join(mocks.workbenchRoot, 'same-instance-matted.png'),
+            artifactId: 'art-same-instance-matted',
+            printId: 'pri-same-instance-matted',
+          },
+        ],
+        failures: [],
+      }
+    })
+
+    const service = new PipelineService()
+    const detail = await service.runPipeline('run-same-instance-stream', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'comfyui-chenyu',
+        prompt: { mode: 'manual', prompts: ['same instance flower'] },
+        comfyui: {
+          workflowId: 'wf-same-instance-source',
+          instanceUuid: 'instance-same',
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'wf-same-instance-matting',
+        instanceUuid: 'instance-same',
+      },
+      detection: {
+        enabled: false,
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(detail.run.status).toBe('completed')
+    expect(sourceCalls).toEqual(['run-same-instance-stream-txt2img-1'])
+    expect(mattingCalls).toEqual(['run-same-instance-stream-matting-pri-same-instance-source'])
+    expect(detail.items?.find((item) => item.step_key === 'matting')).toMatchObject({
+      status: 'completed',
+      output_path: join(mocks.workbenchRoot, 'same-instance-matted.png'),
+    })
+  })
+
+  it('streams matting outputs into detection and splits passed and blocked items without blocking later prints', async () => {
+    const sourceStarted = createDeferred<void>()
+    const detectionCalls: string[] = []
+    const firstDetectionFinished = createDeferred<void>()
+    const secondDetectionGate = createDeferred<void>()
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        sourceStarted.resolve()
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-detection-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-detect-source-1.png'),
+          printId: 'pri-stream-detect-source-1',
+          artifactId: 'art-stream-detect-source-1',
+          sourceArtifactIds: [],
+        })
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-detection-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-detect-source-2.png'),
+          printId: 'pri-stream-detect-source-2',
+          artifactId: 'art-stream-detect-source-2',
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-stream-detection-txt2img',
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+          images: [
+            {
+              prompt: 'p1',
+              url: 'file://stream-detect-source-1.png',
+              localPath: join(mocks.workbenchRoot, 'stream-detect-source-1.png'),
+              artifactId: 'art-stream-detect-source-1',
+              printId: 'pri-stream-detect-source-1',
+            },
+            {
+              prompt: 'p2',
+              url: 'file://stream-detect-source-2.png',
+              localPath: join(mocks.workbenchRoot, 'stream-detect-source-2.png'),
+              artifactId: 'art-stream-detect-source-2',
+              printId: 'pri-stream-detect-source-2',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => {
+      const sourcePath = input.sourceImagePaths[0] ?? ''
+      const suffix = sourcePath.endsWith('1.png') ? '1' : '2'
+      return {
+        taskId: input.taskId,
+        capability: 'matting' as const,
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        images: [
+          {
+            prompt: `matted-${suffix}`,
+            url: `file://stream-detect-matted-${suffix}.png`,
+            localPath: join(mocks.workbenchRoot, `stream-detect-matted-${suffix}.png`),
+            artifactId: `art-stream-detect-matted-${suffix}`,
+            printId: `pri-stream-detect-matted-${suffix}`,
+          },
+        ],
+        failures: [],
+      }
+    })
+    mocks.runDetectionBatch.mockImplementation(async (input) => {
+      const imagePath = input.imagePaths[0] ?? ''
+      detectionCalls.push(imagePath)
+      if (imagePath.endsWith('matted-1.png')) {
+        firstDetectionFinished.resolve()
+        return {
+          taskId: 'run-stream-detection-detection-1',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          skipped: 0,
+          results: [
+            {
+              imagePath,
+              thumbnailUrl: '',
+              artifactId: 'art-stream-detect-matted-1',
+              printId: 'pri-stream-detect-matted-1',
+              status: 'success' as const,
+              riskScore: 88,
+              riskLevel: 'block' as const,
+              reason: '高风险',
+              outputPath: join(mocks.workbenchRoot, 'detected-block-1.png'),
+              cached: false,
+            },
+          ],
+        }
+      }
+      await secondDetectionGate.promise
+      return {
+        taskId: 'run-stream-detection-detection-2',
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+        results: [
+          {
+            imagePath,
+            thumbnailUrl: '',
+            artifactId: 'art-stream-detect-matted-2',
+            printId: 'pri-stream-detect-matted-2',
+            status: 'success' as const,
+            riskScore: 12,
+            riskLevel: 'pass' as const,
+            reason: '低风险',
+            outputPath: join(mocks.workbenchRoot, 'detected-pass-2.png'),
+            cached: false,
+          },
+        ],
+      }
+    })
+
+    const service = new PipelineService()
+    const runPromise = service.runPipeline('run-stream-matting-detection', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['p1', 'p2'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      detection: {
+        enabled: true,
+        allowReview: false,
+        skillId: 'infringement-detection',
+        model: 'qwen3-vl-flash',
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    await sourceStarted.promise
+    secondDetectionGate.resolve()
+    const detail = await runPromise
+
+    expect(detail.run.status).toBe('completed')
+    expect(mocks.runComfyuiMattingBatch).toHaveBeenCalledTimes(2)
+    expect(detectionCalls).toEqual([
+      join(mocks.workbenchRoot, 'stream-detect-matted-1.png'),
+      join(mocks.workbenchRoot, 'stream-detect-matted-2.png'),
+    ])
+    expect(
+      detail.result_sections?.find((section) => section.key === 'detection_blocked'),
+    ).toMatchObject({
+      completed: 1,
+      items: [expect.objectContaining({ print_id: 'pri-stream-detect-matted-1' })],
+    })
+    expect(
+      detail.result_sections?.find((section) => section.key === 'detection_passed'),
+    ).toMatchObject({
+      completed: 1,
+      items: [expect.objectContaining({ print_id: 'pri-stream-detect-matted-2' })],
+    })
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'detection' && item.item_key === 'pri-stream-detect-source-1',
+      ),
+    ).toMatchObject({ status: 'filtered' })
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'detection' && item.item_key === 'pri-stream-detect-source-2',
+      ),
+    ).toMatchObject({
+      status: 'completed',
+      output_path: join(mocks.workbenchRoot, 'detected-pass-2.png'),
+    })
+  })
+
+  it('streams detection outputs into Photoshop with arrival-order waiting names and per-template failure isolation', async () => {
+    const sourceStarted = createDeferred<void>()
+    const firstPhotoshopEntered = createDeferred<void>()
+    const releaseFirstPhotoshop = createDeferred<void>()
+    const runBatchCalls: string[] = []
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        sourceStarted.resolve()
+        await createPrint(join(mocks.workbenchRoot, 'stream-ps-source-2.png'))
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-photoshop-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-ps-source-2.png'),
+          printId: 'pri-stream-ps-source-2',
+          artifactId: 'art-stream-ps-source-2',
+          sourceArtifactIds: [],
+        })
+        await createPrint(join(mocks.workbenchRoot, 'stream-ps-source-1.png'))
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-photoshop-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-ps-source-1.png'),
+          printId: 'pri-stream-ps-source-1',
+          artifactId: 'art-stream-ps-source-1',
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-stream-photoshop-txt2img',
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+          images: [
+            {
+              prompt: 'p2',
+              url: 'file://stream-ps-source-2.png',
+              localPath: join(mocks.workbenchRoot, 'stream-ps-source-2.png'),
+              artifactId: 'art-stream-ps-source-2',
+              printId: 'pri-stream-ps-source-2',
+            },
+            {
+              prompt: 'p1',
+              url: 'file://stream-ps-source-1.png',
+              localPath: join(mocks.workbenchRoot, 'stream-ps-source-1.png'),
+              artifactId: 'art-stream-ps-source-1',
+              printId: 'pri-stream-ps-source-1',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => ({
+      taskId: input.taskId,
+      capability: 'matting' as const,
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'matted',
+          url: `file://${basename(input.sourceImagePaths[0] ?? '')}`,
+          localPath: input.sourceImagePaths[0] ?? '',
+          artifactId: `art-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
+          printId: `pri-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
+        },
+      ],
+      failures: [],
+    }))
+    mocks.runDetectionBatch.mockImplementation(async (input) => ({
+      taskId: `detect-${basename(input.imagePaths[0] ?? '', '.png')}`,
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: input.imagePaths[0] ?? '',
+          thumbnailUrl: '',
+          artifactId: `art-detected-${basename(input.imagePaths[0] ?? '', '.png')}`,
+          printId: `pri-detected-${basename(input.imagePaths[0] ?? '', '.png')}`,
+          status: 'success' as const,
+          riskScore: 12,
+          riskLevel: 'pass' as const,
+          reason: '低风险',
+          outputPath: input.imagePaths[0] ?? '',
+          cached: false,
+        },
+      ],
+    }))
+    mocks.runBatch.mockImplementation(
+      async (
+        prints: PhotoshopPrintAsset[],
+        templates: unknown,
+        config: {
+          taskId: string
+          outputRoot: string
+          outputLayout: 'template_first' | 'sku_first'
+        },
+      ) => {
+        const templatePath = Array.isArray(templates) ? String(templates[0] ?? '') : ''
+        const printId = prints[0]?.id ?? 'print'
+        runBatchCalls.push(`${printId}:${windowsBaseName(templatePath).replace(/\.psd$/i, '')}`)
+        if (runBatchCalls.length === 1) {
+          firstPhotoshopEntered.resolve()
+          await releaseFirstPhotoshop.promise
+        }
+        if (
+          windowsBaseName(templatePath).replace(/\.psd$/i, '') === 'mug' &&
+          printId === 'GYX-0002'
+        ) {
+          throw new Error('mug failed')
+        }
+        const templateName = windowsBaseName(templatePath).replace(/\.psd$/i, '')
+        const outputPath = join(config.outputRoot, templateName, printId, '01.jpg')
+        return {
+          ok: true,
+          task_id: config.taskId,
+          output_layout: config.outputLayout,
+          templates_total: 1,
+          groups_total: 1,
+          groups_completed: 1,
+          outputs: [outputPath],
+          templates: [
+            {
+              template_id: `tpl-${templateName}`,
+              template_name: templateName,
+              groups_total: 1,
+              groups_completed: 1,
+              outputs: [outputPath],
+            },
+          ],
+          result_groups: [
+            {
+              template_id: `tpl-${templateName}`,
+              template_name: templateName,
+              group_index: 0,
+              sku_folder: printId,
+              print_ids: [printId],
+              outputs: [outputPath],
+            },
+          ],
+        }
+      },
+    )
+
+    const service = new PipelineService()
+    const runPromise = service.runPipeline('run-stream-photoshop', {
+      ...baseConfig('/unused'),
+      printSkuCode: 'GYX',
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['p2', 'p1'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      detection: {
+        enabled: true,
+        allowReview: false,
+        skillId: 'infringement-detection',
+        model: 'qwen3-vl-flash',
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: true,
+        templates: ['C:\\templates\\mug.psd', 'C:\\templates\\shirt.psd'],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    await sourceStarted.promise
+    await vi.waitUntil(() => mocks.runBatch.mock.calls.length > 0)
+    await firstPhotoshopEntered.promise
+    releaseFirstPhotoshop.resolve()
+
+    const detail = await runPromise
+
+    expect(detail.run.status).toBe('completed')
+    expect(runBatchCalls).toEqual([
+      'GYX-0001:mug',
+      'GYX-0001:shirt',
+      'GYX-0002:mug',
+      'GYX-0002:shirt',
+    ])
+    await expect(
+      readFile(
+        join(
+          mocks.workbenchRoot,
+          WORKBENCH_DIRECTORIES.generation,
+          '等待套版',
+          'run-stream-photoshop',
+          'GYX-0001.png',
+        ),
+        'utf8',
+      ),
+    ).resolves.toBe('image')
+    await expect(
+      readFile(
+        join(
+          mocks.workbenchRoot,
+          WORKBENCH_DIRECTORIES.generation,
+          '等待套版',
+          'run-stream-photoshop',
+          'GYX-0002.png',
+        ),
+        'utf8',
+      ),
+    ).resolves.toBe('image')
+    expect(
+      detail.result_sections?.find((section) => section.key === 'print_products'),
+    ).toMatchObject({
+      completed: 3,
+      items: [
+        expect.objectContaining({
+          local_path: join(
+            mocks.workbenchRoot,
+            WORKBENCH_DIRECTORIES.listing,
+            'mug',
+            'GYX-0001',
+            '01.jpg',
+          ),
+        }),
+        expect.objectContaining({
+          local_path: join(
+            mocks.workbenchRoot,
+            WORKBENCH_DIRECTORIES.listing,
+            'shirt',
+            'GYX-0001',
+            '01.jpg',
+          ),
+        }),
+        expect.objectContaining({
+          local_path: join(
+            mocks.workbenchRoot,
+            WORKBENCH_DIRECTORIES.listing,
+            'shirt',
+            'GYX-0002',
+            '01.jpg',
+          ),
+        }),
+      ],
+    })
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'photoshop' && item.item_key.includes('pri-stream-ps-source-2'),
+      ),
+    ).toMatchObject({
+      status: 'completed',
+    })
+    expect(
+      detail.items?.find(
+        (item) =>
+          item.step_key === 'photoshop' &&
+          item.item_key.includes('pri-stream-ps-source-1') &&
+          item.status === 'failed',
+      ),
+    ).toMatchObject({
+      error_message: 'mug failed',
+    })
+  })
+
+  it('streams Photoshop outputs into title generation without waiting for the full batch', async () => {
+    const sourceStarted = createDeferred<void>()
+    const firstTitleStarted = createDeferred<void>()
+    const releaseFirstTitle = createDeferred<void>()
+    const titleCalls: string[] = []
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        sourceStarted.resolve()
+        await createPrint(join(mocks.workbenchRoot, 'stream-title-source-2.png'))
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-title-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-title-source-2.png'),
+          printId: 'pri-stream-title-source-2',
+          artifactId: 'art-stream-title-source-2',
+          sourceArtifactIds: [],
+        })
+        await createPrint(join(mocks.workbenchRoot, 'stream-title-source-1.png'))
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-stream-title-txt2img',
+          capability: 'txt2img',
+          path: join(mocks.workbenchRoot, 'stream-title-source-1.png'),
+          printId: 'pri-stream-title-source-1',
+          artifactId: 'art-stream-title-source-1',
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-stream-title-txt2img',
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+          images: [
+            {
+              prompt: 'p2',
+              url: 'file://stream-title-source-2.png',
+              localPath: join(mocks.workbenchRoot, 'stream-title-source-2.png'),
+              artifactId: 'art-stream-title-source-2',
+              printId: 'pri-stream-title-source-2',
+            },
+            {
+              prompt: 'p1',
+              url: 'file://stream-title-source-1.png',
+              localPath: join(mocks.workbenchRoot, 'stream-title-source-1.png'),
+              artifactId: 'art-stream-title-source-1',
+              printId: 'pri-stream-title-source-1',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => ({
+      taskId: input.taskId,
+      capability: 'matting' as const,
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      images: [
+        {
+          prompt: 'matted',
+          url: `file://${basename(input.sourceImagePaths[0] ?? '')}`,
+          localPath: input.sourceImagePaths[0] ?? '',
+          artifactId: `art-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
+          printId: `pri-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
+        },
+      ],
+      failures: [],
+    }))
+    mocks.runDetectionBatch.mockImplementation(async (input) => ({
+      taskId: `detect-${basename(input.imagePaths[0] ?? '', '.png')}`,
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: input.imagePaths[0] ?? '',
+          thumbnailUrl: '',
+          artifactId: `art-detected-${basename(input.imagePaths[0] ?? '', '.png')}`,
+          printId: `pri-detected-${basename(input.imagePaths[0] ?? '', '.png')}`,
+          status: 'success' as const,
+          riskScore: 8,
+          riskLevel: 'pass' as const,
+          reason: '低风险',
+          outputPath: input.imagePaths[0] ?? '',
+          cached: false,
+        },
+      ],
+    }))
+    mocks.runBatch.mockImplementation(
+      async (
+        prints: PhotoshopPrintAsset[],
+        templates: unknown,
+        config: {
+          taskId: string
+          outputRoot: string
+          outputLayout: 'template_first' | 'sku_first'
+        },
+      ) => {
+        const templateName = windowsBaseName(
+          String(Array.isArray(templates) ? templates[0] : 'shirt'),
+        ).replace(/\.psd$/i, '')
+        const printId = prints[0]?.id ?? 'print'
+        const outputPath = join(config.outputRoot, templateName, printId, '01.jpg')
+        await createTitleProductImage(outputPath)
+        return {
+          ok: true,
+          task_id: config.taskId,
+          output_layout: config.outputLayout,
+          templates_total: 1,
+          groups_total: 1,
+          groups_completed: 1,
+          outputs: [outputPath],
+          templates: [
+            {
+              template_id: `tpl-${templateName}`,
+              template_name: templateName,
+              groups_total: 1,
+              groups_completed: 1,
+              outputs: [outputPath],
+            },
+          ],
+          result_groups: [
+            {
+              template_id: `tpl-${templateName}`,
+              template_name: templateName,
+              group_index: 0,
+              sku_folder: printId,
+              print_ids: [printId],
+              outputs: [outputPath],
+            },
+          ],
+        }
+      },
+    )
+    const service = new PipelineService()
+    mocks.createTitleProcessingSession.mockResolvedValueOnce({
+      taskId: 'run-stream-title-title-stream',
+      model: 'qwen3.6-flash',
+      skill: {
+        id: 'title-temu-en',
+        module: 'title',
+        category: null,
+        platform: 'temu',
+        language: 'en',
+        version: '1',
+        enabled: true,
+        recommendedModel: 'qwen3.6-flash',
+        notes: null,
+        systemPrompt: 'prompt',
+        variables: [],
+      },
+      workbenchRoot: mocks.workbenchRoot,
+      appendDiagnosticLog: vi.fn(async () => undefined),
+      generateSku: vi.fn(async ({ skuCode }: { skuCode: string }) => {
+        titleCalls.push(skuCode)
+        if (titleCalls.length === 1) {
+          firstTitleStarted.resolve()
+          await releaseFirstTitle.promise
+        }
+        return {
+          skuCode,
+          status: 'success' as const,
+          baseTitle: `Base ${skuCode}`,
+          imagePath: join(
+            mocks.workbenchRoot,
+            WORKBENCH_DIRECTORIES.listing,
+            'shirt',
+            skuCode,
+            '01.jpg',
+          ),
+        }
+      }),
+      close: vi.fn(async () => undefined),
+    })
+
+    const runPromise = service.runPipeline('run-stream-title', {
+      ...baseConfig('/unused'),
+      printSkuCode: 'GYX',
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['p2', 'p1'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: 'matting-workflow',
+      },
+      detection: {
+        enabled: true,
+        allowReview: false,
+        skillId: 'infringement-detection',
+        model: 'qwen3-vl-flash',
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: true,
+        templates: ['C:\\templates\\shirt.psd'],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: true,
+      },
+    })
+
+    await sourceStarted.promise
+    await firstTitleStarted.promise
+    expect(titleCalls).toEqual(['GYX-0001'])
+    releaseFirstTitle.resolve()
+
+    const detail = await runPromise
+
+    expect(detail.run.status).toBe('completed')
+    expect(titleCalls).toEqual(['GYX-0001', 'GYX-0002'])
+    expect(detail.steps.find((step) => step.step_key === 'title')).toMatchObject({
+      status: 'completed',
+      output_count: 2,
+    })
+    expect(
+      detail.items?.find(
+        (item) => item.step_key === 'title' && item.item_key.includes('pri-stream-title-source-2'),
+      ),
+    ).toMatchObject({
+      status: 'completed',
+    })
+  })
+
   it('runs detection against img2img outputs and splits passed and blocked sections', async () => {
     const generatedImages: GenerationRunImage[] = [
       {
@@ -1569,53 +2749,54 @@ describe('PipelineService', () => {
         imagePaths: string[]
         imageInputs?: Array<{ path: string; artifactId?: string; printId?: string }>
       }) => {
-      expect(input.imagePaths).toEqual(generatedImages.map((image) => image.localPath))
-      expect(input.imageInputs).toEqual([
-        {
-          path: generatedImages[0]?.localPath,
-          artifactId: 'art-img2img-pass',
-          printId: 'pri-img2img-pass',
-        },
-        {
-          path: generatedImages[1]?.localPath,
-          artifactId: 'art-img2img-block',
-          printId: 'pri-img2img-block',
-        },
-      ])
-      return {
-        taskId: 'run-img2img-detection-detection',
-        total: 2,
-        succeeded: 2,
-        failed: 0,
-        skipped: 0,
-        results: [
+        expect(input.imagePaths).toEqual(generatedImages.map((image) => image.localPath))
+        expect(input.imageInputs).toEqual([
           {
-            imagePath: generatedImages[0]?.localPath ?? '',
-            thumbnailUrl: '',
+            path: generatedImages[0]?.localPath,
             artifactId: 'art-img2img-pass',
             printId: 'pri-img2img-pass',
-            status: 'success' as const,
-            riskScore: 12,
-            riskLevel: 'pass' as const,
-            reason: '低风险',
-            outputPath: join(mocks.workbenchRoot, 'detected-pass.png'),
-            cached: false,
           },
           {
-            imagePath: generatedImages[1]?.localPath ?? '',
-            thumbnailUrl: '',
+            path: generatedImages[1]?.localPath,
             artifactId: 'art-img2img-block',
             printId: 'pri-img2img-block',
-            status: 'success' as const,
-            riskScore: 92,
-            riskLevel: 'block' as const,
-            reason: '高风险',
-            outputPath: join(mocks.workbenchRoot, 'detected-block.png'),
-            cached: false,
           },
-        ],
-      }
-    })
+        ])
+        return {
+          taskId: 'run-img2img-detection-detection',
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+          skipped: 0,
+          results: [
+            {
+              imagePath: generatedImages[0]?.localPath ?? '',
+              thumbnailUrl: '',
+              artifactId: 'art-img2img-pass',
+              printId: 'pri-img2img-pass',
+              status: 'success' as const,
+              riskScore: 12,
+              riskLevel: 'pass' as const,
+              reason: '低风险',
+              outputPath: join(mocks.workbenchRoot, 'detected-pass.png'),
+              cached: false,
+            },
+            {
+              imagePath: generatedImages[1]?.localPath ?? '',
+              thumbnailUrl: '',
+              artifactId: 'art-img2img-block',
+              printId: 'pri-img2img-block',
+              status: 'success' as const,
+              riskScore: 92,
+              riskLevel: 'block' as const,
+              reason: '高风险',
+              outputPath: join(mocks.workbenchRoot, 'detected-block.png'),
+              cached: false,
+            },
+          ],
+        }
+      },
+    )
 
     const service = new PipelineService()
     await service.runPipeline('run-img2img-detection', {

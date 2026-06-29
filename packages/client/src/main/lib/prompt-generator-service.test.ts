@@ -388,9 +388,7 @@ describe('PromptGeneratorService', () => {
     const message = visionCompletion.mock.calls[0]?.[0].messages[1]
     const textPart =
       Array.isArray(message?.content) &&
-      message.content.find(
-        (part: { type?: string; text?: string }) => part.type === 'text',
-      )
+      message.content.find((part: { type?: string; text?: string }) => part.type === 'text')
 
     expect(textPart && 'text' in textPart ? textPart.text : '').toContain(
       [

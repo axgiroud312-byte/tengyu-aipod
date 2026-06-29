@@ -4,11 +4,13 @@ import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'nod
 import {
   AppErrorClass,
   type PhotoshopPrintAsset,
-  type PipelineComfyuiWorkflowConfig,
   type PipelineComfyuiImg2imgConfig,
+  type PipelineComfyuiWorkflowConfig,
   type PipelineDetectionConfig,
   type PipelineExtractConfig,
   type PipelineGrsaiImageConfig,
+  type PipelineItemRecord,
+  type PipelineItemStatus,
   type PipelineMattingConfig,
   type PipelinePreviewImage,
   type PipelineProgress,
@@ -41,11 +43,13 @@ import {
   detectionService,
 } from './detection-service'
 import {
+  type GenerationImageCompletePayload,
   type GenerationProgress,
   type GenerationPromptInput,
   type GenerationRunImage,
   type GenerationRunResult,
   generateTxt2imgPrompts,
+  requestGenerationCancel,
   runComfyuiExtractBatch,
   runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
@@ -55,6 +59,14 @@ import {
   runTxt2imgBatch,
 } from './generation-service'
 import { shouldPipelineDetectionAllow } from './pipeline-policy'
+import type {
+  PipelinePrintStageRegistration,
+  PipelinePrintStreamItem,
+  PipelineStageRuntimeContext,
+} from './pipeline-stage-types'
+import { createDetectionStage } from './pipeline-stages/detection-stage'
+import { createPhotoshopStage } from './pipeline-stages/photoshop-stage'
+import { createTitleStage } from './pipeline-stages/title-stage'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 import { type TitleBatchResult, titleService } from './title-service'
@@ -100,9 +112,14 @@ type PipelineVisibleFilenameFields = {
   filenameSeparator?: string
 }
 
+type StreamingSourceProducerResult = GenerationRunResult & {
+  itemCount: number
+}
+
 type ActivePipelineRun = {
   db: Pick<SqliteDatabase, 'prepare'>
-  cancelled: boolean
+  cancelRequested: boolean
+  interrupted: boolean
   currentCancel: (() => void | Promise<void>) | null
   previewImages: PipelinePreviewImage[]
   resultSections: PipelineResultSection[]
@@ -408,8 +425,27 @@ function ensurePipelineTables(db: Pick<SqliteDatabase, 'exec' | 'prepare'>) {
       UNIQUE(run_id, step_key)
     );
 
+    CREATE TABLE IF NOT EXISTS pipeline_items (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL,
+      item_key TEXT NOT NULL,
+      step_key TEXT NOT NULL,
+      status TEXT NOT NULL,
+      source_path TEXT,
+      output_path TEXT,
+      artifact_id TEXT,
+      print_id TEXT,
+      source_artifact_ids_json TEXT,
+      error_message TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      completed_at INTEGER,
+      UNIQUE(run_id, item_key, step_key)
+    );
+
     CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);
     CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run ON pipeline_steps(run_id);
+    CREATE INDEX IF NOT EXISTS idx_pipeline_items_run ON pipeline_items(run_id);
   `)
   ensurePipelineColumn(
     db,
@@ -763,7 +799,11 @@ function pipelineVisibleFilenameFields(config: PipelineRunConfig): PipelineVisib
 function runConfigSourceHasReferences(
   source: PipelineSourceConfig,
 ): source is Extract<PipelineSourceConfig, { mode: 'img2img'; provider: 'grsai' }> {
-  return source.mode === 'img2img' && source.provider === 'grsai' && Boolean(source.referenceImagePaths?.length)
+  return (
+    source.mode === 'img2img' &&
+    source.provider === 'grsai' &&
+    Boolean(source.referenceImagePaths?.length)
+  )
 }
 
 function existingPrintStartStep(config: PipelineRunConfig) {
@@ -873,6 +913,36 @@ function readStepRows(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
   return rows.filter(isPipelineStepRecord)
 }
 
+function isPipelineItemRecord(value: unknown): value is PipelineItemRecord {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+  const row = value as Record<string, unknown>
+  return (
+    typeof row.id === 'string' &&
+    typeof row.run_id === 'string' &&
+    typeof row.item_key === 'string' &&
+    typeof row.step_key === 'string' &&
+    typeof row.status === 'string' &&
+    typeof row.created_at === 'number' &&
+    typeof row.updated_at === 'number'
+  )
+}
+
+function readItemRows(db: Pick<SqliteDatabase, 'prepare'>, runId: string) {
+  const rows = db
+    .prepare(
+      `
+        SELECT *
+        FROM pipeline_items
+        WHERE run_id = ?
+        ORDER BY created_at ASC, updated_at ASC
+      `,
+    )
+    .all(runId) as unknown[]
+  return rows.filter(isPipelineItemRecord)
+}
+
 function parseJsonArray<T>(value: string | null | undefined): T[] {
   if (!value) {
     return []
@@ -908,8 +978,69 @@ function readRunDetail(
   return {
     run,
     steps: readStepRows(db, runId),
+    items: readItemRows(db, runId),
     result_sections: parseJsonArray<PipelineResultSection>(run.result_sections_json),
     logs: parseJsonArray<PipelineRuntimeLogEntry>(run.logs_json),
+  }
+}
+
+class AsyncItemQueue<T> implements AsyncIterable<T> {
+  private readonly values: T[] = []
+  private readonly waiters: Array<{
+    resolve: (value: IteratorResult<T>) => void
+    reject: (reason?: unknown) => void
+  }> = []
+  private done = false
+  private error: unknown = null
+
+  push(value: T) {
+    const waiter = this.waiters.shift()
+    if (waiter) {
+      waiter.resolve({ value, done: false })
+      return
+    }
+    this.values.push(value)
+  }
+
+  end() {
+    this.done = true
+    while (this.waiters.length > 0) {
+      this.waiters.shift()?.resolve({ value: undefined, done: true })
+    }
+  }
+
+  fail(error: unknown) {
+    this.error = error
+    this.done = true
+    while (this.waiters.length > 0) {
+      this.waiters.shift()?.reject(error)
+    }
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<T> {
+    return {
+      next: () => {
+        const value = this.values.shift()
+        if (value !== undefined) {
+          return Promise.resolve({ value, done: false })
+        }
+        if (this.error) {
+          return Promise.reject(this.error)
+        }
+        if (this.done) {
+          return Promise.resolve({ value: undefined, done: true })
+        }
+        return new Promise<IteratorResult<T>>((resolve, reject) => {
+          this.waiters.push({ resolve, reject })
+        })
+      },
+    }
+  }
+}
+
+async function* passThroughStageItems<T>(input: AsyncIterable<T>) {
+  for await (const item of input) {
+    yield item
   }
 }
 
@@ -1071,6 +1202,18 @@ export class PipelineService {
   private readonly activeRuns = new Map<string, ActivePipelineRun>()
   private readonly activePrintSkuRuns = new Map<string, string>()
   private readonly photoshopMutex = new PromiseMutex()
+  private readonly comfyuiInstanceQueues = new Map<string, PromiseMutex>()
+
+  private comfyuiQueueForInstance(instanceUuid?: string | undefined) {
+    const key = instanceUuid?.trim() || ''
+    const existing = this.comfyuiInstanceQueues.get(key)
+    if (existing) {
+      return existing
+    }
+    const created = new PromiseMutex()
+    this.comfyuiInstanceQueues.set(key, created)
+    return created
+  }
 
   startRun(config: PipelineRunConfig) {
     const runId = randomUUID()
@@ -1087,7 +1230,7 @@ export class PipelineService {
     if (!active) {
       return false
     }
-    active.cancelled = true
+    active.cancelRequested = true
     void active.currentCancel?.()
     return true
   }
@@ -1105,6 +1248,92 @@ export class PipelineService {
         .filter((row): row is PipelineRunRecord => Boolean(row))
     } finally {
       db.close()
+    }
+  }
+
+  async markPersistedRunningRunsInterrupted() {
+    const workbenchRoot = await this.readWorkbenchRoot()
+    const db = openWorkbenchDatabase(workbenchRoot)
+    try {
+      ensurePipelineTables(db)
+      db.prepare(
+        `
+          UPDATE pipeline_runs
+          SET status = 'interrupted',
+              error_summary = COALESCE(error_summary, '完整任务已中断，已完成产物已保留'),
+              completed_at = COALESCE(completed_at, ?)
+          WHERE status = 'running'
+        `,
+      ).run(Date.now())
+      db.prepare(
+        `
+          UPDATE pipeline_steps
+          SET status = 'interrupted',
+              completed_at = COALESCE(completed_at, ?),
+              updated_at = ?
+          WHERE status = 'running'
+        `,
+      ).run(Date.now(), Date.now())
+      db.prepare(
+        `
+          UPDATE pipeline_items
+          SET status = 'interrupted',
+              completed_at = COALESCE(completed_at, ?),
+              updated_at = ?
+          WHERE status = 'running'
+        `,
+      ).run(Date.now(), Date.now())
+    } finally {
+      db.close()
+    }
+  }
+
+  async markActiveRunsInterrupted() {
+    const now = Date.now()
+    for (const [runId, active] of this.activeRuns.entries()) {
+      try {
+        active.interrupted = true
+        active.collectionReadLock?.release()
+        active.db
+          .prepare(
+            `
+              UPDATE pipeline_runs
+              SET status = 'interrupted',
+                  error_summary = ?,
+                  completed_at = ?
+              WHERE id = ?
+            `,
+          )
+          .run('完整任务已中断，已完成产物已保留', now, runId)
+        active.db
+          .prepare(
+            `
+              UPDATE pipeline_steps
+              SET status = 'interrupted',
+                  completed_at = COALESCE(completed_at, ?),
+                  updated_at = ?
+              WHERE run_id = ? AND status = 'running'
+            `,
+          )
+          .run(now, now, runId)
+        active.db
+          .prepare(
+            `
+              UPDATE pipeline_items
+              SET status = 'interrupted',
+                  completed_at = COALESCE(completed_at, ?),
+                  updated_at = ?
+              WHERE run_id = ? AND status = 'running'
+            `,
+          )
+          .run(now, now, runId)
+        this.appendLog(runId, {
+          level: 'warn',
+          message: '完整任务已中断，已完成产物已保留',
+        })
+      } catch {
+        // 退出路径只尽力落状态，不阻断进程关闭。
+      }
     }
   }
 
@@ -1136,7 +1365,8 @@ export class PipelineService {
       const db = openWorkbenchDatabase(workbenchRoot)
       const active: ActivePipelineRun = {
         db,
-        cancelled: false,
+        cancelRequested: false,
+        interrupted: false,
         currentCancel: null,
         previewImages: [],
         resultSections: [],
@@ -1163,6 +1393,23 @@ export class PipelineService {
           details: { sourceMode: runConfig.source.mode, printMode: runConfig.printMode },
         })
         this.emitRunProgress(db, runId, 'running', null, stats, '完整任务已启动')
+
+        const shouldUseStreamingStageChain = this.canUseStreamingStageChain(runConfig)
+
+        if (shouldUseStreamingStageChain) {
+          await this.runStreamingSourceMatting(db, active, runId, workbenchRoot, runConfig, stats)
+          if (active.interrupted) {
+            return this.requireRunDetail(db, runId)
+          }
+          if (active.cancelRequested) {
+            this.appendLog(runId, { level: 'warn', message: '完整任务已取消' })
+            this.completeRun(db, runId, 'cancelled', stats, '完整任务已取消')
+          } else {
+            this.appendLog(runId, { level: 'info', message: '完整任务完成' })
+            this.completeRun(db, runId, 'completed', stats, null)
+          }
+          return this.requireRunDetail(db, runId)
+        }
 
         const sourceImages = await this.runSourceStep(db, active, runId, runConfig, stats)
         let prints = sourceImages.prints
@@ -1234,19 +1481,32 @@ export class PipelineService {
           }
         }
 
-        this.assertNotCancelled(active)
-        this.appendLog(runId, { level: 'info', message: '完整任务完成' })
-        this.completeRun(db, runId, 'completed', stats, null)
+        if (active.interrupted) {
+          return this.requireRunDetail(db, runId)
+        }
+        if (active.cancelRequested) {
+          this.appendLog(runId, { level: 'warn', message: '完整任务已取消' })
+          this.completeRun(db, runId, 'cancelled', stats, '完整任务已取消')
+        } else {
+          this.appendLog(runId, { level: 'info', message: '完整任务完成' })
+          this.completeRun(db, runId, 'completed', stats, null)
+        }
         return this.requireRunDetail(db, runId)
       } catch (error) {
-        const status: PipelineRunStatus = active.cancelled ? 'cancelled' : 'failed'
+        if (active.interrupted) {
+          return this.requireRunDetail(db, runId)
+        }
+        const status: PipelineRunStatus = active.cancelRequested ? 'cancelled' : 'failed'
         this.appendLog(runId, {
-          level: active.cancelled ? 'warn' : 'error',
-          message: active.cancelled ? '完整任务已取消' : '完整任务失败',
+          level: active.cancelRequested ? 'warn' : 'error',
+          message: active.cancelRequested ? '完整任务已取消' : '完整任务失败',
           details: { error: appErrorMessage(error) },
         })
         this.completeRun(db, runId, status, stats, appErrorMessage(error))
-        throw error
+        if (!active.cancelRequested) {
+          throw error
+        }
+        return this.requireRunDetail(db, runId)
       } finally {
         active.collectionReadLock?.release()
         db.close()
@@ -1311,15 +1571,17 @@ export class PipelineService {
     )
     await mkdir(referenceFolder, { recursive: true })
     const referenceImagePaths = await Promise.all(
-      config.source.referenceImages.map(async (image: PipelineReferenceImageInput, index: number) => {
-        const baseName = safePathSegment(basename(image.name, extname(image.name)))
-        const targetPath = join(
-          referenceFolder,
-          `${String(index + 1).padStart(2, '0')}-${baseName}${referenceImageExtension(image)}`,
-        )
-        await writeFile(targetPath, decodeReferenceImageBase64(image.base64))
-        return targetPath
-      }),
+      config.source.referenceImages.map(
+        async (image: PipelineReferenceImageInput, index: number) => {
+          const baseName = safePathSegment(basename(image.name, extname(image.name)))
+          const targetPath = join(
+            referenceFolder,
+            `${String(index + 1).padStart(2, '0')}-${baseName}${referenceImageExtension(image)}`,
+          )
+          await writeFile(targetPath, decodeReferenceImageBase64(image.base64))
+          return targetPath
+        },
+      ),
     )
 
     const { referenceImages: _referenceImages, ...sourceWithoutUploads } = config.source
@@ -1340,10 +1602,14 @@ export class PipelineService {
       })
     }
     if (config.source.mode === 'existing_prints') {
-      const printFolder = await assertPathInsideWorkbench(workbenchRoot, config.source.printFolder, {
-        domain: 'generation',
-        label: '完整任务印花来源目录',
-      })
+      const printFolder = await assertPathInsideWorkbench(
+        workbenchRoot,
+        config.source.printFolder,
+        {
+          domain: 'generation',
+          label: '完整任务印花来源目录',
+        },
+      )
       const generationRoot = await canonicalPath(
         resolve(workbenchRoot, WORKBENCH_DIRECTORIES.generation),
       )
@@ -1489,6 +1755,7 @@ export class PipelineService {
       message,
       stats: { ...stats },
       steps: readStepRows(db, runId),
+      items: readItemRows(db, runId),
       ...(previewImages ? { preview_images: previewImages } : {}),
       result_sections: active?.resultSections ?? persistedDetail?.result_sections ?? [],
       logs: active?.logs ?? persistedDetail?.logs ?? [],
@@ -1586,10 +1853,96 @@ export class PipelineService {
     this.emitRunProgress(db, runId, 'running', stepKey, stats, message)
   }
 
-  private assertNotCancelled(active: ActivePipelineRun) {
-    if (active.cancelled) {
+  private assertCanAcceptMoreWork(active: ActivePipelineRun) {
+    if (active.cancelRequested) {
       throw new AppErrorClass('HTTP_4XX', '完整任务已取消', false)
     }
+  }
+
+  private stopAcceptingMoreWork(active: ActivePipelineRun) {
+    return active.cancelRequested
+  }
+
+  private async withGenerationCancel<T>(
+    active: ActivePipelineRun,
+    taskId: string,
+    run: () => Promise<T>,
+  ): Promise<T> {
+    active.currentCancel = () => {
+      requestGenerationCancel(taskId)
+    }
+    try {
+      return await run()
+    } finally {
+      active.currentCancel = null
+    }
+  }
+
+  private upsertPipelineItem(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    input: {
+      runId: string
+      itemKey: string
+      stepKey: PipelineStepKey
+      status: PipelineItemStatus
+      sourcePath?: string | undefined
+      outputPath?: string | undefined
+      artifactId?: string | undefined
+      printId?: string | undefined
+      sourceArtifactIds?: string[] | undefined
+      errorMessage?: string | undefined
+      completed?: boolean | undefined
+    },
+  ) {
+    const now = Date.now()
+    db.prepare(
+      `
+        INSERT INTO pipeline_items (
+          id,
+          run_id,
+          item_key,
+          step_key,
+          status,
+          source_path,
+          output_path,
+          artifact_id,
+          print_id,
+          source_artifact_ids_json,
+          error_message,
+          created_at,
+          updated_at,
+          completed_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(run_id, item_key, step_key) DO UPDATE SET
+          status = excluded.status,
+          source_path = COALESCE(excluded.source_path, pipeline_items.source_path),
+          output_path = COALESCE(excluded.output_path, pipeline_items.output_path),
+          artifact_id = COALESCE(excluded.artifact_id, pipeline_items.artifact_id),
+          print_id = COALESCE(excluded.print_id, pipeline_items.print_id),
+          source_artifact_ids_json = COALESCE(
+            excluded.source_artifact_ids_json,
+            pipeline_items.source_artifact_ids_json
+          ),
+          error_message = excluded.error_message,
+          updated_at = excluded.updated_at,
+          completed_at = excluded.completed_at
+      `,
+    ).run(
+      `${input.runId}:${input.itemKey}:${input.stepKey}`,
+      input.runId,
+      input.itemKey,
+      input.stepKey,
+      input.status,
+      input.sourcePath ?? null,
+      input.outputPath ?? null,
+      input.artifactId ?? null,
+      input.printId ?? null,
+      input.sourceArtifactIds ? JSON.stringify(input.sourceArtifactIds) : null,
+      input.errorMessage ?? null,
+      now,
+      now,
+      input.completed ? now : null,
+    )
   }
 
   private async executeStep<T>(
@@ -1608,7 +1961,7 @@ export class PipelineService {
       ) => Promise<{ output: T; outputCount: number; outputJson?: unknown }>
     },
   ): Promise<T> {
-    this.assertNotCancelled(active)
+    this.assertCanAcceptMoreWork(active)
     const now = Date.now()
     db.prepare(
       `
@@ -1667,7 +2020,28 @@ export class PipelineService {
 
     try {
       const result = await input.run(emitMessage)
-      this.assertNotCancelled(active)
+      if (active.interrupted) {
+        db.prepare(
+          `
+            UPDATE pipeline_steps
+            SET status = 'interrupted',
+                output_count = ?,
+                output_json = ?,
+                error_json = NULL,
+                completed_at = ?,
+                updated_at = ?
+            WHERE run_id = ? AND step_key = ?
+          `,
+        ).run(
+          result.outputCount,
+          JSON.stringify(result.outputJson ?? null),
+          Date.now(),
+          Date.now(),
+          input.runId,
+          input.stepKey,
+        )
+        return result.output
+      }
       db.prepare(
         `
           UPDATE pipeline_steps
@@ -1714,7 +2088,7 @@ export class PipelineService {
           WHERE run_id = ? AND step_key = ?
         `,
       ).run(
-        active.cancelled ? 'cancelled' : 'failed',
+        active.cancelRequested ? 'cancelled' : 'failed',
         JSON.stringify({ message: appErrorMessage(error) }),
         Date.now(),
         Date.now(),
@@ -1722,15 +2096,15 @@ export class PipelineService {
         input.stepKey,
       )
       this.appendLog(input.runId, {
-        level: active.cancelled ? 'warn' : 'error',
+        level: active.cancelRequested ? 'warn' : 'error',
         step_key: input.stepKey,
-        message: active.cancelled ? `${input.label}已取消` : `${input.label}失败`,
+        message: active.cancelRequested ? `${input.label}已取消` : `${input.label}失败`,
         details: { error: appErrorMessage(error) },
       })
       this.emitRunProgress(
         db,
         input.runId,
-        active.cancelled ? 'cancelled' : 'failed',
+        active.cancelRequested ? 'cancelled' : 'failed',
         input.stepKey,
         input.stats,
         appErrorMessage(error),
@@ -1824,6 +2198,7 @@ export class PipelineService {
           )
         }
         const output = await this.resolveSourceImages(
+          active,
           runId,
           config,
           emitMessage,
@@ -1880,7 +2255,354 @@ export class PipelineService {
     })
   }
 
+  private supportsStreamingSource(config: PipelineRunConfig) {
+    return config.source.mode === 'txt2img' || config.source.mode === 'img2img'
+  }
+
+  private canUseStreamingStageChain(config: PipelineRunConfig) {
+    return this.supportsStreamingSource(config) && shouldRunMattingStep(config)
+  }
+
+  private buildStreamingPrintStages(
+    db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+    active: ActivePipelineRun,
+    runId: string,
+    workbenchRoot: string,
+    config: PipelineRunConfig,
+    stats: PipelineRunStats,
+    visibleFilenameFields: PipelineVisibleFilenameFields,
+    sourceTotalRef: { value: number },
+    sourceFailedRef: { value: number },
+  ): PipelinePrintStageRegistration[] {
+    const stages: PipelinePrintStageRegistration[] = []
+
+    if (shouldRunMattingStep(config)) {
+      stages.push({
+        stepKey: 'matting',
+        create: (context) =>
+          this.createStreamingMattingStage(
+            db,
+            active,
+            context,
+            stats,
+            visibleFilenameFields,
+            sourceTotalRef,
+            sourceFailedRef,
+          ),
+      })
+    }
+
+    if (shouldRunDetectionStep(config)) {
+      stages.push({
+        stepKey: 'detection',
+        create: createDetectionStage({
+          db,
+          stats,
+          upsertPipelineItem: (input) => this.upsertPipelineItem(db, input),
+          updateResultSection: (nextRunId, section) => this.updateResultSection(nextRunId, section),
+          appendLog: (nextRunId, input) => this.appendLog(nextRunId, input),
+          emitRunningProgress: (nextRunId, message) =>
+            this.emitRunProgress(db, nextRunId, 'running', 'detection', stats, message),
+          setCurrentCancel: (cancel) => {
+            active.currentCancel = cancel
+          },
+          assertNotCancelled: () => this.assertCanAcceptMoreWork(active),
+        }),
+      })
+    }
+
+    if (config.photoshop.enabled !== false) {
+      stages.push({
+        stepKey: 'photoshop',
+        create: createPhotoshopStage({
+          db,
+          stats,
+          workbenchRoot,
+          photoshopMutex: this.photoshopMutex,
+          runBatch,
+          upsertPipelineItem: (input) => this.upsertPipelineItem(db, input),
+          updateResultSection: (nextRunId, section) => this.updateResultSection(nextRunId, section),
+          appendLog: (nextRunId, input) => this.appendLog(nextRunId, input),
+          emitRunningProgress: (nextRunId, message) =>
+            this.emitRunProgress(db, nextRunId, 'running', 'photoshop', stats, message),
+          setCurrentCancel: (cancel) => {
+            active.currentCancel = cancel
+          },
+          assertNotCancelled: () => this.assertCanAcceptMoreWork(active),
+        }),
+      })
+    }
+
+    if (config.photoshop.enabled !== false && config.title.enabled !== false) {
+      stages.push({
+        stepKey: 'title',
+        create: createTitleStage({
+          db: {
+            exec: (...args) => db.exec(...args),
+            prepare: (...args) => db.prepare(...args),
+          },
+          stats,
+          upsertPipelineItem: (input) => this.upsertPipelineItem(db, input),
+          appendLog: (nextRunId, input) => this.appendLog(nextRunId, input),
+          emitRunningProgress: (nextRunId, message) =>
+            this.emitRunProgress(db, nextRunId, 'running', 'title', stats, message),
+          setCurrentCancel: (cancel) => {
+            active.currentCancel = cancel
+          },
+          assertNotCancelled: () => this.assertCanAcceptMoreWork(active),
+        }),
+      })
+    }
+
+    return stages
+  }
+
+  private applyStreamingPrintStages(
+    input: AsyncIterable<PipelinePrintStreamItem>,
+    stages: PipelinePrintStageRegistration[],
+    createContext: (stepKey: PipelineStepKey) => PipelineStageRuntimeContext,
+  ) {
+    let current: AsyncIterable<PipelinePrintStreamItem> = input
+    const pumps: Promise<void>[] = []
+    for (const stage of stages) {
+      const stageInput = current
+      const stageOutput = new AsyncItemQueue<PipelinePrintStreamItem>()
+      const context = createContext(stage.stepKey)
+      pumps.push(
+        (async () => {
+          try {
+            for await (const item of stage.create(context)(stageInput, context)) {
+              stageOutput.push(item)
+            }
+            stageOutput.end()
+          } catch (error) {
+            stageOutput.fail(error)
+          }
+        })(),
+      )
+      current = stageOutput
+    }
+    return {
+      output: current,
+      completed: Promise.all(pumps).then(() => undefined),
+    }
+  }
+
+  private async runStreamingSourceMatting(
+    db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+    active: ActivePipelineRun,
+    runId: string,
+    workbenchRoot: string,
+    config: PipelineRunConfig,
+    stats: PipelineRunStats,
+  ) {
+    if (!this.canUseStreamingStageChain(config)) {
+      throw new AppErrorClass('HTTP_5XX', '当前来源暂不支持流式 source→matting', true, {
+        sourceMode: config.source.mode,
+      })
+    }
+    const visibleFilenameFields = pipelineVisibleFilenameFields(config)
+    const sourceQueue = new AsyncItemQueue<PipelinePrintStreamItem>()
+    const outputItems: PipelineImage[] = []
+    const sourceItems: PipelineImage[] = []
+    const sourceSectionTitle =
+      config.source.mode === 'txt2img' || config.source.mode === 'img2img' ? '来源印花' : '图像处理'
+    const sourceTotalRef = { value: 0 }
+    const sourceFailedRef = { value: 0 }
+
+    const refreshSourceSection = () => {
+      this.updateResultSection(
+        runId,
+        resultSection({
+          key: 'source_images',
+          title: sourceSectionTitle,
+          items: sourceItems.map((image, index) =>
+            resultImageFromPipelineImage('source', basename(image.path), image, index),
+          ),
+          total: sourceTotalRef.value,
+          failed: sourceFailedRef.value,
+          paginated: true,
+        }),
+      )
+    }
+
+    db.prepare(
+      `
+        INSERT INTO pipeline_steps (
+          id, run_id, step_key, module, label, status, input_count, output_count, output_json,
+          error_json, started_at, completed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
+        ON CONFLICT(run_id, step_key) DO UPDATE SET
+          status = excluded.status,
+          input_count = excluded.input_count,
+          output_count = excluded.output_count,
+          output_json = NULL,
+          error_json = NULL,
+          started_at = excluded.started_at,
+          completed_at = NULL,
+          updated_at = excluded.updated_at
+      `,
+    ).run(
+      `${runId}:source`,
+      runId,
+      'source',
+      'generation',
+      '来源生图',
+      'running',
+      0,
+      0,
+      Date.now(),
+      Date.now(),
+    )
+    db.prepare(
+      `
+        INSERT INTO pipeline_steps (
+          id, run_id, step_key, module, label, status, input_count, output_count, output_json,
+          error_json, started_at, completed_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
+        ON CONFLICT(run_id, step_key) DO UPDATE SET
+          status = excluded.status,
+          input_count = excluded.input_count,
+          output_count = excluded.output_count,
+          output_json = NULL,
+          error_json = NULL,
+          started_at = excluded.started_at,
+          completed_at = NULL,
+          updated_at = excluded.updated_at
+      `,
+    ).run(
+      `${runId}:matting`,
+      runId,
+      'matting',
+      'generation',
+      '抠图',
+      'running',
+      0,
+      0,
+      Date.now(),
+      Date.now(),
+    )
+    this.emitRunProgress(db, runId, 'running', 'source', stats, '正在流式生成来源印花')
+    const stageRegistrations = this.buildStreamingPrintStages(
+      db,
+      active,
+      runId,
+      workbenchRoot,
+      config,
+      stats,
+      visibleFilenameFields,
+      sourceTotalRef,
+      sourceFailedRef,
+    )
+    const stagePipeline = this.applyStreamingPrintStages(
+      sourceQueue,
+      stageRegistrations,
+      (stepKey) => ({
+        runId,
+        config,
+        stepKey,
+        isCancelled: () => active.cancelRequested,
+      }),
+    )
+    const consumeOutputPromise = (async () => {
+      for await (const item of stagePipeline.output) {
+        outputItems.push({
+          path: item.path,
+          ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+          ...(item.printId ? { printId: item.printId } : {}),
+        })
+      }
+    })()
+
+    try {
+      const result = await this.runStreamingSourceProducer(
+        db,
+        active,
+        runId,
+        config,
+        stats,
+        visibleFilenameFields,
+        sourceQueue,
+        (payload) => {
+          sourceTotalRef.value += 1
+          const image: PipelineImage = {
+            path: payload.path,
+            ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
+            ...(payload.printId ? { printId: payload.printId } : {}),
+          }
+          sourceItems.push(image)
+          stats.prints = sourceItems.length
+          this.upsertPipelineItem(db, {
+            runId,
+            itemKey: payload.itemKey,
+            stepKey: 'source',
+            status: 'completed',
+            outputPath: payload.path,
+            artifactId: payload.artifactId,
+            printId: payload.printId,
+            sourceArtifactIds: payload.sourceArtifactIds,
+            completed: true,
+          })
+          refreshSourceSection()
+          db.prepare(
+            `
+              UPDATE pipeline_steps
+              SET input_count = ?, output_count = ?, updated_at = ?
+              WHERE run_id = ? AND step_key = 'source'
+            `,
+          ).run(sourceTotalRef.value, sourceItems.length, Date.now(), runId)
+          if (!this.stopAcceptingMoreWork(active)) {
+            sourceQueue.push(payload)
+            this.emitRunProgress(db, runId, 'running', 'source', stats, '来源印花已流出')
+          }
+        },
+      )
+      sourceFailedRef.value = result.failed
+      refreshSourceSection()
+      sourceQueue.end()
+      await consumeOutputPromise
+      await stagePipeline.completed
+      db.prepare(
+        `
+          UPDATE pipeline_steps
+          SET status = 'completed',
+              input_count = ?,
+              output_count = ?,
+              output_json = ?,
+              completed_at = ?,
+              updated_at = ?
+          WHERE run_id = ? AND step_key = 'source'
+        `,
+      ).run(
+        sourceTotalRef.value,
+        sourceItems.length,
+        JSON.stringify({
+          total: result.total,
+          itemCount: result.itemCount,
+          succeeded: result.succeeded,
+          failed: result.failed,
+        }),
+        Date.now(),
+        Date.now(),
+        runId,
+      )
+      if (!shouldRunDetectionStep(config)) {
+        this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', outputItems.length)
+      }
+      if (config.photoshop.enabled === false) {
+        this.recordSkippedStep(db, runId, 'photoshop', 'photoshop', 'PS 套版', outputItems.length)
+        this.recordSkippedStep(db, runId, 'title', 'title', '标题生成', outputItems.length)
+      } else if (config.title.enabled === false) {
+        this.recordSkippedStep(db, runId, 'title', 'title', '标题生成', outputItems.length)
+      }
+    } catch (error) {
+      sourceQueue.end()
+      throw error
+    }
+  }
+
   private async resolveSourceImages(
+    active: ActivePipelineRun,
     runId: string,
     config: PipelineRunConfig,
     emitMessage: (message: string) => void,
@@ -1908,13 +2630,45 @@ export class PipelineService {
       emitMessage(`文生图提示词 ${prompts.length} 条`)
       if (source.provider === 'comfyui-chenyu') {
         emitPreviewImages([], prompts.length, 0)
-        const result = await runComfyuiTxt2imgBatch(
+        const result = await this.withGenerationCancel(active, `${runId}-txt2img`, async () =>
+          runComfyuiTxt2imgBatch(
+            {
+              prompts,
+              workflowId: source.comfyui.workflowId,
+              taskId: `${runId}-txt2img`,
+              ...pipelineVisibleFilenameFields(config),
+              ...comfyuiOptionalFields(source.comfyui),
+            },
+            {
+              emitProgress: emitGenerationProgressAsPipeline(
+                runId,
+                'source',
+                emitMessage,
+                emitPreviewImages,
+              ),
+            },
+          ),
+        )
+        emitPreviewImages(result.images, result.total, result.failed)
+        this.appendGenerationFailureLog(runId, 'source', '文生图', result)
+        return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
+      }
+      if (!source.grsai) {
+        throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
+      }
+      const grsaiConfig = source.grsai
+      emitPreviewImages([], prompts.length, 0)
+      const result = await this.withGenerationCancel(active, `${runId}-txt2img`, async () =>
+        runTxt2imgBatch(
           {
+            capability: 'txt2img',
             prompts,
-            workflowId: source.comfyui.workflowId,
+            model: grsaiConfig.model,
+            aspectRatio: grsaiConfig.aspectRatio,
+            concurrency: grsaiConfig.concurrency ?? 3,
             taskId: `${runId}-txt2img`,
             ...pipelineVisibleFilenameFields(config),
-            ...comfyuiOptionalFields(source.comfyui),
+            ...grsaiOptionalFields(grsaiConfig),
           },
           {
             emitProgress: emitGenerationProgressAsPipeline(
@@ -1924,34 +2678,7 @@ export class PipelineService {
               emitPreviewImages,
             ),
           },
-        )
-        emitPreviewImages(result.images, result.total, result.failed)
-        this.appendGenerationFailureLog(runId, 'source', '文生图', result)
-        return { extractSources: [], prints: usableGenerationImages(result, '文生图') }
-      }
-      if (!source.grsai) {
-        throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
-      }
-      emitPreviewImages([], prompts.length, 0)
-      const result = await runTxt2imgBatch(
-        {
-          capability: 'txt2img',
-          prompts,
-          model: source.grsai.model,
-          aspectRatio: source.grsai.aspectRatio,
-          concurrency: source.grsai.concurrency ?? 3,
-          taskId: `${runId}-txt2img`,
-          ...pipelineVisibleFilenameFields(config),
-          ...grsaiOptionalFields(source.grsai),
-        },
-        {
-          emitProgress: emitGenerationProgressAsPipeline(
-            runId,
-            'source',
-            emitMessage,
-            emitPreviewImages,
-          ),
-        },
+        ),
       )
       emitPreviewImages(result.images, result.total, result.failed)
       this.appendGenerationFailureLog(runId, 'source', '文生图', result)
@@ -1963,25 +2690,28 @@ export class PipelineService {
       if (sourcePaths.length === 0) {
         throw new AppErrorClass('HTTP_4XX', '图生图图片文件夹里没有可用图片', false)
       }
-      const batchSize = source.comfyui.batchSize ?? 1
+      const comfyuiConfig = source.comfyui
+      const batchSize = comfyuiConfig.batchSize ?? 1
       emitMessage(`图生图来源 ${sourcePaths.length} 张，每张生成 ${batchSize} 张`)
       emitPreviewImages([], sourcePaths.length * batchSize, 0)
-      const result = await runComfyuiImg2imgBatch(
-        {
-          sourceImagePaths: sourcePaths,
-          workflowId: source.comfyui.workflowId,
-          taskId: `${runId}-img2img`,
-          ...pipelineVisibleFilenameFields(config),
-          ...comfyuiImg2imgOptionalFields(source.comfyui),
-        },
-        {
-          emitProgress: emitGenerationProgressAsPipeline(
-            runId,
-            'source',
-            emitMessage,
-            emitPreviewImages,
-          ),
-        },
+      const result = await this.withGenerationCancel(active, `${runId}-img2img`, async () =>
+        runComfyuiImg2imgBatch(
+          {
+            sourceImagePaths: sourcePaths,
+            workflowId: comfyuiConfig.workflowId,
+            taskId: `${runId}-img2img`,
+            ...pipelineVisibleFilenameFields(config),
+            ...comfyuiImg2imgOptionalFields(comfyuiConfig),
+          },
+          {
+            emitProgress: emitGenerationProgressAsPipeline(
+              runId,
+              'source',
+              emitMessage,
+              emitPreviewImages,
+            ),
+          },
+        ),
       )
       emitPreviewImages(result.images, result.total, result.failed)
       this.appendGenerationFailureLog(runId, 'source', '图生图', result)
@@ -2006,6 +2736,7 @@ export class PipelineService {
     if (!source.grsai) {
       throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
     }
+    const grsaiConfig = source.grsai
     const references = source.sendReferenceImages
       ? await Promise.all(sourcePaths.map((imagePath) => imageReference(imagePath)))
       : undefined
@@ -2019,26 +2750,28 @@ export class PipelineService {
       promptReferences,
     )
     emitPreviewImages([], prompts.length, 0)
-    const result = await runTxt2imgBatch(
-      {
-        capability: 'img2img',
-        prompts,
-        model: source.grsai.model,
-        aspectRatio: source.grsai.aspectRatio,
-        concurrency: source.grsai.concurrency ?? 3,
-        taskId: `${runId}-img2img`,
-        ...(references?.length ? { referenceImages: references } : {}),
-        ...pipelineVisibleFilenameFields(config),
-        ...grsaiOptionalFields(source.grsai),
-      },
-      {
-        emitProgress: emitGenerationProgressAsPipeline(
-          runId,
-          'source',
-          emitMessage,
-          emitPreviewImages,
-        ),
-      },
+    const result = await this.withGenerationCancel(active, `${runId}-img2img`, async () =>
+      runTxt2imgBatch(
+        {
+          capability: 'img2img',
+          prompts,
+          model: grsaiConfig.model,
+          aspectRatio: grsaiConfig.aspectRatio,
+          concurrency: grsaiConfig.concurrency ?? 3,
+          taskId: `${runId}-img2img`,
+          ...(references?.length ? { referenceImages: references } : {}),
+          ...pipelineVisibleFilenameFields(config),
+          ...grsaiOptionalFields(grsaiConfig),
+        },
+        {
+          emitProgress: emitGenerationProgressAsPipeline(
+            runId,
+            'source',
+            emitMessage,
+            emitPreviewImages,
+          ),
+        },
+      ),
     )
     emitPreviewImages(result.images, result.total, result.failed)
     this.appendGenerationFailureLog(runId, 'source', '图生图', result)
@@ -2077,6 +2810,7 @@ export class PipelineService {
         )
         this.emitRunProgress(db, runId, 'running', 'extract', stats, '正在提取印花')
         const result = await this.runExtractConfig(
+          active,
           runId,
           source.extract,
           sourceImages,
@@ -2119,6 +2853,7 @@ export class PipelineService {
   }
 
   private async runExtractConfig(
+    active: ActivePipelineRun,
     runId: string,
     config: PipelineExtractConfig,
     sourceImages: PipelineImage[],
@@ -2128,21 +2863,50 @@ export class PipelineService {
   ): Promise<GenerationRunResult> {
     const sourceImagePaths = sourceImages.map((image) => image.path)
     if (config.provider === 'grsai') {
-      if (!config.grsai || !config.skillId) {
+      const grsaiConfig = config.grsai
+      const skillId = config.skillId
+      if (!grsaiConfig || !skillId) {
         throw new AppErrorClass('HTTP_4XX', 'Grsai 提取需要选择模型和提取 Skill', false)
       }
-      return runExtractBatch(
+      return this.withGenerationCancel(active, `${runId}-extract`, async () =>
+        runExtractBatch(
+          {
+            sourceImagePaths,
+            skillId,
+            model: grsaiConfig.model,
+            aspectRatio: grsaiConfig.aspectRatio,
+            concurrency: grsaiConfig.concurrency ?? 3,
+            taskId: `${runId}-extract`,
+            ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
+            ...(config.variables ? { variables: config.variables } : {}),
+            ...visibleFilenameFields,
+            ...grsaiOptionalFields(grsaiConfig),
+          },
+          {
+            emitProgress: emitGenerationProgressAsPipeline(
+              runId,
+              'extract',
+              emitMessage,
+              emitPreviewImages,
+            ),
+          },
+        ),
+      )
+    }
+    if (!config.comfyui) {
+      throw new AppErrorClass('HTTP_4XX', 'ComfyUI 提取需要选择工作流', false)
+    }
+    const comfyuiConfig = config.comfyui
+    return this.withGenerationCancel(active, `${runId}-extract`, async () =>
+      runComfyuiExtractBatch(
         {
           sourceImagePaths,
-          skillId: config.skillId,
-          model: config.grsai.model,
-          aspectRatio: config.grsai.aspectRatio,
-          concurrency: config.grsai.concurrency ?? 3,
+          workflowId: comfyuiConfig.workflowId,
           taskId: `${runId}-extract`,
+          ...(config.skillId ? { skillId: config.skillId } : {}),
           ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
-          ...(config.variables ? { variables: config.variables } : {}),
           ...visibleFilenameFields,
-          ...grsaiOptionalFields(config.grsai),
+          ...comfyuiOptionalFields(comfyuiConfig),
         },
         {
           emitProgress: emitGenerationProgressAsPipeline(
@@ -2152,30 +2916,471 @@ export class PipelineService {
             emitPreviewImages,
           ),
         },
+      ),
+    )
+  }
+
+  private async runStreamingSourceProducer(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    active: ActivePipelineRun,
+    runId: string,
+    config: PipelineRunConfig,
+    stats: PipelineRunStats,
+    visibleFilenameFields: PipelineVisibleFilenameFields,
+    _queue: AsyncItemQueue<PipelinePrintStreamItem>,
+    onItem: (item: PipelinePrintStreamItem) => void,
+  ): Promise<StreamingSourceProducerResult> {
+    const source = config.source
+    if (source.mode === 'existing_prints') {
+      throw new AppErrorClass('HTTP_5XX', '已有印花来源不走流式 source producer', true)
+    }
+    if (source.mode === 'txt2img') {
+      const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
+      if (source.provider === 'comfyui-chenyu') {
+        const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
+        const aggregate: GenerationRunResult = {
+          taskId: `${runId}-txt2img`,
+          total: prompts.length,
+          succeeded: 0,
+          failed: 0,
+          images: [],
+          failures: [],
+        }
+        let itemCount = 0
+        for (const [index, prompt] of prompts.entries()) {
+          this.assertCanAcceptMoreWork(active)
+          const taskId = `${runId}-txt2img-${index + 1}`
+          const result = await this.withGenerationCancel(active, taskId, async () =>
+            queue.runExclusive(() =>
+              runComfyuiTxt2imgBatch(
+                {
+                  prompts: [prompt],
+                  workflowId: source.comfyui.workflowId,
+                  taskId,
+                  ...visibleFilenameFields,
+                  ...comfyuiOptionalFields(source.comfyui),
+                },
+                {
+                  onImageComplete: async (payload) => {
+                    if (this.stopAcceptingMoreWork(active)) {
+                      return
+                    }
+                    itemCount += 1
+                    onItem({
+                      itemKey: payload.printId,
+                      path: payload.path,
+                      artifactId: payload.artifactId,
+                      printId: payload.printId,
+                      sourceArtifactIds: payload.sourceArtifactIds,
+                    })
+                  },
+                },
+              ),
+            ),
+          )
+          aggregate.succeeded += result.succeeded
+          aggregate.failed += result.failed
+          aggregate.images.push(...result.images)
+          aggregate.failures.push(...result.failures)
+        }
+        this.recordStreamingSourceFailures(db, runId, aggregate, itemCount)
+        return { ...aggregate, itemCount }
+      }
+      if (!source.grsai) {
+        throw new AppErrorClass('HTTP_4XX', '文生图缺少 Grsai 配置', false)
+      }
+      const grsaiConfig = source.grsai
+      let itemCount = 0
+      const result = await this.withGenerationCancel(active, `${runId}-txt2img`, async () =>
+        runTxt2imgBatch(
+          {
+            capability: 'txt2img',
+            prompts,
+            model: grsaiConfig.model,
+            aspectRatio: grsaiConfig.aspectRatio,
+            concurrency: grsaiConfig.concurrency ?? 3,
+            taskId: `${runId}-txt2img`,
+            ...visibleFilenameFields,
+            ...grsaiOptionalFields(grsaiConfig),
+          },
+          {
+            onImageComplete: async (payload) => {
+              if (this.stopAcceptingMoreWork(active)) {
+                return
+              }
+              itemCount += 1
+              onItem({
+                itemKey: payload.printId,
+                path: payload.path,
+                artifactId: payload.artifactId,
+                printId: payload.printId,
+                sourceArtifactIds: payload.sourceArtifactIds,
+              })
+            },
+            emitProgress: emitGenerationProgressAsPipeline(runId, 'source', () => undefined),
+          },
+        ),
+      )
+      this.recordStreamingSourceFailures(db, runId, result, itemCount)
+      return { ...result, itemCount }
+    }
+    if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
+      const sourcePaths = await scanImageFiles(source.sourceFolder)
+      const batchSize = source.comfyui.batchSize ?? 1
+      const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
+      const aggregate: GenerationRunResult = {
+        taskId: `${runId}-img2img`,
+        total: sourcePaths.length * batchSize,
+        succeeded: 0,
+        failed: 0,
+        images: [],
+        failures: [],
+      }
+      let itemCount = 0
+      for (const [index, sourcePath] of sourcePaths.entries()) {
+        this.assertCanAcceptMoreWork(active)
+        const taskId = `${runId}-img2img-${index + 1}`
+        const result = await this.withGenerationCancel(active, taskId, async () =>
+          queue.runExclusive(() =>
+            runComfyuiImg2imgBatch(
+              {
+                sourceImagePaths: [sourcePath],
+                workflowId: source.comfyui.workflowId,
+                taskId,
+                ...visibleFilenameFields,
+                ...comfyuiImg2imgOptionalFields(source.comfyui),
+              },
+              {
+                onImageComplete: async (payload) => {
+                  if (this.stopAcceptingMoreWork(active)) {
+                    return
+                  }
+                  itemCount += 1
+                  onItem({
+                    itemKey: payload.printId,
+                    path: payload.path,
+                    artifactId: payload.artifactId,
+                    printId: payload.printId,
+                    sourceArtifactIds: payload.sourceArtifactIds,
+                  })
+                },
+              },
+            ),
+          ),
+        )
+        aggregate.succeeded += result.succeeded
+        aggregate.failed += result.failed
+        aggregate.images.push(...result.images)
+        aggregate.failures.push(...result.failures)
+      }
+      this.recordStreamingSourceFailures(db, runId, aggregate, itemCount)
+      return { ...aggregate, itemCount }
+    }
+    if (source.mode === 'img2img' && source.provider === 'grsai') {
+      const sourcePaths = source.referenceImagePaths?.length
+        ? source.referenceImagePaths
+        : source.sourceFolder
+          ? await scanImageFiles(source.sourceFolder)
+          : []
+      const references = source.sendReferenceImages
+        ? await Promise.all(sourcePaths.map((imagePath) => imageReference(imagePath)))
+        : undefined
+      const promptReferences = await Promise.all(
+        sourcePaths.slice(0, 4).map((imagePath) => imageReference(imagePath)),
+      )
+      const prompts = await resolvePrompts(
+        source.prompt,
+        'img2img',
+        config.printMode,
+        promptReferences,
+      )
+      if (!source.grsai) {
+        throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
+      }
+      const grsaiConfig = source.grsai
+      let itemCount = 0
+      const result = await this.withGenerationCancel(active, `${runId}-img2img`, async () =>
+        runTxt2imgBatch(
+          {
+            capability: 'img2img',
+            prompts,
+            model: grsaiConfig.model,
+            aspectRatio: grsaiConfig.aspectRatio,
+            concurrency: grsaiConfig.concurrency ?? 3,
+            taskId: `${runId}-img2img`,
+            ...(references?.length ? { referenceImages: references } : {}),
+            ...visibleFilenameFields,
+            ...grsaiOptionalFields(grsaiConfig),
+          },
+          {
+            onImageComplete: async (payload) => {
+              if (this.stopAcceptingMoreWork(active)) {
+                return
+              }
+              itemCount += 1
+              onItem({
+                itemKey: payload.printId,
+                path: payload.path,
+                artifactId: payload.artifactId,
+                printId: payload.printId,
+                sourceArtifactIds: payload.sourceArtifactIds,
+              })
+            },
+          },
+        ),
+      )
+      this.recordStreamingSourceFailures(db, runId, result, itemCount)
+      return { ...result, itemCount }
+    }
+    throw new AppErrorClass('HTTP_5XX', '当前来源暂不支持流式生产者', true, {
+      sourceMode: source.mode,
+    })
+  }
+
+  private recordStreamingSourceFailures(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    result: GenerationRunResult,
+    itemCount: number,
+  ) {
+    if (result.failed <= 0) {
+      return
+    }
+    const baseIndex = Math.max(0, itemCount)
+    for (const [index, failure] of result.failures.entries()) {
+      const itemKey = `source-failure-${baseIndex + index + 1}`
+      this.upsertPipelineItem(db, {
+        runId,
+        itemKey,
+        stepKey: 'source',
+        status: 'failed',
+        sourcePath: failure.sourcePath,
+        sourceArtifactIds: [],
+        errorMessage: failure.error,
+        completed: true,
+      })
+    }
+  }
+
+  private createStreamingMattingStage(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    active: ActivePipelineRun,
+    context: PipelineStageRuntimeContext,
+    stats: PipelineRunStats,
+    visibleFilenameFields: PipelineVisibleFilenameFields,
+    sourceTotalRef: { value: number },
+    sourceFailedRef: { value: number },
+  ) {
+    const queue = this.comfyuiQueueForInstance(context.config.matting.instanceUuid)
+    let queued = 0
+    let completed = 0
+    let failed = 0
+    const outputItems: PipelineImage[] = []
+
+    const refreshMattingSection = () => {
+      this.updateResultSection(
+        context.runId,
+        resultSection({
+          key: IMAGE_PROCESSING_SECTION_KEY,
+          title: '抠图结果',
+          items: outputItems.map((image, index) =>
+            resultImageFromPipelineImage('matting', basename(image.path), image, index),
+          ),
+          total: sourceTotalRef.value,
+          failed,
+        }),
       )
     }
-    if (!config.comfyui) {
-      throw new AppErrorClass('HTTP_4XX', 'ComfyUI 提取需要选择工作流', false)
+
+    return (input: AsyncIterable<PipelinePrintStreamItem>) => {
+      const service = this
+      async function* stage(items: AsyncIterable<PipelinePrintStreamItem>) {
+        db.prepare(
+          `
+            INSERT INTO pipeline_steps (
+              id, run_id, step_key, module, label, status, input_count, output_count, output_json,
+              error_json, started_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
+            ON CONFLICT(run_id, step_key) DO UPDATE SET
+              status = excluded.status,
+              input_count = excluded.input_count,
+              output_count = excluded.output_count,
+              output_json = NULL,
+              error_json = NULL,
+              started_at = excluded.started_at,
+              completed_at = NULL,
+              updated_at = excluded.updated_at
+          `,
+        ).run(
+          `${context.runId}:matting`,
+          context.runId,
+          'matting',
+          'generation',
+          '抠图',
+          'running',
+          0,
+          0,
+          Date.now(),
+          Date.now(),
+        )
+        for await (const item of items) {
+          service.assertCanAcceptMoreWork(active)
+          queued += 1
+          db.prepare(
+            `
+              UPDATE pipeline_steps
+              SET input_count = ?, updated_at = ?
+              WHERE run_id = ? AND step_key = 'matting'
+            `,
+          ).run(queued, Date.now(), context.runId)
+          service.emitRunProgress(db, context.runId, 'running', 'matting', stats, '抠图流处理中')
+          service.upsertPipelineItem(db, {
+            runId: context.runId,
+            itemKey: item.itemKey,
+            stepKey: 'matting',
+            status: 'running',
+            sourcePath: item.path,
+            artifactId: item.artifactId,
+            printId: item.printId,
+            sourceArtifactIds: item.sourceArtifactIds,
+          })
+
+          try {
+            let result: GenerationRunResult
+            if (context.config.matting.mode === 'mixed') {
+              const workflowId = context.config.matting.workflowId
+              if (!workflowId) {
+                throw new AppErrorClass('HTTP_4XX', '混合抠图需要选择 ComfyUI 工作流', false)
+              }
+              result = await service.withGenerationCancel(
+                active,
+                `${context.runId}-matting-${item.itemKey}`,
+                () =>
+                  queue.runExclusive(() =>
+                    runMixedMattingBatch(
+                      {
+                        sourceImagePaths: [item.path],
+                        workflowId,
+                        taskId: `${context.runId}-matting-${item.itemKey}`,
+                        ...visibleFilenameFields,
+                        ...mattingOptionalFields(context.config.matting),
+                      },
+                      {},
+                    ),
+                  ),
+              )
+            } else {
+              const workflowId = context.config.matting.workflowId
+              if (!workflowId) {
+                throw new AppErrorClass('HTTP_4XX', '抠图需要选择 ComfyUI 工作流', false)
+              }
+              result = await service.withGenerationCancel(
+                active,
+                `${context.runId}-matting-${item.itemKey}`,
+                () =>
+                  queue.runExclusive(() =>
+                    runComfyuiMattingBatch(
+                      {
+                        sourceImagePaths: [item.path],
+                        workflowId,
+                        taskId: `${context.runId}-matting-${item.itemKey}`,
+                        ...visibleFilenameFields,
+                        ...mattingOptionalFields(context.config.matting),
+                      },
+                      {},
+                    ),
+                  ),
+              )
+            }
+            const output = usableGenerationImages(result, '抠图')[0]
+            if (!output) {
+              throw new AppErrorClass('HTTP_4XX', '抠图未产生结果', false)
+            }
+            completed += 1
+            outputItems.push(output)
+            stats.prints = completed
+            service.upsertPipelineItem(db, {
+              runId: context.runId,
+              itemKey: item.itemKey,
+              stepKey: 'matting',
+              status: 'completed',
+              sourcePath: item.path,
+              outputPath: output.path,
+              artifactId: output.artifactId,
+              printId: output.printId,
+              sourceArtifactIds: item.sourceArtifactIds,
+              completed: true,
+            })
+            refreshMattingSection()
+            db.prepare(
+              `
+                UPDATE pipeline_steps
+                SET output_count = ?, updated_at = ?
+                WHERE run_id = ? AND step_key = 'matting'
+              `,
+            ).run(completed, Date.now(), context.runId)
+            service.emitRunProgress(db, context.runId, 'running', 'matting', stats, '抠图流处理中')
+            yield {
+              itemKey: item.itemKey,
+              path: output.path,
+              artifactId: output.artifactId,
+              printId: output.printId,
+              sourceArtifactIds: item.sourceArtifactIds,
+            } satisfies PipelinePrintStreamItem
+          } catch (error) {
+            failed += 1
+            service.upsertPipelineItem(db, {
+              runId: context.runId,
+              itemKey: item.itemKey,
+              stepKey: 'matting',
+              status: 'failed',
+              sourcePath: item.path,
+              artifactId: item.artifactId,
+              printId: item.printId,
+              sourceArtifactIds: item.sourceArtifactIds,
+              errorMessage: appErrorMessage(error),
+              completed: true,
+            })
+            service.appendLog(context.runId, {
+              level: 'warn',
+              step_key: 'matting',
+              message: '单张抠图失败，已跳过',
+              details: {
+                itemKey: item.itemKey,
+                error: appErrorMessage(error),
+              },
+            })
+            refreshMattingSection()
+          }
+        }
+        db.prepare(
+          `
+            UPDATE pipeline_steps
+            SET status = 'completed',
+                input_count = ?,
+                output_count = ?,
+                output_json = ?,
+                completed_at = ?,
+                updated_at = ?
+            WHERE run_id = ? AND step_key = 'matting'
+          `,
+        ).run(
+          queued,
+          completed,
+          JSON.stringify({
+            total: sourceTotalRef.value,
+            succeeded: completed,
+            failed,
+            sourceFailed: sourceFailedRef.value,
+          }),
+          Date.now(),
+          Date.now(),
+          context.runId,
+        )
+        service.emitRunProgress(db, context.runId, 'running', 'matting', stats, '抠图完成')
+      }
+      return stage(input)
     }
-    return runComfyuiExtractBatch(
-      {
-        sourceImagePaths,
-        workflowId: config.comfyui.workflowId,
-        taskId: `${runId}-extract`,
-        ...(config.skillId ? { skillId: config.skillId } : {}),
-        ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
-        ...visibleFilenameFields,
-        ...comfyuiOptionalFields(config.comfyui),
-      },
-      {
-        emitProgress: emitGenerationProgressAsPipeline(
-          runId,
-          'extract',
-          emitMessage,
-          emitPreviewImages,
-        ),
-      },
-    )
   }
 
   private async runMattingStep(
@@ -2209,66 +3414,72 @@ export class PipelineService {
         this.emitRunProgress(db, runId, 'running', 'matting', stats, '正在抠图')
         let result: GenerationRunResult
         if (config.mode === 'mixed') {
-          if (!config.workflowId) {
+          const workflowId = config.workflowId
+          if (!workflowId) {
             throw new AppErrorClass('HTTP_4XX', '混合抠图需要选择 ComfyUI 工作流', false)
           }
-          result = await runMixedMattingBatch(
-            {
-              sourceImagePaths,
-              workflowId: config.workflowId,
-              taskId: `${runId}-matting`,
-              ...visibleFilenameFields,
-              ...mattingOptionalFields(config),
-            },
-            {
-              emitProgress: emitGenerationProgressAsPipeline(
-                runId,
-                'matting',
-                emitMessage,
-                (images, total, failed) =>
-                  this.updateGenerationPreviewImages(
-                    db,
-                    runId,
-                    'matting',
-                    stats,
-                    '正在抠图',
-                    images,
-                    total,
-                    failed,
-                  ),
-              ),
-            },
+          result = await this.withGenerationCancel(active, `${runId}-matting`, async () =>
+            runMixedMattingBatch(
+              {
+                sourceImagePaths,
+                workflowId,
+                taskId: `${runId}-matting`,
+                ...visibleFilenameFields,
+                ...mattingOptionalFields(config),
+              },
+              {
+                emitProgress: emitGenerationProgressAsPipeline(
+                  runId,
+                  'matting',
+                  emitMessage,
+                  (images, total, failed) =>
+                    this.updateGenerationPreviewImages(
+                      db,
+                      runId,
+                      'matting',
+                      stats,
+                      '正在抠图',
+                      images,
+                      total,
+                      failed,
+                    ),
+                ),
+              },
+            ),
           )
         } else {
-          if (!config.workflowId) {
+          const workflowId = config.workflowId
+          if (!workflowId) {
             throw new AppErrorClass('HTTP_4XX', '抠图需要选择 ComfyUI 工作流', false)
           }
-          result = await runComfyuiMattingBatch(
-            {
-              sourceImagePaths,
-              workflowId: config.workflowId,
-              taskId: `${runId}-matting`,
-              ...visibleFilenameFields,
-              ...mattingOptionalFields(config),
-            },
-            {
-              emitProgress: emitGenerationProgressAsPipeline(
-                runId,
-                'matting',
-                emitMessage,
-                (images, total, failed) =>
-                  this.updateGenerationPreviewImages(
-                    db,
-                    runId,
-                    'matting',
-                    stats,
-                    '正在抠图',
-                    images,
-                    total,
-                    failed,
-                  ),
-              ),
-            },
+          result = await this.withGenerationCancel(active, `${runId}-matting`, async () =>
+            runComfyuiMattingBatch(
+              {
+                sourceImagePaths,
+                workflowId,
+                taskId: `${runId}-matting`,
+                ...visibleFilenameFields,
+                ...mattingOptionalFields(config),
+              },
+              {
+                emitProgress: emitGenerationProgressAsPipeline(
+                  runId,
+                  'matting',
+                  emitMessage,
+                  (images, total, failed) =>
+                    this.updateGenerationPreviewImages(
+                      db,
+                      runId,
+                      'matting',
+                      stats,
+                      '正在抠图',
+                      images,
+                      total,
+                      failed,
+                    ),
+                ),
+              },
+            ),
           )
         }
         this.appendGenerationFailureLog(runId, 'matting', '抠图', result)
@@ -2475,7 +3686,7 @@ export class PipelineService {
           )
           emitMessage('正在等待 Photoshop 空闲')
           const result = await this.photoshopMutex.runExclusive(async () => {
-            this.assertNotCancelled(active)
+            this.assertCanAcceptMoreWork(active)
             return runBatch(printAssetsFromImages(photoshopPrints), config.photoshop.templates, {
               taskId,
               outputRoot,
@@ -2546,7 +3757,7 @@ export class PipelineService {
       run: async () => {
         const results: TitleBatchResult[] = []
         for (const [index, batchDir] of batchDirs.entries()) {
-          this.assertNotCancelled(active)
+          this.assertCanAcceptMoreWork(active)
           const taskId = `${runId}-title-${index + 1}`
           active.currentCancel = () => {
             titleService.cancelTask(taskId)

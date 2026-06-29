@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative } from 'node:path'
-import { pathToFileURL } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
   type GenerationCapability,
@@ -138,6 +138,15 @@ export type GenerationRunResult = {
   failures: Array<{ prompt: string; error: string; sourcePath?: string }>
   cancelled?: boolean | undefined
   diagnosticsLogPath?: string | undefined
+}
+
+export type GenerationImageCompletePayload = {
+  taskId: string
+  capability: GenerationCapability
+  path: string
+  printId: string
+  artifactId?: string | undefined
+  sourceArtifactIds: string[]
 }
 
 export type GenerationTaskEvent =
@@ -352,6 +361,7 @@ type GenerationServiceDependencies = {
   downloadImage?: (url: string) => Promise<Buffer>
   emitProgress?: (progress: GenerationProgress) => void
   emitDebugLog?: (entry: GenerationDebugLogEntry) => void
+  onImageComplete?: (image: GenerationImageCompletePayload) => void | Promise<void>
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
 
@@ -1569,6 +1579,39 @@ function createGenerationProgressEmitter(
   }
 }
 
+async function emitImageComplete(
+  dependencies: Pick<GenerationServiceDependencies, 'onImageComplete' | 'emitDebugLog'>,
+  payload: GenerationImageCompletePayload,
+) {
+  if (!dependencies.onImageComplete) {
+    return
+  }
+  try {
+    await dependencies.onImageComplete(payload)
+  } catch (error) {
+    createGenerationDebugLogger(dependencies, {
+      taskId: payload.taskId,
+      capability: payload.capability,
+    })('逐张完成回调失败', 'warn', {
+      operation: 'onImageComplete',
+      error: appErrorMessage(error),
+      printId: payload.printId,
+      artifactId: payload.artifactId ?? null,
+      path: payload.path,
+    })
+  }
+}
+
+function localPathFromGeneratedImage(image: { local_path?: string; url: string }) {
+  if (image.local_path?.trim()) {
+    return image.local_path
+  }
+  if (image.url.startsWith('file://')) {
+    return fileURLToPath(image.url)
+  }
+  throw new AppErrorClass('HTTP_5XX', '生成结果缺少本地路径', true)
+}
+
 function generationProgressMessage(progress: GenerationProgress) {
   if (progress.total > 0 && progress.processed >= progress.total) {
     return progress.failed > 0 ? '任务处理完成，有失败项' : '任务处理完成'
@@ -2405,6 +2448,14 @@ async function runTxt2imgTask(
                 artifactId: artifact.artifactId,
                 printId: artifact.printId,
               })
+              await emitImageComplete(dependencies, {
+                taskId,
+                capability,
+                path: targetPath,
+                printId: artifact.printId,
+                artifactId: artifact.artifactId,
+                sourceArtifactIds: [],
+              })
             }
           } catch (error) {
             observeGenerationError(controller, error)
@@ -2596,6 +2647,14 @@ export async function runExtractBatch(
                 artifactId: artifact.artifactId,
                 printId: artifact.printId,
               })
+              await emitImageComplete(dependencies, {
+                taskId,
+                capability: 'extract',
+                path: targetPath,
+                printId: artifact.printId,
+                artifactId: artifact.artifactId,
+                sourceArtifactIds: [sourceIdentity.artifactId],
+              })
             }
           } catch (error) {
             observeGenerationError(controller, error)
@@ -2747,16 +2806,25 @@ export async function runComfyuiExtractBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
           }
           outputIndex += response.images.length
-          result.succeeded += response.images.length
-          result.images.push(
-            ...response.images.map((image) => ({
+          for (const image of response.images) {
+            const completedImage = {
               prompt,
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               sourcePath: sourceImagePath,
               ...generationImageIdentity(image, sourceIdentity),
-            })),
-          )
+            }
+            result.succeeded += 1
+            result.images.push(completedImage)
+            await emitImageComplete(dependencies, {
+              taskId,
+              capability: 'extract',
+              path: localPathFromGeneratedImage(image),
+              printId: completedImage.printId ?? sourceIdentity.printId,
+              artifactId: completedImage.artifactId,
+              sourceArtifactIds: [sourceIdentity.artifactId],
+            })
+          }
         } catch (error) {
           await diagnostics
             ?.append({
@@ -2959,13 +3027,22 @@ export async function runComfyuiExtractMattingBatch(
             throw new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图未返回结果图', true)
           }
           outputIndex += 1
-          result.succeeded += 1
-          result.images.push({
+          const completedImage = {
             prompt: mattingPrompt,
             url: finalImage.url,
             ...(finalImage.local_path ? { localPath: finalImage.local_path } : {}),
             sourcePath: sourceImagePath,
             ...generationImageIdentity(finalImage, sourceIdentity),
+          }
+          result.succeeded += 1
+          result.images.push(completedImage)
+          await emitImageComplete(dependencies, {
+            taskId,
+            capability: 'matting',
+            path: localPathFromGeneratedImage(finalImage),
+            printId: completedImage.printId ?? sourceIdentity.printId,
+            artifactId: completedImage.artifactId,
+            sourceArtifactIds: [sourceIdentity.artifactId],
           })
         } catch (error) {
           await diagnostics
@@ -3101,16 +3178,25 @@ export async function runComfyuiMattingBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图失败', true)
           }
           outputIndex += response.images.length
-          result.succeeded += response.images.length
-          result.images.push(
-            ...response.images.map((image) => ({
+          for (const image of response.images) {
+            const completedImage = {
               prompt,
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               sourcePath: source.imagePath,
               ...generationImageIdentity(image, { artifactId, printId: source.printId }),
-            })),
-          )
+            }
+            result.succeeded += 1
+            result.images.push(completedImage)
+            await emitImageComplete(dependencies, {
+              taskId,
+              capability: 'matting',
+              path: localPathFromGeneratedImage(image),
+              printId: completedImage.printId ?? source.printId,
+              artifactId: completedImage.artifactId,
+              sourceArtifactIds: [artifactId],
+            })
+          }
         } catch (error) {
           await diagnostics
             ?.append({
@@ -3308,16 +3394,25 @@ export async function runMixedMattingBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 混合抠图失败', true)
           }
           outputIndex += response.images.length
-          result.succeeded += response.images.length
-          result.images.push(
-            ...response.images.map((image) => ({
+          for (const image of response.images) {
+            const completedImage = {
               prompt,
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               sourcePath: source.imagePath,
               ...generationImageIdentity(image, { artifactId, printId: source.printId }),
-            })),
-          )
+            }
+            result.succeeded += 1
+            result.images.push(completedImage)
+            await emitImageComplete(dependencies, {
+              taskId,
+              capability: 'matting',
+              path: localPathFromGeneratedImage(image),
+              printId: completedImage.printId ?? source.printId,
+              artifactId: completedImage.artifactId,
+              sourceArtifactIds: [artifactId],
+            })
+          }
         } catch (error) {
           await diagnostics
             ?.append({
@@ -3463,15 +3558,25 @@ export async function runComfyuiTxt2imgBatch(
                 throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 文生图失败', true)
               }
               outputIndex += response.images.length
-              result.succeeded += response.images.length
-              result.images.push(
-                ...response.images.map((image) => ({
+              for (const image of response.images) {
+                const printId = image.print_id ?? newPrintId()
+                const completedImage = {
                   prompt,
                   url: image.url,
                   ...(image.local_path ? { localPath: image.local_path } : {}),
-                  ...generationImageIdentity(image),
-                })),
-              )
+                  ...generationImageIdentity(image, { printId }),
+                }
+                result.succeeded += 1
+                result.images.push(completedImage)
+                await emitImageComplete(dependencies, {
+                  taskId,
+                  capability: 'txt2img',
+                  path: localPathFromGeneratedImage(image),
+                  printId,
+                  artifactId: completedImage.artifactId,
+                  sourceArtifactIds: [],
+                })
+              }
             } catch (error) {
               await diagnostics
                 ?.append({
@@ -3612,7 +3717,24 @@ export async function runComfyuiImg2imgBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 图生图失败', true)
           }
           outputIndex += response.images.length
-          result.succeeded += response.images.length
+          for (const image of response.images) {
+            const completedImage = {
+              prompt,
+              url: image.url,
+              ...(image.local_path ? { localPath: image.local_path } : {}),
+              ...generationImageIdentity(image, { artifactId, printId: source.printId }),
+            }
+            result.succeeded += 1
+            result.images.push(completedImage)
+            await emitImageComplete(dependencies, {
+              taskId,
+              capability: 'img2img',
+              path: localPathFromGeneratedImage(image),
+              printId: completedImage.printId ?? source.printId,
+              artifactId: completedImage.artifactId,
+              sourceArtifactIds: [artifactId],
+            })
+          }
           if (response.images.length < batchSize) {
             const missing = batchSize - response.images.length
             result.failed += missing
@@ -3622,14 +3744,6 @@ export async function runComfyuiImg2imgBatch(
               sourcePath: artifactId,
             })
           }
-          result.images.push(
-            ...response.images.map((image) => ({
-              prompt,
-              url: image.url,
-              ...(image.local_path ? { localPath: image.local_path } : {}),
-              ...generationImageIdentity(image, { artifactId, printId: source.printId }),
-            })),
-          )
         } catch (error) {
           await diagnostics
             ?.append({

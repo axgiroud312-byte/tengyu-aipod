@@ -779,12 +779,7 @@ describe('listing runner', () => {
 
     expect(createTaskDir).toHaveBeenCalledWith('listing', 'task-1')
     expect(result.results[0]?.evidenceDir).toBe(
-      join(
-        '/tmp/workbench/.workbench/tmp/listing/task-1',
-        'evidence',
-        'profile-a',
-        'SKU-1',
-      ),
+      join('/tmp/workbench/.workbench/tmp/listing/task-1', 'evidence', 'profile-a', 'SKU-1'),
     )
   })
 

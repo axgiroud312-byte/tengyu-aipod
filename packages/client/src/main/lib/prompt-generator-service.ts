@@ -375,9 +375,7 @@ function structuredPromptInput(
     `2. 参考模式：${referenceMode || '未指定'}`,
     `3. 本次生成多少组提示词：${count}`,
     `4. 其他需求：${requirement}`,
-    refImageCount > 0
-      ? `5. 对应发送的参考图：已随本消息附带 ${refImageCount} 张参考图`
-      : '',
+    refImageCount > 0 ? `5. 对应发送的参考图：已随本消息附带 ${refImageCount} 张参考图` : '',
   ]
     .filter(Boolean)
     .join('\n')

@@ -2,7 +2,7 @@
 
 ## Status
 
-Accepted
+Accepted; 执行模型部分（批处理阶段串行、同机串行、"生图在 step 边界停止"的取消语义）被 ADR-0015 取代，其余（显式开关、来源、命名、UX）仍有效
 
 ## Context
 

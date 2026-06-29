@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ChenyuInstanceInfo, ChenyuInstanceStatus } from './chenyu-cloud-client'
 import {
   type GenerationDebugLogEntry,
+  type GenerationImageCompletePayload,
   comfyuiInstanceLocks,
   generateTxt2imgPrompts,
   listComfyuiExtractWorkflows,
@@ -195,6 +196,20 @@ function createDeferred<T>() {
   return { promise, resolve, reject }
 }
 
+async function flushAsyncWork() {
+  await new Promise((resolve) => setTimeout(resolve, 0))
+}
+
+async function waitForCondition(condition: () => boolean, maxAttempts = 50) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+    if (condition()) {
+      return
+    }
+    await flushAsyncWork()
+  }
+  throw new Error('Condition not met in time')
+}
+
 function runningChenyuInstance(instanceUuid: string, comfyuiUrl: string): ChenyuInstanceInfo {
   return {
     instance_uuid: instanceUuid,
@@ -380,6 +395,78 @@ describe('generation prompt service entrypoint', () => {
 })
 
 describe('generation Grsai paid image service', () => {
+  it('calls onImageComplete in completion order before the Grsai batch resolves', async () => {
+    const fakeDb = createFakeDb()
+    const first = createDeferred<{
+      status: 'succeeded'
+      images: Array<{ url: string }>
+    }>()
+    const second = createDeferred<{
+      status: 'succeeded'
+      images: Array<{ url: string }>
+    }>()
+    const generate = vi.fn().mockImplementation(async (input: { prompt: string }) => {
+      return input.prompt === 'first prompt' ? first.promise : second.promise
+    })
+    const completions: GenerationImageCompletePayload[] = []
+    let resolved = false
+
+    const runPromise = runTxt2imgBatch(
+      {
+        prompts: ['first prompt', 'second prompt'],
+        model: 'gpt-image-2',
+        aspectRatio: '1024x1024',
+        concurrency: 2,
+        taskId: 'txt-callback-order-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-grsai',
+        openDatabase: fakeDb.openDatabase,
+        createGrsaiAdapter: () => ({ generate }),
+        downloadImage: vi.fn().mockResolvedValue(Buffer.from('txt-result-image')),
+        onImageComplete: async (payload) => {
+          expect(resolved).toBe(false)
+          completions.push(payload)
+        },
+      },
+    )
+    const trackedRunPromise = runPromise.then((value) => {
+      resolved = true
+      return value
+    })
+
+    await waitForCondition(() => generate.mock.calls.length === 2)
+    second.resolve({
+      status: 'succeeded',
+      images: [{ url: 'https://example.test/second.png' }],
+    })
+    await waitForCondition(() => completions.length === 1)
+
+    expect(completions).toHaveLength(1)
+    expect(completions[0]).toMatchObject({
+      taskId: 'txt-callback-order-task',
+      capability: 'txt2img',
+      sourceArtifactIds: [],
+    })
+
+    first.resolve({
+      status: 'succeeded',
+      images: [{ url: 'https://example.test/first.png' }],
+    })
+
+    const result = await trackedRunPromise
+
+    expect(completions).toHaveLength(2)
+    expect(completions.map((item) => item.path)).toEqual(
+      result.images.map((image) => image.localPath ?? ''),
+    )
+    expect(completions.map((item) => item.printId)).toEqual(
+      result.images.map((image) => image.printId ?? ''),
+    )
+    expect(completions.every((item) => item.printId.startsWith('pri_'))).toBe(true)
+  })
+
   it('saves txt2img outputs under the task folder and stores artifacts', async () => {
     const fakeDb = createFakeDb()
     const generate = vi.fn().mockResolvedValue({
@@ -389,6 +476,7 @@ describe('generation Grsai paid image service', () => {
     const downloadImage = vi.fn().mockResolvedValue(Buffer.from('txt-result-image'))
     const debugLogs: GenerationDebugLogEntry[] = []
     const progress: unknown[] = []
+    const completions: Array<Record<string, unknown>> = []
 
     const result = await runTxt2imgBatch(
       {
@@ -406,6 +494,9 @@ describe('generation Grsai paid image service', () => {
         downloadImage,
         emitDebugLog: (entry) => debugLogs.push(entry),
         emitProgress: (item) => progress.push(item),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -427,6 +518,16 @@ describe('generation Grsai paid image service', () => {
         images: [expect.objectContaining({ localPath: result.images[0]?.localPath })],
       }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'txt-task',
+        capability: 'txt2img',
+        path: result.images[0]?.localPath,
+        printId: result.images[0]?.printId,
+        artifactId: result.images[0]?.artifactId,
+        sourceArtifactIds: [],
+      }),
+    ])
     expect(debugLogs).toContainEqual(
       expect.objectContaining({
         level: 'debug',
@@ -452,6 +553,7 @@ describe('generation Grsai paid image service', () => {
       images: [{ url: 'https://example.test/img-result.png' }],
     })
     const progress: unknown[] = []
+    const completions: Array<Record<string, unknown>> = []
 
     const result = await runTxt2imgBatch(
       {
@@ -470,6 +572,9 @@ describe('generation Grsai paid image service', () => {
         createGrsaiAdapter: () => ({ generate }),
         downloadImage: vi.fn().mockResolvedValue(Buffer.from('img-result-image')),
         emitProgress: (item) => progress.push(item),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -492,6 +597,16 @@ describe('generation Grsai paid image service', () => {
         images: [expect.objectContaining({ localPath: result.images[0]?.localPath })],
       }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'img-task',
+        capability: 'img2img',
+        path: result.images[0]?.localPath,
+        printId: result.images[0]?.printId,
+        artifactId: result.images[0]?.artifactId,
+        sourceArtifactIds: [],
+      }),
+    ])
   })
 
   it('uses user visible filenames without changing generated print ids', async () => {
@@ -582,6 +697,7 @@ describe('generation extract service', () => {
       images: [{ url: 'https://example.test/result.png' }],
     })
     const downloadImage = vi.fn().mockResolvedValue(Buffer.from('result-image'))
+    const completions: Array<Record<string, unknown>> = []
 
     const result = await runExtractBatch(
       {
@@ -608,6 +724,9 @@ describe('generation extract service', () => {
         createGrsaiAdapter: () => ({ generate }),
         downloadImage,
         emitProgress: (item) => progress.push(item),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -630,6 +749,16 @@ describe('generation extract service', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'extract-task', capability: 'extract', processed: 1 }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'extract-task',
+        capability: 'extract',
+        path: result.images[0]?.localPath,
+        printId: result.images[0]?.printId,
+        artifactId: result.images[0]?.artifactId,
+        sourceArtifactIds: [String(fakeDb.artifacts[0]?.[0])],
+      }),
+    ])
   })
 })
 
@@ -662,9 +791,17 @@ describe('generation comfyui service', () => {
   it('runs ComfyUI txt2img with workflow dimensions', async () => {
     const fakeDb = createFakeDb()
     const progress: unknown[] = []
+    const completions: Array<Record<string, unknown>> = []
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
-      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+      images: [
+        {
+          url: 'file:///result.png',
+          local_path: '/result.png',
+          artifact_id: 'art-comfy-txt',
+          print_id: 'pri_comfy_txt',
+        },
+      ],
     })
 
     const result = await runComfyuiTxt2imgBatch(
@@ -683,6 +820,9 @@ describe('generation comfyui service', () => {
         openDatabase: fakeDb.openDatabase,
         createComfyuiAdapter: () => ({ generate }),
         emitProgress: (item) => progress.push(item),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -716,6 +856,16 @@ describe('generation comfyui service', () => {
         images: [expect.objectContaining({ localPath: '/result.png' })],
       }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'txt2img-comfy-task',
+        capability: 'txt2img',
+        path: '/result.png',
+        printId: 'pri_comfy_txt',
+        artifactId: 'art-comfy-txt',
+        sourceArtifactIds: [],
+      }),
+    ])
   })
 
   it('advances ComfyUI txt2img visible filename indexes by actual output count', async () => {
@@ -871,6 +1021,7 @@ describe('generation comfyui service', () => {
     const fakeDb = createFakeDb()
     const progress: unknown[] = []
     const debugLogs: GenerationDebugLogEntry[] = []
+    const completions: Array<Record<string, unknown>> = []
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
       images: [
@@ -899,6 +1050,9 @@ describe('generation comfyui service', () => {
         createComfyuiAdapter: () => ({ generate }),
         emitProgress: (item) => progress.push(item),
         emitDebugLog: (entry) => debugLogs.push(entry),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -959,6 +1113,16 @@ describe('generation comfyui service', () => {
         processed: 1,
       }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'extract-comfy-task',
+        capability: 'extract',
+        path: '/result.png',
+        printId: 'pri_extract_output',
+        artifactId: 'art-extract-output',
+        sourceArtifactIds: [String(sourceArtifactId)],
+      }),
+    ])
   })
 
   it('uses the ComfyUI extract skill prompt when a skill is provided', async () => {
@@ -1203,6 +1367,7 @@ describe('generation comfyui img2img service', () => {
         getSecret: async () => 'cy-key',
         openDatabase: fakeDb.openDatabase,
         createComfyuiAdapter: () => ({ generate }),
+        onImageComplete: vi.fn(),
       },
     )
 
@@ -1233,6 +1398,7 @@ describe('generation comfyui img2img service', () => {
         }),
       }),
     )
+    expect(generate.mock.calls.length > 0).toBe(true)
   })
 
   it('counts ComfyUI img2img batch outputs and missing images', async () => {
@@ -1464,6 +1630,7 @@ describe('generation comfyui matting service', () => {
       },
     ])
     const progress: unknown[] = []
+    const completions: Array<Record<string, unknown>> = []
     const generate = vi.fn().mockResolvedValue({
       status: 'succeeded',
       images: [
@@ -1490,6 +1657,9 @@ describe('generation comfyui matting service', () => {
         openDatabase: fakeDb.openDatabase,
         createComfyuiAdapter: () => ({ generate }),
         emitProgress: (item) => progress.push(item),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -1521,6 +1691,16 @@ describe('generation comfyui matting service', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'matting-task', capability: 'matting', processed: 1 }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'matting-task',
+        capability: 'matting',
+        path: '/matting.png',
+        printId: 'pri_matting_output',
+        artifactId: 'art-matting-output',
+        sourceArtifactIds: ['print-artifact'],
+      }),
+    ])
   })
 
   it('registers arbitrary folder images before running ComfyUI matting', async () => {
@@ -1578,6 +1758,7 @@ describe('generation comfyui matting service', () => {
     })
     const cleanupTask = vi.fn()
     const progress: unknown[] = []
+    const completions: Array<Record<string, unknown>> = []
     const getChenyuInstanceInfo = vi
       .fn()
       .mockResolvedValue(
@@ -1635,6 +1816,9 @@ describe('generation comfyui matting service', () => {
         },
         tempFiles: { createTaskDir, cleanupTask },
         emitProgress: (item) => progress.push(item),
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -1696,6 +1880,16 @@ describe('generation comfyui matting service', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'extract-matting-task', capability: 'matting' }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'extract-matting-task',
+        capability: 'matting',
+        path: finalPath,
+        printId: 'pri_extract_matting_output',
+        artifactId: 'art-extract-matting-output',
+        sourceArtifactIds: [sourceArtifactId],
+      }),
+    ])
   })
 
   it('runs mixed matting through Grsai mask generation and ComfyUI compositing', async () => {
@@ -1703,6 +1897,7 @@ describe('generation comfyui matting service', () => {
     await createImage(printPath, 'print-image')
     const fakeDb = createFakeDb()
     const progress: unknown[] = []
+    const completions: Array<Record<string, unknown>> = []
     const generateMask = vi.fn().mockResolvedValue({
       status: 'succeeded',
       images: [{ url: 'https://example.test/mask.png' }],
@@ -1769,6 +1964,9 @@ describe('generation comfyui matting service', () => {
         downloadImage,
         emitProgress: (item) => progress.push(item),
         tempFiles: { createTaskDir, cleanupTask },
+        onImageComplete: async (payload) => {
+          completions.push(payload)
+        },
       },
     )
 
@@ -1824,5 +2022,15 @@ describe('generation comfyui matting service', () => {
     expect(progress).toContainEqual(
       expect.objectContaining({ task_id: 'mixed-task', capability: 'matting', processed: 1 }),
     )
+    expect(completions).toEqual([
+      expect.objectContaining({
+        taskId: 'mixed-task',
+        capability: 'matting',
+        path: '/matting.png',
+        printId: 'pri_mixed_output',
+        artifactId: 'art-mixed-output',
+        sourceArtifactIds: [sourceArtifactId],
+      }),
+    ])
   })
 })

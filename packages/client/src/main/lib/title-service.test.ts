@@ -17,6 +17,7 @@ import {
   normalizeTitleKeywordGroups,
   parseTitle,
   readExistingTitles,
+  resolveTitleXlsxPath,
   scanSkuFolders,
   titleXlsxPath,
   toXlsxWriteError,
@@ -231,6 +232,18 @@ describe('title service utilities', () => {
     )
   })
 
+  it('falls back to legacy titles.xlsx when 标题.xlsx is missing', async () => {
+    const batchDir = join(tempRoot, 'legacy-batch')
+    await mkdir(batchDir, { recursive: true })
+    const legacyPath = join(batchDir, 'titles.xlsx')
+    await createWorkbook(legacyPath, [['SKU1', 'Legacy title']])
+
+    await expect(resolveTitleXlsxPath(batchDir)).resolves.toBe(legacyPath)
+    await expect(readExistingTitles(await resolveTitleXlsxPath(batchDir))).resolves.toEqual(
+      new Map([['SKU1', 'Legacy title']]),
+    )
+  })
+
   it('maps locked xlsx write failures to XLSX_LOCKED', () => {
     const error = Object.assign(new Error('EPERM: locked'), { code: 'EPERM' })
 
@@ -441,6 +454,61 @@ describe('TitleService', () => {
     await expect(readExistingTitles(result.xlsxPath)).resolves.toEqual(
       new Map([['SKU1', 'Generated SKU1']]),
     )
+  })
+
+  it('creates a processing session that generates one sku at a time', async () => {
+    const batchDir = join(tempRoot, 'session-batch')
+    const skuDir = await createSku(batchDir, 'SKU1', ['1.png'])
+    const outputPath = join(workbenchRoot, '.workbench', 'tmp', 'title', 'session-title', 'p.jpg')
+    const service = new TitleService()
+
+    const session = await service.createProcessingSession(
+      {
+        batchDir,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+        taskId: 'session-title',
+      },
+      {
+        skillCache: {
+          listSkills: vi.fn().mockResolvedValue([summary()]),
+          getSkill: vi.fn().mockResolvedValue(skill()),
+        },
+        createBailianAdapter: () => ({
+          visionCompletion: vi.fn().mockResolvedValue({ text: 'Vintage Shirt' }),
+        }),
+        preprocessPool: {
+          process: vi.fn(async () => {
+            await mkdir(dirname(outputPath), { recursive: true })
+            await writeFile(outputPath, 'processed')
+            return {
+              outputPath,
+              mimeType: 'image/jpeg',
+              sizeBytes: 9,
+              dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+            }
+          }),
+          close: vi.fn(),
+        },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    await expect(
+      session.generateSku({
+        skuCode: 'SKU1',
+        skuFolder: skuDir,
+      }),
+    ).resolves.toMatchObject({
+      skuCode: 'SKU1',
+      status: 'success',
+      baseTitle: 'Vintage Shirt',
+      imagePath: join(skuDir, '1.png'),
+    })
+    await session.close()
   })
 
   it('writes custom title xlsx and wraps generated titles with keyword groups', async () => {

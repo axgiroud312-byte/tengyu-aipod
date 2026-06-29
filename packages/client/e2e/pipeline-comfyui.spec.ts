@@ -73,6 +73,17 @@ async function startMockServer(state: MockState) {
         ok: true,
         data: [
           {
+            id: 'extract-comfyui',
+            module: 'generation',
+            category: 'extract-comfyui-workflow',
+            platform: null,
+            language: null,
+            version: '1.0.0',
+            enabled: true,
+            recommendedModel: 'qwen3-vl-plus',
+            notes: 'ComfyUI 提取',
+          },
+          {
             id: 'txt2img-local-print',
             module: 'generation',
             category: 'txt2img-local-print',
@@ -95,6 +106,26 @@ async function startMockServer(state: MockState) {
             notes: null,
           },
         ],
+      })
+      return
+    }
+
+    if (url.pathname === '/api/skills/extract-comfyui') {
+      sendJson(response, {
+        ok: true,
+        data: {
+          id: 'extract-comfyui',
+          module: 'generation',
+          category: 'extract-comfyui-workflow',
+          platform: null,
+          language: null,
+          version: '1.0.0',
+          enabled: true,
+          recommendedModel: 'qwen3-vl-plus',
+          notes: 'ComfyUI 提取',
+          systemPrompt: 'Extract the print from the source product image.',
+          variables: [],
+        },
       })
       return
     }
@@ -305,7 +336,14 @@ async function prepareApp(page: Page, workbenchRoot: string) {
   }, workbenchRoot)
 }
 
-async function importWorkflow(page: Page, input: { name: string; capability: 'txt2img' | 'img2img'; workflowJson: Record<string, unknown> }) {
+async function importWorkflow(
+  page: Page,
+  input: {
+    name: string
+    capability: 'txt2img' | 'img2img' | 'extract' | 'matting'
+    workflowJson: Record<string, unknown>
+  },
+) {
   return page.evaluate(
     async (payload) =>
       window.api.workflow.importLocal({
@@ -366,10 +404,7 @@ async function createImage(path: string, content: string) {
   await writeFile(path, content)
 }
 
-async function runPipeline(
-  page: Page,
-  input: Parameters<Window['api']['pipeline']['run']>[0],
-) {
+async function runPipeline(page: Page, input: Parameters<Window['api']['pipeline']['run']>[0]) {
   return page.evaluate(async (runInput) => {
     return new Promise<Awaited<ReturnType<Window['api']['pipeline']['getRun']>>>(
       (resolve, reject) => {
@@ -408,8 +443,16 @@ async function runPipeline(
 
 function txt2imgWorkflowJson() {
   return {
-    '1': { class_type: 'CLIPTextEncode', inputs: { text: 'default txt2img prompt' }, _meta: { title: 'Prompt' } },
-    '2': { class_type: 'EmptyImage', inputs: { width: 1024, height: 1024, batch_size: 1 }, _meta: { title: 'Canvas' } },
+    '1': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: 'default txt2img prompt' },
+      _meta: { title: 'Prompt' },
+    },
+    '2': {
+      class_type: 'EmptyImage',
+      inputs: { width: 1024, height: 1024, batch_size: 1 },
+      _meta: { title: 'Canvas' },
+    },
     '9': { class_type: 'SaveImage', inputs: {}, _meta: { title: 'Save' } },
   }
 }
@@ -417,8 +460,50 @@ function txt2imgWorkflowJson() {
 function img2imgWorkflowJson() {
   return {
     '1': { class_type: 'LoadImage', inputs: { image: '' }, _meta: { title: 'Source Image' } },
-    '2': { class_type: 'CLIPTextEncode', inputs: { text: 'workflow default prompt' }, _meta: { title: 'Prompt' } },
-    '3': { class_type: 'EmptyImage', inputs: { width: 1024, height: 1024, batch_size: 1 }, _meta: { title: 'Canvas' } },
+    '2': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: 'workflow default prompt' },
+      _meta: { title: 'Prompt' },
+    },
+    '3': {
+      class_type: 'EmptyImage',
+      inputs: { width: 1024, height: 1024, batch_size: 1 },
+      _meta: { title: 'Canvas' },
+    },
+    '9': { class_type: 'SaveImage', inputs: {}, _meta: { title: 'Save' } },
+  }
+}
+
+function extractWorkflowJson() {
+  return {
+    '1': { class_type: 'LoadImage', inputs: { image: '' }, _meta: { title: 'Source Image' } },
+    '2': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: 'extract default prompt' },
+      _meta: { title: 'Prompt' },
+    },
+    '3': {
+      class_type: 'EmptyImage',
+      inputs: { width: 1024, height: 1024, batch_size: 1 },
+      _meta: { title: 'Canvas' },
+    },
+    '9': { class_type: 'SaveImage', inputs: {}, _meta: { title: 'Save' } },
+  }
+}
+
+function mattingWorkflowJson() {
+  return {
+    '1': { class_type: 'LoadImage', inputs: { image: '' }, _meta: { title: 'Source Image' } },
+    '2': {
+      class_type: 'CLIPTextEncode',
+      inputs: { text: 'Remove the background and output transparent PNG.' },
+      _meta: { title: 'Prompt' },
+    },
+    '3': {
+      class_type: 'EmptyImage',
+      inputs: { width: 1024, height: 1024, batch_size: 1 },
+      _meta: { title: 'Canvas' },
+    },
     '9': { class_type: 'SaveImage', inputs: {}, _meta: { title: 'Save' } },
   }
 }
@@ -446,7 +531,10 @@ test.describe('pipeline comfyui real probe', () => {
     closeMockServer = mockServer.close
 
     const workbenchRoot = join(tempRoot, 'workbench-ui')
-    app = await launchApp({ serverUrl: mockServer.baseUrl, userDataDir: join(tempRoot, 'user-data-ui') })
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-ui'),
+    })
     const page = await app.firstWindow()
     await page.addInitScript(() => {
       const patch = () => {
@@ -511,13 +599,47 @@ test.describe('pipeline comfyui real probe', () => {
               },
             },
           ] as Awaited<ReturnType<Window['api']['generation']['listComfyuiImg2imgWorkflows']>>
-        window.api.generation.listComfyuiExtractWorkflows = async () => []
-        window.api.generation.listComfyuiMattingWorkflows = async () => []
+        window.api.generation.listComfyuiExtractWorkflows = async () =>
+          [
+            {
+              id: 'wf-ui-extract',
+              version: '1.0.0',
+              name: 'UI 提取工作流',
+              capability: 'extract',
+              requiredModels: [],
+              detection: {
+                imageInputs: 1,
+                promptInputs: 1,
+                sizeInputs: 2,
+                batchInputs: 1,
+                outputImages: 1,
+                status: 'ready',
+                warnings: [],
+              },
+            },
+          ] as Awaited<ReturnType<Window['api']['generation']['listComfyuiExtractWorkflows']>>
+        window.api.generation.listComfyuiMattingWorkflows = async () =>
+          [
+            {
+              id: 'wf-ui-matting',
+              version: '1.0.0',
+              name: 'UI 抠图工作流',
+              capability: 'matting',
+              requiredModels: [],
+              detection: {
+                imageInputs: 1,
+                promptInputs: 1,
+                sizeInputs: 2,
+                batchInputs: 1,
+                outputImages: 1,
+                status: 'ready',
+                warnings: [],
+              },
+            },
+          ] as Awaited<ReturnType<Window['api']['generation']['listComfyuiMattingWorkflows']>>
         window.api.title.listPlatforms = async () => [{ key: 'temu', label: 'Temu' }]
         window.api.title.listLanguages = async () => [{ key: 'en', label: 'English' }]
-        window.api.title.listModels = async () => [
-          { key: 'qwen3.6-flash', label: 'qwen3.6-flash' },
-        ]
+        window.api.title.listModels = async () => [{ key: 'qwen3.6-flash', label: 'qwen3.6-flash' }]
         window.api.generationSettings.get = async () => ({
           defaultConcurrency: 1,
           grsaiModels: [
@@ -544,20 +666,57 @@ test.describe('pipeline comfyui real probe', () => {
 
     await page.getByRole('link', { name: '完整任务' }).click()
 
+    await page.getByRole('tab', { name: '采集 + 提取' }).click()
+    await page
+      .getByText('提取方式', { exact: true })
+      .locator('xpath=..')
+      .getByRole('combobox')
+      .click()
+    await page.getByRole('option', { name: '晨羽智云' }).click()
+    await expect(page.getByText('晨羽工作流', { exact: true })).toBeVisible()
+    await expect(
+      page.getByText('提取 Skill', { exact: true }).locator('xpath=..').getByRole('combobox'),
+    ).toBeVisible()
+    await expect(page.getByText('晨羽实例', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('晨羽路径要先配好运行云机和工作流。')).toBeVisible()
+
     await page.getByRole('tab', { name: '文生图' }).click()
-    await page.getByText('生图方式', { exact: true }).locator('xpath=..').getByRole('combobox').click()
+    await page
+      .getByText('生图方式', { exact: true })
+      .locator('xpath=..')
+      .getByRole('combobox')
+      .click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('提示词先走百炼，再送入晨羽文生图工作流。')).toBeVisible()
     await expect(page.getByText('文生图工作流', { exact: true })).toBeVisible()
     await expect(page.getByText('晨羽实例', { exact: true }).first()).toBeVisible()
 
     await page.getByRole('tab', { name: '图生图' }).click()
-    await page.getByText('生图方式', { exact: true }).locator('xpath=..').getByRole('combobox').click()
+    await page
+      .getByText('生图方式', { exact: true })
+      .locator('xpath=..')
+      .getByRole('combobox')
+      .click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('选择图片文件夹、工作流、晨羽实例和每张生成数量。')).toBeVisible()
     await expect(page.getByText('图片文件夹', { exact: true })).toBeVisible()
     await expect(page.locator('input[type="number"][min="1"][max="8"]').last()).toBeVisible()
     await expect(page.getByText('直接用工作流自带提示词，不再走百炼。')).toBeVisible()
+
+    await page.getByRole('tab', { name: '已有印花' }).click()
+    await expect(page.getByText('已有印花文件夹', { exact: true })).toBeVisible()
+    await expect(page.getByText('起始步骤', { exact: true })).toBeVisible()
+    await expect(page.getByText('当前起始步骤会跳过抠图。')).toBeVisible()
+    await expect(page.getByText('当前起始步骤会跳过侵权检测。')).toBeVisible()
+    await page
+      .getByText('起始步骤', { exact: true })
+      .locator('xpath=..')
+      .getByRole('combobox')
+      .click()
+    await page.getByRole('option', { name: '从抠图开始' }).click()
+    await page.getByText('抠图设置', { exact: true }).click()
+    await expect(page.getByText('抠图工作流', { exact: true }).last()).toBeVisible()
+    await expect(page.getByText('需要先配置运行云机和抠图工作流。')).toBeVisible()
   })
 
   test('runs txt2img and img2img comfyui complete tasks through electron IPC', async () => {
@@ -571,7 +730,10 @@ test.describe('pipeline comfyui real probe', () => {
     await createImage(join(img2imgSourceRoot, 'b.png'), 'img-b')
     await seedCurrentComfyuiInstance(workbenchRoot, `${mockServer.baseUrl}/comfy`)
 
-    app = await launchApp({ serverUrl: mockServer.baseUrl, userDataDir: join(tempRoot, 'user-data-run') })
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-run'),
+    })
     const page = await app.firstWindow()
     await prepareApp(page, workbenchRoot)
 
@@ -660,9 +822,7 @@ test.describe('pipeline comfyui real probe', () => {
     expect(state.bailianCalls).toBe(1)
     expect(state.queuedPrompts).toHaveLength(2)
     const firstImg2imgWorkflow = state.queuedPrompts[0]?.workflow
-    const imgPromptNode = firstImg2imgWorkflow?.['2'] as
-      | { inputs?: { text?: string } }
-      | undefined
+    const imgPromptNode = firstImg2imgWorkflow?.['2'] as { inputs?: { text?: string } } | undefined
     const imgBatchNode = firstImg2imgWorkflow?.['3'] as
       | { inputs?: { batch_size?: number } }
       | undefined
@@ -676,10 +836,135 @@ test.describe('pipeline comfyui real probe', () => {
     })
 
     const firstGeneratedPath =
-      (img2imgResult?.result_sections ?? [])
-        .find((section) => section.key === 'image_processing')
+      (img2imgResult?.result_sections ?? []).find((section) => section.key === 'image_processing')
         ?.items[0]?.local_path ?? ''
     expect(firstGeneratedPath).toContain(join('02-印花工作区', '图生图'))
     expect(await readFile(firstGeneratedPath, 'utf8')).toContain('image:')
+  })
+
+  test('runs collection extract and existing prints matting complete tasks through electron IPC', async () => {
+    const state: MockState = { bailianCalls: 0, queuedPrompts: [] }
+    const mockServer = await startMockServer(state)
+    closeMockServer = mockServer.close
+
+    const workbenchRoot = join(tempRoot, 'workbench-stages')
+    const collectionRoot = join(workbenchRoot, '01-采集工作区', 'collection-source')
+    const existingPrintRoot = join(workbenchRoot, '02-印花工作区', 'existing-source')
+    await createImage(join(collectionRoot, 'source-a.png'), 'source-a')
+    await createImage(join(collectionRoot, 'source-b.png'), 'source-b')
+    await createImage(join(existingPrintRoot, 'print-a.png'), 'print-a')
+    await createImage(join(existingPrintRoot, 'print-b.png'), 'print-b')
+    await seedCurrentComfyuiInstance(workbenchRoot, `${mockServer.baseUrl}/comfy`)
+
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-stages'),
+    })
+    const page = await app.firstWindow()
+    await prepareApp(page, workbenchRoot)
+
+    const extractWorkflow = await importWorkflow(page, {
+      name: 'Pipeline Extract Workflow',
+      capability: 'extract',
+      workflowJson: extractWorkflowJson(),
+    })
+    const mattingWorkflow = await importWorkflow(page, {
+      name: 'Pipeline Matting Workflow',
+      capability: 'matting',
+      workflowJson: mattingWorkflowJson(),
+    })
+
+    expect(extractWorkflow.id).toBeTruthy()
+    expect(mattingWorkflow.id).toBeTruthy()
+
+    const collectionResult = await runPipeline(page, {
+      name: 'pipeline-comfyui-collection-extract',
+      printMode: 'local',
+      source: {
+        mode: 'collection',
+        sourceFolder: collectionRoot,
+        extract: {
+          provider: 'comfyui-chenyu',
+          skillId: 'extract-comfyui',
+          skillVersion: '1.0.0',
+          comfyui: {
+            workflowId: extractWorkflow.id,
+            width: 1024,
+            height: 1024,
+            concurrency: 1,
+          },
+        },
+      },
+      matting: { enabled: false, mode: 'comfyui' },
+      detection: { enabled: false },
+      photoshop: { enabled: false, templates: [] },
+      title: {
+        enabled: false,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+      },
+    })
+
+    expect(collectionResult?.run.status).toBe('completed')
+    expect(state.bailianCalls).toBe(0)
+    expect(state.queuedPrompts).toHaveLength(2)
+    expect(
+      (collectionResult?.result_sections ?? []).find(
+        (section) => section.key === 'image_processing',
+      ),
+    ).toMatchObject({
+      total: 2,
+      completed: 2,
+    })
+    const extractPromptNode = state.queuedPrompts[0]?.workflow['2'] as
+      | { inputs?: { text?: string } }
+      | undefined
+    expect(extractPromptNode?.inputs?.text).toBe('Extract the print from the source product image.')
+
+    state.queuedPrompts.length = 0
+
+    const existingPrintResult = await runPipeline(page, {
+      name: 'pipeline-existing-prints-matting',
+      printMode: 'local',
+      source: {
+        mode: 'existing_prints',
+        printFolder: existingPrintRoot,
+        startStep: 'matting',
+      },
+      matting: {
+        enabled: true,
+        mode: 'comfyui',
+        workflowId: mattingWorkflow.id,
+        width: 1024,
+        height: 1024,
+      },
+      detection: { enabled: false },
+      photoshop: { enabled: false, templates: [] },
+      title: {
+        enabled: false,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+      },
+    })
+
+    expect(existingPrintResult?.run.status).toBe('completed')
+    expect(state.bailianCalls).toBe(0)
+    expect(state.queuedPrompts).toHaveLength(2)
+    const mattingPromptNode = state.queuedPrompts[0]?.workflow['2'] as
+      | { inputs?: { text?: string } }
+      | undefined
+    expect(mattingPromptNode?.inputs?.text).toBe(
+      'Remove the background and output transparent PNG.',
+    )
+    expect(
+      (existingPrintResult?.result_sections ?? []).find(
+        (section) => section.key === 'image_processing',
+      ),
+    ).toMatchObject({
+      total: 2,
+      completed: 2,
+    })
   })
 })

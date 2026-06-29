@@ -30,7 +30,7 @@ import {
   registerLocalImageProtocolScheme,
 } from './lib/local-image-protocol'
 import { runNativeSmoke } from './lib/native-smoke'
-import { registerPipelineIpc } from './lib/pipeline-service'
+import { pipelineService, registerPipelineIpc } from './lib/pipeline-service'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
 import { registerTitleIpc } from './lib/title-service'
@@ -97,6 +97,7 @@ function syncSkillCacheWithCustomerAuth(state: CustomerAuthState) {
 }
 
 app.whenReady().then(() => {
+  void pipelineService.markPersistedRunningRunsInterrupted().catch(() => null)
   try {
     runNativeSmoke()
   } catch {
@@ -168,6 +169,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  void pipelineService.markActiveRunsInterrupted().catch(() => null)
   browserProfileLocks.clear()
   void tempFileManager.cleanupSession().catch(() => null)
   tempFileManager.clearTimers()
