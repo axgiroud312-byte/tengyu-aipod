@@ -1,8 +1,9 @@
-import { basename, dirname } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import {
   AppErrorClass,
   type PipelineRunStats,
   type PipelineRuntimeLogEntry,
+  WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import type {
   PipelinePrintStageFactory,
@@ -26,6 +27,7 @@ import {
 
 type TitleStageDependencies = {
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>
+  workbenchRoot: string
   stats: PipelineRunStats
   upsertPipelineItem: (input: {
     runId: string
@@ -230,7 +232,9 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
     return async function* titleStage(input: AsyncIterable<PipelinePrintStreamItem>) {
       session = await titleService.createProcessingSession({
         ...config,
-        batchDir: context.config.photoshop.outputRoot ?? '',
+        batchDir:
+          context.config.photoshop.outputRoot ??
+          join(dependencies.workbenchRoot, WORKBENCH_DIRECTORIES.listing),
         taskId: `${context.runId}-title-stream`,
       })
 

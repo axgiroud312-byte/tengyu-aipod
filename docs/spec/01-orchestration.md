@@ -71,26 +71,16 @@ type StepStatus = 'pending' | 'running' | 'completed' | 'failed' | 'skipped'
 执行结果：
   成功 → Task.status=completed, Step.status=completed
   失败 → Task.status=failed, Step.status=failed, error_json 写入
-  软件关闭 → Task.status=interrupted（启动时检测并询问用户）
+  软件关闭 → Task.status=interrupted（不自动续跑）
 ```
 
 ### 2.2 启动时恢复
 
-```ts
-// 主进程启动时检测中断任务
-const interrupted = await db.tasks.findMany({ status: 'interrupted' })
+当前 v1 完整任务不支持自动恢复或恢复弹窗：
 
-if (interrupted.length > 0) {
-  // UI 弹窗
-  showRecoveryDialog({
-    tasks: interrupted,
-    onResume: (taskId) => { /* 按模块粒度恢复 */ },
-    onDiscard: (taskId) => { /* 标记 failed */ },
-  })
-}
-```
-
-恢复粒度按模块（详见 §6）。
+- 启动时如果发现 `interrupted` 的完整任务，只保留运行记录和已落盘产物，不自动续跑。
+- 用户想继续时，手动从“已有印花来源”或对应模块重新启动新的 run。
+- 下面 §5 的暂停 / 恢复设计属于 v1.5 通用编排引擎预研，不代表当前能力。
 
 ### 2.3 同 SKU 互斥
 

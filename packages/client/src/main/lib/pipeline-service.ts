@@ -116,6 +116,10 @@ type StreamingSourceProducerResult = GenerationRunResult & {
   itemCount: number
 }
 
+type StreamingSourceProducerCallbacks = {
+  onPlannedCount?: (count: number) => void
+}
+
 type ActivePipelineRun = {
   db: Pick<SqliteDatabase, 'prepare'>
   cancelRequested: boolean
@@ -825,6 +829,36 @@ function shouldRunDetectionStep(config: PipelineRunConfig) {
   return config.detection.enabled
 }
 
+function sourceResultSectionKey(config: PipelineRunConfig): PipelineResultSectionKey {
+  if (config.source.mode === 'collection') {
+    return 'source_images'
+  }
+  if (config.source.mode === 'existing_prints') {
+    return IMAGE_PROCESSING_SECTION_KEY
+  }
+  return shouldRunMattingStep(config) ? 'source_images' : IMAGE_PROCESSING_SECTION_KEY
+}
+
+function sourceResultSectionTitle(config: PipelineRunConfig) {
+  if (config.source.mode === 'collection') {
+    return '采集图'
+  }
+  if (sourceResultSectionKey(config) === IMAGE_PROCESSING_SECTION_KEY) {
+    return '图像处理'
+  }
+  return '来源印花'
+}
+
+function sourceFailureLogLabel(config: PipelineRunConfig) {
+  if (config.source.mode === 'txt2img') {
+    return '文生图'
+  }
+  if (config.source.mode === 'img2img') {
+    return '图生图'
+  }
+  return null
+}
+
 function sameOrInsidePath(child: string, parent: string) {
   if (child === parent) {
     return true
@@ -1394,92 +1428,7 @@ export class PipelineService {
         })
         this.emitRunProgress(db, runId, 'running', null, stats, '完整任务已启动')
 
-        const shouldUseStreamingStageChain = this.canUseStreamingStageChain(runConfig)
-
-        if (shouldUseStreamingStageChain) {
-          await this.runStreamingSourceMatting(db, active, runId, workbenchRoot, runConfig, stats)
-          if (active.interrupted) {
-            return this.requireRunDetail(db, runId)
-          }
-          if (active.cancelRequested) {
-            this.appendLog(runId, { level: 'warn', message: '完整任务已取消' })
-            this.completeRun(db, runId, 'cancelled', stats, '完整任务已取消')
-          } else {
-            this.appendLog(runId, { level: 'info', message: '完整任务完成' })
-            this.completeRun(db, runId, 'completed', stats, null)
-          }
-          return this.requireRunDetail(db, runId)
-        }
-
-        const sourceImages = await this.runSourceStep(db, active, runId, runConfig, stats)
-        let prints = sourceImages.prints
-
-        if (sourceImages.extractSources.length > 0) {
-          prints = await this.runExtractStep(
-            db,
-            active,
-            runId,
-            runConfig.source,
-            sourceImages.extractSources,
-            stats,
-            pipelineVisibleFilenameFields(runConfig),
-          )
-        }
-
-        if (shouldRunMattingStep(runConfig)) {
-          prints = await this.runMattingStep(
-            db,
-            active,
-            runId,
-            runConfig.matting,
-            prints,
-            stats,
-            pipelineVisibleFilenameFields(runConfig),
-          )
-        } else {
-          this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', prints.length)
-        }
-
-        if (shouldRunDetectionStep(runConfig)) {
-          prints = await this.runDetectionStep(
-            db,
-            active,
-            runId,
-            runConfig.detection,
-            prints,
-            stats,
-            runConfig.photoshop.enabled !== false,
-          )
-        } else {
-          this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', prints.length)
-        }
-
-        if (runConfig.photoshop.enabled === false) {
-          this.recordSkippedStep(db, runId, 'photoshop', 'photoshop', 'PS 套版', prints.length)
-          this.recordSkippedStep(db, runId, 'title', 'title', '标题生成', prints.length)
-        } else {
-          const photoshopResult = await this.runPhotoshopStep(
-            db,
-            active,
-            runId,
-            workbenchRoot,
-            runConfig,
-            prints,
-            stats,
-          )
-          if (runConfig.title.enabled === false) {
-            this.recordSkippedStep(
-              db,
-              runId,
-              'title',
-              'title',
-              '标题生成',
-              photoshopResult.result.templates.length,
-            )
-          } else {
-            await this.runTitleStep(db, active, runId, runConfig, photoshopResult, stats)
-          }
-        }
+        await this.runStreamingPipeline(db, active, runId, workbenchRoot, runConfig, stats)
 
         if (active.interrupted) {
           return this.requireRunDetail(db, runId)
@@ -2234,8 +2183,8 @@ export class PipelineService {
           this.updateResultSection(
             runId,
             resultSection({
-              key: IMAGE_PROCESSING_SECTION_KEY,
-              title: '图像处理',
+              key: sourceResultSectionKey(config),
+              title: sourceResultSectionTitle(config),
               items: output.prints.map((image, index) =>
                 resultImageFromPipelineImage('source', basename(image.path), image, index),
               ),
@@ -2255,14 +2204,6 @@ export class PipelineService {
     })
   }
 
-  private supportsStreamingSource(config: PipelineRunConfig) {
-    return config.source.mode === 'txt2img' || config.source.mode === 'img2img'
-  }
-
-  private canUseStreamingStageChain(config: PipelineRunConfig) {
-    return this.supportsStreamingSource(config) && shouldRunMattingStep(config)
-  }
-
   private buildStreamingPrintStages(
     db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
     active: ActivePipelineRun,
@@ -2275,6 +2216,20 @@ export class PipelineService {
     sourceFailedRef: { value: number },
   ): PipelinePrintStageRegistration[] {
     const stages: PipelinePrintStageRegistration[] = []
+
+    if (config.source.mode === 'collection') {
+      stages.push({
+        stepKey: 'extract',
+        create: (context) =>
+          this.createStreamingExtractStage(
+            db,
+            active,
+            context,
+            stats,
+            visibleFilenameFields,
+          ),
+      })
+    }
 
     if (shouldRunMattingStep(config)) {
       stages.push({
@@ -2341,6 +2296,7 @@ export class PipelineService {
             exec: (...args) => db.exec(...args),
             prepare: (...args) => db.prepare(...args),
           },
+          workbenchRoot,
           stats,
           upsertPipelineItem: (input) => this.upsertPipelineItem(db, input),
           appendLog: (nextRunId, input) => this.appendLog(nextRunId, input),
@@ -2388,7 +2344,7 @@ export class PipelineService {
     }
   }
 
-  private async runStreamingSourceMatting(
+  private async runStreamingPipeline(
     db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
     active: ActivePipelineRun,
     runId: string,
@@ -2396,33 +2352,45 @@ export class PipelineService {
     config: PipelineRunConfig,
     stats: PipelineRunStats,
   ) {
-    if (!this.canUseStreamingStageChain(config)) {
-      throw new AppErrorClass('HTTP_5XX', '当前来源暂不支持流式 source→matting', true, {
-        sourceMode: config.source.mode,
-      })
-    }
     const visibleFilenameFields = pipelineVisibleFilenameFields(config)
     const sourceQueue = new AsyncItemQueue<PipelinePrintStreamItem>()
     const outputItems: PipelineImage[] = []
     const sourceItems: PipelineImage[] = []
-    const sourceSectionTitle =
-      config.source.mode === 'txt2img' || config.source.mode === 'img2img' ? '来源印花' : '图像处理'
+    const sourceSectionKey = sourceResultSectionKey(config)
+    const sourceSectionTitle = sourceResultSectionTitle(config)
     const sourceTotalRef = { value: 0 }
     const sourceFailedRef = { value: 0 }
+    let plannedSourceCount = 0
+    const sourceLabel = config.source.mode === 'collection' ? '准备来源' : '来源生图'
+    const sourceModule = config.source.mode === 'existing_prints' ? 'generation' : config.source.mode
 
     const refreshSourceSection = () => {
+      const total = Math.max(sourceTotalRef.value, plannedSourceCount)
+      const loadingCount = Math.max(0, total - sourceItems.length - sourceFailedRef.value)
       this.updateResultSection(
         runId,
         resultSection({
-          key: 'source_images',
+          key: sourceSectionKey,
           title: sourceSectionTitle,
-          items: sourceItems.map((image, index) =>
-            resultImageFromPipelineImage('source', basename(image.path), image, index),
-          ),
-          total: sourceTotalRef.value,
+          items: [
+            ...sourceItems.map((image, index) =>
+              resultImageFromPipelineImage('source', basename(image.path), image, index),
+            ),
+            ...loadingResultImages('source', '图像加载中', loadingCount),
+          ],
+          total,
           failed: sourceFailedRef.value,
           paginated: true,
+          defaultCollapsed: sourceSectionKey === 'source_images',
         }),
+      )
+      this.emitRunProgress(
+        db,
+        runId,
+        'running',
+        'source',
+        stats,
+        config.source.mode === 'collection' ? '正在扫描采集来源图片' : '正在流式准备来源印花',
       )
     }
 
@@ -2446,43 +2414,22 @@ export class PipelineService {
       `${runId}:source`,
       runId,
       'source',
-      'generation',
-      '来源生图',
+      sourceModule,
+      sourceLabel,
       'running',
       0,
       0,
       Date.now(),
       Date.now(),
     )
-    db.prepare(
-      `
-        INSERT INTO pipeline_steps (
-          id, run_id, step_key, module, label, status, input_count, output_count, output_json,
-          error_json, started_at, completed_at, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
-        ON CONFLICT(run_id, step_key) DO UPDATE SET
-          status = excluded.status,
-          input_count = excluded.input_count,
-          output_count = excluded.output_count,
-          output_json = NULL,
-          error_json = NULL,
-          started_at = excluded.started_at,
-          completed_at = NULL,
-          updated_at = excluded.updated_at
-      `,
-    ).run(
-      `${runId}:matting`,
+    this.emitRunProgress(
+      db,
       runId,
-      'matting',
-      'generation',
-      '抠图',
       'running',
-      0,
-      0,
-      Date.now(),
-      Date.now(),
+      'source',
+      stats,
+      config.source.mode === 'collection' ? '正在扫描采集来源图片' : '正在流式准备来源印花',
     )
-    this.emitRunProgress(db, runId, 'running', 'source', stats, '正在流式生成来源印花')
     const stageRegistrations = this.buildStreamingPrintStages(
       db,
       active,
@@ -2531,7 +2478,9 @@ export class PipelineService {
             ...(payload.printId ? { printId: payload.printId } : {}),
           }
           sourceItems.push(image)
-          stats.prints = sourceItems.length
+          if (config.source.mode !== 'collection') {
+            stats.prints = sourceItems.length
+          }
           this.upsertPipelineItem(db, {
             runId,
             itemKey: payload.itemKey,
@@ -2553,11 +2502,28 @@ export class PipelineService {
           ).run(sourceTotalRef.value, sourceItems.length, Date.now(), runId)
           if (!this.stopAcceptingMoreWork(active)) {
             sourceQueue.push(payload)
-            this.emitRunProgress(db, runId, 'running', 'source', stats, '来源印花已流出')
+            this.emitRunProgress(
+              db,
+              runId,
+              'running',
+              'source',
+              stats,
+              config.source.mode === 'collection' ? '来源图片已进入提取' : '来源印花已流出',
+            )
           }
+        },
+        {
+          onPlannedCount: (count) => {
+            plannedSourceCount = count
+            refreshSourceSection()
+          },
         },
       )
       sourceFailedRef.value = result.failed
+      const failureLogLabel = sourceFailureLogLabel(config)
+      if (failureLogLabel) {
+        this.appendGenerationFailureLog(runId, 'source', failureLogLabel, result)
+      }
       refreshSourceSection()
       sourceQueue.end()
       await consumeOutputPromise
@@ -2586,6 +2552,9 @@ export class PipelineService {
         Date.now(),
         runId,
       )
+      if (!shouldRunMattingStep(config)) {
+        this.recordSkippedStep(db, runId, 'matting', 'generation', '抠图', outputItems.length)
+      }
       if (!shouldRunDetectionStep(config)) {
         this.recordSkippedStep(db, runId, 'detection', 'detection', '侵权检测', outputItems.length)
       }
@@ -2860,6 +2829,7 @@ export class PipelineService {
     visibleFilenameFields: PipelineVisibleFilenameFields,
     emitMessage: (message: string) => void,
     emitPreviewImages: (images: GenerationRunImage[], total: number, failed: number) => void,
+    onImageComplete?: (payload: GenerationImageCompletePayload) => void | Promise<void>,
   ): Promise<GenerationRunResult> {
     const sourceImagePaths = sourceImages.map((image) => image.path)
     if (config.provider === 'grsai') {
@@ -2889,6 +2859,7 @@ export class PipelineService {
               emitMessage,
               emitPreviewImages,
             ),
+            ...(onImageComplete ? { onImageComplete } : {}),
           },
         ),
       )
@@ -2915,6 +2886,7 @@ export class PipelineService {
             emitMessage,
             emitPreviewImages,
           ),
+          ...(onImageComplete ? { onImageComplete } : {}),
         },
       ),
     )
@@ -2929,13 +2901,64 @@ export class PipelineService {
     visibleFilenameFields: PipelineVisibleFilenameFields,
     _queue: AsyncItemQueue<PipelinePrintStreamItem>,
     onItem: (item: PipelinePrintStreamItem) => void,
+    callbacks: StreamingSourceProducerCallbacks = {},
   ): Promise<StreamingSourceProducerResult> {
     const source = config.source
+    if (source.mode === 'collection') {
+      const sourcePaths = await scanImageFiles(source.sourceFolder)
+      if (sourcePaths.length === 0) {
+        throw new AppErrorClass('HTTP_4XX', '采集目录里没有可提取的图片', false)
+      }
+      callbacks.onPlannedCount?.(sourcePaths.length)
+      for (const [index, sourcePath] of sourcePaths.entries()) {
+        this.assertCanAcceptMoreWork(active)
+        onItem({
+          itemKey: `source-${index + 1}`,
+          path: sourcePath,
+          sourceArtifactIds: [],
+        })
+      }
+      return {
+        taskId: `${runId}-collection-source`,
+        total: sourcePaths.length,
+        succeeded: sourcePaths.length,
+        failed: 0,
+        images: [],
+        failures: [],
+        itemCount: sourcePaths.length,
+      }
+    }
     if (source.mode === 'existing_prints') {
-      throw new AppErrorClass('HTTP_5XX', '已有印花来源不走流式 source producer', true)
+      const paths = await scanImageFiles(source.printFolder)
+      if (paths.length === 0) {
+        throw new AppErrorClass('HTTP_4XX', '印花目录里没有可套版图片', false)
+      }
+      callbacks.onPlannedCount?.(paths.length)
+      for (const [index, path] of paths.entries()) {
+        this.assertCanAcceptMoreWork(active)
+        onItem({
+          itemKey: `existing-print-${index + 1}`,
+          path,
+          sourceArtifactIds: [],
+        })
+      }
+      return {
+        taskId: `${runId}-existing-prints-source`,
+        total: paths.length,
+        succeeded: paths.length,
+        failed: 0,
+        images: paths.map((path) => ({
+          prompt: '',
+          url: '',
+          localPath: path,
+        })),
+        failures: [],
+        itemCount: paths.length,
+      }
     }
     if (source.mode === 'txt2img') {
       const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
+      callbacks.onPlannedCount?.(prompts.length)
       if (source.provider === 'comfyui-chenyu') {
         const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
         const aggregate: GenerationRunResult = {
@@ -3027,6 +3050,7 @@ export class PipelineService {
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
       const sourcePaths = await scanImageFiles(source.sourceFolder)
       const batchSize = source.comfyui.batchSize ?? 1
+      callbacks.onPlannedCount?.(sourcePaths.length * batchSize)
       const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
       const aggregate: GenerationRunResult = {
         taskId: `${runId}-img2img`,
@@ -3094,6 +3118,7 @@ export class PipelineService {
         config.printMode,
         promptReferences,
       )
+      callbacks.onPlannedCount?.(prompts.length)
       if (!source.grsai) {
         throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
       }
@@ -3132,9 +3157,7 @@ export class PipelineService {
       this.recordStreamingSourceFailures(db, runId, result, itemCount)
       return { ...result, itemCount }
     }
-    throw new AppErrorClass('HTTP_5XX', '当前来源暂不支持流式生产者', true, {
-      sourceMode: source.mode,
-    })
+    throw new AppErrorClass('HTTP_5XX', '当前来源暂不支持流式生产者', true)
   }
 
   private recordStreamingSourceFailures(
@@ -3159,6 +3182,261 @@ export class PipelineService {
         errorMessage: failure.error,
         completed: true,
       })
+    }
+  }
+
+  private createStreamingExtractStage(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    active: ActivePipelineRun,
+    context: PipelineStageRuntimeContext,
+    stats: PipelineRunStats,
+    visibleFilenameFields: PipelineVisibleFilenameFields,
+  ) {
+    const collectionSource = context.config.source.mode === 'collection' ? context.config.source : null
+    if (!collectionSource) {
+      throw new AppErrorClass('HTTP_5XX', '仅 collection 来源可创建 extract stage', true)
+    }
+    const activeCollectionSource = collectionSource
+    let queued = 0
+    let completed = 0
+    let failed = 0
+    const outputItems: PipelineImage[] = []
+
+    const refreshExtractSection = () => {
+      this.updateResultSection(
+        context.runId,
+        resultSection({
+          key: IMAGE_PROCESSING_SECTION_KEY,
+          title: '图像处理',
+          items: outputItems.map((image, index) =>
+            resultImageFromPipelineImage('extract', basename(image.path), image, index),
+          ),
+          total: queued,
+          failed,
+        }),
+      )
+    }
+
+    return (input: AsyncIterable<PipelinePrintStreamItem>) => {
+      const service = this
+      async function* stage(items: AsyncIterable<PipelinePrintStreamItem>) {
+        db.prepare(
+          `
+            INSERT INTO pipeline_steps (
+              id, run_id, step_key, module, label, status, input_count, output_count, output_json,
+              error_json, started_at, completed_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
+            ON CONFLICT(run_id, step_key) DO UPDATE SET
+              status = excluded.status,
+              input_count = excluded.input_count,
+              output_count = excluded.output_count,
+              output_json = NULL,
+              error_json = NULL,
+              started_at = excluded.started_at,
+              completed_at = NULL,
+              updated_at = excluded.updated_at
+          `,
+        ).run(
+          `${context.runId}:extract`,
+          context.runId,
+          'extract',
+          'generation',
+          '提取',
+          'running',
+          0,
+          0,
+          Date.now(),
+          Date.now(),
+        )
+
+        const sourceItems: PipelinePrintStreamItem[] = []
+        for await (const item of items) {
+          service.assertCanAcceptMoreWork(active)
+          queued += 1
+          sourceItems.push(item)
+          service.upsertPipelineItem(db, {
+            runId: context.runId,
+            itemKey: item.itemKey,
+            stepKey: 'extract',
+            status: 'running',
+            sourcePath: item.path,
+            sourceArtifactIds: item.sourceArtifactIds,
+          })
+          db.prepare(
+            `
+              UPDATE pipeline_steps
+              SET input_count = ?, updated_at = ?
+              WHERE run_id = ? AND step_key = 'extract'
+            `,
+          ).run(queued, Date.now(), context.runId)
+          service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取流处理中')
+        }
+
+        if (sourceItems.length === 0) {
+          db.prepare(
+            `
+              UPDATE pipeline_steps
+              SET status = 'completed',
+                  input_count = 0,
+                  output_count = 0,
+                  output_json = ?,
+                  completed_at = ?,
+                  updated_at = ?
+              WHERE run_id = ? AND step_key = 'extract'
+            `,
+          ).run(JSON.stringify({ total: 0, succeeded: 0, failed: 0 }), Date.now(), Date.now(), context.runId)
+          service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取完成')
+          return
+        }
+
+        const sourceItemByArtifactId = new Map<string, PipelinePrintStreamItem>()
+        const sourceItemsByPath = new Map(sourceItems.map((item) => [item.path, item] as const))
+        const stageOutput = new AsyncItemQueue<PipelinePrintStreamItem>()
+
+        service.updateResultSection(
+          context.runId,
+          resultSection({
+            key: IMAGE_PROCESSING_SECTION_KEY,
+            title: '图像处理',
+            items: loadingResultImages('extract', '图像加载中', sourceItems.length),
+            total: sourceItems.length,
+          }),
+        )
+
+        for (const sourceItem of sourceItems) {
+          if (sourceItem.sourceArtifactIds[0]) {
+            sourceItemByArtifactId.set(sourceItem.sourceArtifactIds[0], sourceItem)
+          }
+        }
+
+        const extractResult = await service.runExtractConfig(
+          active,
+          context.runId,
+          activeCollectionSource.extract,
+          sourceItems.map((item) => ({ path: item.path })),
+          visibleFilenameFields,
+          (message) => {
+            service.appendLog(context.runId, {
+              level: 'info',
+              step_key: 'extract',
+              message,
+            })
+            service.emitRunProgress(db, context.runId, 'running', 'extract', stats, message)
+          },
+          (_images, total, failedCount) => {
+            service.updateResultSection(
+              context.runId,
+              resultSection({
+                key: IMAGE_PROCESSING_SECTION_KEY,
+                title: '图像处理',
+                items: [
+                  ...outputItems.map((image, index) =>
+                    resultImageFromPipelineImage('extract', basename(image.path), image, index),
+                  ),
+                  ...loadingResultImages(
+                    'extract',
+                    '图像加载中',
+                    Math.max(0, total - outputItems.length - failedCount),
+                  ),
+                ],
+                total,
+                failed: failedCount,
+              }),
+            )
+            service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取流处理中')
+          },
+          async (payload) => {
+            const sourceArtifactId = payload.sourceArtifactIds[0]
+            const sourceItem =
+              sourceArtifactId ? sourceItemByArtifactId.get(sourceArtifactId) : undefined
+            const itemKey = payload.printId ?? sourceItem?.itemKey ?? `extract-${completed + 1}`
+            completed += 1
+            outputItems.push({
+              path: payload.path,
+              ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
+              ...(payload.printId ? { printId: payload.printId } : {}),
+            })
+            stats.prints = completed
+            service.upsertPipelineItem(db, {
+              runId: context.runId,
+              itemKey,
+              stepKey: 'extract',
+              status: 'completed',
+              sourcePath: sourceItem?.path,
+              outputPath: payload.path,
+              artifactId: payload.artifactId,
+              printId: payload.printId,
+              sourceArtifactIds: payload.sourceArtifactIds,
+              completed: true,
+            })
+            refreshExtractSection()
+            db.prepare(
+              `
+                UPDATE pipeline_steps
+                SET output_count = ?, updated_at = ?
+                WHERE run_id = ? AND step_key = 'extract'
+              `,
+            ).run(completed, Date.now(), context.runId)
+            stageOutput.push({
+              itemKey,
+              path: payload.path,
+              artifactId: payload.artifactId,
+              printId: payload.printId,
+              sourceArtifactIds: payload.sourceArtifactIds,
+            })
+          },
+        )
+
+        failed = extractResult.failed
+        service.appendGenerationFailureLog(context.runId, 'extract', '提取', extractResult)
+        for (const failure of extractResult.failures) {
+          const failedItem = failure.sourcePath ? sourceItemsByPath.get(failure.sourcePath) : undefined
+          if (!failedItem) {
+            continue
+          }
+          service.upsertPipelineItem(db, {
+            runId: context.runId,
+            itemKey: failedItem.itemKey,
+            stepKey: 'extract',
+            status: 'failed',
+            sourcePath: failedItem.path,
+            sourceArtifactIds: failedItem.sourceArtifactIds,
+            errorMessage: failure.error,
+            completed: true,
+          })
+        }
+        refreshExtractSection()
+        db.prepare(
+          `
+            UPDATE pipeline_steps
+            SET status = 'completed',
+                input_count = ?,
+                output_count = ?,
+                output_json = ?,
+                completed_at = ?,
+                updated_at = ?
+            WHERE run_id = ? AND step_key = 'extract'
+          `,
+        ).run(
+          queued,
+          completed,
+          JSON.stringify({
+            total: extractResult.total,
+            succeeded: extractResult.succeeded,
+            failed: extractResult.failed,
+          }),
+          Date.now(),
+          Date.now(),
+          context.runId,
+        )
+        service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取完成')
+        stageOutput.end()
+
+        for await (const item of stageOutput) {
+          yield item
+        }
+      }
+      return stage(input)
     }
   }
 
