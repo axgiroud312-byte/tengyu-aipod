@@ -231,11 +231,14 @@ const mocks = vi.hoisted(() => ({
     }),
   ),
   runComfyuiImg2imgBatch: vi.fn(
-    async (input: {
-      sourceImagePaths?: string[]
-      batchSize?: number
-      taskId?: string
-    }, dependencies?: GenerationBatchDependencies): Promise<GenerationRunResult> => {
+    async (
+      input: {
+        sourceImagePaths?: string[]
+        batchSize?: number
+        taskId?: string
+      },
+      dependencies?: GenerationBatchDependencies,
+    ): Promise<GenerationRunResult> => {
       const paths = input.sourceImagePaths ?? []
       const batchSize = input.batchSize ?? 1
       const images = paths.flatMap((sourcePath, sourceIndex) =>
@@ -612,7 +615,11 @@ describe('PipelineService', () => {
     })
 
     expect(mocks.runBatch.mock.calls[0]?.[2]).toMatchObject({ outputRoot })
-    expect((await service.getRun('run-custom-output'))?.steps.find((step) => step.step_key === 'photoshop')).toMatchObject({
+    expect(
+      (await service.getRun('run-custom-output'))?.steps.find(
+        (step) => step.step_key === 'photoshop',
+      ),
+    ).toMatchObject({
       status: 'completed',
       output_count: 1,
     })
@@ -1661,6 +1668,93 @@ describe('PipelineService', () => {
       ],
     ])
     expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
+  })
+
+  it('passes AI prompt settings to the ComfyUI img2img runner', async () => {
+    const sourceFolder = join(mocks.workbenchRoot, 'external-img2img-ai-source')
+    await createPrint(join(sourceFolder, 'a.png'))
+
+    const service = new PipelineService()
+    await service.runPipeline('run-img2img-comfyui-ai', {
+      ...baseConfig('/unused'),
+      printMode: 'full',
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder,
+        prompt: {
+          mode: 'ai',
+          requirement: 'make a floral pattern',
+          model: 'qwen3-vl-flash',
+          modeInstruction: 'Use both layout and style from the reference image.',
+          skillId: 'img2img-full-reference',
+          skillVersion: '1.0.0',
+        },
+        comfyui: {
+          workflowId: 'wf-img2img',
+          instanceUuid: 'instance-b',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(mocks.runComfyuiImg2imgBatch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        promptMode: 'ai',
+        printMode: 'full',
+        promptSkillId: 'img2img-full-reference',
+        promptSkillVersion: '1.0.0',
+        promptModel: 'qwen3-vl-flash',
+        modeInstruction: 'Use both layout and style from the reference image.',
+        requirement: 'make a floral pattern',
+      }),
+      expect.anything(),
+    )
+  })
+
+  it('allows workflow prompt mode for complete-task ComfyUI img2img', async () => {
+    const sourceFolder = join(mocks.workbenchRoot, 'external-img2img-workflow-source')
+    await createPrint(join(sourceFolder, 'a.png'))
+
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-img2img-comfyui-workflow', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder,
+        prompt: { mode: 'workflow' },
+        comfyui: {
+          workflowId: 'wf-img2img',
+          instanceUuid: 'instance-b',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    const input = mocks.runComfyuiImg2imgBatch.mock.calls[0]?.[0] as
+      | Record<string, unknown>
+      | undefined
+    expect(input).toMatchObject({ promptMode: 'workflow' })
+    expect(input).not.toHaveProperty('promptSkillId')
+    expect(input).not.toHaveProperty('promptModel')
   })
 
   it('emits staged result sections and runtime logs for a complete task', async () => {

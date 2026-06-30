@@ -729,6 +729,33 @@ describe('ComfyuiChenyuAdapter', () => {
     })
   })
 
+  it('only injects the first non-negative prompt slot', () => {
+    const injected = injectComfyuiInputs(
+      {
+        '1': { inputs: { text: 'workflow main prompt' }, _meta: { title: 'Positive Prompt' } },
+        '2': { inputs: { text: 'workflow negative prompt' }, _meta: { title: 'Negative Prompt' } },
+        '3': { inputs: { text: 'workflow detail prompt' }, _meta: { title: 'Detail Prompt' } },
+      },
+      [
+        { name: 'prompt', nodeId: '1', field: 'text' },
+        { name: 'negativePrompt', nodeId: '2', field: 'text' },
+        { name: 'detailPrompt', nodeId: '3', field: 'text' },
+      ],
+      {
+        capability: 'img2img',
+        prompt: 'AI generated prompt',
+        output: {},
+      },
+      { uploadedImages: [] },
+    )
+
+    expect(injected).toEqual({
+      '1': { inputs: { text: 'AI generated prompt' }, _meta: { title: 'Positive Prompt' } },
+      '2': { inputs: { text: 'workflow negative prompt' }, _meta: { title: 'Negative Prompt' } },
+      '3': { inputs: { text: 'workflow detail prompt' }, _meta: { title: 'Detail Prompt' } },
+    })
+  })
+
   it('requires output images from configured output slots', () => {
     expect(() =>
       outputsFromHistory({ outputs: { '9': { text: ['not image'] } } }, [
