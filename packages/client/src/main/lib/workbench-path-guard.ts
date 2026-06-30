@@ -7,6 +7,7 @@ export type WorkbenchPathDomain =
   | 'generation'
   | 'detection'
   | 'listing'
+  | 'video'
   | 'local-image'
   | 'visible-workbench'
 
@@ -65,6 +66,7 @@ export function workbenchDomainRoots(workbenchRoot: string, domain: WorkbenchPat
     join(root, WORKBENCH_DIRECTORIES.generation),
     join(root, WORKBENCH_DIRECTORIES.detection),
     join(root, WORKBENCH_DIRECTORIES.listing),
+    join(root, WORKBENCH_DIRECTORIES.video),
   ]
   const privateImageRoots = [
     join(root, WORKBENCH_DIRECTORIES.metadata, 'tmp'),
@@ -80,6 +82,8 @@ export function workbenchDomainRoots(workbenchRoot: string, domain: WorkbenchPat
       return [join(root, WORKBENCH_DIRECTORIES.detection)]
     case 'listing':
       return [join(root, WORKBENCH_DIRECTORIES.listing)]
+    case 'video':
+      return [join(root, WORKBENCH_DIRECTORIES.video)]
     case 'local-image':
       return [...businessRoots, ...privateImageRoots]
     case 'visible-workbench':

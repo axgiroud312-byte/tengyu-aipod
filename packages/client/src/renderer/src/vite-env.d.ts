@@ -139,6 +139,34 @@ declare global {
           import('../../main/lib/generation-local-config').GenerationLocalSettingsSnapshot
         >
       }
+      video: {
+        chooseImages: (input?: { multiple?: boolean }) => Promise<
+          | { ok: true; data: { paths: string[] } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+        run: (
+          input: import('../../main/lib/video-generation-service').VideoRunInput,
+        ) => Promise<string>
+        stop: (input: { task_id: string }) => Promise<{ ok: boolean }>
+        openPath: (
+          input: { path: string },
+        ) => Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }>
+        onProgress: (
+          callback: (
+            progress: import('../../main/lib/video-generation-service').VideoProgressEvent,
+          ) => void,
+        ) => () => void
+        onCompleted: (
+          callback: (
+            event: import('../../main/lib/video-generation-service').VideoCompletedEvent,
+          ) => void,
+        ) => () => void
+        onDebugLog: (
+          callback: (
+            entry: import('../../main/lib/video-generation-service').VideoRuntimeLogEntry,
+          ) => void,
+        ) => () => void
+      }
       workflow: {
         chooseDirectory: () => Promise<WorkflowDirectoryChooseResult>
         listLocal: (

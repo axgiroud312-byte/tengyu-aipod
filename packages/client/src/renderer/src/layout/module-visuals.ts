@@ -32,6 +32,11 @@ const moduleVisuals: Record<WorkbenchModule, ModuleVisual> = {
     glow: 'rgba(79, 70, 229, 0.22)',
     image: 'brand/visuals/module-listing.png',
   },
+  video: {
+    accent: 'hsl(221 83% 53%)',
+    glow: 'rgba(37, 99, 235, 0.22)',
+    image: 'brand/visuals/module-generation.png',
+  },
   ps: {
     accent: 'hsl(199 89% 48%)',
     glow: 'rgba(2, 132, 199, 0.22)',

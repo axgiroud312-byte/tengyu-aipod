@@ -118,6 +118,12 @@ import type {
 } from '../main/lib/generation-service'
 import type { ListingBatchLoadResult } from '../main/lib/listing-batch-loader'
 import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/lib/title-service'
+import type {
+  VideoCompletedEvent,
+  VideoProgressEvent,
+  VideoRuntimeLogEntry,
+  VideoRunInput,
+} from '../main/lib/video-generation-service'
 import type { PhotoshopPrintFolderScan } from '../main/photoshop/print-folder'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'
 
@@ -486,6 +492,50 @@ const api = {
 
       return () => {
         ipcRenderer.removeListener('generation:debug-log', listener)
+      }
+    },
+  },
+  video: {
+    chooseImages: (input?: { multiple?: boolean }) =>
+      ipcRenderer.invoke('video:choose-images', input) as Promise<
+        | { ok: true; data: { paths: string[] } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    run: (input: VideoRunInput) => ipcRenderer.invoke('video:run', input) as Promise<string>,
+    stop: (input: { task_id: string }) =>
+      ipcRenderer.invoke('video:stop', input) as Promise<{ ok: boolean }>,
+    openPath: (input: { path: string }) =>
+      ipcRenderer.invoke('video:open-path', input) as Promise<
+        { ok: true } | { ok: false; error: { code: string; message: string } }
+      >,
+    onProgress: (callback: (progress: VideoProgressEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, progress: VideoProgressEvent) => {
+        callback(progress)
+      }
+      ipcRenderer.on('video:progress', listener)
+
+      return () => {
+        ipcRenderer.removeListener('video:progress', listener)
+      }
+    },
+    onCompleted: (callback: (event: VideoCompletedEvent) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, event: VideoCompletedEvent) => {
+        callback(event)
+      }
+      ipcRenderer.on('video:completed', listener)
+
+      return () => {
+        ipcRenderer.removeListener('video:completed', listener)
+      }
+    },
+    onDebugLog: (callback: (entry: VideoRuntimeLogEntry) => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, entry: VideoRuntimeLogEntry) => {
+        callback(entry)
+      }
+      ipcRenderer.on('video:debug-log', listener)
+
+      return () => {
+        ipcRenderer.removeListener('video:debug-log', listener)
       }
     },
   },

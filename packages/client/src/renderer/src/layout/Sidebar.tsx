@@ -11,6 +11,7 @@ import {
   ShieldCheck,
   Sparkles,
   Type,
+  Video,
   Workflow,
 } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
@@ -24,6 +25,7 @@ const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>
   generation: Sparkles,
   detection: ShieldCheck,
   listing: Rocket,
+  video: Video,
   ps: Layers,
   settings: Settings2,
   tutorial: HelpCircle,

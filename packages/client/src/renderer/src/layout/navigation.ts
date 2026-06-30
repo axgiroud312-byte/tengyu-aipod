@@ -5,6 +5,7 @@ export type WorkbenchModule =
   | 'generation'
   | 'detection'
   | 'listing'
+  | 'video'
   | 'ps'
   | 'settings'
   | 'tutorial'
@@ -69,6 +70,13 @@ export const workbenchModules: WorkbenchModuleMeta[] = [
     label: '上架',
     title: '上架模块',
     description: '批量操作店小秘草稿并保留真实页面证据',
+  },
+  {
+    key: 'video',
+    path: '/video',
+    label: '视频生成',
+    title: '视频生成模块',
+    description: '用 HappyHorse 生成本地 MP4 视频',
   },
 ]
 

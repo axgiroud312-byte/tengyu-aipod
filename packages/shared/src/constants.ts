@@ -18,6 +18,7 @@ export const WORKBENCH_DIRECTORIES = {
   generation: '02-印花工作区',
   detection: '03-检测工作区',
   listing: '04-上架工作区',
+  video: '05-视频工作区',
   productImages: '04-上架工作区',
   metadata: '.workbench',
 } as const

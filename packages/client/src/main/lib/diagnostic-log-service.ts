@@ -4,7 +4,7 @@ import { basename, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { readAppConfig } from './workbench-config'
 
-export type DiagnosticModule = 'generation' | 'detection' | 'title'
+export type DiagnosticModule = 'generation' | 'video' | 'detection' | 'title'
 
 export type DiagnosticLogEvent = {
   type: string

@@ -14,6 +14,7 @@ export const workbenchSubdirectories = [
   `${WORKBENCH_DIRECTORIES.generation}/抠图`,
   WORKBENCH_DIRECTORIES.detection,
   WORKBENCH_DIRECTORIES.listing,
+  WORKBENCH_DIRECTORIES.video,
   WORKBENCH_DIRECTORIES.metadata,
 ] as const
 

@@ -22,6 +22,7 @@ import {
 import { PhotoshopPage } from '@/features/photoshop/PhotoshopPage'
 import { FullTaskPage } from '@/features/pipeline/FullTaskPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
+import { VideoPage } from '@/features/video/VideoPage'
 import {
   type TitleExistingStrategy,
   type TitleFormState,
@@ -227,7 +228,7 @@ function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
           <h1 className="text-2xl font-semibold tracking-normal">请先选择工作区</h1>
           <p className="text-sm leading-6 text-muted-foreground">
             采集、生图、检测、PS
-            套版、标题和上架都会把文件写入工作区。选择后会自动创建采集工作区、印花工作区、检测工作区和上架工作区。
+            套版、标题、上架和视频生成都会把文件写入工作区。选择后会自动创建采集工作区、印花工作区、检测工作区、上架工作区和视频工作区。
           </p>
         </div>
       </div>
@@ -1323,6 +1324,9 @@ function MainWorkbench() {
                 </div>
                 <div hidden={activeModule !== 'listing'}>
                   <ListingPage />
+                </div>
+                <div hidden={activeModule !== 'video'}>
+                  <VideoPage />
                 </div>
                 <div hidden={activeModule !== 'ps'}>
                   <PhotoshopPage />

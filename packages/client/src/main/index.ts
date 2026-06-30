@@ -34,6 +34,7 @@ import { pipelineService, registerPipelineIpc } from './lib/pipeline-service'
 import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
 import { registerTitleIpc } from './lib/title-service'
+import { registerVideoGenerationIpc } from './lib/video-generation-service'
 import { registerOnboardingIpc } from './onboarding'
 import { registerPhotoshopIpc } from './photoshop/ipc'
 
@@ -143,6 +144,7 @@ app.whenReady().then(() => {
     registerDetectionConfigIpc()
     registerDetectionIpc()
     registerGenerationIpc()
+    registerVideoGenerationIpc()
     registerPipelineIpc()
     registerListingRunnerIpc()
     registerPhotoshopIpc()

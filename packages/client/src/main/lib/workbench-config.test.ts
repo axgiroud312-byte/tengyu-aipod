@@ -31,6 +31,7 @@ describe('workbench config directories', () => {
     await expectDirectory(join(workbenchRoot, '02-印花工作区', '抠图'))
     await expectDirectory(join(workbenchRoot, '03-检测工作区'))
     await expectDirectory(join(workbenchRoot, '04-上架工作区'))
+    await expectDirectory(join(workbenchRoot, '05-视频工作区'))
     await expectDirectory(join(workbenchRoot, '.workbench'))
   })
 })
