@@ -79,6 +79,7 @@ class TempFileManager {
 ├─ 02-印花工作区/    ← 只放图片
 ├─ 03-检测工作区/    ← 只放图片
 ├─ 04-上架工作区/    ← 只放图片 + 标题 xlsx
+├─ 05-视频工作区/    ← 只放 MP4
 └─ .workbench/       ← 黑盒，用户不动
     └─ tmp/         ← 临时文件
 ```
@@ -86,6 +87,7 @@ class TempFileManager {
 **强约束**：业务工作区目录里**绝对不放 .json、.jsx、.csv 等元数据/中间产物文件**。
 
 只有 `04-上架工作区/{模板批次}/` 下允许标题 xlsx（这是业务文件，给上架程序读；当前优先 `标题.xlsx`，兼容旧 `titles.xlsx`）。
+`05-视频工作区/` 只允许视频生成模块写入最终 MP4 产物。
 
 ## 候选方案对比
 
@@ -176,8 +178,8 @@ async cleanupTask(module: string, taskId: string, opts: { keepIfFailed?: boolean
 ### 强制约束的措施
 
 - Code review 中检查模块代码不直接写业务工作区目录的非业务文件
-- 单元测试验证：模块跑完后业务工作区新增的非图片文件 = 0（上架批次标题 xlsx 除外）
-- 文档（CONTEXT.md / spec/00-overview）明确"业务工作区目录只放业务图片"
+- 单元测试验证：模块跑完后业务工作区新增的非业务产物 = 0（上架批次标题 xlsx、视频生成 MP4 除外）
+- 文档（CONTEXT.md / spec/00-overview）明确"业务工作区目录只放业务产物"
 
 ## 替代决策的触发条件
 

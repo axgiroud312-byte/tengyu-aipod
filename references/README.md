@@ -19,6 +19,9 @@
 - [grsai-api.md](./generation-paid/grsai-api.md) — Grsai 付费 AI API 中转站；腾域当前只接入 `gpt-image-2` / `gpt-image-2-vip`，统一走原生 `/v1/api/generate`
 - _待编写_ — skill 提示词设计原则、各模型对比
 
+### 生图 - 视频（generation-video/）
+- [happyhorse-api.md](./generation-video/happyhorse-api.md) — 阿里云百炼 HappyHorse 文生视频 / 图生视频 / 参考生视频 / 视频编辑 API；原始 HTML 已同步保存在同目录
+
 ### 视觉/LLM 横切 provider（vision-llm-providers/）
 - [aliyun-bailian-api.md](./vision-llm-providers/aliyun-bailian-api.md) — 阿里云百炼，生图提示词当前默认 `qwen3.6-flash`，并覆盖侵权检测/标题生成所需视觉与文本模型，OpenAI 兼容接入
 

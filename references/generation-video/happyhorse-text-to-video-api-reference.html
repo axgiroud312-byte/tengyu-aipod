@@ -1,0 +1,1107 @@
+
+
+<!DOCTYPE html><html lang="zh"><head>
+  <meta name="nav-disable" content="flex">
+  
+  <link rel="icon" href="https://img.alicdn.com/imgextra/i2/O1CN01TFs5Qw27uYvfA6gib_!!6000000007857-55-tps-32-32.svg" type="image/x-icon">
+  <link rel="apple-touch-icon" sizes="72x72" href="https://img.alicdn.com/imgextra/i4/O1CN01jlcNT71YBfZJJI7qY_!!6000000003021-2-tps-128-128.png">
+  
+
+  <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+  <meta http-equiv="X-UA-Compatible" content="IE=edge,chrome=1">
+  <meta http-equiv="Cache-Control" content="no-siteapp">
+  <meta name="renderer" content="webkit">
+  <meta http-equiv="x-ua-compatible" content="ie=edge,chrome=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1, maximum-scale=1, user-scalable=no">
+  <meta name="applicable-device" content="pc,mobile">
+  <meta name="nav-config" content="footer=default">
+  <meta name="aplus-core" content="aplus.js">
+  <meta name="aplus-ajax" content="chksum">
+  <meta name="aplus-waiting" content="MAN">
+  <meta name="aplus-pvhash" content="1">
+  
+  <meta name="data-spm" content="a2c4g">
+  
+  <script>
+    window.pageStartTime = Date.now();
+  </script>
+
+  
+  <title>
+    HappyHorse-文生视频API参考-大模型服务平台百炼(Model Studio)-阿里云帮助中心
+  </title>
+  <link rel="canonical" href="https://help.aliyun.com/zh/model-studio/happyhorse-text-to-video-api-reference">
+  <meta name="keywords" content="文生视频API参考,HappyHorse,视频生成,AI视频,T2V">
+  <meta name="description" content="HappyHorse文生视频模型，输入文本提示词生成物理真实、运动流畅的视频内容。">
+  <meta name="last-modified" content="2026-06-23T16:12:44+08:00">
+  <meta name="date" content="2026-04-26T11:54:53+08:00">
+  <meta property="og:title" content="HappyHorse-文生视频">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://help.aliyun.com/zh/model-studio/happyhorse-text-to-video-api-reference">
+  <meta property="og:image" content="https://img.alicdn.com/imgextra/i1/O1CN012QgtoH1c1Mu70xD3w_!!6000000003540-2-tps-640-640.png">
+  <meta property="og:description" content="HappyHorse文生视频模型，输入文本提示词生成物理真实、运动流畅的视频内容。">
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "WebPage",
+    "url": "https://help.aliyun.com/zh/model-studio/happyhorse-text-to-video-api-reference",
+    "publisher": {
+      "@type": "Organization",
+      "name": "阿里云计算",
+      "url": "https://www.aliyun.com/",
+      "logo": "https://img.alicdn.com/imgextra/i1/O1CN01BEqugB1KebzCRyIJl_!!6000000001189-55-tps-48-48.svg"
+    }
+  }
+  </script>
+  
+
+  <link href="https://g.alicdn.com/aliyun-help/help-portal-fe/0.12.44/css/index.css" rel="stylesheet">
+  
+
+  <script>
+    window.globalData = {
+      nodeId: "3029820",
+      website: "cn",
+      language: "zh",
+    }
+    window.$ACE_TRACKER_CONFIG = {
+      "enableHistory": true,
+      "enableHash": false
+    }
+  </script>
+<script>
+    window.__ICE_SSR_ENABLED__=true;
+    window.__ICE_APP_DATA__={};
+window.__ICE_PAGE_PROPS__={"docDetailData":{"storeData":{"alias":"/model-studio/happyhorse-text-to-video-api-reference","nodeId":null,"data":{"lastModifiedTime":1782202364000,"keywords":"文生视频API参考,HappyHorse,视频生成,AI视频,T2V","docTitle":"HappyHorse-文生视频API参考","language":"zh","seoTitle":"HappyHorse-文生视频API参考-大模型服务平台百炼(Model Studio)-阿里云帮助中心","title":"HappyHorse-文生视频","content":"<div lang=\"zh\" class=\"icms-help-docs-content\">\n\n  <main id=\"main-3265195\">\n    \n    \n    <p id=\"8048199460kaj\" data-tag=\"shortdesc\" class=\"shortdesc\">HappyHorse<span class=\"help-letter-space\"></span>文生视频模型，输入文本提示词生成物理真实、运动流畅的视频内容。</p>\n    <div id=\"hh01body\" data-tag=\"body\" class=\"body\">\n      <section id=\"hh01scope\" class=\"section\">\n        <h2 id=\"hh01scope-title\">适用范围</h2>\n        <p id=\"hh01scope-desc\">为确保调用成功，请务必保证模型、endpoint URL 和 API Key 均属于<b>同一地域</b>。跨地域调用将会失败。</p>\n        <ul id=\"hh01scope-list\">\n          <li id=\"hh01scope-li1\">\n            <p id=\"hh01scope-li1p\"><span data-tag=\"ph\" id=\"9ffa3a4204tnq\" props=\"china\" data-cond-props=\"china\" class=\"ph\"><a class=\"\" href=\"https://bailian.console.aliyun.com/cn-beijing?tab=model#/model-market/all\" id=\"8158377d09c3z\"><b>选择模型</b></a></span>：确认模型所属的地域。</p>\n          </li>\n          <li id=\"hh01scope-li2\">\n            <p id=\"hh01scope-li2p\"><b>选择 URL</b>：选择对应的地域 Endpoint URL，支持<span class=\"help-letter-space\"></span>HTTP URL。</p>\n          </li>\n          <li id=\"hh01scope-li3\">\n            <p id=\"hh01scope-li3p\"><b>配置 API Key</b>：获取该地域的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/get-api-key\" id=\"hh01scope-xref2\" title=\"\" class=\"xref\">API Key</a>，再<a href=\"https://help.aliyun.com/zh/model-studio/configure-api-key-through-environment-variables\" id=\"hh01scope-xref3\" title=\"\" class=\"xref\">配置<span class=\"help-letter-space\"></span>API Key<span class=\"help-letter-space\"></span>到环境变量</a>。</p>\n          </li>\n        </ul>\n        <div type=\"note\" id=\"hh01scope-note-china\" props=\"china\" data-cond-props=\"china\" class=\"note note-note\"><div class=\"note-icon-wrapper\"><i class=\"icon-note note note\"></i></div><div class=\"noteContentSpan\"><strong>说明 </strong>\n          <p id=\"hh01scope-note-china-p\">本文的示例代码适用于<b>华北<span class=\"help-letter-space\"></span>2（北京）地域</b>。</p>\n        </div></div>\n        \n        <div type=\"important\" id=\"8954a95aab0ep\" is-conref=\"true\" class=\"note note-important\"><div class=\"note-icon-wrapper\"><i class=\"icon-note note important\"></i></div><div class=\"noteContentSpan\"><strong>重要 </strong>\n        <p id=\"6610938-sg-https-migration-notice-p\">百炼为华北<span class=\"help-letter-space\"></span>2（北京）、新加坡地域推出了业务空间专属域名，<b>能够为推理请求提供卓越的性能和更高的稳定性</b>，建议迁移至新域名：</p>\n        <ul id=\"6610938-sg-https-migration-list\">\n          <li id=\"6610938-sg-https-bj-li\">\n            <p id=\"6610938-sg-https-bj-p\">华北<span class=\"help-letter-space\"></span>2（北京）地域：从 <code data-tag=\"code\" id=\"6610938-sg-https-bj-old\" class=\"code\">https://dashscope.aliyuncs.com</code> 迁移至 <code data-tag=\"code\" id=\"6610938-sg-https-bj-new\" class=\"code\">https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com</code></p>\n          </li>\n          <li id=\"6610938-sg-https-sg-li\">\n            <p id=\"6610938-sg-https-sg-p\">新加坡地域：从 <code data-tag=\"code\" id=\"6610938-sg-https-old-domain\" class=\"code\">https://dashscope-intl.aliyuncs.com</code> 迁移至 <code data-tag=\"code\" id=\"6610938-sg-https-new-domain\" class=\"code\">https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com</code></p>\n          </li>\n        </ul>\n        <p id=\"6610938-sg-https-wsid-p\">其中 <code data-tag=\"code\" id=\"6610938-sg-https-wsid\" class=\"code\">{WorkspaceId}</code> 为您的业务空间 ID，可在百炼控制台的<b>业务空间详情</b>页面查看。现有域名仍可正常使用。</p>\n      </div></div>\n      </section>\n      <section id=\"hh01http\" class=\"section\">\n        <h2 id=\"hh01http-title\">HTTP<span class=\"help-letter-space\"></span>调用</h2>\n        <p id=\"hh01http-desc\">文生视频任务耗时较长（通常为<span class=\"help-letter-space\"></span>1-5<span class=\"help-letter-space\"></span>分钟），API<span class=\"help-letter-space\"></span>采用异步调用的方式。整个流程包含&nbsp;<b>\"创建任务 -&gt; 轮询获取\"</b>&nbsp;两个核心步骤，具体如下：</p>\n        <section id=\"hh01step1\" class=\"section\">\n          <h3 id=\"hh01step1-title\"><b>步骤<span class=\"help-letter-space\"></span>1：创建任务获取任务<span class=\"help-letter-space\"></span>ID</b></h3>\n          <section id=\"hh01step1-china-tabs\" data-tag=\"tabbed-content-box\" outputclass=\"tabbed-content-box\" props=\"china\" data-cond-props=\"china\" class=\"tabbed-content-box section\">\n            <section id=\"hh01step1-china-bj\" class=\"section\">\n              <h2 id=\"hh01step1-china-bj-title\"><b>华北<span class=\"help-letter-space\"></span>2（北京）</b></h2>\n              <p id=\"hh01step1-china-bj-url\"><code data-tag=\"code\" id=\"hh01step1-china-bj-code\" class=\"code\">POST https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>\n              <p id=\"hh01step1-china-bj-note\">调用时请将<code data-tag=\"code\" id=\"hh01step1-china-bj-wsid\" class=\"code\">WorkspaceId</code>替换为真实的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu\" id=\"hh01step1-china-bj-xref\" title=\"\" class=\"xref\">Workspace ID</a>。</p>\n            </section>\n            <section id=\"hh01step1-china-sg\" class=\"section\">\n              <h2 id=\"hh01step1-china-sg-title\"><b>新加坡</b></h2>\n              <p id=\"hh01step1-china-sg-url\"><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01step1-china-sg-code\" class=\"code\">POST https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>\n              <p id=\"344d744a7a29\">调用时请将<code data-tag=\"code\" id=\"d174801c5862\" class=\"code\">WorkspaceId</code>替换为真实的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu\" id=\"397730f07dd9\" title=\"\" class=\"xref\">Workspace ID</a>。</p>\n            </section>\n            <section id=\"hh01step1-china-va\" class=\"section\">\n              <h2 id=\"hh01step1-china-va-title\"><b>美国（弗吉尼亚）</b></h2>\n              <p id=\"hh01step1-china-va-url\"><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01step1-china-va-code\" class=\"code\">POST https://dashscope-us.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>\n            </section>\n            <section id=\"hh01step1-china-fr\" class=\"section\">\n              <h2 id=\"hh01step1-china-fr-title\"><b>德国（法兰克福）</b></h2>\n              <p id=\"hh01step1-china-fr-url\"><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01step1-china-fr-code\" class=\"code\">POST https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>\n              <p id=\"hh01step1-china-fr-note\">调用时请将<code data-tag=\"code\" id=\"hh01step1-china-fr-wsid\" class=\"code\">WorkspaceId</code>替换为真实的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu\" id=\"hh01step1-china-fr-xref\" title=\"\" class=\"xref\">Workspace ID</a>。</p>\n            </section>\n          </section>\n          \n          <div type=\"note\" id=\"hh01step1-note\" is-conref=\"true\" class=\"note note-note\"><div class=\"note-icon-wrapper\"><i class=\"icon-note note note\"></i></div><div class=\"noteContentSpan\"><strong>说明 </strong>\n        <ul id=\"293298e687o1v\">\n          <li id=\"4f27058238nvw\">\n            <p id=\"8ea87a0a45mar\">创建成功后，使用接口返回的 <code data-tag=\"code\" id=\"b357e1caa0kcf\" class=\"code\">task_id</code> 查询结果，task_id 有效期为 24 小时。<b>请勿重复创建任务</b>，轮询获取即可。</p>\n          </li>\n          <li id=\"ceea565da7a22\">\n            <p id=\"6cd37e3e57tgj\">新手指引请参见<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/first-call-to-image-and-video-api\" id=\"a28717ba6dqgc\" title=\"\" class=\"xref\">Postman</a>。</p>\n          </li>\n        </ul>\n      </div></div>\n          <table bordertype=\"no-border\" id=\"hh01step1-table\" outputclass=\"api-reference column-layout\" tablewidth=\"100\" tablecolswidth=\"53.91 46.09\" autofit=\"true\" class=\"api-reference column-layout table\">\n            <colgroup colwidth=\"1.08*\" style=\"width:53.91%\"></colgroup>\n            <colgroup colwidth=\"0.92*\" style=\"width:46.09%\"></colgroup>\n            <tbody class=\"tbody\">\n              <tr id=\"hh01req-header\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01req-header-td1\" rowspan=\"1\" style=\"vertical-align:top\" colspan=\"1\">\n                  <h4 id=\"hh01req-header-h4\">请求参数</h4>\n                </td>\n                <td id=\"hh01req-header-td2\" rowspan=\"7\" style=\"vertical-align:top\" colspan=\"1\">\n                  <section id=\"hh01req-code-section\" outputclass=\"stick-top\" class=\"stick-top section\">\n                    <section id=\"hh01req-code-tabs\" data-tag=\"tabbed-content-box\" outputclass=\"tabbed-content-box margin-top-33\" class=\"tabbed-content-box section margin-top-33\">\n                      <section id=\"hh01req-code-t2v\" class=\"section\">\n                        <h2 id=\"hh01req-code-t2v-title\">文生视频</h2><pre code-type=\"xCode\" id=\"hh01req-curl-china\" data-tag=\"codeblock\" outputclass=\"language-curl\" props=\"china\" data-cond-props=\"china\" class=\"pre codeblock language-curl\"><code>curl --location 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis' \\\n    -H 'X-DashScope-Async: enable' \\\n    -H \"Authorization: Bearer $DASHSCOPE_API_KEY\" \\\n    -H 'Content-Type: application/json' \\\n    -d '{\n    \"model\": \"happyhorse-1.1-t2v\",\n    \"input\": {\n        \"prompt\": \"一座由硬纸板和瓶盖搭建的微型城市，在夜晚焕发出生机。一列硬纸板火车缓缓驶过，小灯点缀其间，照亮前路。\"\n    },\n    \"parameters\": {\n        \"resolution\": \"720P\",\n        \"ratio\": \"16:9\",\n        \"duration\": 5\n    }\n}'</code></pre>\n                      </section>\n                    </section>\n                  </section>\n                </td>\n              </tr>\n              <tr id=\"hh01req-headers-row\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01req-headers-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01req-headers-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"b35b36152auao\"><b>Content-Type </b><code data-tag=\"code\" code-type=\"xCode\" id=\"9d0e02b383aea\" class=\"code\"><i>string</i></code><i> </i><b>（必选）</b></p>\n        <p jc=\"left\" id=\"c84336268andm\" style=\"text-align:left\">请求内容类型。此参数必须设置为<code data-tag=\"code\" code-type=\"xCode\" id=\"e629c56e1e0ss\" class=\"code\">application/json</code>。</p>\n      </section>\n                </td>\n              </tr>\n              <tr id=\"hh01req-auth-row\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01req-auth-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01req-auth-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"ac48af82483to\"><b>Authorization </b><code data-tag=\"code\" code-type=\"xCode\" id=\"7c35409e8enfj\" class=\"code\"><i>string</i></code><b>（必选）</b></p>\n        <p jc=\"left\" id=\"a1b0e25ac4cv4\" style=\"text-align:left\">请求身份认证。接口使用阿里云百炼<span class=\"help-letter-space\"></span>API Key<span class=\"help-letter-space\"></span>进行身份认证。示例值：Bearer sk-xxxx。</p>\n      </section>\n                </td>\n              </tr>\n              <tr id=\"hh01req-ct-row\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01req-ct-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01req-ct-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"ce88e0f57eopk\"><b>X-DashScope-Async </b><code data-tag=\"code\" code-type=\"xCode\" id=\"21417561a0y7n\" class=\"code\"><i>string</i></code><i> </i><b>（必选）</b></p>\n        <p jc=\"left\" id=\"07fa9d1a3e24y\" style=\"text-align:left\">异步处理配置参数。HTTP<span class=\"help-letter-space\"></span>请求只支持异步，<b>必须设置为</b><code data-tag=\"code\" code-type=\"xCode\" id=\"e7b30e36930sk\" class=\"code\"><b>enable</b></code>。</p>\n        <div type=\"important\" id=\"c8a2904c29tco\" class=\"note note-important\"><div class=\"note-icon-wrapper\"><i class=\"icon-note note important\"></i></div><div class=\"noteContentSpan\"><strong>重要 </strong>\n          <p id=\"2cf177f1bepsl\">缺少此请求头将报错：“current user api does not support synchronous calls”。</p>\n        </div></div>\n      </section>\n                </td>\n              </tr>\n              <tr id=\"hh01req-body-row\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01req-body-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <h5 id=\"hh01req-body-h5\">请求体（Request Body）</h5>\n                </td>\n              </tr>\n              <tr id=\"hh01req-model\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01req-model-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01req-model-section\" class=\"section\">\n                    <p id=\"hh01req-model-p1\"><b>model</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-model-type\" class=\"code\"><i>string</i></code> <b>（必选）</b></p>\n                    <p id=\"hh01req-model-p2\">模型名称。</p>\n                    <p id=\"hh01req-model-p3\">可选值：</p>\n                    <ul id=\"971dbddd0cwda\">\n                      <li id=\"hh01req-model-li15\">\n                        <p id=\"hh01req-model-p15\"><code data-tag=\"code\" id=\"hh01req-model-v15\" class=\"code\">happyhorse-1.1-t2v</code></p>\n                      </li>\n                      <li id=\"3c5580751bv4s\">\n                        <p id=\"44fca6a034rnd\"><code data-tag=\"code\" id=\"1ae85f8660r7t\" class=\"code\">happyhorse-1.0-t2v</code></p>\n                      </li>\n                    </ul>\n                  </section>\n                </td>\n              </tr>\n              <tr id=\"hh01req-input\">\n                <td id=\"hh01req-input-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01req-input-section\" class=\"section\">\n                    <p id=\"hh01req-input-p1\"><b>input</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-input-type\" class=\"code\"><i>object</i></code> <b>（必选）</b></p>\n                    <p id=\"hh01req-input-p2\">模型的输入信息。</p>\n                    <div id=\"hh01req-input-collapse\" outputclass=\"collapse expanded\" class=\"collapse expanded\">\n                      <p id=\"hh01req-input-collapse-title\" data-tag=\"expandable-title\" class=\"expandable-title\"><b>属性</b></p>\n                      <div id=\"hh01req-input-collapse-content\" data-tag=\"expandable-content\" class=\"expandable-content\">\n                        <section id=\"hh01req-prompt-section\" class=\"section\">\n                          <p id=\"hh01req-prompt-p1\"><b>prompt</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-prompt-type\" class=\"code\"><i>string</i></code> <b>（必选）</b></p>\n                          <p id=\"hh01req-prompt-p2\">文本提示词，用于描述期望生成的视频内容。</p>\n                          <p id=\"hh01req-prompt-p3\">支持任何语言输入，长度不超过<span class=\"help-letter-space\"></span>5000<span class=\"help-letter-space\"></span>个非中文字符或<span class=\"help-letter-space\"></span>2500<span class=\"help-letter-space\"></span>个中文字符，超过部分将自动截断。</p>\n                        </section>\n                      </div>\n                    </div>\n                  </section>\n                </td>\n              </tr>\n              <tr id=\"hh01req-params\">\n                <td id=\"hh01req-params-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01req-params-section\" class=\"section\">\n                    <p id=\"hh01req-params-p1\"><b>parameters</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-params-type\" class=\"code\"><i>object</i></code> （可选）</p>\n                    <p id=\"hh01req-params-p2\">视频处理参数，如设置视频分辨率、设置视频时长等。</p>\n                    <div id=\"hh01req-params-collapse\" outputclass=\"collapse expanded\" class=\"collapse expanded\">\n                      <p id=\"hh01req-params-collapse-title\" data-tag=\"expandable-title\" class=\"expandable-title\"><b>属性</b></p>\n                      <div id=\"hh01req-params-collapse-content\" data-tag=\"expandable-content\" class=\"expandable-content\">\n                        <section id=\"hh01req-resolution-section\" class=\"section\">\n                          <p id=\"hh01req-resolution-p1\"><b>resolution</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-resolution-type\" class=\"code\"><i>string</i></code> （可选）</p>\n                          <p id=\"hh01req-resolution-p2\">指定生成视频的分辨率档位。</p>\n                          <p id=\"hh01req-resolution-p3\">可选值：</p>\n                          <ul id=\"9b676bf567dpd\">\n                            <li id=\"091254bcc2fx4\">\n                              <p id=\"225bf780e7olo\"><code data-tag=\"code\" id=\"hh01req-resolution-v1\" class=\"code\">720P</code></p>\n                            </li>\n                            <li id=\"5ec1e4884akn7\">\n                              <p id=\"fde238b7f7s2w\"><code data-tag=\"code\" id=\"hh01req-resolution-v2\" class=\"code\">1080P</code>：默认值。</p>\n                            </li>\n                          </ul>\n                        </section>\n                        <section id=\"hh01req-ratio-section\" class=\"section\">\n                          <p id=\"hh01req-ratio-p1\"><b>ratio</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-ratio-type\" class=\"code\"><i>string</i></code> （可选）</p>\n                          <p id=\"hh01req-ratio-p2\">指定生成视频的宽高比。</p>\n                          <p id=\"hh01req-ratio-p3\">可选值：</p>\n                          <ul id=\"cd694b470fipo\">\n                            <li id=\"d18fcd6de9mlm\">\n                              <p id=\"2b57f94585w89\"><code data-tag=\"code\" id=\"hh01req-ratio-v1\" class=\"code\">16:9</code>：默认值。</p>\n                            </li>\n                            <li id=\"4a09304c5b5xe\">\n                              <p id=\"d3856acb281f2\"><code data-tag=\"code\" id=\"hh01req-ratio-v2\" class=\"code\">9:16</code></p>\n                            </li>\n                            <li id=\"1f26ed3382pu2\">\n                              <p id=\"6bf0151aa3l2e\"><code data-tag=\"code\" id=\"hh01req-ratio-v3\" class=\"code\">1:1</code></p>\n                            </li>\n                            <li id=\"021b621d54ks8\">\n                              <p id=\"c7ef1c71c4rij\"><code data-tag=\"code\" id=\"hh01req-ratio-v4\" class=\"code\">4:3</code></p>\n                            </li>\n                            <li id=\"51cefbc74f0fz\">\n                              <p id=\"920e0097d75us\"><code data-tag=\"code\" id=\"hh01req-ratio-v5\" class=\"code\">3:4</code></p>\n                            </li>\n                            <li id=\"hh01req-ratio-li6\">\n                              <p id=\"hh01req-ratio-p6\"><code data-tag=\"code\" id=\"hh01req-ratio-v6\" class=\"code\">4:5</code></p>\n                            </li>\n                            <li id=\"hh01req-ratio-li7\">\n                              <p id=\"hh01req-ratio-p7\"><code data-tag=\"code\" id=\"hh01req-ratio-v7\" class=\"code\">5:4</code></p>\n                            </li>\n                            <li id=\"hh01req-ratio-li8\">\n                              <p id=\"hh01req-ratio-p8\"><code data-tag=\"code\" id=\"hh01req-ratio-v8\" class=\"code\">9:21</code></p>\n                            </li>\n                            <li id=\"hh01req-ratio-li9\">\n                              <p id=\"hh01req-ratio-p9\"><code data-tag=\"code\" id=\"hh01req-ratio-v9\" class=\"code\">21:9</code></p>\n                            </li>\n                          </ul>\n                        </section>\n                        <section id=\"hh01req-duration-section\" class=\"section\">\n                          <p id=\"hh01req-duration-p1\"><b>duration</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01req-duration-type\" class=\"code\"><i>integer</i></code> （可选）</p>\n                          <p id=\"hh01req-duration-p2\">指定生成视频的时长，单位为秒。</p>\n                          <p id=\"ee5232ecb8tae\">取值为[3, 15]之间的整数。默认值为<code data-tag=\"code\" id=\"hh01req-duration-default\" class=\"code\">5</code>。</p>\n                        </section>\n                        <section id=\"f8a814f0c6rdw\" class=\"section\">\n                          <p id=\"f3bfe39dd7niu\"><b>watermark</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"098e0969d3t4x\" class=\"code\"><i>boolean</i></code> （可选）</p>\n                          <p id=\"6edb38d854rid\">是否在生成的视频上添加水印标识。水印位于视频右下角，文案固定为“Happy Horse”。</p>\n                          <ul id=\"65c819df514cy\">\n                            <li id=\"a18035d28fg51\">\n                              <p id=\"985eabbe26g67\"><code data-tag=\"code\" id=\"a005960c98aaw\" class=\"code\">true</code>：默认值，添加水印。</p>\n                            </li>\n                            <li id=\"9507dd9f2a50d\">\n                              <p id=\"6dd20caa06xvi\"><code data-tag=\"code\" id=\"5fbd3a9e24koq\" class=\"code\">false</code>：不添加水印。</p>\n                            </li>\n                          </ul>\n                        </section>\n                        <section id=\"db4a199411fko\" docid=\"5729257\" is-conref=\"true\" class=\"section\">\n        <p id=\"94249db1edmah\"><b>seed </b><code data-tag=\"code\" code-type=\"xCode\" id=\"cca1b934440rn\" class=\"code\"><i>integer</i></code><b> </b><i> </i>（可选）</p>\n        <p id=\"3261f9b5b9zdb\">随机数种子，取值范围为<code data-tag=\"code\" id=\"b1710151ee0lg\" class=\"code\">[0, 2147483647]</code>。</p>\n        <p id=\"dcc50f7645tjn\">未指定时，系统自动生成随机种子。若需提升生成结果的可复现性，建议固定<span class=\"help-letter-space\"></span>seed<span class=\"help-letter-space\"></span>值。</p>\n        <p jc=\"left\" id=\"87b2da986bhdy\" style=\"text-align:left\">请注意，由于模型生成具有概率性，即使使用相同 seed，也不能保证每次生成结果完全一致。</p>\n      </section>\n                        <p id=\"4bed8b59445hs\"></p>\n                      </div>\n                    </div>\n                  </section>\n                </td>\n                <td id=\"c069c709359fp\" rowspan=\"1\" colspan=\"1\">\n                  <p id=\"a3e0a18f3bnvi\"></p>\n                </td>\n              </tr>\n            </tbody>\n          </table>\n        </section>\n        <p id=\"hh01step1-gap\"></p>\n        <section id=\"hh01step1-resp\" class=\"section\">\n          <table bordertype=\"no-border\" id=\"hh01step1-resp-table\" outputclass=\"api-reference column-layout\" tablewidth=\"100\" tablecolswidth=\"53.5 46.5\" autofit=\"true\" class=\"api-reference column-layout table\">\n            <colgroup colwidth=\"1.07*\" style=\"width:53.50%\"></colgroup>\n            <colgroup colwidth=\"0.93*\" style=\"width:46.50%\"></colgroup>\n            <tbody class=\"tbody\">\n              <tr id=\"hh01resp1-header\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01resp1-header-td1\" rowspan=\"1\" style=\"vertical-align:top\" colspan=\"1\">\n                  <h4 id=\"hh01resp1-header-h4\" outputclass=\"test\" class=\"test\">响应参数</h4>\n                </td>\n                <td id=\"hh01resp1-header-td2\" rowspan=\"5\" style=\"vertical-align:top\" colspan=\"1\">\n                  <section id=\"hh01resp1-code\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <section id=\"8d84b12dadbku\" data-tag=\"tabbed-content-box\" outputclass=\"tabbed-content-box\" class=\"tabbed-content-box section\">\n          <section id=\"938dd6aa00xez\" class=\"section\">\n            <h3 id=\"f281932a43b03\">成功响应</h3>\n            <p jc=\"left\" id=\"f78b9c52854wc\" style=\"text-align:left\">请保存 task_id，用于查询任务状态与结果。</p><pre code-type=\"xCode\" id=\"089f6d510f95u\" data-tag=\"codeblock\" outputclass=\"language-json\" class=\"pre codeblock language-json\"><code>{\n    \"output\": {\n        \"task_status\": \"PENDING\",\n        \"task_id\": \"0385dc79-5ff8-4d82-bcb6-xxxxxx\"\n    },\n    \"request_id\": \"4909100c-7b5a-9f92-bfe5-xxxxxx\"\n}</code></pre>\n          </section>\n          <section id=\"77dc168e6fsu6\" class=\"section\">\n            <h3 id=\"a9ad4ea0bcr7i\">异常响应</h3>\n            <p id=\"aad5e34286x6w\">创建任务失败，请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"dd77e2f8a0my1\" title=\"\" class=\"xref\">错误码</a>进行解决。</p><pre code-type=\"xCode\" id=\"8d79ec495em13\" data-tag=\"codeblock\" outputclass=\"language-json\" class=\"pre codeblock language-json\"><code>{\n    \"code\": \"InvalidApiKey\",\n    \"message\": \"No API-key provided.\",\n    \"request_id\": \"7438d53d-6eb8-4596-8835-xxxxxx\"\n}</code></pre>\n          </section>\n        </section>\n      </section>\n                </td>\n              </tr>\n              <tr id=\"hh01resp1-output\">\n                <td id=\"hh01resp1-output-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <p id=\"hh01resp1-output-p1\"><b>output</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"hh01resp1-output-type\" class=\"code\"><i>object</i></code></p>\n                  <p id=\"hh01resp1-output-p2\">任务输出信息。</p>\n                  <div id=\"hh01resp1-output-collapse\" outputclass=\"collapse expanded\" class=\"collapse expanded\">\n                    <p id=\"hh01resp1-output-collapse-title\" data-tag=\"expandable-title\" class=\"expandable-title\">属性</p>\n                    <div id=\"hh01resp1-output-collapse-content\" data-tag=\"expandable-content\" class=\"expandable-content\">\n                      <section id=\"hh01resp1-taskstatus\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"1fe5b36c81n81\"><b>task_id</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"1927ac1711a6b\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"4ac2b3335dt4z\" style=\"text-align:left\">任务<span class=\"help-letter-space\"></span>ID。查询有效期<span class=\"help-letter-space\"></span>24<span class=\"help-letter-space\"></span>小时。</p>\n      </section>\n                      <section id=\"hh01resp1-taskid\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"e05ef2e779yzc\"><b>task_status</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"2cc6cd76b7scz\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"20e406b75d1tu\" style=\"text-align:left\">任务状态。</p>\n        <div id=\"47d1a560adkz4\" outputclass=\"collapse expanded\" class=\"collapse expanded\">\n          <p id=\"9f885f3065wa7\" data-tag=\"expandable-title\" class=\"expandable-title\"><b>枚举值</b></p>\n          <div id=\"52a8839a3b8ve\" data-tag=\"expandable-content\" class=\"expandable-content\">\n            <ul id=\"bea23c4522v96\">\n              <li id=\"8b437cac894c9\">\n                <p jc=\"left\" id=\"2d1a77994culj\" style=\"text-align:left\">PENDING：任务排队中</p>\n              </li>\n              <li id=\"83a099d9ff99x\">\n                <p jc=\"left\" id=\"58157145280pd\" style=\"text-align:left\">RUNNING：任务处理中</p>\n              </li>\n              <li id=\"45bba956f5dn8\">\n                <p id=\"ecd9d0220dku0\">SUCCEEDED：任务执行成功</p>\n              </li>\n              <li id=\"6d9fa1aa091ec\">\n                <p id=\"4f3476ccabg8m\">FAILED：任务执行失败</p>\n              </li>\n              <li id=\"1a40e957952zv\">\n                <p id=\"dfeff5edf0ir4\">CANCELED：任务已取消</p>\n              </li>\n              <li id=\"4fc2869e3d7e3\">\n                <p id=\"c1947b6b9asan\">UNKNOWN：任务不存在或状态未知</p>\n              </li>\n            </ul>\n          </div>\n        </div>\n      </section>\n                    </div>\n                  </div>\n                </td>\n              </tr>\n              <tr id=\"hh01resp1-reqid\" outputclass=\"test\" class=\"test\">\n                <td id=\"hh01resp1-reqid-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01resp1-reqid-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"f8ad0d8e5fmh3\"><b>request_id </b><code data-tag=\"code\" code-type=\"xCode\" id=\"3f24e7a18c86z\" class=\"code\"><i>string</i></code><i> </i></p>\n        <p id=\"50e43a8e01stk\">请求唯一标识。可用于请求明细溯源和问题排查。</p>\n      </section>\n                </td>\n              </tr>\n              <tr id=\"hh01resp1-usage\">\n                <td id=\"hh01resp1-usage-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01resp1-usage-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"0e54bb3abdsfz\"><b>code </b><code data-tag=\"code\" code-type=\"xCode\" id=\"747a126bbd65i\" class=\"code\"><i>string</i></code></p>\n        <p id=\"b634d3711cwim\">请求失败的错误码。请求成功时不会返回此参数，详情请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"8ce79bbfb6xfs\" title=\"\" class=\"xref\">错误码</a>。</p>\n      </section>\n                </td>\n              </tr>\n              <tr id=\"hh01resp1-usage2\">\n                <td id=\"hh01resp1-usage2-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                  <section id=\"hh01resp1-usage2-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"aa9502135bkcx\"><b>message </b><code data-tag=\"code\" code-type=\"xCode\" id=\"319e9daaccg6n\" class=\"code\"><i>string</i></code></p>\n        <p id=\"49943cf91bcyu\">请求失败的详细信息。请求成功时不会返回此参数，详情请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"201837a58b7du\" title=\"\" class=\"xref\">错误码</a>。</p>\n      </section>\n                </td>\n              </tr>\n            </tbody>\n          </table>\n        </section>\n        <section id=\"hh01step2\" class=\"section\">\n          <h3 id=\"hh01step2-title\"><b>步骤<span class=\"help-letter-space\"></span>2：根据任务<span class=\"help-letter-space\"></span>ID<span class=\"help-letter-space\"></span>查询结果</b></h3>\n          <section id=\"hh01step2-china-tabs\" data-tag=\"tabbed-content-box\" outputclass=\"tabbed-content-box\" props=\"china\" data-cond-props=\"china\" class=\"tabbed-content-box section\">\n            <section id=\"hh01step2-china-bj\" class=\"section\">\n              <h2 id=\"hh01step2-china-bj-title\"><b>华北<span class=\"help-letter-space\"></span>2（北京）</b></h2>\n              <p id=\"hh01step2-china-bj-url\"><code data-tag=\"code\" id=\"hh01step2-china-bj-code\" class=\"code\">GET https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/tasks/{task_id}</code></p>\n              <p id=\"hh01step2-china-bj-note\">调用时请将<code data-tag=\"code\" id=\"hh01step2-china-bj-wsid\" class=\"code\">WorkspaceId</code>替换为真实的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu\" id=\"hh01step2-china-bj-xref\" title=\"\" class=\"xref\">Workspace ID</a>。</p>\n            </section>\n            <section id=\"hh01step2-china-sg\" class=\"section\">\n              <h2 id=\"hh01step2-china-sg-title\"><b>新加坡</b></h2>\n              <p id=\"hh01step2-china-sg-url\"><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01step2-china-sg-code\" class=\"code\">GET https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api/v1/tasks/{task_id}</code></p>\n              <p id=\"00bb2196fd8f\">调用时请将<code data-tag=\"code\" id=\"9c29ddd4a94c\" class=\"code\">WorkspaceId</code>替换为真实的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu\" id=\"0d6efa207b51\" title=\"\" class=\"xref\">Workspace ID</a>。</p>\n            </section>\n            <section id=\"hh01step2-china-va\" class=\"section\">\n              <h2 id=\"hh01step2-china-va-title\"><b>美国（弗吉尼亚）</b></h2>\n              <p id=\"hh01step2-china-va-url\"><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01step2-china-va-code\" class=\"code\">GET https://dashscope-us.aliyuncs.com/api/v1/tasks/{task_id}</code></p>\n            </section>\n            <section id=\"hh01step2-china-fr\" class=\"section\">\n              <h2 id=\"hh01step2-china-fr-title\"><b>德国（法兰克福）</b></h2>\n              <p id=\"hh01step2-china-fr-url\"><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01step2-china-fr-code\" class=\"code\">GET https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/api/v1/tasks/{task_id}</code></p>\n              <p id=\"hh01step2-china-fr-note\">调用时请将<code data-tag=\"code\" id=\"hh01step2-china-fr-wsid\" class=\"code\">WorkspaceId</code>替换为真实的<span class=\"help-letter-space\"></span><a href=\"https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu\" id=\"hh01step2-china-fr-xref\" title=\"\" class=\"xref\">Workspace ID</a>。</p>\n            </section>\n          </section>\n          \n          <div type=\"note\" id=\"hh01step2-note\" is-conref=\"true\" class=\"note note-note\"><div class=\"note-icon-wrapper\"><i class=\"icon-note note note\"></i></div><div class=\"noteContentSpan\"><strong>说明 </strong>\n        <ul id=\"a9e1c59d65l4l\" data-spm-anchor-id=\"a2c4g.11186623.0.i37.4ae8f41cvAcjZU\">\n          <li id=\"da2e599becqcv\">\n            <p id=\"1f9c13b4ddq6u\"><b>轮询建议</b>：视频生成过程约需数分钟，建议采用<b>轮询</b>机制，并设置合理的查询间隔（如 15 秒）来获取结果。</p>\n          </li>\n          <li id=\"a78391f1503lz\">\n            <p id=\"5a3e8b9afbbue\"><b>任务状态流转</b>：PENDING（排队中）→&nbsp;RUNNING（处理中）→ SUCCEEDED（成功）/&nbsp;FAILED（失败）。</p>\n          </li>\n          <li class=\"md-list-item\" cid=\"n317\" mdtype=\"list_item\" id=\"d17d254689egr\">\n            <p id=\"26b74ca0c6x51\"><b>结果链接</b>：任务成功后返回视频链接，有效期为 <b>24 小时</b>。建议在获取链接后立即下载并转存至永久存储（如<a href=\"https://help.aliyun.com/zh/oss/user-guide/what-is-oss\" id=\"294e6ca42dptf\" title=\"\" class=\"xref\">阿里云 OSS</a>）。</p>\n          </li>\n          <li id=\"3f336841bcoof\">\n            <p id=\"f35981f24c16r\"><b>task_id 有效期</b>：<b>24<span class=\"help-letter-space\"></span>小时</b>，超时后将无法查询结果，接口将返回任务状态为<code data-tag=\"code\" id=\"67fc3dea09nps\" data-init-id=\"3e57658fb4evd\" class=\"code\">UNKNOWN</code>。</p>\n          </li>\n          <li _ngcontent-ng-c4063671643=\"\" class=\"ng-star-inserted\" id=\"80ec94bd41mtp\" props=\"china\" data-cond-props=\"china\">\n            <p id=\"89c26ddb04j4k\"><b>RPS 限制</b>：查询接口默认<span class=\"help-letter-space\"></span>RPS<span class=\"help-letter-space\"></span>为<span class=\"help-letter-space\"></span>20。如需更高频查询或事件通知，建议<a href=\"https://help.aliyun.com/zh/model-studio/async-task-api\" id=\"d251902af3dq2\" title=\"\" class=\"xref\">配置异步任务回调</a>。</p>\n          </li>\n          <li id=\"c54c22508771c\" props=\"china\" data-cond-props=\"china\">\n            <p id=\"819eb41df28og\"><b>更多操作</b>：如需批量查询、取消任务等操作，请参见<a href=\"https://help.aliyun.com/zh/model-studio/manage-asynchronous-tasks#f26499d72adsl\" id=\"e71d72bcebi1x\" title=\"\" class=\"xref\">管理异步任务</a>。</p>\n          </li>\n        </ul>\n      </div></div>\n          <p id=\"hh01step2-gap\"></p>\n          <section id=\"hh01step2-req\" class=\"section\">\n            <table bordertype=\"no-border\" id=\"hh01step2-req-table\" outputclass=\"api-reference column-layout\" tablewidth=\"100\" tablecolswidth=\"53.81 46.19\" autofit=\"true\" class=\"api-reference column-layout table\">\n              <colgroup colwidth=\"1.08*\" style=\"width:53.81%\"></colgroup>\n              <colgroup colwidth=\"0.92*\" style=\"width:46.19%\"></colgroup>\n              <tbody class=\"tbody\">\n                <tr id=\"hh01step2-req-header\" outputclass=\"test\" class=\"test\">\n                  <td id=\"hh01step2-req-header-td1\" rowspan=\"1\" style=\"vertical-align:top\" colspan=\"1\">\n                    <h4 id=\"hh01step2-req-header-h4\">请求参数</h4>\n                  </td>\n                  <td id=\"hh01step2-req-header-td2\" rowspan=\"5\" style=\"vertical-align:top\" colspan=\"1\">\n                    <section id=\"hh01step2-code-section\" outputclass=\"stick-top two-codeblocks\" class=\"two-codeblocks stick-top section\">\n                      <section id=\"hh01step2-code-tabs\" data-tag=\"tabbed-content-box\" outputclass=\"tabbed-content-box margin-top-33\" class=\"tabbed-content-box section margin-top-33\">\n                        <section id=\"hh01step2-code-query\" class=\"section\">\n                          <h2 id=\"hh01step2-code-query-title\">查询任务结果</h2>\n                          <section id=\"hh01step2-code-query-content\" is-conref=\"true\" class=\"section\">\n        <p id=\"37c488525frts\">将<code data-tag=\"code\" id=\"7901a4ac7d4e8\" class=\"code\">{task_id}</code>完整替换为上一步接口返回的<code data-tag=\"code\" id=\"051ad9306ey2i\" class=\"code\">task_id</code>的值。<code data-tag=\"code\" id=\"d85332762a18d\" class=\"code\">task_id</code>查询有效期为<span class=\"help-letter-space\"></span>24<span class=\"help-letter-space\"></span>小时。</p>\n        <section id=\"f1f95de4cemai\" class=\"section\"><pre code-type=\"xCode\" id=\"f4c59daa2alvv\" data-tag=\"codeblock\" outputclass=\"language-curl\" props=\"china\" data-cond-props=\"china\" class=\"pre codeblock language-curl\"><code>curl -X GET https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/tasks/{task_id} \\\n--header \"Authorization: Bearer $DASHSCOPE_API_KEY\"</code></pre></section>\n      </section>\n                        </section>\n                      </section>\n                    </section>\n                  </td>\n                </tr>\n                <tr id=\"hh01step2-headers\">\n                  <td id=\"hh01step2-headers-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                    <h5 id=\"hh01step2-headers-h5\"><b>请求头（Headers）</b></h5>\n                  </td>\n                </tr>\n                <tr id=\"hh01step2-auth\" outputclass=\"test\" class=\"test\">\n                  <td id=\"hh01step2-auth-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                    <section id=\"hh01step2-auth-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"ac48af82483to\"><b>Authorization </b><code data-tag=\"code\" code-type=\"xCode\" id=\"7c35409e8enfj\" class=\"code\"><i>string</i></code><b>（必选）</b></p>\n        <p jc=\"left\" id=\"a1b0e25ac4cv4\" style=\"text-align:left\">请求身份认证。接口使用阿里云百炼<span class=\"help-letter-space\"></span>API Key<span class=\"help-letter-space\"></span>进行身份认证。示例值：Bearer sk-xxxx。</p>\n      </section>\n                  </td>\n                </tr>\n                <tr id=\"hh01step2-path\" outputclass=\"test\" class=\"test\">\n                  <td id=\"hh01step2-path-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                    <h5 id=\"hh01step2-path-h5\"><b>URL<span class=\"help-letter-space\"></span>路径参数（Path parameters）</b></h5>\n                  </td>\n                </tr>\n                <tr id=\"hh01step2-taskid\" outputclass=\"test\" class=\"test\">\n                  <td id=\"hh01step2-taskid-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                    <section id=\"hh01step2-taskid-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"f0f368468efqp\"><b>task_id</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"b7b98f85a05qn\" class=\"code\"><i>string</i></code><b>（必选）</b></p>\n        <p id=\"246335d09fpiz\">任务<span class=\"help-letter-space\"></span>ID。</p>\n      </section>\n                  </td>\n                </tr>\n              </tbody>\n            </table>\n            <section id=\"hh01step2-resp\" class=\"section\">\n              <table bordertype=\"no-border\" id=\"hh01step2-resp-table\" outputclass=\"api-reference column-layout\" tablewidth=\"100\" tablecolswidth=\"53.81 46.19\" autofit=\"true\" class=\"api-reference column-layout table\">\n                <colgroup colwidth=\"1.08*\" style=\"width:53.81%\"></colgroup>\n                <colgroup colwidth=\"0.92*\" style=\"width:46.19%\"></colgroup>\n                <tbody class=\"tbody\">\n                  <tr id=\"hh01resp2-header\" outputclass=\"test\" class=\"test\">\n                    <td id=\"hh01resp2-header-td1\" rowspan=\"1\" style=\"vertical-align:top\" colspan=\"1\">\n                      <h4 id=\"hh01resp2-header-h4\" outputclass=\"test\" class=\"test\"><b>响应参数</b></h4>\n                    </td>\n                    <td id=\"hh01resp2-header-td2\" rowspan=\"4\" style=\"vertical-align:top\" colspan=\"1\">\n                      <section id=\"hh01resp2-code-tabs\" data-tag=\"tabbed-content-box\" outputclass=\"tabbed-content-box stick-top\" class=\"tabbed-content-box stick-top section\">\n                        <section id=\"hh01resp2-success\" class=\"section\">\n                          <h2 id=\"hh01resp2-success-title\">任务执行成功</h2>\n                          <section id=\"hh01resp2-success-note\" is-conref=\"true\" class=\"section\">\n        <p jc=\"left\" id=\"b4121e3f440c7\" style=\"text-align:left\">视频<span class=\"help-letter-space\"></span>URL<span class=\"help-letter-space\"></span>仅保留<span class=\"help-letter-space\"></span>24<span class=\"help-letter-space\"></span>小时，超时后会被自动清除，请及时保存生成的视频。</p>\n      </section>\n                          <section id=\"hh01resp2-success-code\" class=\"section\"><pre code-type=\"xCode\" id=\"hh01resp2-success-json\" data-tag=\"codeblock\" outputclass=\"language-json\" class=\"pre codeblock language-json\"><code>{\n    \"request_id\": \"99243b47-ec5f-9413-9993-xxxxxx\",\n    \"output\": {\n        \"task_id\": \"4673458e-28be-4a05-bf2a-xxxxxx\",\n        \"task_status\": \"SUCCEEDED\",\n        \"submit_time\": \"2026-04-20 17:55:17.075\",\n        \"scheduled_time\": \"2026-04-20 17:55:17.129\",\n        \"end_time\": \"2026-04-20 17:56:36.658\",\n        \"orig_prompt\": \"一座由硬纸板和瓶盖搭建的微型城市，在夜晚焕发出生机。一列硬纸板火车缓缓驶过，小灯点缀其间，照亮前路。\",\n        \"video_url\": \"https://dashscope-result.oss-cn-beijing.aliyuncs.com/xxx.mp4?Expires=xxx\"\n    },\n    \"usage\": {\n        \"duration\": 5,\n        \"input_video_duration\": 0,\n        \"output_video_duration\": 5,\n        \"video_count\": 1,\n        \"SR\": 720,\n        \"ratio\": \"16:9\"\n    }\n}</code></pre></section>\n                        </section>\n                        <section id=\"hh01resp2-failed\" class=\"section\">\n                          <h2 id=\"hh01resp2-failed-title\">任务执行失败</h2>\n                          <section id=\"hh01resp2-failed-note\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"16791da818coy\">若任务执行失败，task_status<span class=\"help-letter-space\"></span>将置为 FAILED，并提供错误码和信息。请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"5bf22525d31sa\" title=\"\" class=\"xref\">错误码</a>进行解决。</p>\n      </section><pre code-type=\"xCode\" id=\"hh01resp2-failed-json\" data-tag=\"codeblock\" outputclass=\"language-json\" class=\"pre codeblock language-json\"><code>{\n    \"request_id\": \"e5d70b02-ebd3-98ce-9fe8-759d7d7b107d\",\n    \"output\": {\n        \"task_id\": \"86ecf553-d340-4e21-af6e-a0c6a421c010\",\n        \"task_status\": \"FAILED\",\n        \"code\": \"InvalidParameter\",\n        \"message\": \"The parameter is invalid.\"\n    }\n}</code></pre>\n                        </section>\n                        <section id=\"hh01resp2-expired\" class=\"section\">\n                          <h2 id=\"hh01resp2-expired-title\">任务查询过期</h2>\n                          <section id=\"hh01resp2-expired-note\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"c68e5703881mm\">task_id<span class=\"help-letter-space\"></span>查询有效期为 24 小时，超时后将无法查询，返回以下报错信息。</p><pre code-type=\"xCode\" id=\"ea58ce8c686g8\" data-tag=\"codeblock\" outputclass=\"language-json\" class=\"pre codeblock language-json\"><code>{\n    \"request_id\": \"a4de7c32-7057-9f82-8581-xxxxxx\",\n    \"output\": {\n        \"task_id\": \"502a00b1-19d9-4839-a82f-xxxxxx\",\n        \"task_status\": \"UNKNOWN\"\n    }\n}</code></pre>\n      </section>\n                        </section>\n                      </section>\n                    </td>\n                  </tr>\n                  <tr id=\"hh01resp2-output\">\n                    <td id=\"hh01resp2-output-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                      <p id=\"hh01resp2-output-p1\"><b>output </b><code data-tag=\"code\" code-type=\"xCode\" id=\"hh01resp2-output-type\" class=\"code\"><i>object</i></code></p>\n                      <p id=\"hh01resp2-output-p2\">任务输出信息。</p>\n                      <div id=\"hh01resp2-output-collapse\" outputclass=\"collapse expanded\" class=\"collapse expanded\">\n                        <p id=\"hh01resp2-output-collapse-title\" data-tag=\"expandable-title\" class=\"expandable-title\"><b>属性</b></p>\n                        <div id=\"hh01resp2-output-collapse-content\" data-tag=\"expandable-content\" class=\"expandable-content\">\n                          <section id=\"hh01resp2-taskstatus\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"1fe5b36c81n81\"><b>task_id</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"1927ac1711a6b\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"4ac2b3335dt4z\" style=\"text-align:left\">任务<span class=\"help-letter-space\"></span>ID。查询有效期<span class=\"help-letter-space\"></span>24<span class=\"help-letter-space\"></span>小时。</p>\n      </section>\n                          <section id=\"hh01resp2-taskid-detail\" is-conref=\"true\" class=\"section\">\n        <p id=\"1f6f4e8149c47\"><b>task_status</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"efc4c9c6d3fem\" data-init-id=\"2cc6cd76b7scz\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"d768722a91b6q\" style=\"text-align:left\">任务状态。</p>\n        <div id=\"b96f5d30120gj\" outputclass=\"collapse expanded\" docid=\"5715354\" is-conref=\"true\" class=\"collapse expanded\">\n          <p id=\"9f885f3065wa7\" data-tag=\"expandable-title\" class=\"expandable-title\"><b>枚举值</b></p>\n          <div id=\"52a8839a3b8ve\" data-tag=\"expandable-content\" class=\"expandable-content\">\n            <ul id=\"bea23c4522v96\">\n              <li id=\"8b437cac894c9\">\n                <p jc=\"left\" id=\"2d1a77994culj\" style=\"text-align:left\">PENDING：任务排队中</p>\n              </li>\n              <li id=\"83a099d9ff99x\">\n                <p jc=\"left\" id=\"58157145280pd\" style=\"text-align:left\">RUNNING：任务处理中</p>\n              </li>\n              <li id=\"45bba956f5dn8\">\n                <p id=\"ecd9d0220dku0\">SUCCEEDED：任务执行成功</p>\n              </li>\n              <li id=\"6d9fa1aa091ec\">\n                <p id=\"4f3476ccabg8m\">FAILED：任务执行失败</p>\n              </li>\n              <li id=\"1a40e957952zv\">\n                <p id=\"dfeff5edf0ir4\">CANCELED：任务已取消</p>\n              </li>\n              <li id=\"4fc2869e3d7e3\">\n                <p id=\"c1947b6b9asan\">UNKNOWN：任务不存在或状态未知</p>\n              </li>\n            </ul>\n          </div>\n        </div>\n        <p id=\"022578e7b4zmq\"><b>轮询过程中的状态流转：</b></p>\n        <ul dir=\"auto\" id=\"7aa4bb9f370hw\">\n          <li data-spm-anchor-id=\"a2ty_o01.29997173.0.i41.45605171zBOZnO\" id=\"6c811cbc69qdy\">\n            <p id=\"d115a086a16nb\">PENDING（排队中） →&nbsp;RUNNING（处理中）→ SUCCEEDED（成功）/&nbsp;FAILED（失败）。</p>\n          </li>\n          <li id=\"f635ea02b2bdf\">\n            <p id=\"85a9068834ffa\">初次查询状态通常为 PENDING（排队中）或 RUNNING（处理中）。</p>\n          </li>\n          <li data-spm-anchor-id=\"a2ty_o01.29997173.0.i38.45605171zBOZnO\" id=\"d5ef1c8889ceq\">\n            <p id=\"38bce4a1c4ga1\">当状态变为 SUCCEEDED 时，响应中将包含生成的视频<span class=\"help-letter-space\"></span>URL。</p>\n          </li>\n          <li id=\"bfda010402nl7\">\n            <p id=\"9aa824692dccl\">若状态为 FAILED，请检查错误信息并重试。</p>\n          </li>\n          <li id=\"a4f7d3e9b1ghy\">\n            <p id=\"b5g8e4f0c2jhz\">若状态为 CANCELED，表示任务已取消，如需继续请重新提交任务。</p>\n          </li>\n          <li id=\"c6h9f5g1d3kia\">\n            <p id=\"d7i0g6h2e4lib\">若状态为 UNKNOWN，表示任务不存在或状态未知，可能在 task_id 不存在或超过 24 小时有效期后出现。</p>\n          </li>\n        </ul>\n      </section>\n                          <section id=\"hh01resp2-times\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"e7f4494bd6qyk\"><b>submit_time</b> <code data-tag=\"code\" id=\"24aa5438e2pxu\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"746ca6e31cx1m\" style=\"text-align:left\">任务提交时间。格式为&nbsp;YYYY-MM-DD HH:mm:ss.SSS。</p>\n      </section>\n                          <section id=\"hh01resp2-prompt\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"9a4303951198v\"><b>scheduled_time</b> <code data-tag=\"code\" id=\"208c9508c6mcv\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"add62d333a6l1\" style=\"text-align:left\">任务执行时间。格式为&nbsp;YYYY-MM-DD HH:mm:ss.SSS。</p>\n      </section>\n                          <section id=\"hh01resp2-videourl\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"4c98803d30bd3\"><b>end_time</b> <code data-tag=\"code\" id=\"3868f8ef2bfof\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"cb80512dc1v8y\" style=\"text-align:left\">任务完成时间。格式为&nbsp;YYYY-MM-DD HH:mm:ss.SSS。</p>\n      </section>\n                          <section id=\"hh01resp2-code-field\" is-conref=\"true\" class=\"section\">\n        <p id=\"dfd5cf75979vx\"><b>video_url </b><code data-tag=\"code\" id=\"5e58c2df6e9ci\" class=\"code\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"1edb8555938wa\" style=\"text-align:left\">视频<span class=\"help-letter-space\"></span>URL。仅在&nbsp;task_status&nbsp;为&nbsp;SUCCEEDED&nbsp;时返回。</p>\n        <p id=\"785ed9c3d97rl\">链接有效期<span class=\"help-letter-space\"></span>24<span class=\"help-letter-space\"></span>小时，可通过此<span class=\"help-letter-space\"></span>URL<span class=\"help-letter-space\"></span>下载视频。视频格式为<span class=\"help-letter-space\"></span>MP4（H.264 编码）。</p>\n      </section>\n                          <section id=\"hh01resp2-msg-field\" is-conref=\"true\" class=\"section\">\n        <p jc=\"left\" id=\"2bea6e58b8f22\" style=\"text-align:left\"><b>orig_prompt</b>&nbsp;<code data-tag=\"code\" code-type=\"xCode\" class=\"code\" id=\"e79ee09774hyx\"><i>string</i></code></p>\n        <p jc=\"left\" id=\"2917477fc2dc1\" style=\"text-align:left\">原始输入的<span class=\"help-letter-space\"></span>prompt，对应请求参数<code data-tag=\"code\" id=\"f1b2676b46bnd\" class=\"code\">prompt</code>。</p>\n      </section>\n                          <section id=\"hh01resp2-usage-fields\" class=\"section\">\n                            <section id=\"hh01resp2-usage-f1\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"0e54bb3abdsfz\"><b>code </b><code data-tag=\"code\" code-type=\"xCode\" id=\"747a126bbd65i\" class=\"code\"><i>string</i></code></p>\n        <p id=\"b634d3711cwim\">请求失败的错误码。请求成功时不会返回此参数，详情请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"8ce79bbfb6xfs\" title=\"\" class=\"xref\">错误码</a>。</p>\n      </section>\n                            <section id=\"hh01resp2-usage-f2\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"aa9502135bkcx\"><b>message </b><code data-tag=\"code\" code-type=\"xCode\" id=\"319e9daaccg6n\" class=\"code\"><i>string</i></code></p>\n        <p id=\"49943cf91bcyu\">请求失败的详细信息。请求成功时不会返回此参数，详情请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"201837a58b7du\" title=\"\" class=\"xref\">错误码</a>。</p>\n      </section>\n                          </section>\n                        </div>\n                      </div>\n                    </td>\n                  </tr>\n                  <tr id=\"13d70b601euox\">\n                    <td id=\"fa0586f1459ot\" rowspan=\"1\" colspan=\"1\">\n                      <p id=\"704a3aef1c6bx\"><b>usage</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"aaec751be39en\" class=\"code\"><i>object</i></code></p>\n                      <p jc=\"left\" id=\"a0f8c52642if1\" style=\"text-align:left\">输出信息统计，只对成功的结果计数。</p>\n                      <div id=\"4a4994e6d37z2\" outputclass=\"collapse expanded\" class=\"collapse expanded\">\n                        <p id=\"ddb3077a59hwz\" data-tag=\"expandable-title\" class=\"expandable-title\"><b>属性</b></p>\n                        <div id=\"6e9ed1ca47ywd\" data-tag=\"expandable-content\" class=\"expandable-content\">\n                          <section id=\"8d77120cb76xa\" class=\"section\">\n                            <p jc=\"left\" id=\"aa2586b5e9p3p\" style=\"text-align:left\"><b>input_video_duration</b>&nbsp;<code data-tag=\"code\" id=\"6342763b82i4x\" class=\"code\"><i>integer</i></code></p>\n                            <p jc=\"left\" id=\"1b76666cc4457\" style=\"text-align:left\">输入的视频的时长，单位秒。</p>\n                          </section>\n                          <section id=\"1cc25b3262gvh\" class=\"section\">\n                            <p jc=\"left\" id=\"262aff31beyp7\" style=\"text-align:left\"><b>output_video_duration</b>&nbsp;<code data-tag=\"code\" code-type=\"xCode\" class=\"code\" id=\"e8eaccac39z8d\"><i>integer</i></code></p>\n                            <p id=\"a9fe594cf2qa3\">输出视频的时长，单位秒。</p>\n                          </section>\n                          <section id=\"5ccb8e42c1izl\" class=\"section\">\n                            <p jc=\"left\" id=\"5a17a21df9v6w\" style=\"text-align:left\"><b>duration</b>&nbsp;<code data-tag=\"code\" code-type=\"xCode\" class=\"code\" id=\"a72f612ab8ww6\"><i>integer</i></code></p>\n                            <p id=\"ed05b7f2a0iz8\">总的视频时长，用于计费。</p>\n                          </section>\n                          <section id=\"b800a4ff535bt\" class=\"section\">\n                            <p id=\"62b51df5f26wo\"><b>SR</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"a978cf63163c7\" class=\"code\"><i>integer</i></code></p>\n                            <p id=\"3d9e083ed6l7n\">输出视频的分辨率档位。</p>\n                          </section>\n                          <section id=\"bbb3abc882nam\" class=\"section\">\n                            <p id=\"3fa4a26f026k7\"><b>ratio</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"509636bd44egu\" class=\"code\"><i>string</i></code></p>\n                            <p id=\"ab81f1bcb7evq\">输出视频的宽高比。</p>\n                          </section>\n                          <section id=\"7c6511f6f6wk4\" class=\"section\">\n                            <p id=\"200ad93e2fnyk\"><b>video_count</b> <code data-tag=\"code\" code-type=\"xCode\" id=\"3d691245122sx\" data-init-id=\"60f8b094609l5\" class=\"code\"><i>integer</i></code></p>\n                            <p id=\"7177ec4d80v9u\">输出视频的数量。固定为<span class=\"help-letter-space\"></span>1。</p>\n                          </section>\n                        </div>\n                      </div>\n                    </td>\n                  </tr>\n                  <tr id=\"hh01resp2-reqid\" outputclass=\"test\" class=\"test\">\n                    <td id=\"hh01resp2-reqid-td\" rowspan=\"1\" style=\"vertical-align:middle\" colspan=\"1\">\n                      <section id=\"hh01resp2-reqid-section\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n        <p id=\"f8ad0d8e5fmh3\"><b>request_id </b><code data-tag=\"code\" code-type=\"xCode\" id=\"3f24e7a18c86z\" class=\"code\"><i>string</i></code><i> </i></p>\n        <p id=\"50e43a8e01stk\">请求唯一标识。可用于请求明细溯源和问题排查。</p>\n      </section>\n                    </td>\n                  </tr>\n                </tbody>\n              </table>\n            </section>\n          </section>\n        </section>\n      </section>\n      <section id=\"2e1d8db361w9w\" class=\"section\">\n        <h2 id=\"0d0a562d05nkh\" data-lake-id=\"OajFO\" sourcekey=\"2000000000811\"><b>错误码</b></h2>\n        <p id=\"fce87b9a1052i\">如果模型调用失败并返回报错信息，请参见<a href=\"https://help.aliyun.com/zh/model-studio/error-code\" id=\"a913aa4391wq7\" title=\"\" class=\"xref\">错误码</a>进行解决。</p>\n      </section>\n      <section id=\"4072a72421znb\" data-ref-searchable=\"yes\" data-source=\"reuse_library\" is-conref=\"true\" class=\"section\">\n  <style>\n/* 调整 table 宽度 */\n.aliyun-docs-content table.medium-width {\n  max-width: 1018px;\n  width: 100%;\n}\n\n.aliyun-docs-content table.table-no-border tr td:first-child {\n  padding-left: 0;\n}\n\n.aliyun-docs-content table.table-no-border tr td:last-child {\n  padding-right: 0;\n}\n</style>\n \n  <style>\n/* 支持吸顶 */\ndiv:has(.aliyun-docs-content),\n.aliyun-docs-content .markdown-body {\n  overflow: visible;\n}\n.stick-top {\n  position: sticky;\n  top: 46px;\n}\n</style>\n \n  <style>\n/**代码块字体**/\n\n/* 减少表格中的代码块 margin，让表格信息显示更紧凑 */\n.unionContainer .markdown-body table .help-code-block  {\n  margin: 0 !important;\n}\n/* 减少表格中的代码块字号，让表格信息显示更紧凑 */\n.unionContainer .markdown-body .help-code-block pre {\n  font-size: 12px !important;\n}\n/* 减少表格中的代码块字号，让表格信息显示更紧凑 */\n.unionContainer .markdown-body .help-code-block pre code {\n  font-size: 12px !important;\n}\n</style>\n \n  <style>\n\n/** API Reference 表格 **/\n\n.aliyun-docs-content table.api-reference tr td:first-child {\n  margin: 0px;\n  border-bottom: 1px solid #d8d8d8;\n}\n\n.aliyun-docs-content table.api-reference tr:last-child td:first-child {  \n  border-bottom: none;\n}\n\n.aliyun-docs-content table.api-reference p {\n  color: #6e6e80;\n}\n\n.aliyun-docs-content table.api-reference b, i {\n  color: #181818;\n}\n\n.aliyun-docs-content table.api-reference .collapse {\n  border: none;\n  margin-top: 4px;\n  margin-bottom: 4px;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title-bold {\n  padding: 0;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title {\n  padding: 0;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title-bold .title {\n  margin-left: 16px;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title .title {\n  margin-left: 16px;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title-bold i.icon {\n  position: absolute;\n  color: #777;\n  font-weight: 100;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title i.icon {\n  position: absolute;\n  color: #777;\n  font-weight: 100;\n}\n\n.aliyun-docs-content table.api-reference .collapse.expanded .expandable-content {\n  padding: 10px 14px 10px 14px !important;\n  margin: 0;\n  border: 1px solid #e9e9e9;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title-bold b {\n  font-size: 13px;\n  font-weight: normal;\n  color: #6e6e80;\n}\n\n.aliyun-docs-content table.api-reference .collapse .expandable-title b {\n  font-size: 13px;\n  font-weight: normal;\n  color: #6e6e80;\n}\n\n.aliyun-docs-content table.api-reference .tabbed-content-box {\n  border: none;\n}\n\n.aliyun-docs-content table.api-reference .tabbed-content-box section {\n  padding: 8px 0 !important;\n}\n\n.aliyun-docs-content table.api-reference .tabbed-content-box.mini .tab-box {\n  /*\n  position: absolute;\n  left: 40px;\n  right: 0;\n  */\n}\n\n.aliyun-docs-content .margin-top-33 {\n  margin-top: 33px !important;\n}\n\n.aliyun-docs-content .two-codeblocks pre {\n  max-height: calc(50vh - 136px) !important;\n  height: auto;\n}\n\n.expandable-content section {\n    border-bottom: 1px solid #e9e9e9;\n    padding-top: 6px;\n    padding-bottom: 4px;\n}\n\n.expandable-content section:last-child {\n    border-bottom: none;\n}\n\n.expandable-content section:first-child {\n    padding-top: 0;\n}\n\n</style>\n </section>\n      \n        <style>\n          /* 让表格显示成类似钉钉文档的分栏卡片 */\n          table.help-table-card td {\n            border: 10px solid #FFF !important;\n            background: #F4F6F9;\n            padding: 16px !important;\n            vertical-align: top;\n          }\n\n          /* 减少表格中的代码块 margin，让表格信息显示更紧凑 */\n          .unionContainer .markdown-body table .help-code-block {\n            margin: 0 !important;\n          }\n\n          /* 减少表格中的代码块字号，让表格信息显示更紧凑 */\n          .unionContainer .markdown-body .help-code-block pre {\n            font-size: 12px !important;\n          }\n\n          /* 减少表格中的代码块字号，让表格信息显示更紧凑 */\n          .unionContainer .markdown-body .help-code-block pre code {\n            font-size: 12px !important;\n          }\n\n          /* 表格中的引用上下间距调小，避免内容显示过于稀疏 */\n          .unionContainer .markdown-body table blockquote {\n            margin: 4px 0 0 0;\n          }\n\n        </style>\n      \n      <section id=\"9426195eafzbs\" docid=\"6660267\" is-conref=\"true\" class=\"section\"><style>\n/* ========================================= */\n/* 新增样式：带边框的表格 (api-table-border) */\n/* ========================================= */\n\n/* 1. 表格容器核心设置 */\n.aliyun-docs-content table.api-table-border {\n  border: 1px solid #d8d8d8 !important;       /* 表格外边框 */\n  border-collapse: collapse !important;        /* 合并边框，防止双线 */\n  width: 100% !important;                      /* 宽度占满 */\n  margin: 10px 0 !important;                   /* 上下间距 */\n  background-color: #fff !important;           /* 背景色 */\n  box-sizing: border-box !important;\n}\n\n/* 2. 表头、表体、行设置 */\n/* 确保行本身没有干扰边框 */\n.aliyun-docs-content table.api-table-border thead,\n.aliyun-docs-content table.api-table-border tbody,\n.aliyun-docs-content table.api-table-border tr {\n  border: none !important;\n  background-color: transparent !important;\n}\n\n/* 3. 单元格设置 (th 和 td) */\n/* 这是边框显示的关键位置 */\n.aliyun-docs-content table.api-table-border th,\n.aliyun-docs-content table.api-table-border td {\n  border: 1px solid #d8d8d8 !important;        /* 单元格四周边框 */\n  padding: 8px 12px !important;                /* 内边距 */\n  text-align: left !important;                 /* 文字左对齐 */\n  vertical-align: middle !important;           /* 垂直居中 */\n  color: #6e6e80 !important;                   /* 文字颜色 */\n  font-size: 14px !important;                  /* 字体大小 */\n  line-height: 1.5 !important;\n}\n\n/* 4. 表头特殊样式 */\n.aliyun-docs-content table.api-table-border th {\n  background-color: #f9fafb !important;        /* 表头背景色 */\n  color: #181818 !important;                   /* 表头文字颜色 */\n  font-weight: 600 !important;                 /* 表头加粗 */\n}\n\n/* 5. 鼠标悬停效果 (可选) */\n.aliyun-docs-content table.api-table-border tbody tr:hover td {\n  background-color: #fcfcfc !important;        /* 悬停时背景微变 */\n}\n\n/* 6. 兼容原有 api-reference 可能存在的冲突 */\n/* 如果原有样式针对 td:first-child 等特殊选择器有干扰，这里强制覆盖 */\n.aliyun-docs-content table.api-table-border tr td:first-child {\n  border-bottom: 1px solid #d8d8d8 !important;\n  margin: 0 !important;\n}\n\n.aliyun-docs-content table.api-table-border tr:last-child td:first-child {\n  border-bottom: 1px solid #d8d8d8 !important; /* 保持底部边框 */\n}\n</style></section>\n    </div>\n  </main>\n\n\n\n\n</div>","path":"https://help.aliyun.com/zh/model-studio/happyhorse-text-to-video-api-reference","productNodeVO":{"emptyNode":false,"level":3,"validDocument":true,"headNavEnable":false,"docTitle":"大模型服务平台百炼","id":2400256,"title":"大模型服务平台百炼","url":"/zh/model-studio/"},"alias":"/model-studio/happyhorse-text-to-video-api-reference","showType":1,"taskStatus":"NO_TASK_AVAILABLE","website":"cn","level":7,"developerUrl":"https://developer.aliyun.com/modelstudio/","nodeType":1,"version":14,"url":"/zh/model-studio/happyhorse-text-to-video-api-reference","tags":[{"value":"1","key":"accept","desc":"已承接"},{"value":false,"key":"autoTranslation","desc":"非自动翻译"},{"value":3029820,"key":"nodeId","desc":"文档ID"}],"userVO":{},"recommendDocs":[],"directoryPath":{"children":[{"children":[{"children":[{"emptyNode":false,"level":7,"validDocument":true,"headNavEnable":false,"docTitle":"HappyHorse-文生视频","id":3029820,"title":"HappyHorse-文生视频","url":"/zh/model-studio/happyhorse-text-to-video-api-reference"}],"emptyNode":false,"level":6,"validDocument":true,"headNavEnable":false,"docTitle":"HappyHorse","id":3040873,"title":"HappyHorse","url":"/zh/model-studio/happyhorse-api-reference/"}],"emptyNode":false,"level":5,"validDocument":true,"headNavEnable":false,"docTitle":"视频生成","id":2878493,"title":"视频生成","url":"/zh/model-studio/video-generation-api/"}],"emptyNode":false,"level":3,"validDocument":true,"headNavEnable":false,"docTitle":"大模型服务平台百炼","id":2400256,"title":"大模型服务平台百炼","url":"/zh/model-studio/"},"productUrl":"https://www.aliyun.com/product/bailian","nodeId":3029820,"desc":"HappyHorse文生视频模型，输入文本提示词生成物理真实、运动流畅的视频内容。"},"breadcrumb":[{"emptyNode":false,"level":3,"validDocument":true,"headNavEnable":false,"docTitle":"大模型服务平台百炼","id":2400256,"title":"大模型服务平台百炼","url":"/zh/model-studio/"},{"emptyNode":false,"level":5,"validDocument":true,"headNavEnable":false,"docTitle":"视频生成","id":2878493,"title":"视频生成","url":"/zh/model-studio/video-generation-api/"},{"emptyNode":false,"level":6,"validDocument":true,"headNavEnable":false,"docTitle":"HappyHorse","id":3040873,"title":"HappyHorse","url":"/zh/model-studio/happyhorse-api-reference/"},{"emptyNode":false,"level":7,"validDocument":true,"headNavEnable":false,"docTitle":"HappyHorse-文生视频","id":3029820,"title":"HappyHorse-文生视频","url":"/zh/model-studio/happyhorse-text-to-video-api-reference"}],"isMachineTranslation":false,"isNotFound":false,"helpResponseCode":200,"redirectUrl":"","helpDocVersion":1,"reloadFlag":true}}};
+  </script><link href="https://g.alicdn.com/code/npm/@ali/??hmod-ace-2023-box/0.1.0/index.css,hmod-aliyun-com-global-nav-search/0.8.5/index.css,hmod-aliyun-com-global-nav/0.3.18/index.css" rel="stylesheet"/>
+<link href="https://g.alicdn.com/code/npm/@ali/??hmod-ace-2023-box/0.1.0/index.css,hmod-ace-2024-global-footer/0.2.1/index.css" rel="stylesheet"/>
+</head>
+
+<body><script>
+with(document)with(body)with(insertBefore(createElement("script"),firstChild))setAttribute("exparams","category=&userid=&aplus&yunid=&&trid=213e056117827891063763814e5b14&asid=AQAAAADyM0NqUO6fDgAAAAD7sm9aqUR+bQ==",id="tb-beacon-aplus",src=(location>"https"?"//g":"//g")+".alicdn.com/alilog/mlog/aplus_v2.js")
+</script>
+
+  <script>
+    var _performance_domStart = window.performance && window.performance.now();
+  </script>
+  <header><div id="35ed6b66d57084d03def49c3ad672872"><div class="_18a32969382a277c44015217fbc5cb5a_box"><div class="_3bd147f6948a20d6c528ac898ad4ba47_pc de5ef2fee09ebcb2b1dcaf0c982523bc_theme _277ebb348812c9712fac6b680ad5e513_reset _277ebb348812c9712fac6b680ad5e513_aliyun-font-family" data-ai-assistant-text-selection-tooltip="disabled"><header class="_702422913dd5754f065139ec2d2def80_container   "><button class="_17fcaf1a4ee37405e5ad5fbad24204b4_container _17fcaf1a4ee37405e5ad5fbad24204b4_loading" aria-label="打开菜单" data-spm="d_dashboard_trigger" data-tracker-exp="true"><span class="_17fcaf1a4ee37405e5ad5fbad24204b4_burger "><span class="_17fcaf1a4ee37405e5ad5fbad24204b4_middle"></span></span></button><a href="https://www.aliyun.com/" class="_3f46140aade30bc61f3012933357c477_logo _702422913dd5754f065139ec2d2def80_logo" data-tracker-content="LOGO" data-spm="d_logo"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 4608 1024" fill="#ff6a00" width="80"><path d="M3266.56 773.12h327.68v-102.4h-327.68v-102.4H3584V35.84H2846.72v532.48h317.44v102.4h-327.68v102.4h327.68v112.64h-353.28v102.4h814.08v-102.4h-353.28v-112.64zM3276.8 138.24h215.04v112.64H3276.8V138.24z m0 215.04h215.04V460.8H3276.8V353.28zM3174.4 460.8h-215.04V353.28H3174.4V460.8z m0-209.92h-215.04V138.24H3174.4v112.64zM537.6 445.44H1075.2v122.88H537.6z"></path><path d="M1341.44 5.12h-353.28L1075.2 128l256 81.92c46.08 15.36 76.8 61.44 76.8 107.52v389.12c0 46.08-30.72 92.16-76.8 107.52l-256 81.92-87.04 122.88h353.28c148.48 0 266.24-117.76 266.24-266.24V276.48c0-148.48-117.76-271.36-266.24-271.36zM276.48 814.08c-46.08-15.36-76.8-61.44-76.8-107.52V317.44c0-46.08 30.72-92.16 76.8-107.52l256-81.92L619.52 5.12H266.24C117.76 5.12 0 128 0 276.48v471.04c0 148.48 117.76 266.24 266.24 266.24h353.28l-87.04-122.88-256-76.8zM2493.44 250.88h-261.12v537.6h261.12V250.88z m-107.52 430.08h-56.32V353.28h56.32v327.68zM1848.32 988.16h102.4V138.24h107.52L1996.8 419.84v102.4h61.44v225.28c0 15.36-10.24 25.6-25.6 25.6h-25.6v102.4h51.2c56.32 0 102.4-46.08 102.4-102.4v-358.4H2099.2l61.44-281.6v-102.4h-312.32v957.44z"></path><path d="M2206.72 138.24H2560v660.48c0 46.08-35.84 87.04-87.04 87.04h-76.8v102.4h107.52c87.04 0 163.84-71.68 163.84-163.84V138.24h35.84v-102.4h-496.64v102.4zM3763.2 40.96h737.28v102.4H3763.2zM4541.44 527.36v-102.4H3727.36v102.4h204.8l-163.84 358.4v102.4h691.2c30.72 0 51.2-25.6 51.2-51.2 0-10.24 0-15.36-5.12-20.48l-87.04-194.56h-112.64l76.8 163.84h-496.64l163.84-358.4h491.52z"></path></svg></a><div class="e76910c82efe8556eb8a6ce6019c5d00_container"><button class="e76910c82efe8556eb8a6ce6019c5d00_controller" data-spm="dscroll-left"><i class="ee52067fb65534cb06d3b35f654f5441_icon ddd10ed9ffa4788f54781e516c4c6560-button_left"></i></button><div class="e76910c82efe8556eb8a6ce6019c5d00_menu-warp"><nav class="_0b0e00051b37611378e027e6ac3a695a_menus"><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/product/tongyi" data-spm="d_menu_0">大模型</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/product/list" data-spm="d_menu_1">产品</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/solution/tech-solution/" data-spm="d_menu_2">解决方案</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/benefit" data-spm="d_menu_3">权益</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/price" data-spm="d_menu_4">定价</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://market.aliyun.com/" data-spm="d_menu_5">云市场</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://partner.aliyun.com/management/v2" data-spm="d_menu_6">伙伴</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/service" data-spm="d_menu_7">服务</a><a class="_2cdcedb5935313401458d214540870bc_menu" href="https://www.aliyun.com/about" data-spm="d_menu_8">了解阿里云</a></nav></div><button class="e76910c82efe8556eb8a6ce6019c5d00_controller" data-spm="dscroll-right"><i class="ee52067fb65534cb06d3b35f654f5441_icon ddd10ed9ffa4788f54781e516c4c6560-button_right"></i></button></div><div class="_702422913dd5754f065139ec2d2def80_search-wrap " style="--left-width:0px;--right-width:0px"><div class="global-nav-search _626567c051250ffe2f303af907d3fc83_global-nav-search"><div class="global-search-container _626567c051250ffe2f303af907d3fc83_global-nav-search-desktop-container"><div class="ff4f4a96a12f52ffbdd0d6adbdb6a2b0_position-desktop-search-container"><div><div class="f6fd7e4d3293f0634b9ac54848c275b7_default-search-panel  f6fd7e4d3293f0634b9ac54848c275b7_hidden-default-search-panel"></div><div class="_3b4f5487091623b0b6852e2b46d2729e_search-recommend-panel  _3b4f5487091623b0b6852e2b46d2729e_hidden-search-recommend-panel"><button class="_4b65cdd64479a2fabe582b8c0789821e_search-no-content " type="button">查看 &quot;&quot; 全部搜索结果</button></div></div></div></div><div class="_626567c051250ffe2f303af907d3fc83_global-nav-search-mobile-container"><a class="_626567c051250ffe2f303af907d3fc83_search-button" href="https://www.aliyun.com/search?from=h5-global-nav-search"><span role="img" class="_9a1d73bbcd1a80626a31035a12410804_icon _626567c051250ffe2f303af907d3fc83_search-button-icon"><svg width="1em" height="1em" viewBox="0 0 32 32" focusable="false" color="currentColor" fill="currentColor" class="" data-icon="search"><g><g><path fill-opacity="1" fill-rule="evenodd" d="M14,4C15.3558,4,16.653399999999998,4.262105,17.8926,4.786314C19.089100000000002,5.29242,20.1486,6.00666,21.071,6.92905C21.9933,7.85144,22.7076,8.91087,23.2137,10.10735C23.7379,11.34664,24,12.64419,24,14C24,15.3558,23.7379,16.653399999999998,23.2137,17.892699999999998C22.8382,18.7803,22.3482,19.5925,21.7436,20.3293L27.7072,26.2928L26.293,27.7071L20.3294,21.7435C19.592599999999997,22.3481,18.7803,22.8382,17.8926,23.2137C16.653399999999998,23.7379,15.3558,24,14,24C12.64419,24,11.34664,23.7379,10.10735,23.2137C8.91087,22.7076,7.85144,21.9933,6.92905,21.0709C6.00666,20.1486,5.29242,19.089100000000002,4.786314,17.8926C4.262105,16.653399999999998,4,15.3558,4,14C4,12.64419,4.262105,11.34664,4.786314,10.10735C5.29242,8.91087,6.00666,7.85144,6.92905,6.92905C7.85144,6.00666,8.91087,5.29242,10.10735,4.786314C11.34664,4.262105,12.64419,4,14,4ZM14,6C11.79102,6,9.905439999999999,6.78109,8.34326,8.34326C6.78109,9.905439999999999,6,11.79102,6,14C6,16.209,6.78109,18.0946,8.34326,19.6567C9.905439999999999,21.2189,11.79102,22,14,22C16.209,22,18.0946,21.2189,19.6567,19.6567C21.2189,18.0946,22,16.209,22,14C22,11.79102,21.2189,9.905439999999999,19.6567,8.34326C18.0946,6.78109,16.209,6,14,6Z"></path></g></g></svg></span></a></div></div></div><div class="_174801eef2caf75aeaee91c72b19c09a_container"><a class="global-nav-ai-assistant _174801eef2caf75aeaee91c72b19c09a_item _2d3ef330b3f8055912d355b9a255bfcf_btn" href="https://www.aliyun.com/ai-assistant?displayMode=side" data-spm="dai_assistant" target="_blank"><div class="LogoStyled-aliyun-ai-assistant-rc-8096__sc-1qusfpt-0 cpJKij"><div class="ai-assistant-brand-logo-icon" style="background:no-repeat center/100%  url(https://img.alicdn.com/imgextra/i4/O1CN012X1Rxl1clAgB5waMK_!!6000000003640-2-tps-52-52.png)"><img src="https://img.alicdn.com/imgextra/i2/O1CN01bYc1m81RrcSAyOjMu_!!6000000002165-54-tps-60-60.apng" loading="lazy"/></div><div class="ai-assistant-brand-logo-tooltip "><div class="ai-assistant-logo-tooltip-content">AI 助理</div></div></div></a><button class="_174801eef2caf75aeaee91c72b19c09a_item c017bf0be22012eb313124a5a5408d0f_button"><i class="ee52067fb65534cb06d3b35f654f5441_icon ddd10ed9ffa4788f54781e516c4c6560-intl"></i></button><button class="_174801eef2caf75aeaee91c72b19c09a_item"><i class="ee52067fb65534cb06d3b35f654f5441_icon ddd10ed9ffa4788f54781e516c4c6560-contact f9c0581c7b0803efa9027b0f2d228294_icon"></i></button><a class="_174801eef2caf75aeaee91c72b19c09a_item" href="https://help.aliyun.com/" target="_blank" data-spm="d_quick_access_3">文档</a><a class="_174801eef2caf75aeaee91c72b19c09a_item" href="https://beian.aliyun.com/" target="_blank" data-spm="d_quick_access_4">备案</a><a class="_174801eef2caf75aeaee91c72b19c09a_item" href="https://home.console.aliyun.com/home/dashboard/ProductAndService" target="_blank" data-spm="d_quick_access_5" rel="nofollow">控制台</a><span class="f8312ad103723788906e97b238dccd8c_loading _174801eef2caf75aeaee91c72b19c09a_item"></span></div></header></div><div class="_3bd147f6948a20d6c528ac898ad4ba47_mobile de5ef2fee09ebcb2b1dcaf0c982523bc_theme _277ebb348812c9712fac6b680ad5e513_reset _277ebb348812c9712fac6b680ad5e513_aliyun-font-family"></div><div class="_18a32969382a277c44015217fbc5cb5a_box"></div></div></div></header>
+
+  <div id="app"><div class="MainLayout--mainContainer--FzmzeDI" id="docs-container"><div class="MainLayout--helpBodyHead--fFcCOhC"><div class="HelpBodyHead--helpBodyHeadBox--VWOHGv0 help-body-head" data-spm="help-sub-nav"><div class="HelpBodyHead--helpBodyHead--YgG0_RH help-body-head-content"><div class="HelpBodyHead--helpHeadDocName--eZC8orQ"><a href="/zh" data-spm="d_logo">官方文档</a></div><div class="help-tablist"></div><div class="HelpBodyHead--bodyHeadRight--mgSoj67"></div></div><div class="HelpBodyHead--productList--YJ9ism5" style="display:none"><div class="ProductList--allProducts--Z87vhzs"><div class="ProductList--allProductsHead--l2aMmm6"><div class="ProductList--allProductsSearchWrapper--PgTrGTl"><div class="ProductList--allProductsSearch--edTNjmr"><span role="img" class="Icon--icon--jErARdR ProductList--searchIcon--NrFYKki"><svg width="1em" height="1em" viewBox="0 0 32 32" focusable="false" color="currentColor" fill="currentColor" class="" data-icon="document-search"><g fill-rule="evenodd" stroke-width="1"><path d="M19,3 L27,11 L27,29 L5,29 L5,3 L19,3 Z M18,5 L7,5 L7,27 L25,27 L25,12 L18,12 L18,5 Z M20,6.82842636 L20,10 L23.1715736,10 L20,6.82842636 Z"></path><path d="M15.5,13.5 C16.8806419,13.5 18.0591358,13.9881726 19.0354815,14.9645178 C20.0118272,15.9408637 20.5,17.1193577 20.5,18.5 C20.5,19.5346034 20.2258676,20.4556918 19.6776028,21.2632651 L22.1636839,23.7493687 L20.749464,25.1635761 L18.2634125,22.6775026 C17.4558048,23.2258342 16.5346673,23.5 15.5,23.5 C14.1193581,23.5 12.9408642,23.0118272 11.9645183,22.0354815 C10.9881728,21.0591364 10.5,19.8806426 10.5,18.5 C10.5,17.1193576 10.9881728,15.9408636 11.9645183,14.9645181 C12.9408638,13.9881727 14.1193577,13.5 15.5,13.5 Z M15.5,15.5 C14.6716423,15.5 13.9645529,15.7929106 13.3787317,16.3787317 C12.7929106,16.9645527 12.5,17.6716421 12.5,18.5 C12.5,19.3283571 12.7929105,20.0354462 13.3787315,20.6212673 C13.964553,21.2070891 14.6716425,21.5 15.5,21.5 C16.3283577,21.5 17.0354471,21.2070891 17.6212683,20.6212673 C18.2070894,20.0354462 18.5,19.3283571 18.5,18.5 C18.5,17.6716421 18.2070894,16.9645526 17.6212683,16.3787315 C17.0354471,15.7929105 16.3283577,15.5 15.5,15.5 Z"></path></g></svg></span><input placeholder="输入文档关键字查找"></div></div></div><div class="ProductList--allProductsBody--jNYsZlh"></div></div></div></div></div><div class="PcLayout--docsContainer--pwbB9bE"><div class="PcLayout--mobileHelpBodyHead--g_YCRMg"><div class="HelpBodyHead--mobileHeadBlank--_hX8BWJ"></div></div><div class="PcLayout--aliyunAppLayout--_QE36ni"><nav class="aliyun-docs-menu" id="aliyun-docs-menu"><div class="Menu--helpMenuBox--WZ7MX3B" id="help-menu-box" style="width:300px"><div class="Menu--helpMenuInnerBox--kxSXymh aliyun-docs-toc-content" style="width:300px"><div class="Menu--helpMenuDrag--fs9WrRe help-menu-drag-box"></div><div class="Menu--helpMenu--reWzeMt"><div class="help-menu-subproduct"></div><div class="MenuSearch--collapseActionBar--m98Zp_n"><div class="MenuSearch--searchContainer--yxqXL6w"><div class="MenuSearch--searchInputWrapper--xJnk941"><span role="img" class="Icon--icon--jErARdR MenuSearch--searchIcon--YWpGKq9"><svg width="1em" height="1em" viewBox="0 0 32 32" focusable="false" color="currentColor" fill="currentColor" class="" data-icon="document-search"><g fill-rule="evenodd" stroke-width="1"><path d="M19,3 L27,11 L27,29 L5,29 L5,3 L19,3 Z M18,5 L7,5 L7,27 L25,27 L25,12 L18,12 L18,5 Z M20,6.82842636 L20,10 L23.1715736,10 L20,6.82842636 Z"></path><path d="M15.5,13.5 C16.8806419,13.5 18.0591358,13.9881726 19.0354815,14.9645178 C20.0118272,15.9408637 20.5,17.1193577 20.5,18.5 C20.5,19.5346034 20.2258676,20.4556918 19.6776028,21.2632651 L22.1636839,23.7493687 L20.749464,25.1635761 L18.2634125,22.6775026 C17.4558048,23.2258342 16.5346673,23.5 15.5,23.5 C14.1193581,23.5 12.9408642,23.0118272 11.9645183,22.0354815 C10.9881728,21.0591364 10.5,19.8806426 10.5,18.5 C10.5,17.1193576 10.9881728,15.9408636 11.9645183,14.9645181 C12.9408638,13.9881727 14.1193577,13.5 15.5,13.5 Z M15.5,15.5 C14.6716423,15.5 13.9645529,15.7929106 13.3787317,16.3787317 C12.7929106,16.9645527 12.5,17.6716421 12.5,18.5 C12.5,19.3283571 12.7929105,20.0354462 13.3787315,20.6212673 C13.964553,21.2070891 14.6716425,21.5 15.5,21.5 C16.3283577,21.5 17.0354471,21.2070891 17.6212683,20.6212673 C18.2070894,20.0354462 18.5,19.3283571 18.5,18.5 C18.5,17.6716421 18.2070894,16.9645526 17.6212683,16.3787315 C17.0354471,15.7929105 16.3283577,15.5 15.5,15.5 Z"></path></g></svg></span><input placeholder="在目录中筛选" class="MenuSearch--searchInput--vYXA7NN"></div></div></div><div class="help-menu-scroll-container Menu--menuContent--f6GC88t" data-spm="help-menu-undefined"><ul id="common-menu-container">
+ <li id="2400262" class="Menu--level1--UN3zYr3">
+<a href="/zh/model-studio/model-user-guide/">
+<i class="iconfont icon-close-arrow"></i>
+<span class="Menu--menuItemText--a6B4ZGH">用户指南（模型）</span>
+</a>
+</li>
+ <li id="2840916" class="Menu--level1--UN3zYr3">
+<a href="/zh/model-studio/application-user-guide/">
+<i class="iconfont icon-close-arrow"></i>
+<span class="Menu--menuItemText--a6B4ZGH">用户指南（应用）</span>
+</a>
+</li>
+ <li id="2400264" class="Menu--level1--UN3zYr3">
+<a href="/zh/model-studio/model-api-reference/">
+<i class="iconfont icon-close-arrow"></i>
+<span class="Menu--menuItemText--a6B4ZGH">API参考（模型）</span>
+</a>
+</li>
+ <li id="2863247" class="Menu--level1--UN3zYr3">
+<a href="/zh/model-studio/applicantion-api-reference/">
+<i class="iconfont icon-close-arrow"></i>
+<span class="Menu--menuItemText--a6B4ZGH">API参考（应用）</span>
+</a>
+</li>
+</ul></div></div></div></div></nav><main class="aliyun-docs-view" id="aliyun-docs-view"><div class="ProductDetail--contentWrapper--iCunrBZ"><section class="aliyun-docs-content" style="height:auto"><header class="aliyun-docs-view-header"><div class="Header--topBar--LXfTLL5"><div class="BreadCrumb--breadcrumb--s_Uzlex"><div class="help-header-breadcrumb"><a href="/zh">首页</a></div></div></div><div class="Header--title--iTk2tUo"><h1>HappyHorse-文生视频API参考</h1><div class="Header--actionBar--dvzFYrk"><div class="Header--left--x8TGxDL"><span class="Header--updateTime--YXGPhcZ">更新时间：</span></div><div class="Header--right--l4TSW1E"><span class="Header--copyButtonWrapper--LDbniON"><span class="CopyAsMarkdown--copyButton--SVGoWIG"><span role="img" class="Icon--icon--jErARdR"><svg width="1em" height="1em" viewBox="0 0 32 32" focusable="false" color="currentColor" fill="currentColor" class="" data-icon="copy"><g fill-rule="evenodd" stroke-width="1"><polygon fill-rule="nonzero" points="8 6.80000019 8 4 28 4 28 24 25 24 25 22 26 22 26 6 10 6 10 6.80000019"></polygon><path d="M24,8 L24,28 L4,28 L4,8 L24,8 Z M22,10 L6,10 L6,26 L22,26 L22,10 Z"></path></g></svg></span>复制 MD 格式</span></span><div class="Header--linkButton--LpCRs1O"><div class="OuterUrl--outUrl--ZFzJIhk"><a href="https://www.aliyun.com/product/bailian" target="_blank" rel="noreferrer">产品详情</a></div></div><div class="Contact--contactButton--TBwTX5R"><span class="Contact--favoritesBtn--J8mRVBp" title="收藏本文档" data-spm-click="gostr=/aliyun;locaid=collect"><i class="help-iconfont help-icon-like"></i></span><a href="/my_favorites.html">我的收藏</a></div></div></div></div></header><div class="pc-markdown-container unionContainer" id="pc-markdown-container"><div class="markdown-body"><div lang="zh" class="icms-help-docs-content">
+
+  <main id="main-3265195">
+    
+    
+    <p id="8048199460kaj" data-tag="shortdesc" class="shortdesc">HappyHorse<span class="help-letter-space"></span>文生视频模型，输入文本提示词生成物理真实、运动流畅的视频内容。</p>
+    <div id="hh01body" data-tag="body" class="body">
+      <section id="hh01scope" class="section">
+        <h2 id="hh01scope-title">适用范围</h2>
+        <p id="hh01scope-desc">为确保调用成功，请务必保证模型、endpoint URL 和 API Key 均属于<b>同一地域</b>。跨地域调用将会失败。</p>
+        <ul id="hh01scope-list">
+          <li id="hh01scope-li1">
+            <p id="hh01scope-li1p"><span data-tag="ph" id="9ffa3a4204tnq" props="china" data-cond-props="china" class="ph"><a class="" href="https://bailian.console.aliyun.com/cn-beijing?tab=model#/model-market/all" id="8158377d09c3z"><b>选择模型</b></a></span>：确认模型所属的地域。</p>
+          </li>
+          <li id="hh01scope-li2">
+            <p id="hh01scope-li2p"><b>选择 URL</b>：选择对应的地域 Endpoint URL，支持<span class="help-letter-space"></span>HTTP URL。</p>
+          </li>
+          <li id="hh01scope-li3">
+            <p id="hh01scope-li3p"><b>配置 API Key</b>：获取该地域的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/get-api-key" id="hh01scope-xref2" title="" class="xref">API Key</a>，再<a href="https://help.aliyun.com/zh/model-studio/configure-api-key-through-environment-variables" id="hh01scope-xref3" title="" class="xref">配置<span class="help-letter-space"></span>API Key<span class="help-letter-space"></span>到环境变量</a>。</p>
+          </li>
+        </ul>
+        <div type="note" id="hh01scope-note-china" props="china" data-cond-props="china" class="note note-note"><div class="note-icon-wrapper"><i class="icon-note note note"></i></div><div class="noteContentSpan"><strong>说明 </strong>
+          <p id="hh01scope-note-china-p">本文的示例代码适用于<b>华北<span class="help-letter-space"></span>2（北京）地域</b>。</p>
+        </div></div>
+        
+        <div type="important" id="8954a95aab0ep" is-conref="true" class="note note-important"><div class="note-icon-wrapper"><i class="icon-note note important"></i></div><div class="noteContentSpan"><strong>重要 </strong>
+        <p id="6610938-sg-https-migration-notice-p">百炼为华北<span class="help-letter-space"></span>2（北京）、新加坡地域推出了业务空间专属域名，<b>能够为推理请求提供卓越的性能和更高的稳定性</b>，建议迁移至新域名：</p>
+        <ul id="6610938-sg-https-migration-list">
+          <li id="6610938-sg-https-bj-li">
+            <p id="6610938-sg-https-bj-p">华北<span class="help-letter-space"></span>2（北京）地域：从 <code data-tag="code" id="6610938-sg-https-bj-old" class="code">https://dashscope.aliyuncs.com</code> 迁移至 <code data-tag="code" id="6610938-sg-https-bj-new" class="code">https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com</code></p>
+          </li>
+          <li id="6610938-sg-https-sg-li">
+            <p id="6610938-sg-https-sg-p">新加坡地域：从 <code data-tag="code" id="6610938-sg-https-old-domain" class="code">https://dashscope-intl.aliyuncs.com</code> 迁移至 <code data-tag="code" id="6610938-sg-https-new-domain" class="code">https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com</code></p>
+          </li>
+        </ul>
+        <p id="6610938-sg-https-wsid-p">其中 <code data-tag="code" id="6610938-sg-https-wsid" class="code">{WorkspaceId}</code> 为您的业务空间 ID，可在百炼控制台的<b>业务空间详情</b>页面查看。现有域名仍可正常使用。</p>
+      </div></div>
+      </section>
+      <section id="hh01http" class="section">
+        <h2 id="hh01http-title">HTTP<span class="help-letter-space"></span>调用</h2>
+        <p id="hh01http-desc">文生视频任务耗时较长（通常为<span class="help-letter-space"></span>1-5<span class="help-letter-space"></span>分钟），API<span class="help-letter-space"></span>采用异步调用的方式。整个流程包含&nbsp;<b>"创建任务 -&gt; 轮询获取"</b>&nbsp;两个核心步骤，具体如下：</p>
+        <section id="hh01step1" class="section">
+          <h3 id="hh01step1-title"><b>步骤<span class="help-letter-space"></span>1：创建任务获取任务<span class="help-letter-space"></span>ID</b></h3>
+          <section id="hh01step1-china-tabs" data-tag="tabbed-content-box" outputclass="tabbed-content-box" props="china" data-cond-props="china" class="tabbed-content-box section">
+            <section id="hh01step1-china-bj" class="section">
+              <h2 id="hh01step1-china-bj-title"><b>华北<span class="help-letter-space"></span>2（北京）</b></h2>
+              <p id="hh01step1-china-bj-url"><code data-tag="code" id="hh01step1-china-bj-code" class="code">POST https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>
+              <p id="hh01step1-china-bj-note">调用时请将<code data-tag="code" id="hh01step1-china-bj-wsid" class="code">WorkspaceId</code>替换为真实的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu" id="hh01step1-china-bj-xref" title="" class="xref">Workspace ID</a>。</p>
+            </section>
+            <section id="hh01step1-china-sg" class="section">
+              <h2 id="hh01step1-china-sg-title"><b>新加坡</b></h2>
+              <p id="hh01step1-china-sg-url"><code data-tag="code" code-type="xCode" id="hh01step1-china-sg-code" class="code">POST https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>
+              <p id="344d744a7a29">调用时请将<code data-tag="code" id="d174801c5862" class="code">WorkspaceId</code>替换为真实的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu" id="397730f07dd9" title="" class="xref">Workspace ID</a>。</p>
+            </section>
+            <section id="hh01step1-china-va" class="section">
+              <h2 id="hh01step1-china-va-title"><b>美国（弗吉尼亚）</b></h2>
+              <p id="hh01step1-china-va-url"><code data-tag="code" code-type="xCode" id="hh01step1-china-va-code" class="code">POST https://dashscope-us.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>
+            </section>
+            <section id="hh01step1-china-fr" class="section">
+              <h2 id="hh01step1-china-fr-title"><b>德国（法兰克福）</b></h2>
+              <p id="hh01step1-china-fr-url"><code data-tag="code" code-type="xCode" id="hh01step1-china-fr-code" class="code">POST https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis</code></p>
+              <p id="hh01step1-china-fr-note">调用时请将<code data-tag="code" id="hh01step1-china-fr-wsid" class="code">WorkspaceId</code>替换为真实的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu" id="hh01step1-china-fr-xref" title="" class="xref">Workspace ID</a>。</p>
+            </section>
+          </section>
+          
+          <div type="note" id="hh01step1-note" is-conref="true" class="note note-note"><div class="note-icon-wrapper"><i class="icon-note note note"></i></div><div class="noteContentSpan"><strong>说明 </strong>
+        <ul id="293298e687o1v">
+          <li id="4f27058238nvw">
+            <p id="8ea87a0a45mar">创建成功后，使用接口返回的 <code data-tag="code" id="b357e1caa0kcf" class="code">task_id</code> 查询结果，task_id 有效期为 24 小时。<b>请勿重复创建任务</b>，轮询获取即可。</p>
+          </li>
+          <li id="ceea565da7a22">
+            <p id="6cd37e3e57tgj">新手指引请参见<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/first-call-to-image-and-video-api" id="a28717ba6dqgc" title="" class="xref">Postman</a>。</p>
+          </li>
+        </ul>
+      </div></div>
+          <table bordertype="no-border" id="hh01step1-table" outputclass="api-reference column-layout" tablewidth="100" tablecolswidth="53.91 46.09" autofit="true" class="api-reference column-layout table">
+            <colgroup colwidth="1.08*" style="width:53.91%"></colgroup>
+            <colgroup colwidth="0.92*" style="width:46.09%"></colgroup>
+            <tbody class="tbody">
+              <tr id="hh01req-header" outputclass="test" class="test">
+                <td id="hh01req-header-td1" rowspan="1" style="vertical-align:top" colspan="1">
+                  <h4 id="hh01req-header-h4">请求参数</h4>
+                </td>
+                <td id="hh01req-header-td2" rowspan="7" style="vertical-align:top" colspan="1">
+                  <section id="hh01req-code-section" outputclass="stick-top" class="stick-top section">
+                    <section id="hh01req-code-tabs" data-tag="tabbed-content-box" outputclass="tabbed-content-box margin-top-33" class="tabbed-content-box section margin-top-33">
+                      <section id="hh01req-code-t2v" class="section">
+                        <h2 id="hh01req-code-t2v-title">文生视频</h2><pre code-type="xCode" id="hh01req-curl-china" data-tag="codeblock" outputclass="language-curl" props="china" data-cond-props="china" class="pre codeblock language-curl"><code>curl --location 'https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/services/aigc/video-generation/video-synthesis' \
+    -H 'X-DashScope-Async: enable' \
+    -H "Authorization: Bearer $DASHSCOPE_API_KEY" \
+    -H 'Content-Type: application/json' \
+    -d '{
+    "model": "happyhorse-1.1-t2v",
+    "input": {
+        "prompt": "一座由硬纸板和瓶盖搭建的微型城市，在夜晚焕发出生机。一列硬纸板火车缓缓驶过，小灯点缀其间，照亮前路。"
+    },
+    "parameters": {
+        "resolution": "720P",
+        "ratio": "16:9",
+        "duration": 5
+    }
+}'</code></pre>
+                      </section>
+                    </section>
+                  </section>
+                </td>
+              </tr>
+              <tr id="hh01req-headers-row" outputclass="test" class="test">
+                <td id="hh01req-headers-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01req-headers-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="b35b36152auao"><b>Content-Type </b><code data-tag="code" code-type="xCode" id="9d0e02b383aea" class="code"><i>string</i></code><i> </i><b>（必选）</b></p>
+        <p jc="left" id="c84336268andm" style="text-align:left">请求内容类型。此参数必须设置为<code data-tag="code" code-type="xCode" id="e629c56e1e0ss" class="code">application/json</code>。</p>
+      </section>
+                </td>
+              </tr>
+              <tr id="hh01req-auth-row" outputclass="test" class="test">
+                <td id="hh01req-auth-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01req-auth-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="ac48af82483to"><b>Authorization </b><code data-tag="code" code-type="xCode" id="7c35409e8enfj" class="code"><i>string</i></code><b>（必选）</b></p>
+        <p jc="left" id="a1b0e25ac4cv4" style="text-align:left">请求身份认证。接口使用阿里云百炼<span class="help-letter-space"></span>API Key<span class="help-letter-space"></span>进行身份认证。示例值：Bearer sk-xxxx。</p>
+      </section>
+                </td>
+              </tr>
+              <tr id="hh01req-ct-row" outputclass="test" class="test">
+                <td id="hh01req-ct-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01req-ct-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="ce88e0f57eopk"><b>X-DashScope-Async </b><code data-tag="code" code-type="xCode" id="21417561a0y7n" class="code"><i>string</i></code><i> </i><b>（必选）</b></p>
+        <p jc="left" id="07fa9d1a3e24y" style="text-align:left">异步处理配置参数。HTTP<span class="help-letter-space"></span>请求只支持异步，<b>必须设置为</b><code data-tag="code" code-type="xCode" id="e7b30e36930sk" class="code"><b>enable</b></code>。</p>
+        <div type="important" id="c8a2904c29tco" class="note note-important"><div class="note-icon-wrapper"><i class="icon-note note important"></i></div><div class="noteContentSpan"><strong>重要 </strong>
+          <p id="2cf177f1bepsl">缺少此请求头将报错：“current user api does not support synchronous calls”。</p>
+        </div></div>
+      </section>
+                </td>
+              </tr>
+              <tr id="hh01req-body-row" outputclass="test" class="test">
+                <td id="hh01req-body-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <h5 id="hh01req-body-h5">请求体（Request Body）</h5>
+                </td>
+              </tr>
+              <tr id="hh01req-model" outputclass="test" class="test">
+                <td id="hh01req-model-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01req-model-section" class="section">
+                    <p id="hh01req-model-p1"><b>model</b> <code data-tag="code" code-type="xCode" id="hh01req-model-type" class="code"><i>string</i></code> <b>（必选）</b></p>
+                    <p id="hh01req-model-p2">模型名称。</p>
+                    <p id="hh01req-model-p3">可选值：</p>
+                    <ul id="971dbddd0cwda">
+                      <li id="hh01req-model-li15">
+                        <p id="hh01req-model-p15"><code data-tag="code" id="hh01req-model-v15" class="code">happyhorse-1.1-t2v</code></p>
+                      </li>
+                      <li id="3c5580751bv4s">
+                        <p id="44fca6a034rnd"><code data-tag="code" id="1ae85f8660r7t" class="code">happyhorse-1.0-t2v</code></p>
+                      </li>
+                    </ul>
+                  </section>
+                </td>
+              </tr>
+              <tr id="hh01req-input">
+                <td id="hh01req-input-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01req-input-section" class="section">
+                    <p id="hh01req-input-p1"><b>input</b> <code data-tag="code" code-type="xCode" id="hh01req-input-type" class="code"><i>object</i></code> <b>（必选）</b></p>
+                    <p id="hh01req-input-p2">模型的输入信息。</p>
+                    <div id="hh01req-input-collapse" outputclass="collapse expanded" class="collapse expanded">
+                      <p id="hh01req-input-collapse-title" data-tag="expandable-title" class="expandable-title"><b>属性</b></p>
+                      <div id="hh01req-input-collapse-content" data-tag="expandable-content" class="expandable-content">
+                        <section id="hh01req-prompt-section" class="section">
+                          <p id="hh01req-prompt-p1"><b>prompt</b> <code data-tag="code" code-type="xCode" id="hh01req-prompt-type" class="code"><i>string</i></code> <b>（必选）</b></p>
+                          <p id="hh01req-prompt-p2">文本提示词，用于描述期望生成的视频内容。</p>
+                          <p id="hh01req-prompt-p3">支持任何语言输入，长度不超过<span class="help-letter-space"></span>5000<span class="help-letter-space"></span>个非中文字符或<span class="help-letter-space"></span>2500<span class="help-letter-space"></span>个中文字符，超过部分将自动截断。</p>
+                        </section>
+                      </div>
+                    </div>
+                  </section>
+                </td>
+              </tr>
+              <tr id="hh01req-params">
+                <td id="hh01req-params-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01req-params-section" class="section">
+                    <p id="hh01req-params-p1"><b>parameters</b> <code data-tag="code" code-type="xCode" id="hh01req-params-type" class="code"><i>object</i></code> （可选）</p>
+                    <p id="hh01req-params-p2">视频处理参数，如设置视频分辨率、设置视频时长等。</p>
+                    <div id="hh01req-params-collapse" outputclass="collapse expanded" class="collapse expanded">
+                      <p id="hh01req-params-collapse-title" data-tag="expandable-title" class="expandable-title"><b>属性</b></p>
+                      <div id="hh01req-params-collapse-content" data-tag="expandable-content" class="expandable-content">
+                        <section id="hh01req-resolution-section" class="section">
+                          <p id="hh01req-resolution-p1"><b>resolution</b> <code data-tag="code" code-type="xCode" id="hh01req-resolution-type" class="code"><i>string</i></code> （可选）</p>
+                          <p id="hh01req-resolution-p2">指定生成视频的分辨率档位。</p>
+                          <p id="hh01req-resolution-p3">可选值：</p>
+                          <ul id="9b676bf567dpd">
+                            <li id="091254bcc2fx4">
+                              <p id="225bf780e7olo"><code data-tag="code" id="hh01req-resolution-v1" class="code">720P</code></p>
+                            </li>
+                            <li id="5ec1e4884akn7">
+                              <p id="fde238b7f7s2w"><code data-tag="code" id="hh01req-resolution-v2" class="code">1080P</code>：默认值。</p>
+                            </li>
+                          </ul>
+                        </section>
+                        <section id="hh01req-ratio-section" class="section">
+                          <p id="hh01req-ratio-p1"><b>ratio</b> <code data-tag="code" code-type="xCode" id="hh01req-ratio-type" class="code"><i>string</i></code> （可选）</p>
+                          <p id="hh01req-ratio-p2">指定生成视频的宽高比。</p>
+                          <p id="hh01req-ratio-p3">可选值：</p>
+                          <ul id="cd694b470fipo">
+                            <li id="d18fcd6de9mlm">
+                              <p id="2b57f94585w89"><code data-tag="code" id="hh01req-ratio-v1" class="code">16:9</code>：默认值。</p>
+                            </li>
+                            <li id="4a09304c5b5xe">
+                              <p id="d3856acb281f2"><code data-tag="code" id="hh01req-ratio-v2" class="code">9:16</code></p>
+                            </li>
+                            <li id="1f26ed3382pu2">
+                              <p id="6bf0151aa3l2e"><code data-tag="code" id="hh01req-ratio-v3" class="code">1:1</code></p>
+                            </li>
+                            <li id="021b621d54ks8">
+                              <p id="c7ef1c71c4rij"><code data-tag="code" id="hh01req-ratio-v4" class="code">4:3</code></p>
+                            </li>
+                            <li id="51cefbc74f0fz">
+                              <p id="920e0097d75us"><code data-tag="code" id="hh01req-ratio-v5" class="code">3:4</code></p>
+                            </li>
+                            <li id="hh01req-ratio-li6">
+                              <p id="hh01req-ratio-p6"><code data-tag="code" id="hh01req-ratio-v6" class="code">4:5</code></p>
+                            </li>
+                            <li id="hh01req-ratio-li7">
+                              <p id="hh01req-ratio-p7"><code data-tag="code" id="hh01req-ratio-v7" class="code">5:4</code></p>
+                            </li>
+                            <li id="hh01req-ratio-li8">
+                              <p id="hh01req-ratio-p8"><code data-tag="code" id="hh01req-ratio-v8" class="code">9:21</code></p>
+                            </li>
+                            <li id="hh01req-ratio-li9">
+                              <p id="hh01req-ratio-p9"><code data-tag="code" id="hh01req-ratio-v9" class="code">21:9</code></p>
+                            </li>
+                          </ul>
+                        </section>
+                        <section id="hh01req-duration-section" class="section">
+                          <p id="hh01req-duration-p1"><b>duration</b> <code data-tag="code" code-type="xCode" id="hh01req-duration-type" class="code"><i>integer</i></code> （可选）</p>
+                          <p id="hh01req-duration-p2">指定生成视频的时长，单位为秒。</p>
+                          <p id="ee5232ecb8tae">取值为[3, 15]之间的整数。默认值为<code data-tag="code" id="hh01req-duration-default" class="code">5</code>。</p>
+                        </section>
+                        <section id="f8a814f0c6rdw" class="section">
+                          <p id="f3bfe39dd7niu"><b>watermark</b> <code data-tag="code" code-type="xCode" id="098e0969d3t4x" class="code"><i>boolean</i></code> （可选）</p>
+                          <p id="6edb38d854rid">是否在生成的视频上添加水印标识。水印位于视频右下角，文案固定为“Happy Horse”。</p>
+                          <ul id="65c819df514cy">
+                            <li id="a18035d28fg51">
+                              <p id="985eabbe26g67"><code data-tag="code" id="a005960c98aaw" class="code">true</code>：默认值，添加水印。</p>
+                            </li>
+                            <li id="9507dd9f2a50d">
+                              <p id="6dd20caa06xvi"><code data-tag="code" id="5fbd3a9e24koq" class="code">false</code>：不添加水印。</p>
+                            </li>
+                          </ul>
+                        </section>
+                        <section id="db4a199411fko" docid="5729257" is-conref="true" class="section">
+        <p id="94249db1edmah"><b>seed </b><code data-tag="code" code-type="xCode" id="cca1b934440rn" class="code"><i>integer</i></code><b> </b><i> </i>（可选）</p>
+        <p id="3261f9b5b9zdb">随机数种子，取值范围为<code data-tag="code" id="b1710151ee0lg" class="code">[0, 2147483647]</code>。</p>
+        <p id="dcc50f7645tjn">未指定时，系统自动生成随机种子。若需提升生成结果的可复现性，建议固定<span class="help-letter-space"></span>seed<span class="help-letter-space"></span>值。</p>
+        <p jc="left" id="87b2da986bhdy" style="text-align:left">请注意，由于模型生成具有概率性，即使使用相同 seed，也不能保证每次生成结果完全一致。</p>
+      </section>
+                        <p id="4bed8b59445hs"></p>
+                      </div>
+                    </div>
+                  </section>
+                </td>
+                <td id="c069c709359fp" rowspan="1" colspan="1">
+                  <p id="a3e0a18f3bnvi"></p>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <p id="hh01step1-gap"></p>
+        <section id="hh01step1-resp" class="section">
+          <table bordertype="no-border" id="hh01step1-resp-table" outputclass="api-reference column-layout" tablewidth="100" tablecolswidth="53.5 46.5" autofit="true" class="api-reference column-layout table">
+            <colgroup colwidth="1.07*" style="width:53.50%"></colgroup>
+            <colgroup colwidth="0.93*" style="width:46.50%"></colgroup>
+            <tbody class="tbody">
+              <tr id="hh01resp1-header" outputclass="test" class="test">
+                <td id="hh01resp1-header-td1" rowspan="1" style="vertical-align:top" colspan="1">
+                  <h4 id="hh01resp1-header-h4" outputclass="test" class="test">响应参数</h4>
+                </td>
+                <td id="hh01resp1-header-td2" rowspan="5" style="vertical-align:top" colspan="1">
+                  <section id="hh01resp1-code" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <section id="8d84b12dadbku" data-tag="tabbed-content-box" outputclass="tabbed-content-box" class="tabbed-content-box section">
+          <section id="938dd6aa00xez" class="section">
+            <h3 id="f281932a43b03">成功响应</h3>
+            <p jc="left" id="f78b9c52854wc" style="text-align:left">请保存 task_id，用于查询任务状态与结果。</p><pre code-type="xCode" id="089f6d510f95u" data-tag="codeblock" outputclass="language-json" class="pre codeblock language-json"><code>{
+    "output": {
+        "task_status": "PENDING",
+        "task_id": "0385dc79-5ff8-4d82-bcb6-xxxxxx"
+    },
+    "request_id": "4909100c-7b5a-9f92-bfe5-xxxxxx"
+}</code></pre>
+          </section>
+          <section id="77dc168e6fsu6" class="section">
+            <h3 id="a9ad4ea0bcr7i">异常响应</h3>
+            <p id="aad5e34286x6w">创建任务失败，请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="dd77e2f8a0my1" title="" class="xref">错误码</a>进行解决。</p><pre code-type="xCode" id="8d79ec495em13" data-tag="codeblock" outputclass="language-json" class="pre codeblock language-json"><code>{
+    "code": "InvalidApiKey",
+    "message": "No API-key provided.",
+    "request_id": "7438d53d-6eb8-4596-8835-xxxxxx"
+}</code></pre>
+          </section>
+        </section>
+      </section>
+                </td>
+              </tr>
+              <tr id="hh01resp1-output">
+                <td id="hh01resp1-output-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <p id="hh01resp1-output-p1"><b>output</b> <code data-tag="code" code-type="xCode" id="hh01resp1-output-type" class="code"><i>object</i></code></p>
+                  <p id="hh01resp1-output-p2">任务输出信息。</p>
+                  <div id="hh01resp1-output-collapse" outputclass="collapse expanded" class="collapse expanded">
+                    <p id="hh01resp1-output-collapse-title" data-tag="expandable-title" class="expandable-title">属性</p>
+                    <div id="hh01resp1-output-collapse-content" data-tag="expandable-content" class="expandable-content">
+                      <section id="hh01resp1-taskstatus" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="1fe5b36c81n81"><b>task_id</b> <code data-tag="code" code-type="xCode" id="1927ac1711a6b" class="code"><i>string</i></code></p>
+        <p jc="left" id="4ac2b3335dt4z" style="text-align:left">任务<span class="help-letter-space"></span>ID。查询有效期<span class="help-letter-space"></span>24<span class="help-letter-space"></span>小时。</p>
+      </section>
+                      <section id="hh01resp1-taskid" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="e05ef2e779yzc"><b>task_status</b> <code data-tag="code" code-type="xCode" id="2cc6cd76b7scz" class="code"><i>string</i></code></p>
+        <p jc="left" id="20e406b75d1tu" style="text-align:left">任务状态。</p>
+        <div id="47d1a560adkz4" outputclass="collapse expanded" class="collapse expanded">
+          <p id="9f885f3065wa7" data-tag="expandable-title" class="expandable-title"><b>枚举值</b></p>
+          <div id="52a8839a3b8ve" data-tag="expandable-content" class="expandable-content">
+            <ul id="bea23c4522v96">
+              <li id="8b437cac894c9">
+                <p jc="left" id="2d1a77994culj" style="text-align:left">PENDING：任务排队中</p>
+              </li>
+              <li id="83a099d9ff99x">
+                <p jc="left" id="58157145280pd" style="text-align:left">RUNNING：任务处理中</p>
+              </li>
+              <li id="45bba956f5dn8">
+                <p id="ecd9d0220dku0">SUCCEEDED：任务执行成功</p>
+              </li>
+              <li id="6d9fa1aa091ec">
+                <p id="4f3476ccabg8m">FAILED：任务执行失败</p>
+              </li>
+              <li id="1a40e957952zv">
+                <p id="dfeff5edf0ir4">CANCELED：任务已取消</p>
+              </li>
+              <li id="4fc2869e3d7e3">
+                <p id="c1947b6b9asan">UNKNOWN：任务不存在或状态未知</p>
+              </li>
+            </ul>
+          </div>
+        </div>
+      </section>
+                    </div>
+                  </div>
+                </td>
+              </tr>
+              <tr id="hh01resp1-reqid" outputclass="test" class="test">
+                <td id="hh01resp1-reqid-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01resp1-reqid-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="f8ad0d8e5fmh3"><b>request_id </b><code data-tag="code" code-type="xCode" id="3f24e7a18c86z" class="code"><i>string</i></code><i> </i></p>
+        <p id="50e43a8e01stk">请求唯一标识。可用于请求明细溯源和问题排查。</p>
+      </section>
+                </td>
+              </tr>
+              <tr id="hh01resp1-usage">
+                <td id="hh01resp1-usage-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01resp1-usage-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="0e54bb3abdsfz"><b>code </b><code data-tag="code" code-type="xCode" id="747a126bbd65i" class="code"><i>string</i></code></p>
+        <p id="b634d3711cwim">请求失败的错误码。请求成功时不会返回此参数，详情请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="8ce79bbfb6xfs" title="" class="xref">错误码</a>。</p>
+      </section>
+                </td>
+              </tr>
+              <tr id="hh01resp1-usage2">
+                <td id="hh01resp1-usage2-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                  <section id="hh01resp1-usage2-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="aa9502135bkcx"><b>message </b><code data-tag="code" code-type="xCode" id="319e9daaccg6n" class="code"><i>string</i></code></p>
+        <p id="49943cf91bcyu">请求失败的详细信息。请求成功时不会返回此参数，详情请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="201837a58b7du" title="" class="xref">错误码</a>。</p>
+      </section>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </section>
+        <section id="hh01step2" class="section">
+          <h3 id="hh01step2-title"><b>步骤<span class="help-letter-space"></span>2：根据任务<span class="help-letter-space"></span>ID<span class="help-letter-space"></span>查询结果</b></h3>
+          <section id="hh01step2-china-tabs" data-tag="tabbed-content-box" outputclass="tabbed-content-box" props="china" data-cond-props="china" class="tabbed-content-box section">
+            <section id="hh01step2-china-bj" class="section">
+              <h2 id="hh01step2-china-bj-title"><b>华北<span class="help-letter-space"></span>2（北京）</b></h2>
+              <p id="hh01step2-china-bj-url"><code data-tag="code" id="hh01step2-china-bj-code" class="code">GET https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/tasks/{task_id}</code></p>
+              <p id="hh01step2-china-bj-note">调用时请将<code data-tag="code" id="hh01step2-china-bj-wsid" class="code">WorkspaceId</code>替换为真实的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu" id="hh01step2-china-bj-xref" title="" class="xref">Workspace ID</a>。</p>
+            </section>
+            <section id="hh01step2-china-sg" class="section">
+              <h2 id="hh01step2-china-sg-title"><b>新加坡</b></h2>
+              <p id="hh01step2-china-sg-url"><code data-tag="code" code-type="xCode" id="hh01step2-china-sg-code" class="code">GET https://{WorkspaceId}.ap-southeast-1.maas.aliyuncs.com/api/v1/tasks/{task_id}</code></p>
+              <p id="00bb2196fd8f">调用时请将<code data-tag="code" id="9c29ddd4a94c" class="code">WorkspaceId</code>替换为真实的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu" id="0d6efa207b51" title="" class="xref">Workspace ID</a>。</p>
+            </section>
+            <section id="hh01step2-china-va" class="section">
+              <h2 id="hh01step2-china-va-title"><b>美国（弗吉尼亚）</b></h2>
+              <p id="hh01step2-china-va-url"><code data-tag="code" code-type="xCode" id="hh01step2-china-va-code" class="code">GET https://dashscope-us.aliyuncs.com/api/v1/tasks/{task_id}</code></p>
+            </section>
+            <section id="hh01step2-china-fr" class="section">
+              <h2 id="hh01step2-china-fr-title"><b>德国（法兰克福）</b></h2>
+              <p id="hh01step2-china-fr-url"><code data-tag="code" code-type="xCode" id="hh01step2-china-fr-code" class="code">GET https://{WorkspaceId}.eu-central-1.maas.aliyuncs.com/api/v1/tasks/{task_id}</code></p>
+              <p id="hh01step2-china-fr-note">调用时请将<code data-tag="code" id="hh01step2-china-fr-wsid" class="code">WorkspaceId</code>替换为真实的<span class="help-letter-space"></span><a href="https://help.aliyun.com/zh/model-studio/obtain-the-app-id-and-workspace-id#d3eb3cd37b7fu" id="hh01step2-china-fr-xref" title="" class="xref">Workspace ID</a>。</p>
+            </section>
+          </section>
+          
+          <div type="note" id="hh01step2-note" is-conref="true" class="note note-note"><div class="note-icon-wrapper"><i class="icon-note note note"></i></div><div class="noteContentSpan"><strong>说明 </strong>
+        <ul id="a9e1c59d65l4l" data-spm-anchor-id="a2c4g.11186623.0.i37.4ae8f41cvAcjZU">
+          <li id="da2e599becqcv">
+            <p id="1f9c13b4ddq6u"><b>轮询建议</b>：视频生成过程约需数分钟，建议采用<b>轮询</b>机制，并设置合理的查询间隔（如 15 秒）来获取结果。</p>
+          </li>
+          <li id="a78391f1503lz">
+            <p id="5a3e8b9afbbue"><b>任务状态流转</b>：PENDING（排队中）→&nbsp;RUNNING（处理中）→ SUCCEEDED（成功）/&nbsp;FAILED（失败）。</p>
+          </li>
+          <li class="md-list-item" cid="n317" mdtype="list_item" id="d17d254689egr">
+            <p id="26b74ca0c6x51"><b>结果链接</b>：任务成功后返回视频链接，有效期为 <b>24 小时</b>。建议在获取链接后立即下载并转存至永久存储（如<a href="https://help.aliyun.com/zh/oss/user-guide/what-is-oss" id="294e6ca42dptf" title="" class="xref">阿里云 OSS</a>）。</p>
+          </li>
+          <li id="3f336841bcoof">
+            <p id="f35981f24c16r"><b>task_id 有效期</b>：<b>24<span class="help-letter-space"></span>小时</b>，超时后将无法查询结果，接口将返回任务状态为<code data-tag="code" id="67fc3dea09nps" data-init-id="3e57658fb4evd" class="code">UNKNOWN</code>。</p>
+          </li>
+          <li _ngcontent-ng-c4063671643="" class="ng-star-inserted" id="80ec94bd41mtp" props="china" data-cond-props="china">
+            <p id="89c26ddb04j4k"><b>RPS 限制</b>：查询接口默认<span class="help-letter-space"></span>RPS<span class="help-letter-space"></span>为<span class="help-letter-space"></span>20。如需更高频查询或事件通知，建议<a href="https://help.aliyun.com/zh/model-studio/async-task-api" id="d251902af3dq2" title="" class="xref">配置异步任务回调</a>。</p>
+          </li>
+          <li id="c54c22508771c" props="china" data-cond-props="china">
+            <p id="819eb41df28og"><b>更多操作</b>：如需批量查询、取消任务等操作，请参见<a href="https://help.aliyun.com/zh/model-studio/manage-asynchronous-tasks#f26499d72adsl" id="e71d72bcebi1x" title="" class="xref">管理异步任务</a>。</p>
+          </li>
+        </ul>
+      </div></div>
+          <p id="hh01step2-gap"></p>
+          <section id="hh01step2-req" class="section">
+            <table bordertype="no-border" id="hh01step2-req-table" outputclass="api-reference column-layout" tablewidth="100" tablecolswidth="53.81 46.19" autofit="true" class="api-reference column-layout table">
+              <colgroup colwidth="1.08*" style="width:53.81%"></colgroup>
+              <colgroup colwidth="0.92*" style="width:46.19%"></colgroup>
+              <tbody class="tbody">
+                <tr id="hh01step2-req-header" outputclass="test" class="test">
+                  <td id="hh01step2-req-header-td1" rowspan="1" style="vertical-align:top" colspan="1">
+                    <h4 id="hh01step2-req-header-h4">请求参数</h4>
+                  </td>
+                  <td id="hh01step2-req-header-td2" rowspan="5" style="vertical-align:top" colspan="1">
+                    <section id="hh01step2-code-section" outputclass="stick-top two-codeblocks" class="two-codeblocks stick-top section">
+                      <section id="hh01step2-code-tabs" data-tag="tabbed-content-box" outputclass="tabbed-content-box margin-top-33" class="tabbed-content-box section margin-top-33">
+                        <section id="hh01step2-code-query" class="section">
+                          <h2 id="hh01step2-code-query-title">查询任务结果</h2>
+                          <section id="hh01step2-code-query-content" is-conref="true" class="section">
+        <p id="37c488525frts">将<code data-tag="code" id="7901a4ac7d4e8" class="code">{task_id}</code>完整替换为上一步接口返回的<code data-tag="code" id="051ad9306ey2i" class="code">task_id</code>的值。<code data-tag="code" id="d85332762a18d" class="code">task_id</code>查询有效期为<span class="help-letter-space"></span>24<span class="help-letter-space"></span>小时。</p>
+        <section id="f1f95de4cemai" class="section"><pre code-type="xCode" id="f4c59daa2alvv" data-tag="codeblock" outputclass="language-curl" props="china" data-cond-props="china" class="pre codeblock language-curl"><code>curl -X GET https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/api/v1/tasks/{task_id} \
+--header "Authorization: Bearer $DASHSCOPE_API_KEY"</code></pre></section>
+      </section>
+                        </section>
+                      </section>
+                    </section>
+                  </td>
+                </tr>
+                <tr id="hh01step2-headers">
+                  <td id="hh01step2-headers-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                    <h5 id="hh01step2-headers-h5"><b>请求头（Headers）</b></h5>
+                  </td>
+                </tr>
+                <tr id="hh01step2-auth" outputclass="test" class="test">
+                  <td id="hh01step2-auth-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                    <section id="hh01step2-auth-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="ac48af82483to"><b>Authorization </b><code data-tag="code" code-type="xCode" id="7c35409e8enfj" class="code"><i>string</i></code><b>（必选）</b></p>
+        <p jc="left" id="a1b0e25ac4cv4" style="text-align:left">请求身份认证。接口使用阿里云百炼<span class="help-letter-space"></span>API Key<span class="help-letter-space"></span>进行身份认证。示例值：Bearer sk-xxxx。</p>
+      </section>
+                  </td>
+                </tr>
+                <tr id="hh01step2-path" outputclass="test" class="test">
+                  <td id="hh01step2-path-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                    <h5 id="hh01step2-path-h5"><b>URL<span class="help-letter-space"></span>路径参数（Path parameters）</b></h5>
+                  </td>
+                </tr>
+                <tr id="hh01step2-taskid" outputclass="test" class="test">
+                  <td id="hh01step2-taskid-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                    <section id="hh01step2-taskid-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="f0f368468efqp"><b>task_id</b> <code data-tag="code" code-type="xCode" id="b7b98f85a05qn" class="code"><i>string</i></code><b>（必选）</b></p>
+        <p id="246335d09fpiz">任务<span class="help-letter-space"></span>ID。</p>
+      </section>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+            <section id="hh01step2-resp" class="section">
+              <table bordertype="no-border" id="hh01step2-resp-table" outputclass="api-reference column-layout" tablewidth="100" tablecolswidth="53.81 46.19" autofit="true" class="api-reference column-layout table">
+                <colgroup colwidth="1.08*" style="width:53.81%"></colgroup>
+                <colgroup colwidth="0.92*" style="width:46.19%"></colgroup>
+                <tbody class="tbody">
+                  <tr id="hh01resp2-header" outputclass="test" class="test">
+                    <td id="hh01resp2-header-td1" rowspan="1" style="vertical-align:top" colspan="1">
+                      <h4 id="hh01resp2-header-h4" outputclass="test" class="test"><b>响应参数</b></h4>
+                    </td>
+                    <td id="hh01resp2-header-td2" rowspan="4" style="vertical-align:top" colspan="1">
+                      <section id="hh01resp2-code-tabs" data-tag="tabbed-content-box" outputclass="tabbed-content-box stick-top" class="tabbed-content-box stick-top section">
+                        <section id="hh01resp2-success" class="section">
+                          <h2 id="hh01resp2-success-title">任务执行成功</h2>
+                          <section id="hh01resp2-success-note" is-conref="true" class="section">
+        <p jc="left" id="b4121e3f440c7" style="text-align:left">视频<span class="help-letter-space"></span>URL<span class="help-letter-space"></span>仅保留<span class="help-letter-space"></span>24<span class="help-letter-space"></span>小时，超时后会被自动清除，请及时保存生成的视频。</p>
+      </section>
+                          <section id="hh01resp2-success-code" class="section"><pre code-type="xCode" id="hh01resp2-success-json" data-tag="codeblock" outputclass="language-json" class="pre codeblock language-json"><code>{
+    "request_id": "99243b47-ec5f-9413-9993-xxxxxx",
+    "output": {
+        "task_id": "4673458e-28be-4a05-bf2a-xxxxxx",
+        "task_status": "SUCCEEDED",
+        "submit_time": "2026-04-20 17:55:17.075",
+        "scheduled_time": "2026-04-20 17:55:17.129",
+        "end_time": "2026-04-20 17:56:36.658",
+        "orig_prompt": "一座由硬纸板和瓶盖搭建的微型城市，在夜晚焕发出生机。一列硬纸板火车缓缓驶过，小灯点缀其间，照亮前路。",
+        "video_url": "https://dashscope-result.oss-cn-beijing.aliyuncs.com/xxx.mp4?Expires=xxx"
+    },
+    "usage": {
+        "duration": 5,
+        "input_video_duration": 0,
+        "output_video_duration": 5,
+        "video_count": 1,
+        "SR": 720,
+        "ratio": "16:9"
+    }
+}</code></pre></section>
+                        </section>
+                        <section id="hh01resp2-failed" class="section">
+                          <h2 id="hh01resp2-failed-title">任务执行失败</h2>
+                          <section id="hh01resp2-failed-note" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="16791da818coy">若任务执行失败，task_status<span class="help-letter-space"></span>将置为 FAILED，并提供错误码和信息。请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="5bf22525d31sa" title="" class="xref">错误码</a>进行解决。</p>
+      </section><pre code-type="xCode" id="hh01resp2-failed-json" data-tag="codeblock" outputclass="language-json" class="pre codeblock language-json"><code>{
+    "request_id": "e5d70b02-ebd3-98ce-9fe8-759d7d7b107d",
+    "output": {
+        "task_id": "86ecf553-d340-4e21-af6e-a0c6a421c010",
+        "task_status": "FAILED",
+        "code": "InvalidParameter",
+        "message": "The parameter is invalid."
+    }
+}</code></pre>
+                        </section>
+                        <section id="hh01resp2-expired" class="section">
+                          <h2 id="hh01resp2-expired-title">任务查询过期</h2>
+                          <section id="hh01resp2-expired-note" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="c68e5703881mm">task_id<span class="help-letter-space"></span>查询有效期为 24 小时，超时后将无法查询，返回以下报错信息。</p><pre code-type="xCode" id="ea58ce8c686g8" data-tag="codeblock" outputclass="language-json" class="pre codeblock language-json"><code>{
+    "request_id": "a4de7c32-7057-9f82-8581-xxxxxx",
+    "output": {
+        "task_id": "502a00b1-19d9-4839-a82f-xxxxxx",
+        "task_status": "UNKNOWN"
+    }
+}</code></pre>
+      </section>
+                        </section>
+                      </section>
+                    </td>
+                  </tr>
+                  <tr id="hh01resp2-output">
+                    <td id="hh01resp2-output-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                      <p id="hh01resp2-output-p1"><b>output </b><code data-tag="code" code-type="xCode" id="hh01resp2-output-type" class="code"><i>object</i></code></p>
+                      <p id="hh01resp2-output-p2">任务输出信息。</p>
+                      <div id="hh01resp2-output-collapse" outputclass="collapse expanded" class="collapse expanded">
+                        <p id="hh01resp2-output-collapse-title" data-tag="expandable-title" class="expandable-title"><b>属性</b></p>
+                        <div id="hh01resp2-output-collapse-content" data-tag="expandable-content" class="expandable-content">
+                          <section id="hh01resp2-taskstatus" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="1fe5b36c81n81"><b>task_id</b> <code data-tag="code" code-type="xCode" id="1927ac1711a6b" class="code"><i>string</i></code></p>
+        <p jc="left" id="4ac2b3335dt4z" style="text-align:left">任务<span class="help-letter-space"></span>ID。查询有效期<span class="help-letter-space"></span>24<span class="help-letter-space"></span>小时。</p>
+      </section>
+                          <section id="hh01resp2-taskid-detail" is-conref="true" class="section">
+        <p id="1f6f4e8149c47"><b>task_status</b> <code data-tag="code" code-type="xCode" id="efc4c9c6d3fem" data-init-id="2cc6cd76b7scz" class="code"><i>string</i></code></p>
+        <p jc="left" id="d768722a91b6q" style="text-align:left">任务状态。</p>
+        <div id="b96f5d30120gj" outputclass="collapse expanded" docid="5715354" is-conref="true" class="collapse expanded">
+          <p id="9f885f3065wa7" data-tag="expandable-title" class="expandable-title"><b>枚举值</b></p>
+          <div id="52a8839a3b8ve" data-tag="expandable-content" class="expandable-content">
+            <ul id="bea23c4522v96">
+              <li id="8b437cac894c9">
+                <p jc="left" id="2d1a77994culj" style="text-align:left">PENDING：任务排队中</p>
+              </li>
+              <li id="83a099d9ff99x">
+                <p jc="left" id="58157145280pd" style="text-align:left">RUNNING：任务处理中</p>
+              </li>
+              <li id="45bba956f5dn8">
+                <p id="ecd9d0220dku0">SUCCEEDED：任务执行成功</p>
+              </li>
+              <li id="6d9fa1aa091ec">
+                <p id="4f3476ccabg8m">FAILED：任务执行失败</p>
+              </li>
+              <li id="1a40e957952zv">
+                <p id="dfeff5edf0ir4">CANCELED：任务已取消</p>
+              </li>
+              <li id="4fc2869e3d7e3">
+                <p id="c1947b6b9asan">UNKNOWN：任务不存在或状态未知</p>
+              </li>
+            </ul>
+          </div>
+        </div>
+        <p id="022578e7b4zmq"><b>轮询过程中的状态流转：</b></p>
+        <ul dir="auto" id="7aa4bb9f370hw">
+          <li data-spm-anchor-id="a2ty_o01.29997173.0.i41.45605171zBOZnO" id="6c811cbc69qdy">
+            <p id="d115a086a16nb">PENDING（排队中） →&nbsp;RUNNING（处理中）→ SUCCEEDED（成功）/&nbsp;FAILED（失败）。</p>
+          </li>
+          <li id="f635ea02b2bdf">
+            <p id="85a9068834ffa">初次查询状态通常为 PENDING（排队中）或 RUNNING（处理中）。</p>
+          </li>
+          <li data-spm-anchor-id="a2ty_o01.29997173.0.i38.45605171zBOZnO" id="d5ef1c8889ceq">
+            <p id="38bce4a1c4ga1">当状态变为 SUCCEEDED 时，响应中将包含生成的视频<span class="help-letter-space"></span>URL。</p>
+          </li>
+          <li id="bfda010402nl7">
+            <p id="9aa824692dccl">若状态为 FAILED，请检查错误信息并重试。</p>
+          </li>
+          <li id="a4f7d3e9b1ghy">
+            <p id="b5g8e4f0c2jhz">若状态为 CANCELED，表示任务已取消，如需继续请重新提交任务。</p>
+          </li>
+          <li id="c6h9f5g1d3kia">
+            <p id="d7i0g6h2e4lib">若状态为 UNKNOWN，表示任务不存在或状态未知，可能在 task_id 不存在或超过 24 小时有效期后出现。</p>
+          </li>
+        </ul>
+      </section>
+                          <section id="hh01resp2-times" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="e7f4494bd6qyk"><b>submit_time</b> <code data-tag="code" id="24aa5438e2pxu" class="code"><i>string</i></code></p>
+        <p jc="left" id="746ca6e31cx1m" style="text-align:left">任务提交时间。格式为&nbsp;YYYY-MM-DD HH:mm:ss.SSS。</p>
+      </section>
+                          <section id="hh01resp2-prompt" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="9a4303951198v"><b>scheduled_time</b> <code data-tag="code" id="208c9508c6mcv" class="code"><i>string</i></code></p>
+        <p jc="left" id="add62d333a6l1" style="text-align:left">任务执行时间。格式为&nbsp;YYYY-MM-DD HH:mm:ss.SSS。</p>
+      </section>
+                          <section id="hh01resp2-videourl" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="4c98803d30bd3"><b>end_time</b> <code data-tag="code" id="3868f8ef2bfof" class="code"><i>string</i></code></p>
+        <p jc="left" id="cb80512dc1v8y" style="text-align:left">任务完成时间。格式为&nbsp;YYYY-MM-DD HH:mm:ss.SSS。</p>
+      </section>
+                          <section id="hh01resp2-code-field" is-conref="true" class="section">
+        <p id="dfd5cf75979vx"><b>video_url </b><code data-tag="code" id="5e58c2df6e9ci" class="code"><i>string</i></code></p>
+        <p jc="left" id="1edb8555938wa" style="text-align:left">视频<span class="help-letter-space"></span>URL。仅在&nbsp;task_status&nbsp;为&nbsp;SUCCEEDED&nbsp;时返回。</p>
+        <p id="785ed9c3d97rl">链接有效期<span class="help-letter-space"></span>24<span class="help-letter-space"></span>小时，可通过此<span class="help-letter-space"></span>URL<span class="help-letter-space"></span>下载视频。视频格式为<span class="help-letter-space"></span>MP4（H.264 编码）。</p>
+      </section>
+                          <section id="hh01resp2-msg-field" is-conref="true" class="section">
+        <p jc="left" id="2bea6e58b8f22" style="text-align:left"><b>orig_prompt</b>&nbsp;<code data-tag="code" code-type="xCode" class="code" id="e79ee09774hyx"><i>string</i></code></p>
+        <p jc="left" id="2917477fc2dc1" style="text-align:left">原始输入的<span class="help-letter-space"></span>prompt，对应请求参数<code data-tag="code" id="f1b2676b46bnd" class="code">prompt</code>。</p>
+      </section>
+                          <section id="hh01resp2-usage-fields" class="section">
+                            <section id="hh01resp2-usage-f1" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="0e54bb3abdsfz"><b>code </b><code data-tag="code" code-type="xCode" id="747a126bbd65i" class="code"><i>string</i></code></p>
+        <p id="b634d3711cwim">请求失败的错误码。请求成功时不会返回此参数，详情请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="8ce79bbfb6xfs" title="" class="xref">错误码</a>。</p>
+      </section>
+                            <section id="hh01resp2-usage-f2" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="aa9502135bkcx"><b>message </b><code data-tag="code" code-type="xCode" id="319e9daaccg6n" class="code"><i>string</i></code></p>
+        <p id="49943cf91bcyu">请求失败的详细信息。请求成功时不会返回此参数，详情请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="201837a58b7du" title="" class="xref">错误码</a>。</p>
+      </section>
+                          </section>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr id="13d70b601euox">
+                    <td id="fa0586f1459ot" rowspan="1" colspan="1">
+                      <p id="704a3aef1c6bx"><b>usage</b> <code data-tag="code" code-type="xCode" id="aaec751be39en" class="code"><i>object</i></code></p>
+                      <p jc="left" id="a0f8c52642if1" style="text-align:left">输出信息统计，只对成功的结果计数。</p>
+                      <div id="4a4994e6d37z2" outputclass="collapse expanded" class="collapse expanded">
+                        <p id="ddb3077a59hwz" data-tag="expandable-title" class="expandable-title"><b>属性</b></p>
+                        <div id="6e9ed1ca47ywd" data-tag="expandable-content" class="expandable-content">
+                          <section id="8d77120cb76xa" class="section">
+                            <p jc="left" id="aa2586b5e9p3p" style="text-align:left"><b>input_video_duration</b>&nbsp;<code data-tag="code" id="6342763b82i4x" class="code"><i>integer</i></code></p>
+                            <p jc="left" id="1b76666cc4457" style="text-align:left">输入的视频的时长，单位秒。</p>
+                          </section>
+                          <section id="1cc25b3262gvh" class="section">
+                            <p jc="left" id="262aff31beyp7" style="text-align:left"><b>output_video_duration</b>&nbsp;<code data-tag="code" code-type="xCode" class="code" id="e8eaccac39z8d"><i>integer</i></code></p>
+                            <p id="a9fe594cf2qa3">输出视频的时长，单位秒。</p>
+                          </section>
+                          <section id="5ccb8e42c1izl" class="section">
+                            <p jc="left" id="5a17a21df9v6w" style="text-align:left"><b>duration</b>&nbsp;<code data-tag="code" code-type="xCode" class="code" id="a72f612ab8ww6"><i>integer</i></code></p>
+                            <p id="ed05b7f2a0iz8">总的视频时长，用于计费。</p>
+                          </section>
+                          <section id="b800a4ff535bt" class="section">
+                            <p id="62b51df5f26wo"><b>SR</b> <code data-tag="code" code-type="xCode" id="a978cf63163c7" class="code"><i>integer</i></code></p>
+                            <p id="3d9e083ed6l7n">输出视频的分辨率档位。</p>
+                          </section>
+                          <section id="bbb3abc882nam" class="section">
+                            <p id="3fa4a26f026k7"><b>ratio</b> <code data-tag="code" code-type="xCode" id="509636bd44egu" class="code"><i>string</i></code></p>
+                            <p id="ab81f1bcb7evq">输出视频的宽高比。</p>
+                          </section>
+                          <section id="7c6511f6f6wk4" class="section">
+                            <p id="200ad93e2fnyk"><b>video_count</b> <code data-tag="code" code-type="xCode" id="3d691245122sx" data-init-id="60f8b094609l5" class="code"><i>integer</i></code></p>
+                            <p id="7177ec4d80v9u">输出视频的数量。固定为<span class="help-letter-space"></span>1。</p>
+                          </section>
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr id="hh01resp2-reqid" outputclass="test" class="test">
+                    <td id="hh01resp2-reqid-td" rowspan="1" style="vertical-align:middle" colspan="1">
+                      <section id="hh01resp2-reqid-section" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+        <p id="f8ad0d8e5fmh3"><b>request_id </b><code data-tag="code" code-type="xCode" id="3f24e7a18c86z" class="code"><i>string</i></code><i> </i></p>
+        <p id="50e43a8e01stk">请求唯一标识。可用于请求明细溯源和问题排查。</p>
+      </section>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          </section>
+        </section>
+      </section>
+      <section id="2e1d8db361w9w" class="section">
+        <h2 id="0d0a562d05nkh" data-lake-id="OajFO" sourcekey="2000000000811"><b>错误码</b></h2>
+        <p id="fce87b9a1052i">如果模型调用失败并返回报错信息，请参见<a href="https://help.aliyun.com/zh/model-studio/error-code" id="a913aa4391wq7" title="" class="xref">错误码</a>进行解决。</p>
+      </section>
+      <section id="4072a72421znb" data-ref-searchable="yes" data-source="reuse_library" is-conref="true" class="section">
+  <style>
+/* 调整 table 宽度 */
+.aliyun-docs-content table.medium-width {
+  max-width: 1018px;
+  width: 100%;
+}
+
+.aliyun-docs-content table.table-no-border tr td:first-child {
+  padding-left: 0;
+}
+
+.aliyun-docs-content table.table-no-border tr td:last-child {
+  padding-right: 0;
+}
+</style>
+ 
+  <style>
+/* 支持吸顶 */
+div:has(.aliyun-docs-content),
+.aliyun-docs-content .markdown-body {
+  overflow: visible;
+}
+.stick-top {
+  position: sticky;
+  top: 46px;
+}
+</style>
+ 
+  <style>
+/**代码块字体**/
+
+/* 减少表格中的代码块 margin，让表格信息显示更紧凑 */
+.unionContainer .markdown-body table .help-code-block  {
+  margin: 0 !important;
+}
+/* 减少表格中的代码块字号，让表格信息显示更紧凑 */
+.unionContainer .markdown-body .help-code-block pre {
+  font-size: 12px !important;
+}
+/* 减少表格中的代码块字号，让表格信息显示更紧凑 */
+.unionContainer .markdown-body .help-code-block pre code {
+  font-size: 12px !important;
+}
+</style>
+ 
+  <style>
+
+/** API Reference 表格 **/
+
+.aliyun-docs-content table.api-reference tr td:first-child {
+  margin: 0px;
+  border-bottom: 1px solid #d8d8d8;
+}
+
+.aliyun-docs-content table.api-reference tr:last-child td:first-child {  
+  border-bottom: none;
+}
+
+.aliyun-docs-content table.api-reference p {
+  color: #6e6e80;
+}
+
+.aliyun-docs-content table.api-reference b, i {
+  color: #181818;
+}
+
+.aliyun-docs-content table.api-reference .collapse {
+  border: none;
+  margin-top: 4px;
+  margin-bottom: 4px;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title-bold {
+  padding: 0;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title {
+  padding: 0;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title-bold .title {
+  margin-left: 16px;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title .title {
+  margin-left: 16px;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title-bold i.icon {
+  position: absolute;
+  color: #777;
+  font-weight: 100;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title i.icon {
+  position: absolute;
+  color: #777;
+  font-weight: 100;
+}
+
+.aliyun-docs-content table.api-reference .collapse.expanded .expandable-content {
+  padding: 10px 14px 10px 14px !important;
+  margin: 0;
+  border: 1px solid #e9e9e9;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title-bold b {
+  font-size: 13px;
+  font-weight: normal;
+  color: #6e6e80;
+}
+
+.aliyun-docs-content table.api-reference .collapse .expandable-title b {
+  font-size: 13px;
+  font-weight: normal;
+  color: #6e6e80;
+}
+
+.aliyun-docs-content table.api-reference .tabbed-content-box {
+  border: none;
+}
+
+.aliyun-docs-content table.api-reference .tabbed-content-box section {
+  padding: 8px 0 !important;
+}
+
+.aliyun-docs-content table.api-reference .tabbed-content-box.mini .tab-box {
+  /*
+  position: absolute;
+  left: 40px;
+  right: 0;
+  */
+}
+
+.aliyun-docs-content .margin-top-33 {
+  margin-top: 33px !important;
+}
+
+.aliyun-docs-content .two-codeblocks pre {
+  max-height: calc(50vh - 136px) !important;
+  height: auto;
+}
+
+.expandable-content section {
+    border-bottom: 1px solid #e9e9e9;
+    padding-top: 6px;
+    padding-bottom: 4px;
+}
+
+.expandable-content section:last-child {
+    border-bottom: none;
+}
+
+.expandable-content section:first-child {
+    padding-top: 0;
+}
+
+</style>
+ </section>
+      
+        <style>
+          /* 让表格显示成类似钉钉文档的分栏卡片 */
+          table.help-table-card td {
+            border: 10px solid #FFF !important;
+            background: #F4F6F9;
+            padding: 16px !important;
+            vertical-align: top;
+          }
+
+          /* 减少表格中的代码块 margin，让表格信息显示更紧凑 */
+          .unionContainer .markdown-body table .help-code-block {
+            margin: 0 !important;
+          }
+
+          /* 减少表格中的代码块字号，让表格信息显示更紧凑 */
+          .unionContainer .markdown-body .help-code-block pre {
+            font-size: 12px !important;
+          }
+
+          /* 减少表格中的代码块字号，让表格信息显示更紧凑 */
+          .unionContainer .markdown-body .help-code-block pre code {
+            font-size: 12px !important;
+          }
+
+          /* 表格中的引用上下间距调小，避免内容显示过于稀疏 */
+          .unionContainer .markdown-body table blockquote {
+            margin: 4px 0 0 0;
+          }
+
+        </style>
+      
+      <section id="9426195eafzbs" docid="6660267" is-conref="true" class="section"><style>
+/* ========================================= */
+/* 新增样式：带边框的表格 (api-table-border) */
+/* ========================================= */
+
+/* 1. 表格容器核心设置 */
+.aliyun-docs-content table.api-table-border {
+  border: 1px solid #d8d8d8 !important;       /* 表格外边框 */
+  border-collapse: collapse !important;        /* 合并边框，防止双线 */
+  width: 100% !important;                      /* 宽度占满 */
+  margin: 10px 0 !important;                   /* 上下间距 */
+  background-color: #fff !important;           /* 背景色 */
+  box-sizing: border-box !important;
+}
+
+/* 2. 表头、表体、行设置 */
+/* 确保行本身没有干扰边框 */
+.aliyun-docs-content table.api-table-border thead,
+.aliyun-docs-content table.api-table-border tbody,
+.aliyun-docs-content table.api-table-border tr {
+  border: none !important;
+  background-color: transparent !important;
+}
+
+/* 3. 单元格设置 (th 和 td) */
+/* 这是边框显示的关键位置 */
+.aliyun-docs-content table.api-table-border th,
+.aliyun-docs-content table.api-table-border td {
+  border: 1px solid #d8d8d8 !important;        /* 单元格四周边框 */
+  padding: 8px 12px !important;                /* 内边距 */
+  text-align: left !important;                 /* 文字左对齐 */
+  vertical-align: middle !important;           /* 垂直居中 */
+  color: #6e6e80 !important;                   /* 文字颜色 */
+  font-size: 14px !important;                  /* 字体大小 */
+  line-height: 1.5 !important;
+}
+
+/* 4. 表头特殊样式 */
+.aliyun-docs-content table.api-table-border th {
+  background-color: #f9fafb !important;        /* 表头背景色 */
+  color: #181818 !important;                   /* 表头文字颜色 */
+  font-weight: 600 !important;                 /* 表头加粗 */
+}
+
+/* 5. 鼠标悬停效果 (可选) */
+.aliyun-docs-content table.api-table-border tbody tr:hover td {
+  background-color: #fcfcfc !important;        /* 悬停时背景微变 */
+}
+
+/* 6. 兼容原有 api-reference 可能存在的冲突 */
+/* 如果原有样式针对 td:first-child 等特殊选择器有干扰，这里强制覆盖 */
+.aliyun-docs-content table.api-table-border tr td:first-child {
+  border-bottom: 1px solid #d8d8d8 !important;
+  margin: 0 !important;
+}
+
+.aliyun-docs-content table.api-table-border tr:last-child td:first-child {
+  border-bottom: 1px solid #d8d8d8 !important; /* 保持底部边框 */
+}
+</style></section>
+    </div>
+  </main>
+
+
+
+
+</div></div><div class="aliyun-docs-pagination"><div class="NextPage--container--cfVcdEE"><span class="NextPage--paginationLeft--WTOmehr"><a href="/zh/model-studio/happyhorse-api-reference/" data-spm-click="gostr=/aliyun;locaid=preDoc"><i class="iconfont icon-prev-arrow"></i>上一篇：HappyHorse</a></span><span class="NextPage--paginationRight--TgS6P1r"><a href="/zh/model-studio/happyhorse-image-to-video-api-reference" data-spm-click="gostr=/aliyun;locaid=nextDoc">下一篇：HappyHorse-图生视频-基于首帧<i class="iconfont icon-next-arrow"></i></a></span></div></div></div><div class="RecommendDoc--container--M1qVQax"></div><div class="FeedbackButton--feedbackContainer--njtB22l aliyun-docs-feedback" id="help-doc-feedback"><div class="FeedbackButton--feedbackHelpTip--JxaBwdy">该文章对您有帮助吗？</div><div class="FeedbackButton--feedbackButtonContainer--ujiXFNJ"><div class="FeedbackButton--feedbackButtonBox--GmY1Nor"><button class="FeedbackButton--iconButton--fx4Xcop"><i class="help-iconfont help-icon-tag-empty"></i></button><button class="FeedbackButton--iconButton--fx4Xcop"><i class="help-iconfont help-icon-tag-empty" style="display:inline-block;transform:rotateX(-180deg)"></i></button><button class="FeedbackButton--clickButton--YxH6n96"><i class="help-iconfont help-icon-bianji"></i>反馈</button></div></div></div></section><div class="aliyun-docs-side" id="aliyun-docs-side"><div id="aliyun-docs-side-content" class="aliyun-docs-side-content ProductDetail--rightBox--GGLE5sH"><ul class="Outline--synopsisBox--zm_HamD" id="outline-container"></ul></div><div id="aliyun-docs-side-blank" class="aliyun-docs-side-blank"></div></div></div></main></div></div><div id="aliyun-docs-selection-div"></div></div></div>
+  <footer><div id="19c84ed1a69bbc2e4d171734f520dc90"><div class="_18a32969382a277c44015217fbc5cb5a_box"><footer class="_49ada0cd752f65901c49f2eed0d6c3d5_container" aria-label="PC 端页尾"><div class="_49ada0cd752f65901c49f2eed0d6c3d5_inner"><div class="_296d5000d6fdcaff9d0bfd209c64fbbc_services"><nav class="_296d5000d6fdcaff9d0bfd209c64fbbc_homepage-footer-main-services" aria-label="页脚导航"><section class="a52e48969cced2d562e47543eeb73ebb_ali-main-services"><h3 class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-title">为什么选择阿里云</h3><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/about/what-is-cloud-computing" target="_blank">什么是云计算</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://infrastructure.aliyun.com/" target="_blank">全球基础设施</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/why-us/leading-technology" target="_blank">技术领先</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/why-us/reliability" target="_blank">稳定可靠</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/why-us/security-compliance" target="_blank">安全合规</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/analyst-reports" target="_blank">分析师报告</a></section><section class="a52e48969cced2d562e47543eeb73ebb_ali-main-services"><h3 class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-title">大模型</h3><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/product/tongyi" target="_blank">千问大模型</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://bailian.console.aliyun.com/?tab=model#/model-market" target="_blank" rel="nofollow">大模型服务</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://bailian.console.aliyun.com/app-center?tab=app#/app-center" target="_blank" rel="nofollow">AI应用构建</a></section><section class="a52e48969cced2d562e47543eeb73ebb_ali-main-services"><h3 class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-title">产品和定价</h3><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/product/list" target="_blank">全部产品</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://free.aliyun.com/" target="_blank">免费试用</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/product/news/" target="_blank">产品动态</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/price/detail" target="_blank">产品定价</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/price/cpq/list" target="_blank">配置报价器</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/price/cost-management" target="_blank">云上成本管理</a></section><section class="a52e48969cced2d562e47543eeb73ebb_ali-main-services"><h3 class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-title">技术内容</h3><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/solution/tech-solution" target="_blank">技术解决方案</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://help.aliyun.com/" target="_blank">帮助文档</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://developer.aliyun.com/" target="_blank">开发者社区</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://tianchi.aliyun.com/" target="_blank">天池大赛</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://edu.aliyun.com/" target="_blank">阿里云认证</a></section><section class="a52e48969cced2d562e47543eeb73ebb_ali-main-services"><h3 class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-title">权益</h3><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://free.aliyun.com/" target="_blank">免费试用</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/solution/free" target="_blank">解决方案免费试用</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://university.aliyun.com/" target="_blank">高校计划</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/benefit/form/index" target="_blank">5亿算力补贴</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://dashi.aliyun.com/?ambRef=shouYeDaoHang2&amp;pageCode=yunparterIndex" target="_blank">推荐返现计划</a></section><section class="a52e48969cced2d562e47543eeb73ebb_ali-main-services"><h3 class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-title">服务</h3><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/service" target="_blank">基础服务</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/service/supportplans" target="_blank">企业增值服务</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/service/devopsimpl/devopsimpl_cloudmigration_public_cn" target="_blank">迁云服务</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://www.aliyun.com/notice/" target="_blank">官网公告</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://status.aliyun.com/" target="_blank">健康看板</a><a class="a52e48969cced2d562e47543eeb73ebb_ali-main-services-link" href="https://security.aliyun.com/trust-center" target="_blank">信任中心</a></section></nav><article class="_7b44142961778903dda8af3f769cd06c_focus"><h3 class="_7b44142961778903dda8af3f769cd06c_ali-main-services-title">关注阿里云</h3><p class="_7b44142961778903dda8af3f769cd06c_ali-main-services-desc">关注阿里云公众号或下载阿里云APP，关注云资讯，随时随地运维管控云服务</p><img alt="阿里云APP" src="https://img.alicdn.com/imgextra/i4/O1CN01XLesV31fkf7pYNATb_!!6000000004045-2-tps-400-400.png" class="_7b44142961778903dda8af3f769cd06c_ali-official-code" loading="lazy"/><img alt="阿里云微信" src="https://img.alicdn.com/tfs/TB1AOdINW6qK1RjSZFmXXX0PFXa-258-258.jpg" class="_7b44142961778903dda8af3f769cd06c_ali-official-code" loading="lazy"/><p class="_7b44142961778903dda8af3f769cd06c_consult-text">联系我们：4008013260</p></article></div><div class="_4598709a854bea355ceb6ef9f23f10d4_about-link-wrap"><a href="https://help.aliyun.com/product/67275.html" class="_4598709a854bea355ceb6ef9f23f10d4_ali-about-link" target="_blank">法律声明</a><a href="https://terms.alicdn.com/legal-agreement/terms/platform_service/20220906101446934/20220906101446934.html" class="_4598709a854bea355ceb6ef9f23f10d4_ali-about-link" target="_blank">Cookies 政策</a><a href="https://aliyun.jubao.alibaba.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-about-link" target="_blank">廉正举报</a><a href="https://report.aliyun.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-about-link" target="_blank">安全举报</a><a href="https://www.aliyun.com/contact" class="_4598709a854bea355ceb6ef9f23f10d4_ali-about-link" target="_blank">联系我们</a><a href="https://careers.aliyun.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-about-link" target="_blank">加入我们</a></div><section class="_4598709a854bea355ceb6ef9f23f10d4_friend-link-wrap"><h3 hidden="">友情链接</h3><a href="https://www.alibabagroup.com/cn/global/home" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">阿里巴巴集团</a><a href="https://www.taobao.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">淘宝网</a><a href="https://www.tmall.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">天猫</a><a href="https://www.aliexpress.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">全球速卖通</a><a href="https://www.alibaba.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">阿里巴巴国际交易市场</a><a href="https://www.1688.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">1688</a><a href="https://www.alimama.com/index.htm" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">阿里妈妈</a><a href="https://www.fliggy.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">飞猪</a><a href="https://www.aliyun.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">阿里云计算</a><a href="https://wanwang.aliyun.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">万网</a><a href="https://mobile.amap.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">高德</a><a href="https://www.uc.cn/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">UC</a><a href="https://www.umeng.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">友盟</a><a href="https://www.youku.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">优酷</a><a href="https://www.dingtalk.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">钉钉</a><a href="https://www.alipay.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">支付宝</a><a href="https://damo.alibaba.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">达摩院</a><a href="https://world.taobao.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">淘宝海外</a><a href="https://www.aliyundrive.com/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">阿里云盘</a><a href="https://www.ele.me/" class="_4598709a854bea355ceb6ef9f23f10d4_ali-friend-link" target="_blank">淘宝闪购</a></section><p class="_4598709a854bea355ceb6ef9f23f10d4_ali-copyright-text">© 2009-现在 Aliyun.com 版权所有 增值电信业务经营许可证： <a href="http://beian.miit.gov.cn/" target="_blank">浙B2-20080101</a> 域名注册服务机构许可： <a href="https://domain.miit.gov.cn/域名注册服务机构/互联网域名/阿里云计算有限公司 " target="_blank">浙D3-20210002</a></p><p class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-wrap"><a href="https://zzlz.gsxt.gov.cn/businessCheck/verifKey.do?showType=p&amp;serial=91330106673959654P-SAIC_SHOW_10000091330106673959654P1710919400712&amp;signData=MEUCIQDEkCd8cK7%2Fyqe6BNMWvoMPtAnsgKa7FZetfPkjZMsvhAIgOX1G9YC6FKyndE7o7hL0KaBVn4f%20V%2Fiof3iAgpsV09o%3D" target="_blank" class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-link"><img src="//gw.alicdn.com/tfs/TB1GxwdSXXXXXa.aXXXXXXXXXXX-65-70.gif" class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-img" alt="" loading="lazy"/></a><a href="http://www.beian.gov.cn/portal/registerSystemInfo" target="_blank" class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-link"><img src="//img.alicdn.com/tfs/TB1..50QpXXXXX7XpXXXXXXXXXX-40-40.png" class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-img" alt="浙公网安备 33010602009975号" loading="lazy"/><span class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-link-text">浙公网安备 33010602009975号</span></a><a href="https://beian.miit.gov.cn/" target="_blank" class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-link"><span class="_4598709a854bea355ceb6ef9f23f10d4_ali-report-link-text _4598709a854bea355ceb6ef9f23f10d4_ali-report-link-text-unique">浙B2-20080101-4</span></a></p></div></footer><footer class="_4b41e3343c851a7a8833c9165b249eb2_container" aria-label="移动端页尾"></footer></div></div></footer>
+
+
+
+<script>
+  var _performance_domEnd = window.performance && window.performance.now();
+</script>
+
+
+  <script>
+    window.ALIYUN_PERF && window.ALIYUN_PERF.getPCP().then(rst => {
+      var data = {
+        product: 'help.aliyun.com',
+        ua: navigator.userAgent,
+        device: 'pc',
+        page: 'index',
+        lang: 'zh',
+        cna: '',
+        url: window.location.href,
+        action: 'pcp',
+        userParams1: rst || 0,
+      };
+      let queryStr = Object.keys(data).map(key => data[key] &&
+        `${encodeURIComponent(key)}=${encodeURIComponent(data[key])}`).join('&');
+      fetch('https://help-new.cn-wulanchabu.log.aliyuncs.com/logstores/web-tracking/track?APIVersion=0.6.0&' +
+        queryStr);
+    });
+  </script>
+  
+
+  <script crossorigin="" src="https://g.alicdn.com/code/lib/??react/16.8.6/umd/react.production.min.js,react-dom/16.8.6/umd/react-dom.production.min.js"></script>
+  <script src="https://g.alicdn.com/code/lib/lodash.js/4.17.21/lodash.min.js" crossorigin="anonymous"></script>
+  <script>
+  window.resourceBaseUrl="https://g.alicdn.com/aliyun-help/help-portal-fe/0.12.44/"
+</script>
+<script defer="" src="https://g.alicdn.com/aliyun-help/help-portal-fe/0.12.44/js/index.js"></script>
+<script defer src="https://g.alicdn.com/aliyun-help/help-portal-fe/0.12.44/js/vendor.js"></script>
+  
+  <script async="" src="https://g.alicdn.com/dawn/assets-loader/scripts/fast-login.js?tenantName=help-new-aliyun-com"></script>
+  <script async="" src="https://g.alicdn.com/aliyun/perf/js/index.js"></script>
+  <script src="//cloud-assets.alicdn.com/website.js" crossorigin=""></script>
+  
+
+<script src="https://website.alyasset.com/npm.combo/@ali/biu-loader/0.1.9/~~index.js,plugins/global-react.js,plugins/ace-module.js"></script>
+<script src="https://website.alyasset.com/npm.combo/@ali/~~hmod-preact/0.0.1/index.js,hmod-preact-hooks/0.0.1/index.js,hmod-preact-compat/0.0.1/index.js,hmod-preact-bridge/0.1.4/index.js"></script>
+<script src="https://website.alyasset.com/code.combo/aliyun-com/~~lowcode-env-inject/0.1.0/aliyun.prod.pc.zh-CN.js,lowcode-engine/0.1.125/renderer/build/js/index.js"></script>
+<script src="https://g.alicdn.com/code/npm/@ali/??hmod-ace-2023-box/0.1.0/index.js,hmod-aliyun-com-floating-toolbar/0.2.4/index.js,hmod-aliyun-com-global-nav-search/0.8.5/index.js,hmod-aliyun-com-global-nav-search/0.8.5/locales/zh-CN.js,hmod-aliyun-com-global-nav/0.3.18/index.js,hmod-aliyun-com-global-nav/0.3.18/locales/zh-CN.js"></script>
+<script src="https://website.alyasset.com/lowcode/entry/prod/35ed6b66d57084d03def49c3ad672872.js"></script>
+<script src="https://g.alicdn.com/code/npm/@ali/??hmod-ace-2023-box/0.1.0/index.js,hmod-ace-2024-global-footer/0.2.1/index.js,hmod-ace-2024-global-footer/0.2.1/locales/zh-CN.js,hmod-lowcode-normal-page/0.1.0/index.js"></script>
+<script src="https://website.alyasset.com/lowcode/entry/prod/19c84ed1a69bbc2e4d171734f520dc90.js"></script>
+</body></html>

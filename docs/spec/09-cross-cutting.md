@@ -265,7 +265,7 @@ level：10=trace, 20=debug, 30=info, 40=warn, 50=error, 60=fatal
   [打开日志目录]
 ```
 
-`删除所有日志` 清空当前工作区 `.workbench/logs/` 并重建空目录，只删除运行日志、诊断日志、崩溃日志和待上报日志；不删除 4 个业务工作区、`.workbench/tmp/`、SQLite 数据库、缓存、API Key。
+`删除所有日志` 清空当前工作区 `.workbench/logs/` 并重建空目录，只删除运行日志、诊断日志、崩溃日志和待上报日志；不删除 5 个业务工作区、`.workbench/tmp/`、SQLite 数据库、缓存、API Key。
 
 ### 5.7 崩溃日志
 
@@ -558,6 +558,7 @@ function Onboarding() {
     - 等待套版/
   - 03-检测工作区/
   - 04-上架工作区/
+  - 05-视频工作区/
   - .workbench/
 
 建议选择空目录或新建文件夹。

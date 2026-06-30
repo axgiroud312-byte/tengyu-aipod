@@ -202,7 +202,7 @@ const result = await window.api.collection.start(params)
 CREATE TABLE tasks (
   id            TEXT PRIMARY KEY,                   -- UUID
   type          TEXT NOT NULL,                       -- "lightweight" | "full"
-  module        TEXT NOT NULL,                       -- "collection" | "generation" | ...
+  module        TEXT NOT NULL,                       -- "collection" | "generation" | "video" | ...
   sku_code      TEXT,                                -- 货号，可为空（轻量任务有时没有）
   status        TEXT NOT NULL,                       -- "running" | "completed" | "failed" | "interrupted"
   config_json   TEXT NOT NULL,                       -- 任务配置快照
@@ -258,7 +258,7 @@ CREATE TABLE artifacts (
   task_id            TEXT REFERENCES tasks(id),
   sku_code           TEXT,                           -- 关联货号
   print_id           TEXT,                           -- 关联印花
-  step               TEXT NOT NULL,                  -- "collect" | "extract" | "txt2img" | "img2img" | "matting" | "mockup" | "title" | "listing"
+  step               TEXT NOT NULL,                  -- "collect" | "extract" | "txt2img" | "img2img" | "matting" | "mockup" | "title" | "listing" | "video"
   provider           TEXT,                           -- "comfyui-chenyu" | "grsai" | "aliyun-bailian" | "manual-import" | "internal"
   model_or_workflow  TEXT,                           -- 具体模型名或工作流 ID
   skill_id           TEXT,                           -- 用了哪个 skill
@@ -474,7 +474,7 @@ export interface AppError {
 
 以下事实任何代码都不能违反：
 
-1. **4 个业务工作区目录下只放业务图片**（含子目录，标题 xlsx 只允许在上架批次目录；当前优先 `标题.xlsx`，兼容旧 `titles.xlsx`），元数据全在 SQLite
+1. **5 个业务工作区目录下只放业务产物**：`01`-`04` 只放业务图片（标题 xlsx 只允许在上架批次目录；当前优先 `标题.xlsx`，兼容旧 `titles.xlsx`），`05-视频工作区` 只放 MP4，元数据全在 SQLite
 2. **04-上架工作区 是上架域**，只有 PS 套版和标题模块写，上架模块读
 3. **套版候选清单在 SQLite**，侵权检测通过图加入清单时不复制、不移动源文件
 4. **完整任务等待套版目录是业务图片副本目录**，位于 `02-印花工作区/等待套版/{runId}/`，不属于临时文件
