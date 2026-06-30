@@ -33,7 +33,7 @@
 | 能力 | 输入 | 强约束 |
 |---|---|---|
 | 文生图 | 纯提示词 | 不接收源图 |
-| 图生图 | Grsai：提示词 + 参考图；ComfyUI：图片文件夹 + 工作流 + 尺寸 | ComfyUI 扫描任意文件夹后，外部图片先登记为 `manual-import` 印花 artifact，再注入工作流 |
+| 图生图 | Grsai：提示词 + 参考图；ComfyUI：图片文件夹 + 工作流 + 尺寸，可选 AI/工作流默认/手动提示词 | ComfyUI 扫描任意文件夹后，外部图片先登记为 `manual-import` 印花 artifact，再注入工作流 |
 | 提取 | Grsai：提示词 + 采集图（源）；ComfyUI：图片文件夹 + 工作流 + 尺寸 | ComfyUI 可直接使用任意文件夹扫描到的图片路径作为源图 |
 | 抠图 | ComfyUI：图片文件夹 + 抠图工作流 + 尺寸 | 外部图片先登记为 `manual-import` 印花 artifact，再注入直接抠图或混合抠图工作流 |
 | 提取后抠图 | ComfyUI：图片文件夹 + 提取工作流 + 抠图工作流 + 尺寸 | 外部图片先登记为 `manual-import` artifact，提取中间图走临时目录，最终图落入抠图目录 |
@@ -60,7 +60,7 @@
 
 - `collection` 来源：从采集目录扫描图片后调用提取能力，完整任务页里这一支可在 Grsai / 晨羽间切换。
 - `txt2img` 来源：完整任务页先用阿里云百炼生成提示词；随后可走 Grsai 文生图，或走 ComfyUI 文生图工作流。
-- `img2img` 来源：完整任务页支持 Grsai 图生图和 ComfyUI 图生图。Grsai 路径提供参考构图 / 参考风格 / 构图+风格和“生图时带参考图”开关；ComfyUI 路径选择图片文件夹、工作流、运行云机和每张生成数量。
+- `img2img` 来源：完整任务页支持 Grsai 图生图和 ComfyUI 图生图。Grsai 路径提供参考构图 / 参考风格 / 构图+风格和“生图时带参考图”开关；ComfyUI 路径选择图片文件夹、工作流、运行云机、每张生成数量，并支持 AI 看图写提示词 / 工作流默认提示词。
 - `existing_prints` 已有印花来源：跳过生图，直接扫描 `02-印花工作区` 下某个具体印花图片文件夹，并可从抠图、侵权检测或 PS 套版开始。
 - 抠图是完整任务中的可选 step；局部印花默认开启，满印默认关闭。
 
@@ -604,18 +604,74 @@ Grsai 图生图里有一个用户可控开关：
 
 ### 5.3 ComfyUI 图生图
 
-ComfyUI 图生图不使用 Grsai 的参考图上传框，也不需要提示词输入框。用户选择任意图片文件夹后点击“检索图片”，客户端递归扫描 `jpg/jpeg/png/webp`，按自然顺序展示只读缩略图清单；检索到 N 张就运行 N 次。
+ComfyUI 图生图仍以“图片文件夹 + 工作流”为主，不使用 Grsai 的参考图上传框。用户选择任意图片文件夹后点击“检索图片”，客户端递归扫描 `jpg/jpeg/png/webp`，按自然顺序展示只读缩略图清单；检索到 N 张就运行 N 次。
 
 运行前，主进程把扫描到的外部图片登记为 `manual-import` 印花 artifact，再复用现有 artifact 血缘和 ComfyUI reference image 注入逻辑。文件夹不限制在 `01-采集工作区` 或 `02-印花工作区` 下。
 
+ComfyUI 图生图支持 3 种提示词来源：
+
+- `AI 看图写提示词（默认）`：每张源图单独发给阿里云百炼视觉模型，生成 1 条英文提示词，再用这 1 条提示词覆盖该张图对应那次 ComfyUI 工作流的主提示词输入框。
+- `工作流默认`：不生成提示词，也不覆盖工作流里的提示词。
+- `手动填写`：整批图片共用 1 条用户手写提示词，用它覆盖每张图对应那次 ComfyUI 工作流的主提示词输入框。
+
+“AI 看图写提示词”模式下，客户端显示并使用以下字段：
+
+- 印花模式：`局部` / `满印`，默认 `局部`
+- 参考方式：`参考构图` / `参考风格` / `构图+风格`，默认 `参考构图`
+- 提示词配置：复用现有 `img2img-local-reference` / `img2img-full-reference` 两类 Skill，下拉可选
+- 提示词模型：复用本地百炼视觉模型列表
+- 其他要求：可留空，作为额外文字要求附加给百炼
+
+“工作流默认”模式下不显示 AI 专用字段；“手动填写”模式下只显示手写提示词文本框，不显示 AI 专用字段。
+
+ComfyUI 图生图**不加提示词审稿步骤**。用户仍只点击一次主按钮启动任务：
+
+- 手动页主按钮继续叫 `开始图生图`
+- 完整任务页仍使用原来的完整任务启动按钮
+
+启动后行为如下：
+
+```text
+AI 看图写提示词：
+  每张图 → 调百炼视觉模型 → 得到 1 条 prompt → 跑 1 次 ComfyUI
+
+工作流默认：
+  每张图 → 直接跑 1 次 ComfyUI，不覆盖 workflow prompt
+
+手动填写：
+  整批共用 1 条 prompt → 每张图各跑 1 次 ComfyUI
+```
+
+AI 写提示词失败时，当前这张图直接记失败并跳过；其他图片继续运行。**不要**偷偷退回工作流默认提示词。
+
+提示词覆盖规则：
+
+- `工作流默认`：一个提示词槽都不改
+- `AI 看图写提示词` / `手动填写`：只替换主提示词框
+- 主提示词框定义为：工作流中识别到的**第一个非负面提示词输入框**
+- 其他额外正向提示词框保留工作流原文，不做高级拆分配置
+- 负面提示词 / negative prompt 保留工作流原文，不做覆盖
+
+结果展示与日志规则：
+
+- 不新增独立“提示词审稿区”
+- 结果预览继续显示每张结果图实际使用的提示词
+- 生图运行期日志和诊断日志记录每张图生成出的 prompt 文本摘要
+- 日志中不记录图片 base64 / data URL 原文
+
 ComfyUI 图生图右侧显示：
-- 执行卡：检索图片数量、工作流、开始图生图按钮。
+- 执行卡：检索图片数量、工作流、提示词模式、开始图生图按钮。
 - 运行云机选择卡。
 - 错误和完成结果反馈。
 
 ComfyUI 图生图支持“每张生成”数量，默认 `1`，范围 `1-8`。它注入工作流里的 batch size / 数量输入，一张参考图仍只提交一次 ComfyUI 工作流；若用户选择大于 `1` 但当前工作流没有可识别的数量输入，则运行前报错，不改为循环重复提交。
 
 不再显示原百分比、处理、成功、失败进度卡。
+
+与 Grsai 图生图对齐但不完全相同：
+
+- 对齐：印花模式、参考方式、提示词配置、提示词模型、其他要求、AI/手动两种写提示词思路
+- 不对齐：不复用 Grsai 的参考图上传框；不提供“生图时带参考图”开关；参考图始终来自所选图片文件夹并作为 ComfyUI 工作流输入
 
 ## 6. 提取能力
 
@@ -1102,7 +1158,24 @@ CREATE TABLE comfyui_instances (
                                         } → TaskId
 'generation:run-comfyui-txt2img'      → { prompts, workflowId, workflowVersion?, width, height, concurrency, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:run-extract'              → { sourceImagePaths, skillId, model, aspectRatio, concurrency, filenamePrefix?, filenameSeparator? } → TaskId
-'generation:run-comfyui-img2img'      → { sourceArtifactIds?, sourceImagePaths?, workflowId, workflowVersion?, prompt?, batchSize?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
+'generation:run-comfyui-img2img'      → {
+                                          sourceArtifactIds?,
+                                          sourceImagePaths?,
+                                          workflowId,
+                                          workflowVersion?,
+                                          promptMode?: 'ai' | 'workflow' | 'manual',
+                                          prompt?,
+                                          promptSkillId?,
+                                          promptSkillVersion?,
+                                          promptModel?,
+                                          printMode?: 'local' | 'full',
+                                          modeInstruction?: string,
+                                          requirement?: string,
+                                          batchSize?,
+                                          instanceUuid?,
+                                          filenamePrefix?,
+                                          filenameSeparator?
+                                        } → TaskId
 'generation:run-comfyui-extract'      → { sourceImagePaths, workflowId, workflowVersion?, skillId, skillVersion?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
 'generation:run-comfyui-extract-matting'
                                       → { sourceImagePaths, extractWorkflowId, mattingWorkflowId, skillId, skillVersion?, instanceUuid?, filenamePrefix?, filenameSeparator? } → TaskId
@@ -1167,6 +1240,7 @@ CREATE TABLE comfyui_instances (
 | `GRSAI_FAILED` | Grsai 通用失败 | 按本地自动重试次数重试，范围 0-10；仍失败后报错 |
 | `BAILIAN_API_KEY_INVALID` | 阿里云百炼 401 | 提示用户重填 API Key |
 | `PROMPT_PARSE_FAILED` | 通用解析器无法提取 | 重试 1 次后让用户手动编辑 |
+| `COMFYUI_IMG2IMG_PROMPT_FAILED` | ComfyUI 图生图的 AI 看图写提示词失败 | 当前图片标记失败并继续后续图片；提示用户查看日志与诊断日志 |
 
 ## 14. 性能预算
 
@@ -1183,6 +1257,10 @@ CREATE TABLE comfyui_instances (
 
 - Grsai 图生图 4 种模式的视觉 LLM 调用差异，以及“生图时带参考图”默认关闭
 - 通用解析器对各种 LLM 输出格式的兜底
+- ComfyUI 图生图 `AI 看图写提示词 / 工作流默认 / 手动填写` 三种模式切换
+- ComfyUI 图生图逐张生成 prompt，并确保“一张图对应一条 prompt”
+- ComfyUI 图生图 AI 写 prompt 失败时只失败当前图片，不影响其他图片
+- ComfyUI 图生图只覆盖第一个非负面提示词输入框，保留其他正向/负向 prompt
 - 晨羽固定 POD 实例创建、开机、关机、设为默认云机
 - 没有运行中云机时，ComfyUI 生图提示先去设置页开机，不自动开机
 - 工作流注入参数后的 ComfyUI 提交
