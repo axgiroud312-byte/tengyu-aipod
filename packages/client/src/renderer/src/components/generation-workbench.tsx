@@ -49,7 +49,7 @@ import { ImageLightbox, type ImageLightboxDetail, type ImageLightboxItem } from 
 
 type Txt2imgMode = 'ai' | 'manual'
 type Img2imgMode = 'layout' | 'style' | 'layout-style' | 'manual'
-type ComfyuiImg2imgPromptMode = 'workflow' | 'custom'
+type ComfyuiImg2imgPromptMode = 'ai' | 'workflow' | 'manual'
 type MattingMode = 'comfyui' | 'mixed'
 type Txt2imgGenerationPath = 'grsai' | 'comfyui'
 type ReferenceImageDraft = {
@@ -2450,6 +2450,7 @@ function GrsaiExtractPanel() {
 }
 
 function ComfyuiImg2imgPanel() {
+  const { settings, error: settingsError } = useGenerationLocalSettings()
   const workflowScope = 'img2img'
   const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
   const [sourceFolder, setSourceFolder] = useState('')
@@ -2459,7 +2460,11 @@ function ComfyuiImg2imgPanel() {
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [batchSize, setBatchSize] = useState('1')
-  const [promptMode, setPromptMode] = useState<ComfyuiImg2imgPromptMode>('workflow')
+  const [promptMode, setPromptMode] = useState<ComfyuiImg2imgPromptMode>('ai')
+  const [printMode, setPrintMode] = useState<'local' | 'full'>('local')
+  const [referenceMode, setReferenceMode] = useState<Exclude<Img2imgMode, 'manual'>>('layout')
+  const [promptModel, setPromptModel] = useState('qwen3.6-flash')
+  const [requirement, setRequirement] = useState('')
   const [prompt, setPrompt] = useState('')
   const [taskName, setTaskName] = useState('')
   const [filenamePrefix, setFilenamePrefix] = useState('')
@@ -2478,6 +2483,27 @@ function ComfyuiImg2imgPanel() {
     setError,
     setRunning,
   })
+
+  const promptSkillCategory = promptSkillCategoryFor('img2img', printMode)
+  const promptSkillSelection = usePromptSkillOptions(promptSkillCategory, setError)
+  const selectedReferenceMode =
+    img2imgModes.find((item) => item.key === referenceMode) ?? img2imgModes[0]
+  const promptModelOptions = useMemo(() => bailianModelsForUse(settings, true), [settings])
+
+  useEffect(() => {
+    if (settingsError) {
+      setError(settingsError)
+    }
+  }, [settingsError])
+
+  useEffect(() => {
+    const preferred = settings?.config.bailian_vision_model
+    const firstModel =
+      promptModelOptions.find((model) => model.id === preferred) ?? promptModelOptions[0]
+    if (firstModel && !promptModelOptions.some((model) => model.id === promptModel)) {
+      setPromptModel(firstModel.id)
+    }
+  }, [promptModel, promptModelOptions, settings])
 
   useEffect(() => {
     void loadWorkflows()
@@ -2550,8 +2576,16 @@ function ComfyuiImg2imgPanel() {
       return
     }
     const customPrompt = prompt.trim()
-    if (promptMode === 'custom' && !customPrompt) {
+    if (promptMode === 'manual' && !customPrompt) {
       setError('请填写图生图提示词，或切回使用工作流默认提示词')
+      return
+    }
+    if (promptMode === 'ai' && !promptSkillSelection.selectedSkill) {
+      setError(`请先选择${promptSkillLabel(promptSkillCategory)} Skill`)
+      return
+    }
+    if (promptMode === 'ai' && !promptModel.trim()) {
+      setError('请选择提示词模型')
       return
     }
 
@@ -2568,7 +2602,22 @@ function ComfyuiImg2imgPanel() {
         ...(taskName.trim() ? { taskId: taskName.trim() } : {}),
         ...(filenamePrefix.trim() ? { filenamePrefix: filenamePrefix.trim() } : {}),
         ...(filenamePrefix.trim() ? { filenameSeparator } : {}),
-        ...(promptMode === 'custom' ? { prompt: customPrompt } : {}),
+        promptMode,
+        ...(promptMode === 'manual' ? { prompt: customPrompt } : {}),
+        ...(promptMode === 'ai'
+          ? {
+              printMode,
+              promptModel,
+              modeInstruction: selectedReferenceMode?.instruction ?? '',
+              requirement,
+              ...(promptSkillSelection.selectedSkill
+                ? {
+                    promptSkillId: promptSkillSelection.selectedSkill.id,
+                    promptSkillVersion: promptSkillSelection.selectedSkill.version,
+                  }
+                : {}),
+            }
+          : {}),
         width: clampNumber(width, 256, 4096, 1024),
         height: clampNumber(height, 256, 4096, 1024),
         batchSize: outputCount,
@@ -2664,6 +2713,14 @@ function ComfyuiImg2imgPanel() {
                 <div className="mt-2 flex flex-wrap gap-4 text-sm">
                   <label className="inline-flex items-center gap-2">
                     <input
+                      checked={promptMode === 'ai'}
+                      onChange={() => setPromptMode('ai')}
+                      type="radio"
+                    />
+                    AI 看图写提示词（推荐）
+                  </label>
+                  <label className="inline-flex items-center gap-2">
+                    <input
                       checked={promptMode === 'workflow'}
                       onChange={() => setPromptMode('workflow')}
                       type="radio"
@@ -2672,14 +2729,77 @@ function ComfyuiImg2imgPanel() {
                   </label>
                   <label className="inline-flex items-center gap-2">
                     <input
-                      checked={promptMode === 'custom'}
-                      onChange={() => setPromptMode('custom')}
+                      checked={promptMode === 'manual'}
+                      onChange={() => setPromptMode('manual')}
                       type="radio"
                     />
-                    填入提示词
+                    手动填写
                   </label>
                 </div>
-                {promptMode === 'custom' ? (
+                {promptMode === 'ai' ? (
+                  <div className="mt-3 grid gap-4 md:grid-cols-2">
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>印花模式</span>
+                      <select
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setPrintMode(event.target.value as 'local' | 'full')}
+                        value={printMode}
+                      >
+                        <option value="local">局部</option>
+                        <option value="full">满印</option>
+                      </select>
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>参考方式</span>
+                      <select
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) =>
+                          setReferenceMode(event.target.value as Exclude<Img2imgMode, 'manual'>)
+                        }
+                        value={referenceMode}
+                      >
+                        {img2imgModes
+                          .filter((item) => item.key !== 'manual')
+                          .map((item) => (
+                            <option key={item.key} value={item.key}>
+                              {item.label}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                    <PromptSkillPicker
+                      category={promptSkillCategory}
+                      onChange={promptSkillSelection.selectPromptSkill}
+                      promptSkills={promptSkillSelection.promptSkills}
+                      selectedSkill={promptSkillSelection.selectedSkill}
+                      selectedSkillId={promptSkillSelection.selectedSkillId}
+                    />
+                    <label className="block space-y-2 text-sm font-medium">
+                      <span>提示词模型</span>
+                      <select
+                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setPromptModel(event.target.value)}
+                        value={promptModel}
+                      >
+                        {promptModelOptions.map((model) => (
+                          <option key={model.id} value={model.id}>
+                            {modelLabel(model)}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-2 text-sm font-medium md:col-span-2">
+                      <span>其他要求</span>
+                      <textarea
+                        className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        onChange={(event) => setRequirement(event.target.value)}
+                        placeholder="例如：改成复古花卉徽章，干净白底，适合印花"
+                        value={requirement}
+                      />
+                    </label>
+                  </div>
+                ) : null}
+                {promptMode === 'manual' ? (
                   <label className="mt-3 block space-y-2 text-sm font-medium">
                     <span>图生图提示词</span>
                     <textarea
@@ -2710,7 +2830,11 @@ function ComfyuiImg2imgPanel() {
               <div>
                 <dt className="text-muted-foreground">提示词</dt>
                 <dd className="font-medium">
-                  {promptMode === 'workflow' ? '工作流默认' : '自定义'}
+                  {promptMode === 'ai'
+                    ? 'AI 看图写提示词'
+                    : promptMode === 'workflow'
+                      ? '工作流默认'
+                      : '手动填写'}
                 </dd>
               </div>
               <div>

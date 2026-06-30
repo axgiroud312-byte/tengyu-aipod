@@ -108,6 +108,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     validateWorkflowForRequest(workflow, req)
     const uploadedImages = await this.uploadReferenceImages(req, comfyHttp)
     const promptWorkflow = await promptWorkflowForRun(workflow, comfyHttp)
+    const effectivePrompt = effectivePromptForRun(promptWorkflow, workflow.inputSlots, req)
     const injectedWorkflow = injectComfyuiInputs(promptWorkflow, workflow.inputSlots, req, {
       uploadedImages,
     })
@@ -126,8 +127,8 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
           version: workflow.version,
           capability: workflow.capability,
         },
-        request: req,
-        injectedWorkflow,
+        request: requestForDiagnosticLog(req, effectivePrompt),
+        injectedWorkflow: workflowForDiagnosticLog(injectedWorkflow, workflow.inputSlots),
       },
     })
     const promptId = await comfyHttp.queuePrompt(injectedWorkflow)
@@ -155,6 +156,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
       outputs,
       promptId,
       comfyHttp,
+      effectivePrompt,
     })
 
     return {
@@ -200,6 +202,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     outputs: ComfyImageOutput[]
     promptId: string
     comfyHttp: { viewImage(input: ComfyViewImageInput): Promise<Buffer> }
+    effectivePrompt: string
   }) {
     const taskId = taskIdFromRequest(input.req)
     const outputFolder =
@@ -258,6 +261,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
             capability: input.req.capability,
             workflow: input.workflow,
             prompt: input.req.prompt,
+            promptSnapshot: input.effectivePrompt,
             params: input.req.options ?? {},
             sourceArtifactIds: sourceArtifactIdsFromRequest(input.req),
             createdAt: this.now(),
@@ -267,6 +271,7 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
           url: pathToFileURL(targetPath).toString(),
           local_path: targetPath,
           print_id: printId,
+          prompt: input.effectivePrompt,
           ...(artifactId ? { artifact_id: artifactId } : {}),
         })
       }
@@ -318,6 +323,7 @@ export function injectComfyuiInputs(
     string,
     { inputs?: Record<string, unknown> }
   >
+  const mainPromptSlot = findMainPromptSlot(slots, workflow)
 
   for (const slot of slots) {
     const node = workflow[slot.nodeId]
@@ -328,7 +334,7 @@ export function injectComfyuiInputs(
       })
     }
     node.inputs ??= {}
-    const value = valueForSlot(slot, req, context)
+    const value = valueForSlot(slot, req, context, { mainPromptSlot })
     if (value !== undefined) {
       node.inputs[slot.field] = value
     }
@@ -362,7 +368,18 @@ function valueForSlot(
   slot: ComfyuiWorkflowSlot,
   req: GenerateRequest,
   context: { uploadedImages: string[] },
+  injection: { mainPromptSlot: ComfyuiWorkflowSlot | null },
 ) {
+  if (isPromptSlot(slot)) {
+    if (req.options?.preserveWorkflowPrompt === true) {
+      return undefined
+    }
+    if (!injection.mainPromptSlot || !sameSlot(slot, injection.mainPromptSlot)) {
+      return undefined
+    }
+    return req.prompt
+  }
+
   const optionValue = req.options?.[slot.name] ?? req.options?.[slot.field]
   if (optionValue !== undefined) {
     return optionValue
@@ -379,10 +396,6 @@ function valueForSlot(
     return req.output.size_px?.height
   }
 
-  if (req.options?.preserveWorkflowPrompt === true && isPromptSlot(slot)) {
-    return undefined
-  }
-
   if (normalizedName.includes('image')) {
     const filename = context.uploadedImages[imageIndexForSlot(slot, req)]
     if (!filename) {
@@ -394,11 +407,110 @@ function valueForSlot(
     return filename
   }
 
-  return req.prompt
+  return undefined
 }
 
 function isPromptSlot(slot: ComfyuiWorkflowSlot) {
   return /prompt|text|文本|提示词/i.test(`${slot.name} ${slot.field}`)
+}
+
+function isNegativePromptSlot(slot: ComfyuiWorkflowSlot, workflowJson: unknown) {
+  const label = `${slot.name} ${slot.field} ${promptNodeLabel(workflowJson, slot)}`.toLowerCase()
+  return /negative|负面|反向/i.test(label)
+}
+
+function promptNodeLabel(workflowJson: unknown, slot: ComfyuiWorkflowSlot) {
+  if (!workflowJson || typeof workflowJson !== 'object' || Array.isArray(workflowJson)) {
+    return ''
+  }
+  const node = (workflowJson as Record<string, unknown>)[slot.nodeId]
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return ''
+  }
+  const record = node as Record<string, unknown>
+  const inputs = record.inputs
+  const inputValue =
+    inputs && typeof inputs === 'object' && !Array.isArray(inputs)
+      ? (inputs as Record<string, unknown>)[slot.field]
+      : ''
+  const meta = record._meta
+  const title =
+    meta && typeof meta === 'object' && !Array.isArray(meta)
+      ? (meta as Record<string, unknown>).title
+      : ''
+  return `${typeof record.class_type === 'string' ? record.class_type : ''} ${
+    typeof title === 'string' ? title : ''
+  } ${typeof inputValue === 'string' ? inputValue : ''}`
+}
+
+function findMainPromptSlot(slots: ComfyuiWorkflowSlot[], workflowJson: unknown) {
+  return (
+    slots.find((slot) => isPromptSlot(slot) && !isNegativePromptSlot(slot, workflowJson)) ?? null
+  )
+}
+
+function sameSlot(left: ComfyuiWorkflowSlot, right: ComfyuiWorkflowSlot) {
+  return left.nodeId === right.nodeId && left.field === right.field
+}
+
+function requestForDiagnosticLog(req: GenerateRequest, effectivePrompt: string) {
+  return {
+    ...req,
+    prompt: promptSummary(effectivePrompt),
+  }
+}
+
+function workflowForDiagnosticLog(workflowJson: unknown, slots: ComfyuiWorkflowSlot[]) {
+  const workflow = structuredClone(workflowJson) as Record<
+    string,
+    { inputs?: Record<string, unknown> }
+  >
+  for (const slot of slots) {
+    if (!isPromptSlot(slot)) {
+      continue
+    }
+    const node = workflow[slot.nodeId]
+    const value = node?.inputs?.[slot.field]
+    if (node && typeof value === 'string') {
+      node.inputs = {
+        ...(node.inputs ?? {}),
+        [slot.field]: promptSummary(value),
+      }
+    }
+  }
+  return workflow
+}
+
+function promptSummary(prompt: string, maxLength = 300) {
+  const normalized = prompt.replace(/\s+/g, ' ').trim()
+  if (normalized.length <= maxLength) {
+    return normalized
+  }
+  return `${normalized.slice(0, maxLength)}...`
+}
+
+function effectivePromptForRun(
+  workflowJson: unknown,
+  slots: ComfyuiWorkflowSlot[],
+  req: GenerateRequest,
+) {
+  if (req.options?.preserveWorkflowPrompt !== true) {
+    return req.prompt
+  }
+  const slot = findMainPromptSlot(slots, workflowJson)
+  if (!slot || !workflowJson || typeof workflowJson !== 'object' || Array.isArray(workflowJson)) {
+    return '工作流默认提示词'
+  }
+  const node = (workflowJson as Record<string, unknown>)[slot.nodeId]
+  if (!node || typeof node !== 'object' || Array.isArray(node)) {
+    return '工作流默认提示词'
+  }
+  const inputs = (node as Record<string, unknown>).inputs
+  if (!inputs || typeof inputs !== 'object' || Array.isArray(inputs)) {
+    return '工作流默认提示词'
+  }
+  const value = (inputs as Record<string, unknown>)[slot.field]
+  return typeof value === 'string' && value.trim() ? value : '工作流默认提示词'
 }
 
 function isBatchSlot(slot: ComfyuiWorkflowSlot) {
@@ -456,9 +568,7 @@ function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: Genera
   const imageInputCount = workflow.inputSlots.filter((slot) =>
     `${slot.name} ${slot.field}`.toLowerCase().includes('image'),
   ).length
-  const promptInputCount = workflow.inputSlots.filter((slot) =>
-    `${slot.name} ${slot.field}`.toLowerCase().includes('prompt'),
-  ).length
+  const promptInputCount = workflow.inputSlots.filter(isPromptSlot).length
   const batchInputCount = workflow.inputSlots.filter(isBatchSlot).length
 
   if (outputCount === 0) {
@@ -477,6 +587,18 @@ function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: Genera
 
   if (req.capability !== 'matting' && promptInputCount === 0) {
     throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流未识别到提示词输入节点', false, {
+      provider: 'comfyui-chenyu',
+      workflowId: workflow.id,
+      capability: req.capability,
+    })
+  }
+
+  if (
+    req.capability !== 'matting' &&
+    req.options?.preserveWorkflowPrompt !== true &&
+    !findMainPromptSlot(workflow.inputSlots, workflow.workflowJson)
+  ) {
+    throw new AppErrorClass('HTTP_4XX', 'ComfyUI 工作流未识别到主提示词输入节点', false, {
       provider: 'comfyui-chenyu',
       workflowId: workflow.id,
       capability: req.capability,
@@ -523,6 +645,7 @@ async function registerComfyuiArtifact(
     capability: GenerateRequest['capability']
     workflow: CachedComfyuiWorkflow
     prompt: string
+    promptSnapshot?: string
     params: Record<string, unknown>
     sourceArtifactIds: string[]
     createdAt: number
@@ -558,7 +681,7 @@ async function registerComfyuiArtifact(
     input.targetPath,
     info.size,
     fileHash,
-    input.prompt,
+    input.promptSnapshot ?? input.prompt,
     JSON.stringify(input.params),
     input.createdAt,
   )

@@ -17,7 +17,7 @@ export type SkillVariableType = 'select' | 'number' | 'text' | 'textarea' | 'che
 export type PipelineSourceMode = 'collection' | 'txt2img' | 'img2img' | 'existing_prints'
 export type PipelineProvider = 'grsai' | 'comfyui-chenyu'
 export type PipelinePrintMode = 'local' | 'full'
-export type PipelinePromptMode = 'manual' | 'ai'
+export type PipelinePromptMode = 'manual' | 'ai' | 'workflow'
 export type PipelineMattingMode = 'comfyui' | 'mixed'
 export type PipelineStartStep = 'matting' | 'detection' | 'photoshop'
 export type PipelineRunStatus = 'running' | 'completed' | 'failed' | 'cancelled' | 'interrupted'
@@ -110,6 +110,7 @@ export type PipelineSourceConfig =
       mode: 'img2img'
       provider: 'comfyui-chenyu'
       sourceFolder: string
+      prompt?: PipelinePromptConfig
       comfyui: PipelineComfyuiImg2imgConfig
     }
   | {

@@ -31,7 +31,13 @@ export type GenerateRequest = {
 
 export type GenerateResponse = {
   status: 'succeeded' | 'failed' | 'violation'
-  images: { url: string; local_path?: string; artifact_id?: string; print_id?: string }[]
+  images: {
+    url: string
+    local_path?: string
+    artifact_id?: string
+    print_id?: string
+    prompt?: string
+  }[]
   raw_response?: unknown
   error?: AppError
 }

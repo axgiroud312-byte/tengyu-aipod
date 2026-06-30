@@ -160,6 +160,10 @@ const promptConfigSchema = z.object({
   model: z.string().optional(),
 })
 
+const comfyuiImg2imgPromptConfigSchema = promptConfigSchema.extend({
+  mode: z.enum(['ai', 'workflow']),
+})
+
 const grsaiImageSchema = z.object({
   model: z.string(),
   aspectRatio: z.string(),
@@ -228,6 +232,7 @@ const sourceSchema = z.union([
     mode: z.literal('img2img'),
     provider: z.literal('comfyui-chenyu'),
     sourceFolder: z.string(),
+    prompt: comfyuiImg2imgPromptConfigSchema.optional(),
     comfyui: comfyuiImg2imgWorkflowSchema,
   }),
   z.object({
@@ -1132,6 +1137,24 @@ function comfyuiImg2imgOptionalFields(config: PipelineComfyuiImg2imgConfig) {
   return {
     ...comfyuiOptionalFields(config),
     ...(config.batchSize !== undefined ? { batchSize: config.batchSize } : {}),
+  }
+}
+
+function comfyuiImg2imgPromptFields(
+  prompt: PipelinePromptConfig | undefined,
+  printMode: PipelineRunConfig['printMode'],
+) {
+  if (!prompt || prompt.mode === 'workflow') {
+    return { promptMode: 'workflow' as const }
+  }
+  return {
+    promptMode: 'ai' as const,
+    printMode,
+    ...(prompt.skillId ? { promptSkillId: prompt.skillId } : {}),
+    ...(prompt.skillVersion ? { promptSkillVersion: prompt.skillVersion } : {}),
+    ...(prompt.model ? { promptModel: prompt.model } : {}),
+    ...(prompt.modeInstruction ? { modeInstruction: prompt.modeInstruction } : {}),
+    ...(prompt.requirement ? { requirement: prompt.requirement } : {}),
   }
 }
 
@@ -2221,13 +2244,7 @@ export class PipelineService {
       stages.push({
         stepKey: 'extract',
         create: (context) =>
-          this.createStreamingExtractStage(
-            db,
-            active,
-            context,
-            stats,
-            visibleFilenameFields,
-          ),
+          this.createStreamingExtractStage(db, active, context, stats, visibleFilenameFields),
       })
     }
 
@@ -2362,7 +2379,8 @@ export class PipelineService {
     const sourceFailedRef = { value: 0 }
     let plannedSourceCount = 0
     const sourceLabel = config.source.mode === 'collection' ? '准备来源' : '来源生图'
-    const sourceModule = config.source.mode === 'existing_prints' ? 'generation' : config.source.mode
+    const sourceModule =
+      config.source.mode === 'existing_prints' ? 'generation' : config.source.mode
 
     const refreshSourceSection = () => {
       const total = Math.max(sourceTotalRef.value, plannedSourceCount)
@@ -2671,6 +2689,7 @@ export class PipelineService {
             taskId: `${runId}-img2img`,
             ...pipelineVisibleFilenameFields(config),
             ...comfyuiImg2imgOptionalFields(comfyuiConfig),
+            ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
           },
           {
             emitProgress: emitGenerationProgressAsPipeline(
@@ -3073,6 +3092,7 @@ export class PipelineService {
                 taskId,
                 ...visibleFilenameFields,
                 ...comfyuiImg2imgOptionalFields(source.comfyui),
+                ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
               },
               {
                 onImageComplete: async (payload) => {
@@ -3192,7 +3212,8 @@ export class PipelineService {
     stats: PipelineRunStats,
     visibleFilenameFields: PipelineVisibleFilenameFields,
   ) {
-    const collectionSource = context.config.source.mode === 'collection' ? context.config.source : null
+    const collectionSource =
+      context.config.source.mode === 'collection' ? context.config.source : null
     if (!collectionSource) {
       throw new AppErrorClass('HTTP_5XX', '仅 collection 来源可创建 extract stage', true)
     }
@@ -3284,7 +3305,12 @@ export class PipelineService {
                   updated_at = ?
               WHERE run_id = ? AND step_key = 'extract'
             `,
-          ).run(JSON.stringify({ total: 0, succeeded: 0, failed: 0 }), Date.now(), Date.now(), context.runId)
+          ).run(
+            JSON.stringify({ total: 0, succeeded: 0, failed: 0 }),
+            Date.now(),
+            Date.now(),
+            context.runId,
+          )
           service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取完成')
           return
         }
@@ -3347,8 +3373,9 @@ export class PipelineService {
           },
           async (payload) => {
             const sourceArtifactId = payload.sourceArtifactIds[0]
-            const sourceItem =
-              sourceArtifactId ? sourceItemByArtifactId.get(sourceArtifactId) : undefined
+            const sourceItem = sourceArtifactId
+              ? sourceItemByArtifactId.get(sourceArtifactId)
+              : undefined
             const itemKey = payload.printId ?? sourceItem?.itemKey ?? `extract-${completed + 1}`
             completed += 1
             outputItems.push({
@@ -3390,7 +3417,9 @@ export class PipelineService {
         failed = extractResult.failed
         service.appendGenerationFailureLog(context.runId, 'extract', '提取', extractResult)
         for (const failure of extractResult.failures) {
-          const failedItem = failure.sourcePath ? sourceItemsByPath.get(failure.sourcePath) : undefined
+          const failedItem = failure.sourcePath
+            ? sourceItemsByPath.get(failure.sourcePath)
+            : undefined
           if (!failedItem) {
             continue
           }

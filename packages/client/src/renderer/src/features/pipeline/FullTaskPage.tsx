@@ -66,6 +66,7 @@ type ExtractProvider = 'grsai' | 'comfyui-chenyu'
 type Txt2imgProvider = 'grsai' | 'comfyui-chenyu'
 type Img2imgProvider = 'grsai' | 'comfyui-chenyu'
 type Img2imgReferenceMode = 'layout' | 'style' | 'layout-style'
+type ComfyuiImg2imgPromptMode = 'ai' | 'workflow'
 type DetectionPassRule = 'allow-review' | 'pass-only'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
@@ -1040,6 +1041,8 @@ export function FullTaskPage() {
     'img2imgComfyuiBatchSize',
     '1',
   )
+  const [img2imgComfyuiPromptMode, setImg2imgComfyuiPromptMode] =
+    useFullTaskSessionState<ComfyuiImg2imgPromptMode>('img2imgComfyuiPromptMode', 'ai')
   const [extractProvider, setExtractProvider] = useFullTaskSessionState<ExtractProvider>(
     'extractProvider',
     'grsai',
@@ -1145,7 +1148,10 @@ export function FullTaskPage() {
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const requiresPromptGeneration =
-    sourceMode === 'txt2img' || (sourceMode === 'img2img' && img2imgProvider === 'grsai')
+    sourceMode === 'txt2img' ||
+    (sourceMode === 'img2img' &&
+      (img2imgProvider === 'grsai' ||
+        (img2imgProvider === 'comfyui-chenyu' && img2imgComfyuiPromptMode === 'ai')))
   const txt2imgUsesComfyui = sourceMode === 'txt2img' && txt2imgProvider === 'comfyui-chenyu'
   const img2imgUsesComfyui = sourceMode === 'img2img' && img2imgProvider === 'comfyui-chenyu'
   const img2imgUsesGrsai = sourceMode === 'img2img' && img2imgProvider === 'grsai'
@@ -1341,6 +1347,17 @@ export function FullTaskPage() {
       if (!img2imgComfyuiInstanceUuid.trim()) {
         issues.push('请先选择晨羽图生图实例')
       }
+      if (img2imgComfyuiPromptMode === 'ai') {
+        if (promptSkillOptions.length === 0) {
+          issues.push('请先在后台配置提示词 Skill')
+        }
+        if (!selectedPromptSkill) {
+          issues.push('请先选择提示词 Skill')
+        }
+        if (!promptModel.trim()) {
+          issues.push('请先选择提示词模型')
+        }
+      }
     }
     if (effectiveMattingEnabled) {
       if (runningInstances.length === 0) {
@@ -1393,6 +1410,7 @@ export function FullTaskPage() {
     selectedExtractSkill,
     selectedDetectionSkill,
     selectedPromptSkill,
+    img2imgComfyuiPromptMode,
     img2imgComfyuiInstanceUuid,
     img2imgComfyuiWorkflowId,
     img2imgProvider,
@@ -1962,6 +1980,12 @@ export function FullTaskPage() {
         mode: 'img2img',
         provider: 'comfyui-chenyu',
         sourceFolder: img2imgSourceFolder,
+        prompt:
+          img2imgComfyuiPromptMode === 'ai'
+            ? buildPromptConfig()
+            : {
+                mode: 'workflow',
+              },
         comfyui: {
           workflowId: img2imgComfyuiWorkflowId,
           instanceUuid: img2imgComfyuiInstanceUuid,
@@ -2611,10 +2635,55 @@ export function FullTaskPage() {
                               value={img2imgComfyuiBatchSize}
                             />
                           </Field>
-                          <div className="flex items-end rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                            直接用工作流自带提示词，不再走百炼。
-                          </div>
+                          <SelectField
+                            label="提示词方式"
+                            onValueChange={(value) =>
+                              setImg2imgComfyuiPromptMode(value as ComfyuiImg2imgPromptMode)
+                            }
+                            options={[
+                              { key: 'ai', label: 'AI 看图写提示词（推荐）' },
+                              { key: 'workflow', label: '工作流默认' },
+                            ]}
+                            value={img2imgComfyuiPromptMode}
+                          />
                         </div>
+                        {img2imgComfyuiPromptMode === 'ai' ? (
+                          <>
+                            <SelectField
+                              label="参考方式"
+                              onValueChange={(value) =>
+                                setImg2imgReferenceMode(value as Img2imgReferenceMode)
+                              }
+                              options={img2imgReferenceModes.map((item) => ({
+                                key: item.key,
+                                label: item.label,
+                              }))}
+                              value={img2imgReferenceMode}
+                            />
+                            <div className="grid gap-4 lg:grid-cols-3">
+                              <SelectField
+                                label="提示词 Skill"
+                                onValueChange={setPromptSkillId}
+                                options={promptSkillOptions}
+                                value={promptSkillId}
+                              />
+                              <SelectField
+                                label="提示词模型"
+                                onValueChange={setPromptModel}
+                                options={promptModelOptions}
+                                value={promptModel}
+                              />
+                              <PromptRequirementField
+                                id="img2img-comfyui-print-requirement"
+                                label="其他要求"
+                                onOpenChange={setPromptRequirementOpen}
+                                onValueChange={setPromptRequirement}
+                                open={promptRequirementOpen}
+                                value={promptRequirement}
+                              />
+                            </div>
+                          </>
+                        ) : null}
                       </>
                     )}
                   </>

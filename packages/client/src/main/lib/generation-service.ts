@@ -231,7 +231,14 @@ export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   workflowId: string
   workflowName?: string | undefined
   workflowVersion?: string | undefined
+  promptMode?: 'ai' | 'workflow' | 'manual' | undefined
   prompt?: string | undefined
+  promptSkillId?: string | undefined
+  promptSkillVersion?: string | undefined
+  promptModel?: string | undefined
+  printMode?: 'local' | 'full' | undefined
+  modeInstruction?: string | undefined
+  requirement?: string | undefined
   width?: number | undefined
   height?: number | undefined
   batchSize?: number | undefined
@@ -369,6 +376,14 @@ type GenerationServiceDependencies = {
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
 
+function promptGeneratorDependencies(dependencies: GenerationServiceDependencies) {
+  return {
+    ...(dependencies.skillCache ? { skillCache: dependencies.skillCache } : {}),
+    ...(dependencies.getSecret ? { getSecret: dependencies.getSecret } : {}),
+    ...(dependencies.readConfig ? { readConfig: dependencies.readConfig } : {}),
+  }
+}
+
 async function assertLocalComfyuiWorkflowExists(
   dependencies: GenerationServiceDependencies,
   input: {
@@ -471,7 +486,14 @@ const comfyuiSourceInputSchema = comfyuiInstanceRunInputSchema.extend({
   workflowId: z.string(),
   workflowName: optionalStringSchema,
   workflowVersion: optionalStringSchema,
+  promptMode: z.enum(['ai', 'workflow', 'manual']).optional(),
   prompt: optionalStringSchema,
+  promptSkillId: optionalStringSchema,
+  promptSkillVersion: optionalStringSchema,
+  promptModel: optionalStringSchema,
+  printMode: z.enum(['local', 'full']).optional(),
+  modeInstruction: optionalStringSchema,
+  requirement: optionalStringSchema,
   width: positiveNumberSchema,
   height: positiveNumberSchema,
   batchSize: comfyuiImg2imgBatchSizeSchema,
@@ -660,6 +682,13 @@ function promptSkillCategory(
     return printMode === 'full' ? 'txt2img-full-print' : 'txt2img-local-print'
   }
   return printMode === 'full' ? 'img2img-full-reference' : 'img2img-local-reference'
+}
+
+function comfyuiImg2imgPromptMode(input: ComfyuiImg2imgRunInput) {
+  if (input.promptMode) {
+    return input.promptMode
+  }
+  return input.prompt?.trim() ? 'manual' : 'workflow'
 }
 
 class ComfyuiInstanceLockManager {
@@ -1695,6 +1724,7 @@ function emitComfyuiRequestLog(
     width?: number | undefined
     height?: number | undefined
     batchSize?: number | undefined
+    promptMode?: string | undefined
   },
 ) {
   debug('发送 ComfyUI 请求', 'debug', {
@@ -1708,7 +1738,157 @@ function emitComfyuiRequestLog(
     width: input.width,
     height: input.height,
     batchSize: input.batchSize,
+    promptMode: input.promptMode,
   })
+}
+
+async function resolveComfyuiImg2imgPromptForSource(
+  input: ComfyuiImg2imgRunInput,
+  source: Img2imgReference,
+  context: {
+    sourceIndex: number
+    total: number
+    diagnostics: DiagnosticLogWriter | null
+    dependencies: GenerationServiceDependencies
+    debug: ReturnType<typeof createGenerationDebugLogger>
+  },
+) {
+  const promptMode = comfyuiImg2imgPromptMode(input)
+  if (promptMode === 'workflow') {
+    return ''
+  }
+  if (promptMode === 'manual') {
+    const prompt = input.prompt?.trim() ?? ''
+    if (!prompt) {
+      throw new AppErrorClass('HTTP_4XX', '请填写图生图提示词', false, {
+        provider: 'comfyui-chenyu',
+        promptMode,
+      })
+    }
+    return prompt
+  }
+
+  const promptCategory = promptSkillCategory('img2img', input.printMode)
+  const selectedSkillId = input.promptSkillId?.trim()
+  const selectedSkillVersion = input.promptSkillVersion?.trim()
+  context.debug('开始为源图生成提示词', 'info', {
+    operation: 'prompt',
+    provider: 'aliyun-bailian',
+    promptMode,
+    sourceIndex: context.sourceIndex,
+    total: context.total,
+    model: input.promptModel ?? null,
+    skillId: selectedSkillId || undefined,
+    skillVersion: selectedSkillVersion || undefined,
+    skillCategory: selectedSkillId ? undefined : promptCategory,
+    printMode: input.printMode ?? 'local',
+    requirement: input.requirement ? promptPreview(input.requirement, 240) : undefined,
+  })
+  try {
+    const prompts = await promptGeneratorService.generatePrompts(
+      {
+        ...(selectedSkillId
+          ? {
+              skillId: selectedSkillId,
+              ...(selectedSkillVersion ? { skillVersion: selectedSkillVersion } : {}),
+            }
+          : { category: promptCategory }),
+        variables: {
+          printMode: input.printMode === 'full' ? '满印' : '局部',
+          requirement: input.requirement ?? '',
+          count: 1,
+          modeInstruction: input.modeInstruction ?? '',
+        },
+        count: 1,
+        refImages: [source.reference],
+        userMessage:
+          input.modeInstruction ?? '根据这张源图生成 1 条适合 ComfyUI 图生图的英文印花提示词。',
+        responseFormat: 'json_object',
+        ...(context.diagnostics ? { diagnostics: context.diagnostics } : {}),
+        ...(input.promptModel ? { model: input.promptModel } : {}),
+        onRawResponse: async (response) => {
+          context.debug('百炼原始返回', 'debug', {
+            operation: 'prompt',
+            provider: 'aliyun-bailian',
+            promptMode,
+            sourceIndex: context.sourceIndex,
+            expected: response.expected,
+            rawResponsePreview: promptPreview(response.text, 800),
+            responseModel: response.model,
+            finishReason: response.finishReason,
+          })
+        },
+      },
+      {
+        ...promptGeneratorDependencies(context.dependencies),
+      },
+    )
+    const prompt = prompts[0]?.trim()
+    if (!prompt) {
+      throw new AppErrorClass('PROMPT_PARSE_FAILED', '百炼未返回可用提示词', true, {
+        provider: 'aliyun-bailian',
+        expected: 1,
+        actual: prompts.length,
+      })
+    }
+    context.debug('源图提示词生成完成', 'info', {
+      operation: 'prompt',
+      provider: 'aliyun-bailian',
+      promptMode,
+      sourceIndex: context.sourceIndex,
+      prompt: promptPreview(prompt, 300),
+    })
+    await context.diagnostics
+      ?.append({
+        type: 'prompt_resolved',
+        provider: 'aliyun-bailian',
+        operation: 'comfyui_img2img_prompt',
+        itemKey: source.artifactId,
+        data: {
+          sourceIndex: context.sourceIndex,
+          sourceArtifactId: source.artifactId,
+          sourcePath: source.imagePath,
+          promptMode,
+          prompt: promptPreview(prompt, 300),
+          model: input.promptModel ?? null,
+          skillId: selectedSkillId || null,
+          skillVersion: selectedSkillVersion || null,
+          skillCategory: selectedSkillId ? null : promptCategory,
+        },
+      })
+      .catch(() => null)
+    return prompt
+  } catch (error) {
+    const wrapped = new AppErrorClass(
+      'COMFYUI_IMG2IMG_PROMPT_FAILED',
+      `AI 写提示词失败：${appErrorMessage(error)}`,
+      true,
+      {
+        provider: 'aliyun-bailian',
+        sourceIndex: context.sourceIndex,
+        sourceArtifactId: source.artifactId,
+      },
+      error,
+    )
+    await context.diagnostics
+      ?.append({
+        type: 'error',
+        provider: 'aliyun-bailian',
+        operation: 'comfyui_img2img_prompt',
+        itemKey: source.artifactId,
+        error: errorForDiagnosticLog(wrapped),
+      })
+      .catch(() => null)
+    context.debug('源图提示词生成失败', 'error', {
+      operation: 'prompt',
+      provider: 'aliyun-bailian',
+      promptMode,
+      sourceIndex: context.sourceIndex,
+      error: wrapped.message,
+      ...promptGenerationErrorDetails(error),
+    })
+    throw wrapped
+  }
 }
 
 export async function listExtractSources(
@@ -2104,6 +2284,7 @@ export async function runComfyuiImg2img(
     operation: 'submit',
     provider: 'comfyui-chenyu',
     sourceCount,
+    promptMode: comfyuiImg2imgPromptMode(input),
     ...workflowLogDetails(input),
     width: input.width ?? 1024,
     height: input.height ?? 1024,
@@ -2113,7 +2294,8 @@ export async function runComfyuiImg2img(
       { ...input, taskId },
       {
         ...dependencies,
-        getSecret: async () => apiKey,
+        getSecret: async (key) =>
+          key === 'chenyu' ? apiKey : await (dependencies.getSecret ?? getSecret)(key),
       },
     ),
   )
@@ -3689,6 +3871,10 @@ export async function runComfyuiImg2imgBatch(
       capability: 'img2img',
       workflowId: input.workflowId,
       sourceCount: requestedComfyuiSourceCount(input),
+      promptMode: comfyuiImg2imgPromptMode(input),
+      promptModel: input.promptModel ?? null,
+      promptSkillId: input.promptSkillId ?? null,
+      promptSkillVersion: input.promptSkillVersion ?? null,
       width: input.width ?? 1024,
       height: input.height ?? 1024,
       batchSize: comfyuiImg2imgBatchSize(input),
@@ -3727,6 +3913,7 @@ export async function runComfyuiImg2imgBatch(
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
       let outputIndex = 0
+      const promptMode = comfyuiImg2imgPromptMode(input)
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3735,12 +3922,19 @@ export async function runComfyuiImg2imgBatch(
         emitImg2imgProgress(result, taskId, result.total, emit)
         try {
           const source = await readReferenceForArtifact(db, workbenchRoot, artifactId)
-          const prompt = input.prompt?.trim() ?? ''
-          const preserveWorkflowPrompt = prompt.length === 0
+          const prompt = await resolveComfyuiImg2imgPromptForSource(input, source, {
+            sourceIndex: index + 1,
+            total: sourceArtifactIds.length,
+            diagnostics,
+            dependencies,
+            debug,
+          })
+          const preserveWorkflowPrompt = promptMode === 'workflow'
           const filenameIndex = outputIndex
           emitComfyuiRequestLog(debug, {
             ...input,
             prompt,
+            promptMode,
             sourceImage: basename(source.imagePath),
             sourceIndex: index + 1,
             total: sourceArtifactIds.length,
@@ -3764,6 +3958,10 @@ export async function runComfyuiImg2imgBatch(
               maxOutputs: batchSize,
               ...visibleFilenameOptions(input, filenameIndex),
               ...(preserveWorkflowPrompt ? { preserveWorkflowPrompt: true } : {}),
+              promptMode,
+              ...(input.promptSkillId ? { promptSkillId: input.promptSkillId } : {}),
+              ...(input.promptSkillVersion ? { promptSkillVersion: input.promptSkillVersion } : {}),
+              ...(input.promptModel ? { promptModel: input.promptModel } : {}),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
           } satisfies GenerateRequest)
@@ -3773,7 +3971,7 @@ export async function runComfyuiImg2imgBatch(
           outputIndex += response.images.length
           for (const image of response.images) {
             const completedImage = {
-              prompt,
+              prompt: image.prompt ?? (preserveWorkflowPrompt ? '工作流默认提示词' : prompt),
               url: image.url,
               ...(image.local_path ? { localPath: image.local_path } : {}),
               ...generationImageIdentity(image, { artifactId, printId: source.printId }),
@@ -3810,7 +4008,7 @@ export async function runComfyuiImg2imgBatch(
             .catch(() => null)
           result.failed += batchSize
           result.failures.push({
-            prompt: input.prompt?.trim() ?? '',
+            prompt: promptMode === 'workflow' ? '工作流默认提示词' : (input.prompt?.trim() ?? ''),
             error: appErrorMessage(error),
             sourcePath: artifactId,
           })
