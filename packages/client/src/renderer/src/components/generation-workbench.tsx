@@ -67,6 +67,15 @@ type ComfyuiInstanceStatus = NonNullable<ActiveComfyuiInstance>['status'] | 'non
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
 type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
+type ActiveGenerationTask = {
+  taskId: string
+  capability: GenerationCapability
+  processed: number
+  total: number
+  succeeded: number
+  failed: number
+  cancelRequested?: boolean
+}
 
 const capabilityIcons: Record<GenerationUiCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
@@ -274,6 +283,14 @@ function progressPercent(progress: GenerationProgress | null) {
     return 0
   }
   return Math.round((progress.processed / progress.total) * 100)
+}
+
+function capabilityLabel(capability: GenerationCapability) {
+  return generationCapabilities.find((item) => item.key === capability)?.label ?? capability
+}
+
+function taskProgressLabel(task: ActiveGenerationTask) {
+  return `${capabilityLabel(task.capability)} · ${task.processed}/${task.total} · 成功 ${task.succeeded} · 失败 ${task.failed}`
 }
 
 function selectedPromptTexts(drafts: Txt2imgPromptDraft[]) {
@@ -998,6 +1015,45 @@ function GenerationCancelButton({
       <Square className="mr-2 h-4 w-4" />
       取消任务
     </Button>
+  )
+}
+
+function ActiveGenerationTaskNotice({
+  tasks,
+  onCancelAll,
+}: {
+  tasks: ActiveGenerationTask[]
+  onCancelAll: () => void
+}) {
+  if (tasks.length === 0) {
+    return null
+  }
+  return (
+    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">后台仍有生图任务运行</h3>
+          <p className="mt-1 text-sm leading-6">
+            切换入口或实现方式不会自动停止旧任务；需要停止时请在这里统一取消。
+          </p>
+        </div>
+        <Button onClick={onCancelAll} type="button" variant="secondary">
+          <Square className="mr-2 h-4 w-4" />
+          取消全部后台任务
+        </Button>
+      </div>
+      <div className="mt-3 space-y-2">
+        {tasks.map((task) => (
+          <div className="rounded-md bg-white/70 px-3 py-2 text-sm" key={task.taskId}>
+            <div className="font-medium">{task.taskId}</div>
+            <div className="mt-1 text-xs text-amber-800">
+              {taskProgressLabel(task)}
+              {task.cancelRequested ? ' · 已请求取消，等待当前项结束' : ''}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
   )
 }
 
@@ -3632,6 +3688,7 @@ export function GenerationWorkbench() {
   const tabs = useGenerationStore((state) => state.tabs)
   const setActiveCapability = useGenerationStore((state) => state.setActiveCapability)
   const setProvider = useGenerationStore((state) => state.setProvider)
+  const [activeTasks, setActiveTasks] = useState<ActiveGenerationTask[]>([])
   const [debugLogs, setDebugLogs] = useState<GenerationDebugLogEntry[]>([])
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
   const [expandedDebugLogId, setExpandedDebugLogId] = useState<string | null>(null)
@@ -3650,13 +3707,65 @@ export function GenerationWorkbench() {
   }, [])
 
   useEffect(() => {
+    const offProgress = window.api.generation.onProgress((progress) => {
+      if (
+        progress.status === 'cancelled' ||
+        (progress.total > 0 && progress.processed >= progress.total)
+      ) {
+        setActiveTasks((current) => current.filter((task) => task.taskId !== progress.task_id))
+        return
+      }
+      setActiveTasks((current) => {
+        const previous = current.find((task) => task.taskId === progress.task_id)
+        const nextTask: ActiveGenerationTask = {
+          taskId: progress.task_id,
+          capability: progress.capability,
+          processed: progress.processed,
+          total: progress.total,
+          succeeded: progress.succeeded,
+          failed: progress.failed,
+          ...(previous?.cancelRequested ? { cancelRequested: true } : {}),
+        }
+        const existing = current.findIndex((task) => task.taskId === progress.task_id)
+        if (existing === -1) {
+          return [...current, nextTask]
+        }
+        return current.map((task, index) => (index === existing ? nextTask : task))
+      })
+    })
+    const offCompleted = window.api.generation.onCompleted((event) => {
+      const taskId = event.ok ? event.result.taskId : event.taskId
+      setActiveTasks((current) => current.filter((task) => task.taskId !== taskId))
+    })
+    return () => {
+      offProgress()
+      offCompleted()
+    }
+  }, [])
+
+  useEffect(() => {
     if (isDebugLogOpen && debugLogs.length > 0) {
       debugLogEndRef.current?.scrollIntoView({ block: 'end' })
     }
   }, [debugLogs.length, isDebugLogOpen])
 
+  async function cancelAllActiveTasks() {
+    const taskIds = activeTasks.map((task) => task.taskId)
+    setActiveTasks((current) =>
+      current.map((task) =>
+        taskIds.includes(task.taskId) ? { ...task, cancelRequested: true } : task,
+      ),
+    )
+    await Promise.all(taskIds.map((taskId) => window.api.generation.cancel({ task_id: taskId })))
+  }
+
   return (
     <div className="space-y-6">
+      <ActiveGenerationTaskNotice
+        tasks={activeTasks}
+        onCancelAll={() => void cancelAllActiveTasks()}
+      />
+
       <div className="rounded-md border bg-background p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
