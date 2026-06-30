@@ -19,6 +19,7 @@ import {
   resolveImg2imgReferences,
   runComfyuiExtractBatch,
   runComfyuiExtractMattingBatch,
+  runComfyuiImg2img,
   runComfyuiImg2imgBatch,
   runComfyuiMattingBatch,
   runComfyuiTxt2imgBatch,
@@ -1329,6 +1330,30 @@ describe('generation comfyui img2img service', () => {
     })
 
     expect(result.map((workflow) => workflow.id)).toEqual(['img2img-v1'])
+  })
+
+  it('rejects missing ComfyUI img2img workflow before submitting a task', async () => {
+    const getSecret = vi.fn()
+
+    await expect(
+      runComfyuiImg2img(
+        {
+          sourceArtifactIds: ['print-artifact'],
+          workflowId: 'deleted-workflow',
+          taskId: 'img2img-task',
+        },
+        {
+          getSecret,
+          workflowCache: {
+            listWorkflows: vi.fn(),
+            get: vi
+              .fn()
+              .mockRejectedValue(new Error('本地 ComfyUI Workflow 不存在，请先在设置页导入')),
+          },
+        },
+      ),
+    ).rejects.toThrow('本地 ComfyUI Workflow 不存在，请先在设置页导入')
+    expect(getSecret).not.toHaveBeenCalled()
   })
 
   it('runs ComfyUI img2img with selected print artifact lineage', async () => {

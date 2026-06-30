@@ -30,7 +30,11 @@ import {
   type ComfyuiInstanceSummary,
   comfyuiUrlCandidates,
 } from './comfyui-instance-manager'
-import { type ComfyuiWorkflowSummary, comfyuiWorkflowCacheManager } from './comfyui-workflow-cache'
+import {
+  type ComfyuiWorkflowCategory,
+  type ComfyuiWorkflowSummary,
+  comfyuiWorkflowCacheManager,
+} from './comfyui-workflow-cache'
 import {
   type DiagnosticLogWriter,
   createOptionalDiagnosticLogWriter,
@@ -363,6 +367,21 @@ type GenerationServiceDependencies = {
   emitDebugLog?: (entry: GenerationDebugLogEntry) => void
   onImageComplete?: (image: GenerationImageCompletePayload) => void | Promise<void>
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
+}
+
+async function assertLocalComfyuiWorkflowExists(
+  dependencies: GenerationServiceDependencies,
+  input: {
+    workflowId: string
+    capability: ComfyuiWorkflowCategory
+    workflowVersion?: string | undefined
+  },
+) {
+  await (dependencies.workflowCache ?? comfyuiWorkflowCacheManager).get(
+    input.workflowId.trim(),
+    input.capability,
+    input.workflowVersion,
+  )
 }
 
 const DEFAULT_GENERATION_MODEL: GrsaiModel = 'gpt-image-2'
@@ -2067,6 +2086,11 @@ export async function runComfyuiImg2img(
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 图生图工作流', false)
   }
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.workflowId,
+    capability: 'img2img',
+    workflowVersion: input.workflowVersion,
+  })
 
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {
@@ -2107,6 +2131,11 @@ export async function runComfyuiTxt2img(
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 文生图工作流', false)
   }
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.workflowId,
+    capability: 'txt2img',
+    workflowVersion: input.workflowVersion,
+  })
 
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {
@@ -2150,6 +2179,11 @@ export async function runComfyuiExtract(
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 提取工作流', false)
   }
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.workflowId,
+    capability: 'extract',
+    workflowVersion: input.workflowVersion,
+  })
 
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {
@@ -2195,6 +2229,16 @@ export async function runComfyuiExtractMatting(
   if (!input.mattingWorkflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 抠图工作流', false)
   }
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.extractWorkflowId,
+    capability: 'extract',
+    workflowVersion: input.extractWorkflowVersion,
+  })
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.mattingWorkflowId,
+    capability: 'matting',
+    workflowVersion: input.mattingWorkflowVersion,
+  })
 
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {
@@ -2236,6 +2280,11 @@ export async function runComfyuiMatting(
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 抠图工作流', false)
   }
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.workflowId,
+    capability: 'matting',
+    workflowVersion: input.workflowVersion,
+  })
 
   const apiKey = await (dependencies.getSecret ?? getSecret)('chenyu')
   if (!apiKey) {
@@ -2276,6 +2325,11 @@ export async function runMixedMatting(
   if (!input.workflowId.trim()) {
     throw new AppErrorClass('HTTP_4XX', '请选择 ComfyUI 混合抠图工作流', false)
   }
+  await assertLocalComfyuiWorkflowExists(dependencies, {
+    workflowId: input.workflowId,
+    capability: 'matting-mixed',
+    workflowVersion: input.workflowVersion,
+  })
   const grsaiKey = await (dependencies.getSecret ?? getSecret)('grsai')
   if (!grsaiKey) {
     throw new AppErrorClass('HTTP_4XX', '缺少 Grsai API Key', false, { provider: 'grsai' })

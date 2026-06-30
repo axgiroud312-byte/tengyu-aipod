@@ -157,6 +157,7 @@ const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
 const COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-instance:'
 const PROMPT_SKILL_SELECTION_STORAGE_PREFIX = 'tengyu:generation-prompt-skill:'
 const GENERATION_SETTINGS_UPDATED_EVENT = 'tengyu:generation-settings-updated'
+const COMFYUI_WORKFLOWS_UPDATED_EVENT = 'tengyu:comfyui-workflows-updated'
 const GENERATION_DEBUG_LOG_LIMIT = 1000
 const promptSkillCategories: Record<
   Extract<GenerationCapability, 'txt2img' | 'img2img'>,
@@ -1445,6 +1446,10 @@ function GrsaiPromptGenerationPanel({
       return
     }
     void loadComfyuiTxt2imgWorkflows()
+    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadComfyuiTxt2imgWorkflows)
+    return () => {
+      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadComfyuiTxt2imgWorkflows)
+    }
   }, [capability])
 
   async function loadComfyuiTxt2imgWorkflows() {
@@ -2476,6 +2481,10 @@ function ComfyuiImg2imgPanel() {
 
   useEffect(() => {
     void loadWorkflows()
+    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    return () => {
+      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    }
   }, [])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
@@ -2783,6 +2792,10 @@ function ComfyuiExtractPanel() {
 
   useEffect(() => {
     void loadWorkflows()
+    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    return () => {
+      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    }
   }, [])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
@@ -3048,6 +3061,10 @@ function ComfyuiExtractMattingPanel() {
 
   useEffect(() => {
     void loadWorkflows()
+    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    return () => {
+      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    }
   }, [])
 
   const selectedExtractWorkflow = extractWorkflows.find(
@@ -3360,6 +3377,10 @@ function ComfyuiMattingPanel() {
 
   useEffect(() => {
     void loadWorkflows()
+    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    return () => {
+      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
+    }
   }, [])
 
   const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows

@@ -79,6 +79,7 @@ const defaultGenerationConfig: GenerationConfig = {
   grsai_retries: 2,
 }
 const GENERATION_SETTINGS_UPDATED_EVENT = 'tengyu:generation-settings-updated'
+const COMFYUI_WORKFLOWS_UPDATED_EVENT = 'tengyu:comfyui-workflows-updated'
 
 const workflowCategoryOptions: Array<{ key: LocalWorkflowSummary['capability']; label: string }> = [
   { key: 'txt2img', label: '文生图' },
@@ -457,6 +458,7 @@ export function SettingsPage({
           imported.skippedCount ? `，跳过 ${imported.skippedCount} 个文件` : ''
         }`,
       )
+      window.dispatchEvent(new Event(COMFYUI_WORKFLOWS_UPDATED_EVENT))
       await loadGenerationSettings()
     } catch (nextError) {
       setError(errorMessage(nextError, '导入 Workflow 文件夹失败'))
