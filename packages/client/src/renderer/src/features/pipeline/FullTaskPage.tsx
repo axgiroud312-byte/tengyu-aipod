@@ -286,18 +286,20 @@ function SelectField({
   label,
   onValueChange,
   options,
+  placeholder = '请选择',
   value,
 }: {
   label: string
   onValueChange: (value: string) => void
   options: Option[]
+  placeholder?: string
   value: string
 }) {
   return (
     <Field label={label}>
       <Select onValueChange={onValueChange} value={value}>
         <SelectTrigger className="min-w-0 [&>span]:min-w-0 [&>span]:truncate">
-          <SelectValue />
+          <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent className="max-w-[min(28rem,var(--radix-select-trigger-width))]">
           {options.map((option) => (
@@ -308,6 +310,70 @@ function SelectField({
         </SelectContent>
       </Select>
     </Field>
+  )
+}
+
+function ChenyuInstanceSelectField({
+  instances,
+  loading,
+  onRefresh,
+  onValueChange,
+  options,
+  value,
+}: {
+  instances: ChenyuManagedInstance[]
+  loading: boolean
+  onRefresh: () => void
+  onValueChange: (value: string) => void
+  options: Option[]
+  value: string
+}) {
+  const selectedInstance = instances.find((instance) => instance.instanceUuid === value) ?? null
+  const selectedComfyuiUrl = selectedInstance ? instanceComfyuiUrl(selectedInstance) : ''
+
+  return (
+    <div className="grid min-w-0 gap-2 text-sm font-medium">
+      <div className="flex items-center justify-between gap-2">
+        <span>晨羽实例</span>
+        <Button
+          className="h-7 px-2 text-xs"
+          disabled={loading}
+          onClick={onRefresh}
+          variant="ghost"
+        >
+          {loading ? (
+            <Loader2 className="mr-1 h-3 w-3 animate-spin" />
+          ) : (
+            <RefreshCw className="mr-1 h-3 w-3" />
+          )}
+          刷新
+        </Button>
+      </div>
+      <Select onValueChange={onValueChange} value={value}>
+        <SelectTrigger className="min-w-0 [&>span]:min-w-0 [&>span]:truncate">
+          <SelectValue placeholder="暂无运行中云机" />
+        </SelectTrigger>
+        <SelectContent className="max-w-[min(28rem,var(--radix-select-trigger-width))]">
+          {options.map((option) => (
+            <SelectItem className="truncate" key={option.key} value={option.key}>
+              {option.label}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      <div className="min-h-8 space-y-1 text-xs font-normal text-muted-foreground">
+        {options.length === 0 ? (
+          <p>暂无运行中云机，请到设置页开机后点击刷新。</p>
+        ) : selectedInstance ? (
+          <>
+            <p className="break-all font-mono">UUID: {selectedInstance.instanceUuid}</p>
+            <p className="break-all font-mono">ComfyUI: {selectedComfyuiUrl || '未配置'}</p>
+          </>
+        ) : (
+          <p>请选择本次任务使用的运行云机。</p>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -1128,6 +1194,7 @@ export function FullTaskPage() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
+  const [optionsLoading, setOptionsLoading] = useState(false)
   const [isLogOpen, setIsLogOpen] = useState(false)
   const [generationSettings, setGenerationSettings] = useState<GenerationSettingsSnapshot | null>(
     null,
@@ -1430,78 +1497,83 @@ export function FullTaskPage() {
   const canStart = !running && validationIssues.length === 0
 
   const refreshOptions = useCallback(async () => {
-    const results = await Promise.allSettled([
-      window.api.skill.list({ module: 'generation' }),
-      window.api.generation.listComfyuiTxt2imgWorkflows(),
-      window.api.generation.listComfyuiImg2imgWorkflows(),
-      window.api.generation.listComfyuiExtractWorkflows(),
-      window.api.generation.listComfyuiMattingWorkflows(),
-      window.api.chenyu.listInstances(),
-      window.api.title.listPlatforms(),
-      window.api.title.listLanguages(),
-      window.api.title.listModels(),
-      window.api.generationSettings.get(),
-      window.api.pipeline.listRuns(),
-      window.api.detection.getConfig(),
-      window.api.detection.listModels(),
-      window.api.skill.list({ module: 'detection' }),
-    ])
-    const failed = results
-      .map((result, index) => ({ result, index }))
-      .filter(
-        (item): item is { result: PromiseRejectedResult; index: number } =>
-          item.result.status === 'rejected',
-      )
-    const errorLabels = [
-      'Skill',
-      '文生图工作流',
-      '图生图工作流',
-      '提取工作流',
-      '抠图工作流',
-      '晨羽实例',
-      '标题平台',
-      '标题语言',
-      '标题模型',
-      '生图设置',
-      '最近任务',
-      '检测配置',
-      '检测模型',
-      '检测 Skill',
-    ]
+    setOptionsLoading(true)
+    try {
+      const results = await Promise.allSettled([
+        window.api.skill.list({ module: 'generation' }),
+        window.api.generation.listComfyuiTxt2imgWorkflows(),
+        window.api.generation.listComfyuiImg2imgWorkflows(),
+        window.api.generation.listComfyuiExtractWorkflows(),
+        window.api.generation.listComfyuiMattingWorkflows(),
+        window.api.chenyu.listInstances(),
+        window.api.title.listPlatforms(),
+        window.api.title.listLanguages(),
+        window.api.title.listModels(),
+        window.api.generationSettings.get(),
+        window.api.pipeline.listRuns(),
+        window.api.detection.getConfig(),
+        window.api.detection.listModels(),
+        window.api.skill.list({ module: 'detection' }),
+      ])
+      const failed = results
+        .map((result, index) => ({ result, index }))
+        .filter(
+          (item): item is { result: PromiseRejectedResult; index: number } =>
+            item.result.status === 'rejected',
+        )
+      const errorLabels = [
+        'Skill',
+        '文生图工作流',
+        '图生图工作流',
+        '提取工作流',
+        '抠图工作流',
+        '晨羽实例',
+        '标题平台',
+        '标题语言',
+        '标题模型',
+        '生图设置',
+        '最近任务',
+        '检测配置',
+        '检测模型',
+        '检测 Skill',
+      ]
 
-    if (failed.length) {
-      setError(`部分配置加载失败：${failed.map((item) => errorLabels[item.index]).join('、')}`)
+      if (failed.length) {
+        setError(`部分配置加载失败：${failed.map((item) => errorLabels[item.index]).join('、')}`)
+      }
+
+      const skills = results[0].status === 'fulfilled' ? results[0].value : []
+      const nextTxt2imgWorkflows = results[1].status === 'fulfilled' ? results[1].value : []
+      const nextImg2imgWorkflows = results[2].status === 'fulfilled' ? results[2].value : []
+      const nextExtractWorkflows = results[3].status === 'fulfilled' ? results[3].value : []
+      const nextMattingWorkflows = results[4].status === 'fulfilled' ? results[4].value : []
+      const nextInstances = results[5].status === 'fulfilled' ? results[5].value : []
+      const nextPlatforms = results[6].status === 'fulfilled' ? results[6].value : []
+      const nextLanguages = results[7].status === 'fulfilled' ? results[7].value : []
+      const nextTitleModels = results[8].status === 'fulfilled' ? results[8].value : []
+      const nextGenerationSettings = results[9].status === 'fulfilled' ? results[9].value : null
+      const runs = results[10].status === 'fulfilled' ? results[10].value : []
+      const nextDetectionConfig = results[11].status === 'fulfilled' ? results[11].value : null
+      const nextDetectionModels = results[12].status === 'fulfilled' ? results[12].value : []
+      const nextDetectionSkills = results[13].status === 'fulfilled' ? results[13].value : []
+
+      setGenerationSkills(skills)
+      setTxt2imgWorkflows(nextTxt2imgWorkflows.map(optionFromWorkflow))
+      setImg2imgWorkflows(nextImg2imgWorkflows.map(optionFromWorkflow))
+      setExtractWorkflows(nextExtractWorkflows.map(optionFromWorkflow))
+      setMattingWorkflows(nextMattingWorkflows.map(optionFromWorkflow))
+      setChenyuInstances(nextInstances)
+      setPlatforms(nextPlatforms)
+      setLanguages(nextLanguages)
+      setTitleModels(nextTitleModels)
+      setGenerationSettings(nextGenerationSettings)
+      setRecentRuns(runs)
+      setDetectionConfig(nextDetectionConfig)
+      setDetectionModels(nextDetectionModels)
+      setDetectionSkills(nextDetectionSkills)
+    } finally {
+      setOptionsLoading(false)
     }
-
-    const skills = results[0].status === 'fulfilled' ? results[0].value : []
-    const nextTxt2imgWorkflows = results[1].status === 'fulfilled' ? results[1].value : []
-    const nextImg2imgWorkflows = results[2].status === 'fulfilled' ? results[2].value : []
-    const nextExtractWorkflows = results[3].status === 'fulfilled' ? results[3].value : []
-    const nextMattingWorkflows = results[4].status === 'fulfilled' ? results[4].value : []
-    const nextInstances = results[5].status === 'fulfilled' ? results[5].value : []
-    const nextPlatforms = results[6].status === 'fulfilled' ? results[6].value : []
-    const nextLanguages = results[7].status === 'fulfilled' ? results[7].value : []
-    const nextTitleModels = results[8].status === 'fulfilled' ? results[8].value : []
-    const nextGenerationSettings = results[9].status === 'fulfilled' ? results[9].value : null
-    const runs = results[10].status === 'fulfilled' ? results[10].value : []
-    const nextDetectionConfig = results[11].status === 'fulfilled' ? results[11].value : null
-    const nextDetectionModels = results[12].status === 'fulfilled' ? results[12].value : []
-    const nextDetectionSkills = results[13].status === 'fulfilled' ? results[13].value : []
-
-    setGenerationSkills(skills)
-    setTxt2imgWorkflows(nextTxt2imgWorkflows.map(optionFromWorkflow))
-    setImg2imgWorkflows(nextImg2imgWorkflows.map(optionFromWorkflow))
-    setExtractWorkflows(nextExtractWorkflows.map(optionFromWorkflow))
-    setMattingWorkflows(nextMattingWorkflows.map(optionFromWorkflow))
-    setChenyuInstances(nextInstances)
-    setPlatforms(nextPlatforms)
-    setLanguages(nextLanguages)
-    setTitleModels(nextTitleModels)
-    setGenerationSettings(nextGenerationSettings)
-    setRecentRuns(runs)
-    setDetectionConfig(nextDetectionConfig)
-    setDetectionModels(nextDetectionModels)
-    setDetectionSkills(nextDetectionSkills)
   }, [])
 
   useEffect(() => {
@@ -2298,8 +2370,10 @@ export function FullTaskPage() {
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-3">
-                        <SelectField
-                          label="晨羽实例"
+                        <ChenyuInstanceSelectField
+                          instances={runningInstances}
+                          loading={optionsLoading}
+                          onRefresh={() => void refreshOptions()}
                           onValueChange={setExtractInstanceUuid}
                           options={runningInstanceOptions}
                           value={extractInstanceUuid}
@@ -2428,8 +2502,10 @@ export function FullTaskPage() {
                       </div>
                     ) : (
                       <div className="grid gap-4 md:grid-cols-3">
-                        <SelectField
-                          label="晨羽实例"
+                        <ChenyuInstanceSelectField
+                          instances={runningInstances}
+                          loading={optionsLoading}
+                          onRefresh={() => void refreshOptions()}
                           onValueChange={setTxt2imgComfyuiInstanceUuid}
                           options={runningInstanceOptions}
                           value={txt2imgComfyuiInstanceUuid}
@@ -2601,8 +2677,10 @@ export function FullTaskPage() {
                             options={img2imgWorkflows}
                             value={img2imgComfyuiWorkflowId}
                           />
-                          <SelectField
-                            label="晨羽实例"
+                          <ChenyuInstanceSelectField
+                            instances={runningInstances}
+                            loading={optionsLoading}
+                            onRefresh={() => void refreshOptions()}
                             onValueChange={setImg2imgComfyuiInstanceUuid}
                             options={runningInstanceOptions}
                             value={img2imgComfyuiInstanceUuid}
@@ -2763,8 +2841,10 @@ export function FullTaskPage() {
                         options={mattingWorkflows}
                         value={mattingWorkflowId}
                       />
-                      <SelectField
-                        label="晨羽实例"
+                      <ChenyuInstanceSelectField
+                        instances={runningInstances}
+                        loading={optionsLoading}
+                        onRefresh={() => void refreshOptions()}
                         onValueChange={setMattingInstanceUuid}
                         options={runningInstanceOptions}
                         value={mattingInstanceUuid}

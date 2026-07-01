@@ -37,6 +37,54 @@ type Txt2imgMockInput = {
   capability?: 'txt2img' | 'img2img'
   prompts: string[]
   taskId?: string
+  outputTaskName?: string
+  filenameStartIndex?: number
+}
+
+type ComfyuiMockInput = {
+  sourceImagePaths?: string[]
+  prompts?: string[]
+  batchSize?: number
+  taskId?: string
+  outputTaskName?: string
+  filenameStartIndex?: number
+}
+
+function mockGenerationOutputPath(capabilityFolder: string, taskName: string, index: number) {
+  return join(
+    mocks.workbenchRoot,
+    WORKBENCH_DIRECTORIES.generation,
+    capabilityFolder,
+    taskName,
+    `${String(index + 1).padStart(4, '0')}.png`,
+  )
+}
+
+function mockMattingResult(input: {
+  taskId: string
+  sourcePath: string
+  outputPath: string
+  artifactId?: string
+  printId?: string
+  prompt?: string
+}): GenerationRunResult {
+  return {
+    taskId: input.taskId,
+    total: 1,
+    succeeded: 1,
+    failed: 0,
+    images: [
+      {
+        prompt: input.prompt ?? 'matting print',
+        url: `file://${basename(input.outputPath)}`,
+        localPath: input.outputPath,
+        sourcePath: input.sourcePath,
+        ...(input.artifactId ? { artifactId: input.artifactId } : {}),
+        ...(input.printId ? { printId: input.printId } : {}),
+      },
+    ],
+    failures: [],
+  }
 }
 
 const mocks = vi.hoisted(() => ({
@@ -203,51 +251,70 @@ const mocks = vi.hoisted(() => ({
       }
     },
   ),
-  runComfyuiMattingBatch: vi.fn(async (input: { sourceImagePaths: string[]; taskId: string }) => ({
-    taskId: input.taskId,
-    capability: 'matting' as const,
-    total: input.sourceImagePaths.length,
-    succeeded: input.sourceImagePaths.length,
-    failed: 0,
-    images: input.sourceImagePaths.map((sourcePath, index) => ({
-      prompt: 'matting print',
-      url: `file://matted-${index + 1}.png`,
-      localPath: join(dirname(sourcePath), `matted-${index + 1}.png`),
-    })),
-    failures: [],
-  })),
-  runComfyuiTxt2imgBatch: vi.fn(
-    async (input: { prompts: string[]; taskId?: string }): Promise<GenerationRunResult> => ({
-      taskId: input.taskId ?? 'comfyui-txt2img-task',
-      total: input.prompts.length,
-      succeeded: input.prompts.length,
+  runComfyuiMattingBatch: vi.fn(
+    async (
+      input: ComfyuiMockInput & { sourceImagePaths: string[]; taskId: string },
+    ): Promise<GenerationRunResult> => ({
+      taskId: input.taskId,
+      total: input.sourceImagePaths.length,
+      succeeded: input.sourceImagePaths.length,
       failed: 0,
-      images: input.prompts.map((prompt, index) => ({
-        prompt,
-        url: `file://comfyui-txt2img-${index + 1}.png`,
-        localPath: join(mocks.workbenchRoot, `comfyui-txt2img-${index + 1}.png`),
-      })),
+      images: input.sourceImagePaths.map((sourcePath, index) => {
+        const outputIndex = (input.filenameStartIndex ?? 0) + index
+        return {
+          prompt: 'matting print',
+          url: `file://matted-${outputIndex + 1}.png`,
+          localPath: mockGenerationOutputPath(
+            '抠图',
+            input.outputTaskName ?? input.taskId,
+            outputIndex,
+          ),
+          sourcePath,
+          artifactId: `art-matted-${outputIndex + 1}`,
+          printId: `pri-matted-${outputIndex + 1}`,
+        }
+      }),
       failures: [],
     }),
   ),
+  runComfyuiTxt2imgBatch: vi.fn(
+    async (input: Txt2imgMockInput) => {
+      const taskId = input.taskId ?? 'comfyui-txt2img-task'
+      const outputTaskName = input.outputTaskName ?? taskId
+      return {
+        taskId,
+        total: input.prompts.length,
+        succeeded: input.prompts.length,
+        failed: 0,
+        images: input.prompts.map((prompt, index) => {
+          const outputIndex = (input.filenameStartIndex ?? 0) + index
+          return {
+            prompt,
+            url: `file://comfyui-txt2img-${outputIndex + 1}.png`,
+            localPath: mockGenerationOutputPath('文生图', outputTaskName, outputIndex),
+          }
+        }),
+        failures: [],
+      }
+    },
+  ),
   runComfyuiImg2imgBatch: vi.fn(
     async (
-      input: {
-        sourceImagePaths?: string[]
-        batchSize?: number
-        taskId?: string
-      },
+      input: ComfyuiMockInput,
       dependencies?: GenerationBatchDependencies,
     ): Promise<GenerationRunResult> => {
       const paths = input.sourceImagePaths ?? []
       const batchSize = input.batchSize ?? 1
+      const taskId = input.taskId ?? 'comfyui-img2img-task'
+      const outputTaskName = input.outputTaskName ?? taskId
       const images = paths.flatMap((sourcePath, sourceIndex) =>
         Array.from({ length: batchSize }, (_item, batchIndex) => ({
           prompt: '',
           url: `file://comfyui-img2img-${sourceIndex + 1}-${batchIndex + 1}.png`,
-          localPath: join(
-            mocks.workbenchRoot,
-            `comfyui-img2img-${sourceIndex + 1}-${batchIndex + 1}.png`,
+          localPath: mockGenerationOutputPath(
+            '图生图',
+            outputTaskName,
+            (input.filenameStartIndex ?? 0) + sourceIndex * batchSize + batchIndex,
           ),
           sourcePath,
           artifactId: `art-comfyui-img2img-${sourceIndex + 1}-${batchIndex + 1}`,
@@ -256,7 +323,7 @@ const mocks = vi.hoisted(() => ({
       )
       for (const image of images) {
         await dependencies?.onImageComplete?.({
-          taskId: input.taskId ?? 'comfyui-img2img-task',
+          taskId,
           capability: 'img2img',
           path: image.localPath,
           printId: image.printId,
@@ -265,7 +332,7 @@ const mocks = vi.hoisted(() => ({
         })
       }
       return {
-        taskId: input.taskId ?? 'comfyui-img2img-task',
+        taskId,
         total: paths.length * batchSize,
         succeeded: paths.length * batchSize,
         failed: 0,
@@ -1166,15 +1233,7 @@ describe('PipelineService', () => {
         expect(input.sourceImagePaths).toEqual([
           join(mocks.workbenchRoot, 'soft-cancel-source-1.png'),
         ])
-        return finishMatting.promise as Promise<{
-          taskId: string
-          capability: 'matting'
-          total: number
-          succeeded: number
-          failed: number
-          images: Array<{ prompt: string; url: string; localPath: string }>
-          failures: never[]
-        }>
+        return finishMatting.promise
       },
     )
 
@@ -1223,6 +1282,7 @@ describe('PipelineService', () => {
           prompt: 'matted',
           url: 'file://soft-cancel-matted-1.png',
           localPath: join(mocks.workbenchRoot, 'soft-cancel-matted-1.png'),
+          sourcePath: join(mocks.workbenchRoot, 'soft-cancel-source-1.png'),
           artifactId: 'art-soft-cancel-matted-1',
           printId: 'pri-soft-cancel-matted-1',
         },
@@ -1288,15 +1348,7 @@ describe('PipelineService', () => {
     )
     mocks.runComfyuiMattingBatch.mockImplementationOnce(async () => {
       mattingStarted.resolve()
-      return finishMatting.promise as Promise<{
-        taskId: string
-        capability: 'matting'
-        total: number
-        succeeded: number
-        failed: number
-        images: Array<{ prompt: string; url: string; localPath: string }>
-        failures: never[]
-      }>
+      return finishMatting.promise
     })
 
     const service = new PipelineService()
@@ -1354,6 +1406,7 @@ describe('PipelineService', () => {
           prompt: 'matted',
           url: 'file://interrupted-matted-1.png',
           localPath: join(mocks.workbenchRoot, 'interrupted-matted-1.png'),
+          sourcePath: join(mocks.workbenchRoot, 'interrupted-source-1.png'),
           artifactId: 'art-interrupted-matted-1',
           printId: 'pri-interrupted-matted-1',
         },
@@ -1644,6 +1697,9 @@ describe('PipelineService', () => {
         expect.objectContaining({
           sourceImagePaths: [join(sourceFolder, 'a.png')],
           workflowId: 'wf-img2img',
+          taskId: 'run-img2img-comfyui-img2img-1',
+          outputTaskName: '完整任务测试',
+          filenameStartIndex: 0,
           instanceUuid: 'instance-b',
           width: 768,
           height: 768,
@@ -1657,6 +1713,9 @@ describe('PipelineService', () => {
         expect.objectContaining({
           sourceImagePaths: [join(sourceFolder, 'b.png')],
           workflowId: 'wf-img2img',
+          taskId: 'run-img2img-comfyui-img2img-2',
+          outputTaskName: '完整任务测试',
+          filenameStartIndex: 3,
           instanceUuid: 'instance-b',
           width: 768,
           height: 768,
@@ -1972,21 +2031,11 @@ describe('PipelineService', () => {
     mocks.runComfyuiMattingBatch.mockImplementation(async (input) => {
       const sourcePath = input.sourceImagePaths[0] ?? ''
       const outputName = sourcePath.endsWith('source-a.png') ? 'matted-1.png' : 'matted-2.png'
-      return {
+      return mockMattingResult({
         taskId: input.taskId,
-        capability: 'matting' as const,
-        total: 1,
-        succeeded: 1,
-        failed: 0,
-        images: [
-          {
-            prompt: 'matting print',
-            url: `file://${outputName}`,
-            localPath: join(dirname(sourcePath), outputName),
-          },
-        ],
-        failures: [],
-      }
+        sourcePath,
+        outputPath: join(dirname(sourcePath), outputName),
+      })
     })
 
     const service = new PipelineService()
@@ -2067,15 +2116,7 @@ describe('PipelineService', () => {
       async (input: { sourceImagePaths: string[]; taskId: string }) => {
         mattingStarted.resolve()
         expect(input.sourceImagePaths).toEqual([join(mocks.workbenchRoot, 'stream-source-1.png')])
-        return finishMatting.promise as Promise<{
-          taskId: string
-          capability: 'matting'
-          total: number
-          succeeded: number
-          failed: number
-          images: Array<{ prompt: string; url: string; localPath: string }>
-          failures: never[]
-        }>
+        return finishMatting.promise
       },
     )
 
@@ -2124,6 +2165,7 @@ describe('PipelineService', () => {
           prompt: 'matted',
           url: 'file://stream-matted-1.png',
           localPath: join(mocks.workbenchRoot, 'stream-matted-1.png'),
+          sourcePath: join(mocks.workbenchRoot, 'stream-source-1.png'),
           artifactId: 'art-stream-matted-1',
           printId: 'pri-stream-matted-1',
         },
@@ -2208,23 +2250,14 @@ describe('PipelineService', () => {
     )
     mocks.runComfyuiMattingBatch.mockImplementationOnce(async (input) => {
       mattingCalls.push(input.taskId)
-      return {
+      return mockMattingResult({
         taskId: input.taskId,
-        capability: 'matting' as const,
-        total: 1,
-        succeeded: 1,
-        failed: 0,
-        images: [
-          {
-            prompt: 'matted',
-            url: 'file://same-instance-matted.png',
-            localPath: join(mocks.workbenchRoot, 'same-instance-matted.png'),
-            artifactId: 'art-same-instance-matted',
-            printId: 'pri-same-instance-matted',
-          },
-        ],
-        failures: [],
-      }
+        sourcePath: join(mocks.workbenchRoot, 'same-instance-source.png'),
+        outputPath: join(mocks.workbenchRoot, 'same-instance-matted.png'),
+        artifactId: 'art-same-instance-matted',
+        printId: 'pri-same-instance-matted',
+        prompt: 'matted',
+      })
     })
 
     const service = new PipelineService()
@@ -2321,23 +2354,14 @@ describe('PipelineService', () => {
     mocks.runComfyuiMattingBatch.mockImplementation(async (input) => {
       const sourcePath = input.sourceImagePaths[0] ?? ''
       const suffix = sourcePath.endsWith('1.png') ? '1' : '2'
-      return {
+      return mockMattingResult({
         taskId: input.taskId,
-        capability: 'matting' as const,
-        total: 1,
-        succeeded: 1,
-        failed: 0,
-        images: [
-          {
-            prompt: `matted-${suffix}`,
-            url: `file://stream-detect-matted-${suffix}.png`,
-            localPath: join(mocks.workbenchRoot, `stream-detect-matted-${suffix}.png`),
-            artifactId: `art-stream-detect-matted-${suffix}`,
-            printId: `pri-stream-detect-matted-${suffix}`,
-          },
-        ],
-        failures: [],
-      }
+        sourcePath,
+        outputPath: join(mocks.workbenchRoot, `stream-detect-matted-${suffix}.png`),
+        artifactId: `art-stream-detect-matted-${suffix}`,
+        printId: `pri-stream-detect-matted-${suffix}`,
+        prompt: `matted-${suffix}`,
+      })
     })
     mocks.runDetectionBatch.mockImplementation(async (input) => {
       const imagePath = input.imagePaths[0] ?? ''
@@ -2434,6 +2458,10 @@ describe('PipelineService', () => {
       join(mocks.workbenchRoot, 'stream-detect-matted-1.png'),
       join(mocks.workbenchRoot, 'stream-detect-matted-2.png'),
     ])
+    expect(mocks.runDetectionBatch.mock.calls.map((call) => call[0]?.taskId)).toEqual([
+      '完整任务测试',
+      '完整任务测试',
+    ])
     expect(
       detail.result_sections?.find((section) => section.key === 'detection_blocked'),
     ).toMatchObject({
@@ -2459,6 +2487,50 @@ describe('PipelineService', () => {
       status: 'completed',
       output_path: join(mocks.workbenchRoot, 'detected-pass-2.png'),
     })
+  })
+
+  it('uses one complete-task folder for streaming ComfyUI img2img outputs', async () => {
+    const sourceFolder = join(mocks.workbenchRoot, 'img2img-task-folder-source')
+    await createPrint(join(sourceFolder, 'a.png'))
+    await createPrint(join(sourceFolder, 'b.png'))
+
+    const service = new PipelineService()
+    const detail = await service.runPipeline('run-img2img-task-folder', {
+      ...baseConfig('/unused'),
+      name: '夏季印花任务',
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder,
+        comfyui: {
+          workflowId: 'wf-img2img',
+          batchSize: 2,
+        },
+      },
+      matting: { ...baseConfig('/unused').matting, enabled: false },
+      detection: { enabled: false },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(detail.run.status).toBe('completed')
+    expect(
+      detail.result_sections
+        ?.find((section) => section.key === 'image_processing')
+        ?.items.map((item) => item.local_path),
+    ).toEqual([
+      mockGenerationOutputPath('图生图', '夏季印花任务', 0),
+      mockGenerationOutputPath('图生图', '夏季印花任务', 1),
+      mockGenerationOutputPath('图生图', '夏季印花任务', 2),
+      mockGenerationOutputPath('图生图', '夏季印花任务', 3),
+    ])
   })
 
   it('streams detection outputs into Photoshop with arrival-order waiting names and per-template failure isolation', async () => {
@@ -2513,23 +2585,17 @@ describe('PipelineService', () => {
         }
       },
     )
-    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => ({
-      taskId: input.taskId,
-      capability: 'matting' as const,
-      total: 1,
-      succeeded: 1,
-      failed: 0,
-      images: [
-        {
-          prompt: 'matted',
-          url: `file://${basename(input.sourceImagePaths[0] ?? '')}`,
-          localPath: input.sourceImagePaths[0] ?? '',
-          artifactId: `art-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
-          printId: `pri-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
-        },
-      ],
-      failures: [],
-    }))
+    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => {
+      const sourcePath = input.sourceImagePaths[0] ?? ''
+      return mockMattingResult({
+        taskId: input.taskId,
+        sourcePath,
+        outputPath: sourcePath,
+        artifactId: `art-${basename(sourcePath, '.png')}`,
+        printId: `pri-${basename(sourcePath, '.png')}`,
+        prompt: 'matted',
+      })
+    })
     mocks.runDetectionBatch.mockImplementation(async (input) => ({
       taskId: `detect-${basename(input.imagePaths[0] ?? '', '.png')}`,
       total: 1,
@@ -2785,23 +2851,17 @@ describe('PipelineService', () => {
         }
       },
     )
-    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => ({
-      taskId: input.taskId,
-      capability: 'matting' as const,
-      total: 1,
-      succeeded: 1,
-      failed: 0,
-      images: [
-        {
-          prompt: 'matted',
-          url: `file://${basename(input.sourceImagePaths[0] ?? '')}`,
-          localPath: input.sourceImagePaths[0] ?? '',
-          artifactId: `art-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
-          printId: `pri-${basename(input.sourceImagePaths[0] ?? '', '.png')}`,
-        },
-      ],
-      failures: [],
-    }))
+    mocks.runComfyuiMattingBatch.mockImplementation(async (input) => {
+      const sourcePath = input.sourceImagePaths[0] ?? ''
+      return mockMattingResult({
+        taskId: input.taskId,
+        sourcePath,
+        outputPath: sourcePath,
+        artifactId: `art-${basename(sourcePath, '.png')}`,
+        printId: `pri-${basename(sourcePath, '.png')}`,
+        prompt: 'matted',
+      })
+    })
     mocks.runDetectionBatch.mockImplementation(async (input) => ({
       taskId: `detect-${basename(input.imagePaths[0] ?? '', '.png')}`,
       total: 1,

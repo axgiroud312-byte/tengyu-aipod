@@ -91,8 +91,10 @@ export type Txt2imgRunInput = {
   referenceImages?: Array<{ base64: string; mime_type: string }> | undefined
   concurrency: number
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type ComfyuiInstanceRunInput = {
@@ -108,8 +110,10 @@ export type ComfyuiTxt2imgRunInput = ComfyuiInstanceRunInput & {
   height?: number | undefined
   concurrency?: number | undefined
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type GenerationProgress = {
@@ -221,8 +225,10 @@ export type ExtractRunInput = {
   imageSize?: '1K' | '2K' | '4K' | undefined
   concurrency: number
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
@@ -243,8 +249,10 @@ export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   height?: number | undefined
   batchSize?: number | undefined
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
@@ -258,8 +266,10 @@ export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
@@ -272,8 +282,10 @@ export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & {
@@ -297,8 +309,10 @@ export type ComfyuiExtractMattingRunInput = ComfyuiInstanceRunInput & {
   width?: number | undefined
   height?: number | undefined
   taskId?: string | undefined
+  outputTaskName?: string | undefined
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
+  filenameStartIndex?: number | undefined
 }
 
 export type ChenyuWorkflowMarketListInput = {
@@ -727,6 +741,7 @@ async function selectedComfyuiInstance(
   input: ComfyuiInstanceRunInput,
   apiKey: string,
   dependencies: GenerationServiceDependencies,
+  db: Pick<SqliteDatabase, 'prepare'>,
 ): Promise<ComfyuiInstanceSummary | undefined> {
   const instanceUuid = input.instanceUuid?.trim()
   if (!instanceUuid) {
@@ -745,7 +760,8 @@ async function selectedComfyuiInstance(
     })
   }
 
-  const comfyuiUrl = comfyuiUrlCandidates(info.server_map, info.server_url)[0]?.url
+  const savedComfyuiUrl = savedComfyuiUrlForInstance(db, instanceUuid)
+  const comfyuiUrl = comfyuiUrlCandidates(info.server_map, info.server_url)[0]?.url ?? savedComfyuiUrl
   if (!comfyuiUrl) {
     throw new AppErrorClass(
       'HTTP_4XX',
@@ -785,7 +801,7 @@ async function createComfyuiAdapterForRun(
   dependencies: GenerationServiceDependencies,
   diagnostics?: DiagnosticLogWriter | null,
 ) {
-  const instance = await selectedComfyuiInstance(input, apiKey, dependencies)
+  const instance = await selectedComfyuiInstance(input, apiKey, dependencies, db)
   const currentInstance = instance ? null : readCurrentComfyuiInstanceRecord(db)
   return (
     dependencies.createComfyuiAdapter?.({
@@ -1011,6 +1027,10 @@ function generationTaskOutputFolder(
   )
 }
 
+function generationOutputTaskName(input: { outputTaskName?: string | undefined }, taskId: string) {
+  return input.outputTaskName?.trim() || taskId
+}
+
 async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
   let index = 0
   while (true) {
@@ -1054,6 +1074,27 @@ function visibleFilenameOptions(
     filenameIndex: index,
     ...(input.filenamePrefix ? { filenamePrefix: input.filenamePrefix } : {}),
     ...(input.filenameSeparator ? { filenameSeparator: input.filenameSeparator } : {}),
+  }
+}
+
+function comfyuiRunOptions(
+  workbenchRoot: string,
+  capability: GenerationCapability,
+  taskId: string,
+  input: {
+    outputTaskName?: string | undefined
+    filenamePrefix?: string | undefined
+    filenameSeparator?: string | undefined
+  },
+  index: number,
+) {
+  return {
+    ...visibleFilenameOptions(input, index),
+    outputFolderOverride: generationTaskOutputFolder(
+      workbenchRoot,
+      capability,
+      generationOutputTaskName(input, taskId),
+    ),
   }
 }
 
@@ -2592,7 +2633,11 @@ async function runTxt2imgTask(
     })
   const downloadImage = dependencies.downloadImage ?? defaultDownloadImage
   const model = normalizeModel(input.model)
-  const outputFolder = generationTaskOutputFolder(workbenchRoot, capability, taskId)
+  const outputFolder = generationTaskOutputFolder(
+    workbenchRoot,
+    capability,
+    generationOutputTaskName(input, taskId),
+  )
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
   const emit = createGenerationProgressEmitter(dependencies)
   const result: GenerationRunResult = {
@@ -2604,7 +2649,7 @@ async function runTxt2imgTask(
     failures: [],
     ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
   }
-  let outputIndex = 0
+  let outputIndex = input.filenameStartIndex ?? 0
 
   try {
     ensureGenerationTables(db)
@@ -2768,7 +2813,7 @@ export async function runExtractBatch(
   let db: GenerationDatabase | null = null
   let diagnostics: DiagnosticLogWriter | null = null
   const emit = createGenerationProgressEmitter(dependencies)
-  let outputIndex = 0
+  let outputIndex = input.filenameStartIndex ?? 0
 
   try {
     const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
@@ -2797,7 +2842,11 @@ export async function runExtractBatch(
         ...(diagnostics ? { diagnostics } : {}),
       })
     const sourceFolder = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection)
-    const outputFolder = generationTaskOutputFolder(workbenchRoot, 'extract', taskId)
+    const outputFolder = generationTaskOutputFolder(
+      workbenchRoot,
+      'extract',
+      generationOutputTaskName(input, taskId),
+    )
     db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     const activeDb = db
     ensureGenerationTables(db)
@@ -2998,7 +3047,7 @@ export async function runComfyuiExtractBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
-      let outputIndex = 0
+      let outputIndex = input.filenameStartIndex ?? 0
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3034,7 +3083,7 @@ export async function runComfyuiExtractBatch(
               sourceArtifactIds: [sourceIdentity.artifactId],
               width: sizePx.width,
               height: sizePx.height,
-              ...visibleFilenameOptions(input, filenameIndex),
+              ...comfyuiRunOptions(workbenchRoot, 'extract', taskId, input, filenameIndex),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
           } satisfies GenerateRequest)
@@ -3170,7 +3219,7 @@ export async function runComfyuiExtractMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-      let outputIndex = 0
+      let outputIndex = input.filenameStartIndex ?? 0
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3249,7 +3298,7 @@ export async function runComfyuiExtractMattingBatch(
               width: sizePx.width,
               height: sizePx.height,
               maxOutputs: 1,
-              ...visibleFilenameOptions(input, filenameIndex),
+              ...comfyuiRunOptions(workbenchRoot, 'matting', taskId, input, filenameIndex),
               ...(input.mattingWorkflowVersion
                 ? { workflowVersion: input.mattingWorkflowVersion }
                 : {}),
@@ -3376,7 +3425,7 @@ export async function runComfyuiMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-      let outputIndex = 0
+      let outputIndex = input.filenameStartIndex ?? 0
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3406,7 +3455,7 @@ export async function runComfyuiMattingBatch(
               sourceArtifactIds: [artifactId],
               printId: source.printId,
               ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
-              ...visibleFilenameOptions(input, filenameIndex),
+              ...comfyuiRunOptions(workbenchRoot, 'matting', taskId, input, filenameIndex),
               ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
             },
           } satisfies GenerateRequest)
@@ -3545,7 +3594,7 @@ export async function runMixedMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-      let outputIndex = 0
+      let outputIndex = input.filenameStartIndex ?? 0
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
         if (isGenerationCancelled(taskId)) {
@@ -3609,7 +3658,7 @@ export async function runMixedMattingBatch(
               sourceArtifactIds: [artifactId],
               printId: source.printId,
               ...(sizePx ? { width: sizePx.width, height: sizePx.height } : {}),
-              ...visibleFilenameOptions(input, filenameIndex),
+              ...comfyuiRunOptions(workbenchRoot, 'matting', taskId, input, filenameIndex),
               workflowCategory: 'matting-mixed',
               artifactProvider: 'grsai+comfyui-mask',
               maskSkillId: skill.id,
@@ -3751,7 +3800,7 @@ export async function runComfyuiTxt2imgBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
       const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
       const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
-      let outputIndex = 0
+      let outputIndex = input.filenameStartIndex ?? 0
 
       await Promise.all(
         prompts.map((prompt, index) =>
@@ -3784,9 +3833,7 @@ export async function runComfyuiTxt2imgBatch(
                   taskId,
                   width,
                   height,
-                  filenameIndex: outputIndex,
-                  filenamePrefix: input.filenamePrefix,
-                  filenameSeparator: input.filenameSeparator,
+                  ...comfyuiRunOptions(workbenchRoot, 'txt2img', taskId, input, outputIndex),
                   ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
                 },
               } satisfies GenerateRequest)
@@ -3912,7 +3959,7 @@ export async function runComfyuiImg2imgBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
-      let outputIndex = 0
+      let outputIndex = input.filenameStartIndex ?? 0
       const promptMode = comfyuiImg2imgPromptMode(input)
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
@@ -3956,7 +4003,7 @@ export async function runComfyuiImg2imgBatch(
               height: sizePx.height,
               batchSize,
               maxOutputs: batchSize,
-              ...visibleFilenameOptions(input, filenameIndex),
+              ...comfyuiRunOptions(workbenchRoot, 'img2img', taskId, input, filenameIndex),
               ...(preserveWorkflowPrompt ? { preserveWorkflowPrompt: true } : {}),
               promptMode,
               ...(input.promptSkillId ? { promptSkillId: input.promptSkillId } : {}),
@@ -4043,6 +4090,23 @@ function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prep
     provider: 'comfyui-chenyu',
     workbenchRoot,
   })
+}
+
+function savedComfyuiUrlForInstance(db: Pick<SqliteDatabase, 'prepare'>, instanceUuid: string) {
+  try {
+    const row = db
+      .prepare(
+        `
+          SELECT comfyui_url
+          FROM comfyui_instances
+          WHERE id = 1 AND instance_uuid = ?
+        `,
+      )
+      .get(instanceUuid) as { comfyui_url?: string } | undefined
+    return row?.comfyui_url?.trim() || null
+  } catch {
+    return null
+  }
 }
 
 function readCurrentComfyuiInstanceRecord(

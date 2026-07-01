@@ -228,6 +228,15 @@ function runningChenyuInstance(instanceUuid: string, comfyuiUrl: string): Chenyu
   }
 }
 
+function runningChenyuInstanceWithoutComfyuiUrl(instanceUuid: string): ChenyuInstanceInfo {
+  return {
+    instance_uuid: instanceUuid,
+    status: ChenyuInstanceStatus.Running,
+    server_map: [],
+    server_url: [],
+  }
+}
+
 beforeEach(async () => {
   const { mkdtemp } = await import('node:fs/promises')
   tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-generation-service-'))
@@ -972,6 +981,52 @@ describe('generation comfyui service', () => {
         instance: expect.objectContaining({
           instanceUuid: 'inst-selected',
           comfyuiUrl: 'https://selected-comfy.example',
+          status: 'running',
+        }),
+      }),
+    )
+  })
+
+  it('uses the saved default ComfyUI URL when the selected current instance has no remote URL', async () => {
+    const fakeDb = createFakeDb()
+    const adapterInputs: unknown[] = []
+    const getChenyuInstanceInfo = vi
+      .fn()
+      .mockResolvedValue(runningChenyuInstanceWithoutComfyuiUrl('inst-current'))
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///saved-current-result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiTxt2imgBatch(
+      {
+        prompts: ['saved current cloud instance print'],
+        workflowId: 'txt2img-v1',
+        taskId: 'txt2img-saved-current-instance',
+        instanceUuid: 'inst-current',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: fakeDb.openDatabase,
+        getChenyuInstanceInfo,
+        createComfyuiAdapter: (adapterInput) => {
+          adapterInputs.push(adapterInput)
+          return { generate }
+        },
+      },
+    )
+
+    expect(result).toMatchObject({
+      taskId: 'txt2img-saved-current-instance',
+      succeeded: 1,
+      failed: 0,
+    })
+    expect(adapterInputs[0]).toEqual(
+      expect.objectContaining({
+        instance: expect.objectContaining({
+          instanceUuid: 'inst-current',
+          comfyuiUrl: 'https://comfy.example',
           status: 'running',
         }),
       }),

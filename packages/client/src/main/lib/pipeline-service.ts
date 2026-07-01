@@ -1451,7 +1451,7 @@ export class PipelineService {
         })
         this.emitRunProgress(db, runId, 'running', null, stats, '完整任务已启动')
 
-        await this.runStreamingPipeline(db, active, runId, workbenchRoot, runConfig, stats)
+        await this.runStreamingPipeline(db, active, runId, runName, workbenchRoot, runConfig, stats)
 
         if (active.interrupted) {
           return this.requireRunDetail(db, runId)
@@ -2231,6 +2231,7 @@ export class PipelineService {
     db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
     active: ActivePipelineRun,
     runId: string,
+    taskName: string,
     workbenchRoot: string,
     config: PipelineRunConfig,
     stats: PipelineRunStats,
@@ -2365,6 +2366,7 @@ export class PipelineService {
     db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
     active: ActivePipelineRun,
     runId: string,
+    runName: string,
     workbenchRoot: string,
     config: PipelineRunConfig,
     stats: PipelineRunStats,
@@ -2452,6 +2454,7 @@ export class PipelineService {
       db,
       active,
       runId,
+      runName,
       workbenchRoot,
       config,
       stats,
@@ -2464,6 +2467,7 @@ export class PipelineService {
       stageRegistrations,
       (stepKey) => ({
         runId,
+        taskName: runName,
         config,
         stepKey,
         isCancelled: () => active.cancelRequested,
@@ -2484,6 +2488,7 @@ export class PipelineService {
         db,
         active,
         runId,
+        runName,
         config,
         stats,
         visibleFilenameFields,
@@ -2800,6 +2805,7 @@ export class PipelineService {
         const result = await this.runExtractConfig(
           active,
           runId,
+          runId,
           source.extract,
           sourceImages,
           visibleFilenameFields,
@@ -2843,6 +2849,7 @@ export class PipelineService {
   private async runExtractConfig(
     active: ActivePipelineRun,
     runId: string,
+    outputTaskName: string,
     config: PipelineExtractConfig,
     sourceImages: PipelineImage[],
     visibleFilenameFields: PipelineVisibleFilenameFields,
@@ -2866,6 +2873,7 @@ export class PipelineService {
             aspectRatio: grsaiConfig.aspectRatio,
             concurrency: grsaiConfig.concurrency ?? 3,
             taskId: `${runId}-extract`,
+            outputTaskName,
             ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
             ...(config.variables ? { variables: config.variables } : {}),
             ...visibleFilenameFields,
@@ -2893,6 +2901,7 @@ export class PipelineService {
           sourceImagePaths,
           workflowId: comfyuiConfig.workflowId,
           taskId: `${runId}-extract`,
+          outputTaskName,
           ...(config.skillId ? { skillId: config.skillId } : {}),
           ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
           ...visibleFilenameFields,
@@ -2915,6 +2924,7 @@ export class PipelineService {
     db: Pick<SqliteDatabase, 'prepare'>,
     active: ActivePipelineRun,
     runId: string,
+    taskName: string,
     config: PipelineRunConfig,
     stats: PipelineRunStats,
     visibleFilenameFields: PipelineVisibleFilenameFields,
@@ -2999,6 +3009,8 @@ export class PipelineService {
                   prompts: [prompt],
                   workflowId: source.comfyui.workflowId,
                   taskId,
+                  outputTaskName: taskName,
+                  filenameStartIndex: index,
                   ...visibleFilenameFields,
                   ...comfyuiOptionalFields(source.comfyui),
                 },
@@ -3042,6 +3054,7 @@ export class PipelineService {
             aspectRatio: grsaiConfig.aspectRatio,
             concurrency: grsaiConfig.concurrency ?? 3,
             taskId: `${runId}-txt2img`,
+            outputTaskName: taskName,
             ...visibleFilenameFields,
             ...grsaiOptionalFields(grsaiConfig),
           },
@@ -3090,6 +3103,8 @@ export class PipelineService {
                 sourceImagePaths: [sourcePath],
                 workflowId: source.comfyui.workflowId,
                 taskId,
+                outputTaskName: taskName,
+                filenameStartIndex: index * batchSize,
                 ...visibleFilenameFields,
                 ...comfyuiImg2imgOptionalFields(source.comfyui),
                 ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
@@ -3153,6 +3168,7 @@ export class PipelineService {
             aspectRatio: grsaiConfig.aspectRatio,
             concurrency: grsaiConfig.concurrency ?? 3,
             taskId: `${runId}-img2img`,
+            outputTaskName: taskName,
             ...(references?.length ? { referenceImages: references } : {}),
             ...visibleFilenameFields,
             ...grsaiOptionalFields(grsaiConfig),
@@ -3338,6 +3354,7 @@ export class PipelineService {
         const extractResult = await service.runExtractConfig(
           active,
           context.runId,
+          context.taskName,
           activeCollectionSource.extract,
           sourceItems.map((item) => ({ path: item.path })),
           visibleFilenameFields,
@@ -3482,6 +3499,7 @@ export class PipelineService {
     let queued = 0
     let completed = 0
     let failed = 0
+    let outputIndex = 0
     const outputItems: PipelineImage[] = []
 
     const refreshMattingSection = () => {
@@ -3559,16 +3577,19 @@ export class PipelineService {
               if (!workflowId) {
                 throw new AppErrorClass('HTTP_4XX', '混合抠图需要选择 ComfyUI 工作流', false)
               }
+              const taskId = `${context.runId}-matting-${item.itemKey}`
               result = await service.withGenerationCancel(
                 active,
-                `${context.runId}-matting-${item.itemKey}`,
+                taskId,
                 () =>
                   queue.runExclusive(() =>
                     runMixedMattingBatch(
                       {
                         sourceImagePaths: [item.path],
                         workflowId,
-                        taskId: `${context.runId}-matting-${item.itemKey}`,
+                        taskId,
+                        outputTaskName: context.taskName,
+                        filenameStartIndex: outputIndex,
                         ...visibleFilenameFields,
                         ...mattingOptionalFields(context.config.matting),
                       },
@@ -3581,16 +3602,19 @@ export class PipelineService {
               if (!workflowId) {
                 throw new AppErrorClass('HTTP_4XX', '抠图需要选择 ComfyUI 工作流', false)
               }
+              const taskId = `${context.runId}-matting-${item.itemKey}`
               result = await service.withGenerationCancel(
                 active,
-                `${context.runId}-matting-${item.itemKey}`,
+                taskId,
                 () =>
                   queue.runExclusive(() =>
                     runComfyuiMattingBatch(
                       {
                         sourceImagePaths: [item.path],
                         workflowId,
-                        taskId: `${context.runId}-matting-${item.itemKey}`,
+                        taskId,
+                        outputTaskName: context.taskName,
+                        filenameStartIndex: outputIndex,
                         ...visibleFilenameFields,
                         ...mattingOptionalFields(context.config.matting),
                       },
@@ -3604,6 +3628,7 @@ export class PipelineService {
               throw new AppErrorClass('HTTP_4XX', '抠图未产生结果', false)
             }
             completed += 1
+            outputIndex += result.succeeded
             outputItems.push(output)
             stats.prints = completed
             service.upsertPipelineItem(db, {

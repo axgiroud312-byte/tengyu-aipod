@@ -183,7 +183,7 @@ export function createDetectionStage(
           sourceArtifactIds: item.sourceArtifactIds,
         })
 
-        const taskId = `${context.runId}-detection-${item.itemKey}`
+        const taskId = context.taskName
         dependencies.setCurrentCancel(() => {
           detectionService.cancelTask(taskId)
         })

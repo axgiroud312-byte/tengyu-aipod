@@ -15,6 +15,7 @@ export type PipelineStreamItem = {
 
 export type PipelineStageRuntimeContext = {
   runId: string
+  taskName: string
   config: PipelineRunConfig
   stepKey: PipelineStepKey
   isCancelled: () => boolean
