@@ -121,8 +121,8 @@ import type { TitleBatchConfig, TitleProgress, TitleTaskEvent } from '../main/li
 import type {
   VideoCompletedEvent,
   VideoProgressEvent,
-  VideoRuntimeLogEntry,
   VideoRunInput,
+  VideoRuntimeLogEntry,
 } from '../main/lib/video-generation-service'
 import type { PhotoshopPrintFolderScan } from '../main/photoshop/print-folder'
 import type { ListingRunConfig, ListingStatusRow } from '../modules/listing/runner'

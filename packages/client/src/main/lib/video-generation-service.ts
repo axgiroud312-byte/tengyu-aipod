@@ -13,8 +13,8 @@ import {
 import { getSecret } from './keychain'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { assertTargetDoesNotExist, sanitizeVisibleFilenamePart } from './user-visible-filename'
-import { assertPathInsideWorkbench } from './workbench-path-guard'
 import { readAppConfig } from './workbench-config'
+import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const HAPPYHORSE_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1'
 const IMAGE_SIZE_LIMIT_BYTES = 20 * 1024 * 1024
@@ -114,14 +114,7 @@ export type VideoRuntimeLogEntry = {
   message: string
   taskId?: string
   details?: {
-    operation?:
-      | 'validate'
-      | 'submit'
-      | 'poll'
-      | 'download'
-      | 'completed'
-      | 'stop'
-      | 'error'
+    operation?: 'validate' | 'submit' | 'poll' | 'download' | 'completed' | 'stop' | 'error'
     remoteTaskId?: string
     taskStatus?: string
     model?: string
@@ -179,9 +172,7 @@ const videoRunInputSchema = z
     resolution: z.enum(['720P', '1080P']),
     duration: z.union([z.literal(3), z.literal(5), z.literal(8), z.literal(10), z.literal(15)]),
     watermark: z.boolean(),
-    ratio: z
-      .enum(['16:9', '9:16', '3:4', '4:3', '4:5', '5:4', '1:1', '9:21', '21:9'])
-      .optional(),
+    ratio: z.enum(['16:9', '9:16', '3:4', '4:3', '4:5', '5:4', '1:1', '9:21', '21:9']).optional(),
   })
   .superRefine((input, ctx) => {
     if (input.mode === 'reference-to-video' && !input.prompt?.trim()) {
@@ -433,12 +424,9 @@ export async function validateVideoImages(
       }
       const ratio = width / height
       if (ratio < 1 / 2.5 || ratio > 2.5) {
-        throw new AppErrorClass(
-          'HTTP_4XX',
-          '首帧图宽高比必须在 1:2.5 到 2.5:1 之间',
-          false,
-          { imagePath },
-        )
+        throw new AppErrorClass('HTTP_4XX', '首帧图宽高比必须在 1:2.5 到 2.5:1 之间', false, {
+          imagePath,
+        })
       }
     } else if (Math.min(width, height) < 400) {
       throw new AppErrorClass('HTTP_4XX', '参考图短边不能低于 400px', false, { imagePath })
@@ -556,25 +544,31 @@ async function toHappyHorseHttpError(response: Response) {
   })
 }
 
-async function downloadVideo(
-  createFetch: typeof fetch,
-  url: string,
-  outputPath: string,
-) {
+async function downloadVideo(createFetch: typeof fetch, url: string, outputPath: string) {
   const response = await createFetch(url)
   if (!response.ok) {
-    throw new AppErrorClass('HTTP_5XX', '视频生成成功，但下载保存失败，请检查网络后重新生成', true, {
-      status: response.status,
-      url,
-    })
+    throw new AppErrorClass(
+      'HTTP_5XX',
+      '视频生成成功，但下载保存失败，请检查网络后重新生成',
+      true,
+      {
+        status: response.status,
+        url,
+      },
+    )
   }
   const arrayBuffer = await response.arrayBuffer()
   const buffer = Buffer.from(arrayBuffer)
   if (buffer.byteLength <= 0) {
-    throw new AppErrorClass('HTTP_5XX', '视频生成成功，但下载保存失败，请检查网络后重新生成', true, {
-      url,
-      bytes: 0,
-    })
+    throw new AppErrorClass(
+      'HTTP_5XX',
+      '视频生成成功，但下载保存失败，请检查网络后重新生成',
+      true,
+      {
+        url,
+        bytes: 0,
+      },
+    )
   }
   await mkdir(dirname(outputPath), { recursive: true })
   await writeFile(outputPath, buffer)
@@ -624,13 +618,7 @@ function completeVideoTask(
     UPDATE tasks
     SET status = ?, result_json = ?, error_json = ?, updated_at = ?
     WHERE id = ?
-  `).run(
-    status,
-    JSON.stringify(result),
-    error ? JSON.stringify(error) : null,
-    now,
-    taskId,
-  )
+  `).run(status, JSON.stringify(result), error ? JSON.stringify(error) : null, now, taskId)
   db.prepare(`
     UPDATE workflow_steps
     SET status = ?, output_json = ?, error_json = ?, updated_at = ?
@@ -804,7 +792,11 @@ export class VideoGenerationService {
         operation: 'submit',
         data: payload,
       })
-      const createResponse = await createHappyHorseTask(apiKey, payload, this.dependencies.createFetch)
+      const createResponse = await createHappyHorseTask(
+        apiKey,
+        payload,
+        this.dependencies.createFetch,
+      )
       await diagnostics?.append({
         type: 'submit_response',
         provider: 'aliyun-bailian',
@@ -1096,7 +1088,9 @@ export function registerVideoGenerationIpc() {
     ),
   )
   ipcMain.handle('video:run', (_event, input: unknown) =>
-    videoGenerationService.run(parseVideoIpcInput(videoRunInputSchema, input, '视频生成任务参数不正确')),
+    videoGenerationService.run(
+      parseVideoIpcInput(videoRunInputSchema, input, '视频生成任务参数不正确'),
+    ),
   )
   ipcMain.handle('video:stop', (_event, input: unknown) => ({
     ok: videoGenerationService.cancel(
@@ -1104,6 +1098,8 @@ export function registerVideoGenerationIpc() {
     ),
   }))
   ipcMain.handle('video:open-path', (_event, input: unknown) =>
-    openVideoPath(parseVideoIpcInput(videoOpenPathInputSchema, input, '视频打开路径参数不正确').path),
+    openVideoPath(
+      parseVideoIpcInput(videoOpenPathInputSchema, input, '视频打开路径参数不正确').path,
+    ),
   )
 }

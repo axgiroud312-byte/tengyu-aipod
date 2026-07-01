@@ -148,9 +148,9 @@ declare global {
           input: import('../../main/lib/video-generation-service').VideoRunInput,
         ) => Promise<string>
         stop: (input: { task_id: string }) => Promise<{ ok: boolean }>
-        openPath: (
-          input: { path: string },
-        ) => Promise<{ ok: true } | { ok: false; error: { code: string; message: string } }>
+        openPath: (input: { path: string }) => Promise<
+          { ok: true } | { ok: false; error: { code: string; message: string } }
+        >
         onProgress: (
           callback: (
             progress: import('../../main/lib/video-generation-service').VideoProgressEvent,

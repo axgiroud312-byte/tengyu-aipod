@@ -1,7 +1,7 @@
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import {
   type ElectronApplication,
   type Page,
@@ -140,7 +140,8 @@ test.describe('workspace settings', () => {
     closeMockServer = mockServer.close
     const userDataDir = join(tempRoot, 'user-data')
     const workspaceRoot = join(tempRoot, 'selected-workspace')
-    const previewImagePath = join(tempRoot, 'preview.png')
+    const previewImagePath = join(workspaceRoot, '02-印花工作区', '文生图', 'preview.png')
+    await mkdir(dirname(previewImagePath), { recursive: true })
     await writeFile(
       previewImagePath,
       Buffer.from(
@@ -176,11 +177,11 @@ test.describe('workspace settings', () => {
     await expect(page.getByText('Skill 缓存')).toBeVisible()
     await expect(page.getByText('1 条')).toBeVisible()
     await expect(page.getByText('尚未手动同步')).toHaveCount(0)
-    await expectImageLoads(page, previewImagePath)
 
     await page.getByRole('textbox', { name: /选择工作区/ }).fill(workspaceRoot)
     await page.getByRole('button', { name: '保存工作区' }).click()
     await expect(page.getByText('工作区已保存，目录已自动创建')).toBeVisible()
+    await expectImageLoads(page, previewImagePath)
 
     await expectDirectory(join(workspaceRoot, '01-采集工作区'))
     await expectDirectory(join(workspaceRoot, '02-印花工作区', '文生图'))

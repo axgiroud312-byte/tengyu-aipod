@@ -56,7 +56,13 @@ describe('workbench path guard', () => {
   it('allows video paths inside the video workspace', async () => {
     tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-path-guard-'))
     const workbenchRoot = join(tempRoot, 'workbench')
-    const videoFile = join(workbenchRoot, WORKBENCH_DIRECTORIES.video, '图生视频', 'task', '0001.mp4')
+    const videoFile = join(
+      workbenchRoot,
+      WORKBENCH_DIRECTORIES.video,
+      '图生视频',
+      'task',
+      '0001.mp4',
+    )
     await createFile(videoFile)
 
     await expect(

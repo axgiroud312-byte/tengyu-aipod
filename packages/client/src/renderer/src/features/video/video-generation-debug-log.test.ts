@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import {
-  formatVideoDebugLogLine,
-  videoDebugLogLevelCounts,
-} from './video-generation-debug-log'
+import { formatVideoDebugLogLine, videoDebugLogLevelCounts } from './video-generation-debug-log'
 
 describe('video generation debug log', () => {
   it('counts warn and error logs', () => {

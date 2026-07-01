@@ -22,7 +22,6 @@ import {
 import { PhotoshopPage } from '@/features/photoshop/PhotoshopPage'
 import { FullTaskPage } from '@/features/pipeline/FullTaskPage'
 import { SettingsPage } from '@/features/settings/SettingsPage'
-import { VideoPage } from '@/features/video/VideoPage'
 import {
   type TitleExistingStrategy,
   type TitleFormState,
@@ -32,6 +31,7 @@ import {
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
 import { TutorialPage } from '@/features/tutorial/TutorialPage'
+import { VideoPage } from '@/features/video/VideoPage'
 import { Shell } from '@/layout/Shell'
 import {
   type WorkbenchModule,

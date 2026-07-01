@@ -701,7 +701,9 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('选择图片文件夹、工作流、晨羽实例和每张生成数量。')).toBeVisible()
     await expect(page.getByText('图片文件夹', { exact: true })).toBeVisible()
     await expect(page.locator('input[type="number"][min="1"][max="8"]').last()).toBeVisible()
-    await expect(page.getByText('直接用工作流自带提示词，不再走百炼。')).toBeVisible()
+    await expect(
+      page.getByText('提示词方式', { exact: true }).locator('xpath=..').getByRole('combobox'),
+    ).toBeVisible()
 
     await page.getByRole('tab', { name: '已有印花' }).click()
     await expect(page.getByText('已有印花文件夹', { exact: true })).toBeVisible()

@@ -20,15 +20,14 @@ export type PipelineStageRuntimeContext = {
   isCancelled: () => boolean
 }
 
-export type PipelinePrintStage<
-  TInput = PipelineStreamItem,
-  TOutput = PipelineStreamItem,
-> = (input: AsyncIterable<TInput>, context: PipelineStageRuntimeContext) => AsyncIterable<TOutput>
+export type PipelinePrintStage<TInput = PipelineStreamItem, TOutput = PipelineStreamItem> = (
+  input: AsyncIterable<TInput>,
+  context: PipelineStageRuntimeContext,
+) => AsyncIterable<TOutput>
 
-export type PipelinePrintStageFactory<
-  TInput = PipelineStreamItem,
-  TOutput = PipelineStreamItem,
-> = (context: PipelineStageRuntimeContext) => PipelinePrintStage<TInput, TOutput>
+export type PipelinePrintStageFactory<TInput = PipelineStreamItem, TOutput = PipelineStreamItem> = (
+  context: PipelineStageRuntimeContext,
+) => PipelinePrintStage<TInput, TOutput>
 
 export type PipelinePrintStageRegistration<
   TInput = PipelineStreamItem,

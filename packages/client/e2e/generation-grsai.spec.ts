@@ -147,6 +147,35 @@ async function startMockServer(state: MockState) {
   const server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
 
+    if (url.pathname === '/user/public/send_login_sms') {
+      sendJson(response, { status: 1, info: 'ok', data: {} })
+      return
+    }
+
+    if (url.pathname === '/user/public/login') {
+      sendJson(response, { status: 1, info: 'ok', data: { secret: 'e2e-secret', uid: 10001 } })
+      return
+    }
+
+    if (url.pathname === '/api/customer-auth/verify') {
+      sendJson(response, {
+        ok: true,
+        data: {
+          customer: {
+            account: 'e2e',
+            avatar_url: null,
+            expires_at: '2099-12-31T00:00:00.000Z',
+            id: 'cus_generation_e2e',
+            nickname: 'E2E 客户',
+            phone: '13800000000',
+            php_uid: 10001,
+          },
+          status: 'active',
+        },
+      })
+      return
+    }
+
     if (url.pathname === '/api/skills') {
       state.skillIndexCalls += 1
       const category = url.searchParams.get('category')
@@ -268,6 +297,7 @@ async function launchApp(mockBaseUrl: string, userDataDir: string) {
       ...process.env,
       NODE_ENV: 'development',
       TENGYU_SERVER_URL: mockBaseUrl,
+      TENGYU_PHP_AUTH_BASE_URL: mockBaseUrl,
       TENGYU_BAILIAN_BASE_URL: `${mockBaseUrl}/compatible-mode/v1`,
       TENGYU_GRSAI_CN_BASE_URL: `${mockBaseUrl}/cn`,
       TENGYU_GRSAI_GLOBAL_BASE_URL: `${mockBaseUrl}/global`,
@@ -279,6 +309,13 @@ async function launchApp(mockBaseUrl: string, userDataDir: string) {
 
 async function prepareApp(page: Page, workbenchRoot: string) {
   await page.evaluate(async (root) => {
+    const authState = await window.api.customerAuth.loginByPhone({
+      code: '123456',
+      phone: '13800000000',
+    })
+    if (authState.status !== 'active') {
+      throw new Error(`customer auth was not active: ${authState.status}`)
+    }
     await window.api.onboarding.saveWorkbenchRoot(root)
     await window.api.onboarding.saveApiKeys({ bailian: 'sk-bailian-e2e', grsai: 'sk-grsai-e2e' })
     await window.api.onboarding.complete()

@@ -3,26 +3,28 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { sanitizeDiagnosticValue } from './diagnostic-log-service'
 import {
+  type VideoCompletedEvent,
   VideoGenerationService,
+  type VideoImageMetadata,
+  type VideoRunInput,
   buildHappyHorsePayload,
   mapHappyHorseTaskStatus,
   registerVideoGenerationIpc,
   resolveHappyHorseModel,
   validateVideoImages,
-  type VideoCompletedEvent,
   videoOutputPath,
   videoTaskId,
-  type VideoRunInput,
-  type VideoImageMetadata,
 } from './video-generation-service'
-import { sanitizeDiagnosticValue } from './diagnostic-log-service'
 
 const electronMocks = vi.hoisted(() => ({
   handlers: new Map<string, (...args: unknown[]) => unknown>(),
   showOpenDialog: vi.fn(),
   shellOpenPath: vi.fn(),
-  browserWindows: [] as Array<{ webContents: { send: (channel: string, payload: unknown) => void } }>,
+  browserWindows: [] as Array<{
+    webContents: { send: (channel: string, payload: unknown) => void }
+  }>,
 }))
 
 vi.mock('electron', () => ({
@@ -62,7 +64,9 @@ afterEach(async () => {
 describe('video generation service helpers', () => {
   it('maps page model version to provider model', () => {
     expect(resolveHappyHorseModel('image-to-video', 'happyhorse-1.1')).toBe('happyhorse-1.1-i2v')
-    expect(resolveHappyHorseModel('reference-to-video', 'happyhorse-1.0')).toBe('happyhorse-1.0-r2v')
+    expect(resolveHappyHorseModel('reference-to-video', 'happyhorse-1.0')).toBe(
+      'happyhorse-1.0-r2v',
+    )
   })
 
   it('maps task status safely', () => {
