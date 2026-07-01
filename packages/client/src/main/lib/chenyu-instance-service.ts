@@ -239,9 +239,7 @@ export async function listChenyuInstances() {
     readCurrentInstanceSafely(),
     client.listInstances(),
   ])
-  return result.items.map((item) =>
-    mapManagedInstance(item, current?.instanceUuid ?? null, settings.config),
-  )
+  return result.items.map((item) => mapManagedInstance(item, current, settings.config))
 }
 
 export async function createFixedPodInstance(input: ChenyuCreateFixedPodInstanceInput) {
@@ -454,15 +452,20 @@ function selectBestPod(pods: ChenyuPod[], keyword: string) {
 
 function mapManagedInstance(
   info: ChenyuInstanceInfo,
-  currentInstanceUuid: string | null,
+  current: ComfyuiInstanceSummary | null,
   config: ChenyuConfig,
 ): ChenyuManagedInstance {
   const podUuid = stringField(info, 'pod_uuid')
   const podTag = stringField(info, 'pod_tag') ?? stringField(info, 'image_tag')
   const title = stringField(info, 'title') ?? stringField(info, 'image_name') ?? info.instance_uuid
-  const serverUrls = comfyuiUrlCandidates(info.server_map, info.server_url).map(
-    (candidate) => candidate.url,
-  )
+  const isCurrent = current?.instanceUuid === info.instance_uuid
+  const savedComfyuiUrl = isCurrent ? current?.comfyuiUrl : null
+  const serverUrls = uniqueStrings([
+    ...comfyuiUrlCandidates(info.server_map, info.server_url).map((candidate) => candidate.url),
+    ...(savedComfyuiUrl ? [savedComfyuiUrl] : []),
+  ])
+  const comfyuiUrl =
+    extractComfyuiUrl(info.server_map) ?? savedComfyuiUrl ?? serverUrls[0] ?? null
   return {
     instanceUuid: info.instance_uuid,
     title,
@@ -473,9 +476,9 @@ function mapManagedInstance(
     podTag,
     gpuUuid: stringField(info, 'gpu_uuid'),
     gpuName: stringField(info, 'gpu_name'),
-    comfyuiUrl: extractComfyuiUrl(info.server_map),
+    comfyuiUrl,
     serverUrls,
-    isCurrent: currentInstanceUuid === info.instance_uuid,
+    isCurrent,
     isFixedPod: Boolean(config.pod_uuid && podUuid === config.pod_uuid),
     raw: info,
   }

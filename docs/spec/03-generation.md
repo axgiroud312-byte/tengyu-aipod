@@ -975,6 +975,7 @@ async function shutdownFromSettings(instanceUuid: string) {
 - `chenyu:set-active-instance` 把某个实例保存为默认云机。
 - 生图页 ComfyUI 路径读取当前 API Key 下的实例列表，只展示 `running` 且有 ComfyUI 地址的云机。
 - 默认云机作为运行云机选择的默认候选；如果默认云机不在可运行列表内，客户端自动选第一个运行中云机。
+- 读取实例列表时，如果某个实例是本地已保存的默认云机，必须把 `comfyui_instances` 里的已保存 ComfyUI 地址合并进该实例；即使晨羽远端列表暂时无法从 `server_map` / `server_url` 自动识别地址，生图页和完整任务页也能选择这台运行云机。
 - 运行时如果本次没有显式选择运行云机，客户端优先复用本地 `comfyui_instances` 里状态为 `running` 的默认云机记录和已保存的 ComfyUI 地址；只有缺少本地记录或需要刷新状态时，才再请求晨羽实例详情。
 - 没有运行中云机时，生图模块提示用户先去设置页开机。
 - 运行云机没有可用 ComfyUI 地址时，不进入可选列表。
@@ -1262,6 +1263,7 @@ CREATE TABLE comfyui_instances (
 - ComfyUI 图生图 AI 写 prompt 失败时只失败当前图片，不影响其他图片
 - ComfyUI 图生图只覆盖第一个非负面提示词输入框，保留其他正向/负向 prompt
 - 晨羽固定 POD 实例创建、开机、关机、设为默认云机
+- 晨羽实例列表要把本地默认云机保存的 ComfyUI 地址合并到对应运行中实例，保证生图页和完整任务页可选
 - 没有运行中云机时，ComfyUI 生图提示先去设置页开机，不自动开机
 - 工作流注入参数后的 ComfyUI 提交
 - 提取后抠图只保留最终抠图结果，提取中间图走临时目录并清理
