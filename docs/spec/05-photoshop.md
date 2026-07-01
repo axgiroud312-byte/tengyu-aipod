@@ -1,6 +1,6 @@
 # Spec 05 — PS 套版模块
 
-> Windows-only。通过 COM 接口启动 Photoshop，动态生成 JSX 脚本替换 PSD 智能对象，输出按模板批次组织的成品图。
+> Windows-only。通过 COM 接口启动 Photoshop，动态生成 JSX 脚本替换 PSD 智能对象，独立套版默认按单次套版批次 + 货号文件夹输出成品图；完整任务沿用模板批次布局。
 > v1 采用直接替换路径（路径 A），v1.5 加入进入 SO 编辑路径（路径 B）。
 
 ## 1. 平台约束
@@ -332,6 +332,23 @@ function sortAlphaNum(a: string, b: string): number {
 
 ### 6.2 输出
 
+独立 PS 套版默认输出为单次套版批次目录。默认目录为
+`04-上架工作区/套版-{时间戳}/`，其下直接按货号分文件夹；文件名前缀使用模板名，避免同一货号同时套多个 PSD 模板时重名：
+
+```
+04-上架工作区/
+└─ 套版-20260701-183000/              ← 单次独立套版任务批次
+   ├─ {货号1}/
+   │   ├─ {模板1名}-01.jpg
+   │   ├─ {模板1名}-02.jpg             ← 多裁切区域时多张
+   │   ├─ {模板2名}-01.jpg
+   │   └─ ...
+   ├─ {货号2}/
+   └─ ...
+```
+
+历史兼容布局和完整任务仍支持模板优先输出：
+
 ```
 04-上架工作区/
 ├─ {模板1名}/                       ← 每个模板一个一级目录（"模板批次"）
@@ -630,6 +647,12 @@ async function runJobWithRetry(job: PhotoshopJob, maxRetries: number) {
 ```
 
 字段：`ts, level, stage, group, input, attempt, output_file, error, duration_ms`
+
+模板级批处理使用单个 JSX 连续处理多个套版组。主进程必须监听 JSX 实时日志：
+
+- 收到成功的 `group_complete` 日志时，立即发送 `photoshop:progress`，让页面进度条按组推进。
+- 批处理返回后，再用最终结果同步 `verified_outputs`、`skipped`、`cancelled` 和最终 `task_complete` / `cancelled` 状态。
+- 已由实时日志推进过的组不能在最终结果阶段重复累计。
 
 ## 12. 预览
 

@@ -29,7 +29,7 @@ const runBatchInputSchema = z.object({
   print_folder: z.string().min(1),
   templates: z.array(z.string().min(1)).min(1),
   replace_range: z.enum(['auto', 'top', 'all']).default('auto'),
-  output_layout: z.enum(['template_first', 'sku_first']).default('template_first'),
+  output_layout: z.enum(['template_first', 'sku_first', 'sku_flat']).default('sku_flat'),
   format: z.enum(['jpg', 'png']).default('jpg'),
   clip_mode: z.enum(['none', 'auto', 'guides']).default('auto'),
   skip_completed: z.boolean().default(true),

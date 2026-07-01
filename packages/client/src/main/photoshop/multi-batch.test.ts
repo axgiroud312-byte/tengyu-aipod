@@ -121,6 +121,7 @@ describe('PhotoshopMultiBatchRunner', () => {
       'group_complete:keychain:0',
       'task_start:keychain:1',
       'group_complete:keychain:1',
+      'task_complete:undefined:undefined',
     ])
     expect(logStages).toContain('task_start')
     expect(logStages).toContain('jsx_generate')
@@ -257,6 +258,78 @@ describe('PhotoshopMultiBatchRunner', () => {
         outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img10/template/01.jpg'],
       },
     ])
+  })
+
+  it('emits template-level progress as group_complete logs arrive', async () => {
+    const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
+    const progress: Array<{
+      stage: string
+      group: number | undefined
+      completed: number
+      verifiedOutputs: number
+    }> = []
+    let completedProgressBeforeReturn = 0
+
+    await runBatch(
+      createPrints(),
+      [template.file_path],
+      {
+        taskId: 'batch-template-progress',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+      },
+      {
+        scanner: {
+          scanPsd: async () => template,
+        },
+        engine: {
+          runTemplateBatch: async (_template, groups, _maxRetries, options) => {
+            const firstGroup = groups[0]
+            if (!firstGroup) {
+              throw new Error('expected at least one Photoshop group')
+            }
+            await options.onLog?.({
+              ts: Date.now(),
+              level: 'info',
+              stage: 'group_complete',
+              group: firstGroup.group_index,
+            })
+            completedProgressBeforeReturn = progress.filter(
+              (item) => item.stage === 'group_complete',
+            ).length
+            return {
+              ok: true,
+              outputs: groups.flatMap((group) => group.job.output_paths),
+              groups: groups.map((group) => ({
+                group_index: group.group_index,
+                sku_folder: group.sku_folder,
+                outputs: group.job.output_paths,
+                skipped: false,
+              })),
+            }
+          },
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        onProgress: (item) => {
+          progress.push({
+            stage: item.current_stage,
+            group: item.group_index,
+            completed: item.completed,
+            verifiedOutputs: item.verified_outputs,
+          })
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(completedProgressBeforeReturn).toBe(1)
+    expect(
+      progress.filter((item) => item.stage === 'group_complete').map((item) => item.group),
+    ).toEqual([0, 1])
+    expect(progress.at(-1)).toMatchObject({
+      stage: 'task_complete',
+      completed: 2,
+      verifiedOutputs: 2,
+    })
   })
 
   it('keeps cancelled template-level previews limited to completed groups', async () => {

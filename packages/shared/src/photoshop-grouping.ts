@@ -104,11 +104,16 @@ function buildJob(
   const clipAreas = template.clip_areas
   const extension = options.format === 'jpg' ? 'jpg' : 'png'
   const outputFolder =
-    options.outputLayout === 'sku_first'
+    options.outputLayout === 'sku_flat'
+      ? `${options.outputRoot}/${skuFolder}`
+      : options.outputLayout === 'sku_first'
       ? `${options.outputRoot}/${skuFolder}/${templateName}`
       : `${options.outputRoot}/${templateName}/${printAssets[0]?.id ?? 'group'}`
   const outputPaths = clipAreas.map(
-    (_, clipIndex) => `${outputFolder}/${String(clipIndex + 1).padStart(2, '0')}.${extension}`,
+    (_, clipIndex) =>
+      options.outputLayout === 'sku_flat'
+        ? `${outputFolder}/${templateName}-${String(clipIndex + 1).padStart(2, '0')}.${extension}`
+        : `${outputFolder}/${String(clipIndex + 1).padStart(2, '0')}.${extension}`,
   )
   const soReplacements: PhotoshopSoReplacement[] = selectSmartObjects(
     template,
@@ -148,7 +153,7 @@ function skuFolderForGroup(
   groupIndex: number,
   outputLayout: PhotoshopOutputLayout,
 ): string {
-  if (outputLayout === 'sku_first' && printAssets.length > 1) {
+  if ((outputLayout === 'sku_first' || outputLayout === 'sku_flat') && printAssets.length > 1) {
     return `group-${String(groupIndex + 1).padStart(3, '0')}`
   }
   return printAssets[0]?.id ?? `group-${String(groupIndex + 1).padStart(3, '0')}`

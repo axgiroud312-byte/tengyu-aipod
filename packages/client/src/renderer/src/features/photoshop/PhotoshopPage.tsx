@@ -160,7 +160,7 @@ function PhotoshopStatusBar() {
 
 export function PhotoshopPage() {
   const [skipCompleted, setSkipCompleted] = useState(true)
-  const [outputLayout, setOutputLayout] = useState<PhotoshopOutputLayout>('template_first')
+  const outputLayout: PhotoshopOutputLayout = 'sku_flat'
   const [printFolder, setPrintFolder] = useState('02-印花工作区')
   const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
   const [printScan, setPrintScan] = useState<PhotoshopPrintFolderScan | null>(null)
@@ -515,17 +515,9 @@ export function PhotoshopPage() {
               />
               跳过已完成
             </label>
-            <label className="ml-2 mt-4 inline-flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium">
-              <input
-                checked={outputLayout === 'sku_first'}
-                className="h-4 w-4"
-                onChange={(event) =>
-                  setOutputLayout(event.target.checked ? 'sku_first' : 'template_first')
-                }
-                type="checkbox"
-              />
-              货号优先输出
-            </label>
+            <div className="ml-2 mt-4 inline-flex items-center rounded-md border px-3 py-2 text-sm font-medium">
+              默认按货号文件夹输出
+            </div>
           </div>
 
           <div className="rounded-md border bg-background p-5 shadow-sm">
@@ -609,7 +601,7 @@ export function PhotoshopPage() {
               </Button>
             </div>
             <p className="mt-2 text-xs text-muted-foreground">
-              默认是本次套版批次目录，可直接改成其他批次目录。
+              默认是本次套版批次目录，成品图会保存到该目录下的货号文件夹。
             </p>
           </div>
         </div>

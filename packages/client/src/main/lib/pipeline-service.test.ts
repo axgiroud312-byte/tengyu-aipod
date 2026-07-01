@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import {
   type PhotoshopPrintAsset,
+  type PhotoshopOutputLayout,
   type PipelineProgress,
   type PipelineResultSection,
   type PipelineRunConfig,
@@ -98,7 +99,7 @@ const mocks = vi.hoisted(() => ({
       config: {
         taskId: string
         outputRoot: string
-        outputLayout: 'template_first' | 'sku_first'
+        outputLayout: PhotoshopOutputLayout
       },
     ) => {
       const printId = prints[0]?.id ?? 'print'
@@ -441,7 +442,7 @@ function createPhotoshopBatchResult(
   config: {
     taskId: string
     outputRoot: string
-    outputLayout: 'template_first' | 'sku_first'
+    outputLayout: PhotoshopOutputLayout
   },
 ) {
   const printId = prints[0]?.id ?? 'print'
@@ -888,7 +889,7 @@ describe('PipelineService', () => {
         config: {
           taskId: string
           outputRoot: string
-          outputLayout: 'template_first' | 'sku_first'
+          outputLayout: PhotoshopOutputLayout
         },
       ) => {
         await new Promise<void>((resolve) => {
@@ -926,7 +927,7 @@ describe('PipelineService', () => {
         config: {
           taskId: string
           outputRoot: string
-          outputLayout: 'template_first' | 'sku_first'
+          outputLayout: PhotoshopOutputLayout
         },
       ) => {
         if (config.taskId.startsWith('run-ps-lock-1-photoshop-')) {
@@ -2624,7 +2625,7 @@ describe('PipelineService', () => {
         config: {
           taskId: string
           outputRoot: string
-          outputLayout: 'template_first' | 'sku_first'
+          outputLayout: PhotoshopOutputLayout
         },
       ) => {
         const templatePath = Array.isArray(templates) ? String(templates[0] ?? '') : ''
@@ -2890,7 +2891,7 @@ describe('PipelineService', () => {
         config: {
           taskId: string
           outputRoot: string
-          outputLayout: 'template_first' | 'sku_first'
+          outputLayout: PhotoshopOutputLayout
         },
       ) => {
         const templateName = windowsBaseName(

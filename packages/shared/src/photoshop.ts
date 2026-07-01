@@ -10,7 +10,7 @@ export interface PhotoshopStatus {
 
 export type SmartObjectMode = 'single' | 'shared' | 'independent' | 'none'
 export type PhotoshopClipMode = 'none' | 'auto' | 'guides'
-export type PhotoshopOutputLayout = 'template_first' | 'sku_first'
+export type PhotoshopOutputLayout = 'template_first' | 'sku_first' | 'sku_flat'
 
 export type PsdBounds = [number, number, number, number]
 

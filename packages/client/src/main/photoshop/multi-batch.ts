@@ -184,6 +184,7 @@ export class PhotoshopMultiBatchRunner {
 
       const templateOutputs: string[] = []
       if (this.engine.runTemplateBatch) {
+        const realtimeCompletedGroupIndexes = new Set<number>()
         await this.emitProgress({
           task_id: config.taskId,
           total_groups: groupsTotal,
@@ -216,11 +217,39 @@ export class PhotoshopMultiBatchRunner {
             onLog: async (entry) => {
               logger?.write(entry)
               await this.emitLog(entry)
+              if (
+                entry.stage !== 'group_complete' ||
+                entry.level !== 'info' ||
+                entry.group === undefined ||
+                realtimeCompletedGroupIndexes.has(entry.group)
+              ) {
+                return
+              }
+              const group = groups.find((item) => item.group_index === entry.group)
+              if (!group) {
+                return
+              }
+              realtimeCompletedGroupIndexes.add(entry.group)
+              groupsCompleted += 1
+              await this.emitProgress({
+                task_id: config.taskId,
+                total_groups: groupsTotal,
+                completed: groupsCompleted - skipped,
+                failed,
+                skipped,
+                current_group: group.group_index,
+                current_stage: 'group_complete',
+                verified_outputs: verifiedOutputs,
+                template_index: templateIndex,
+                template_total: templatePaths.length,
+                template_name: templateName,
+                group_index: group.group_index,
+                group_total: groups.length,
+                groups_completed: groupsCompleted,
+              })
             },
           },
         )
-        groupsCompleted += result.groups.length
-        skipped += result.groups.filter((group) => group.skipped).length
         verifiedOutputs += result.outputs.length
         templateOutputs.push(...result.outputs)
         allOutputs.push(...result.outputs)
@@ -229,24 +258,33 @@ export class PhotoshopMultiBatchRunner {
           if (!group) {
             continue
           }
+          const alreadyEmitted = realtimeCompletedGroupIndexes.has(groupResult.group_index)
+          if (!alreadyEmitted) {
+            groupsCompleted += 1
+          }
+          if (groupResult.skipped) {
+            skipped += 1
+          }
           const groupOutputs = groupResult.outputs
           resultGroups.push(batchOutputGroup(template, group, groupOutputs))
-          await this.emitProgress({
-            task_id: config.taskId,
-            total_groups: groupsTotal,
-            completed: groupsCompleted - skipped,
-            failed,
-            skipped,
-            current_group: group.group_index,
-            current_stage: 'group_complete',
-            verified_outputs: verifiedOutputs,
-            template_index: templateIndex,
-            template_total: templatePaths.length,
-            template_name: templateName,
-            group_index: group.group_index,
-            group_total: groups.length,
-            groups_completed: groupsCompleted,
-          })
+          if (!alreadyEmitted) {
+            await this.emitProgress({
+              task_id: config.taskId,
+              total_groups: groupsTotal,
+              completed: groupsCompleted - skipped,
+              failed,
+              skipped,
+              current_group: group.group_index,
+              current_stage: 'group_complete',
+              verified_outputs: verifiedOutputs,
+              template_index: templateIndex,
+              template_total: templatePaths.length,
+              template_name: templateName,
+              group_index: group.group_index,
+              group_total: groups.length,
+              groups_completed: groupsCompleted,
+            })
+          }
         }
         templateResults.push({
           template_id: template.id,
@@ -388,6 +426,19 @@ export class PhotoshopMultiBatchRunner {
         outputs: templateOutputs,
       })
     }
+
+    await this.emitProgress({
+      task_id: config.taskId,
+      total_groups: groupsTotal,
+      completed: groupsCompleted - skipped,
+      failed,
+      skipped,
+      current_group: null,
+      current_stage: cancelled ? 'cancelled' : 'task_complete',
+      verified_outputs: verifiedOutputs,
+      template_total: templatePaths.length,
+      groups_completed: groupsCompleted,
+    })
 
     return {
       ok: !cancelled,

@@ -159,6 +159,41 @@ describe('groupTasks', () => {
     )
   })
 
+  it('writes sku-flat outputs directly under sku folders with template-prefixed filenames', () => {
+    const groups = groupTasks(
+      [{ id: 'img2', file_path: 'C:\\素材\\img2.png' }],
+      createTemplate({
+        representative_so_count: 1,
+        smart_objects: [
+          {
+            name: 'SO 1',
+            path: 'root/SO 1',
+            sort_order: 0,
+            is_top_level: true,
+            bounds: [0, 0, 100, 100],
+            shared_indicator: 'a',
+          },
+        ],
+        clip_areas: [
+          { x: 0, y: 0, w: 500, h: 1000 },
+          { x: 500, y: 0, w: 500, h: 1000 },
+        ],
+      }),
+      {
+        taskId: 'task-1',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        outputLayout: 'sku_flat',
+      },
+    )
+
+    expect(groups[0]?.sku_folder).toBe('img2')
+    expect(groups[0]?.template_name).toBe('钥匙扣x')
+    expect(groups[0]?.job.output_paths).toEqual([
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/img2/钥匙扣x-01.jpg',
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/img2/钥匙扣x-02.jpg',
+    ])
+  })
+
   it('uses stable group names for multi-print sku-first groups', () => {
     const groups = groupTasks(
       [
