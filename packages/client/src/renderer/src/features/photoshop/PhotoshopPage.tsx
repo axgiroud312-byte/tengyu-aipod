@@ -178,7 +178,8 @@ export function PhotoshopPage() {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
   const [scannedTemplates, setScannedTemplates] = useState<PsdTemplate[]>([])
   const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
-  const [running, setRunning] = useState(false)
+  const [scanningTemplates, setScanningTemplates] = useState(false)
+  const [batchRunning, setBatchRunning] = useState(false)
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const percent = progressPercent(progress)
@@ -279,18 +280,8 @@ export function PhotoshopPage() {
   }
 
   async function scanTemplates() {
-    setRunning(true)
+    setScanningTemplates(true)
     setMessage('正在扫描模板...')
-    setProgress({
-      task_id: 'ui-preview',
-      total_groups: Math.max(templatePaths.length, 1),
-      completed: 0,
-      failed: 0,
-      skipped: 0,
-      current_group: null,
-      current_stage: 'task_start',
-      verified_outputs: 0,
-    })
     try {
       const templates: PsdTemplate[] = []
       for (let index = 0; index < templatePaths.length; index += 1) {
@@ -298,36 +289,32 @@ export function PhotoshopPage() {
           psd_path: templatePaths[index] ?? '',
         })
         templates.push(template)
-        setProgress({
-          task_id: 'ui-preview',
-          total_groups: templatePaths.length,
-          completed: index + 1,
-          failed: 0,
-          skipped: 0,
-          current_group: index,
-          current_stage: 'group_complete',
-          verified_outputs: templates.reduce((count, item) => count + item.clip_areas.length, 0),
-        })
       }
       setScannedTemplates(templates)
       setMessage('模板已扫描，套版执行会沿用这些参数')
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
-      setProgress((current) =>
-        current
-          ? { ...current, failed: current.failed + 1, current_stage: 'group_complete' }
-          : null,
-      )
     } finally {
-      setRunning(false)
+      setScanningTemplates(false)
     }
   }
 
   async function runPhotoshopBatch() {
-    setRunning(true)
+    setBatchRunning(true)
     setMessage('正在执行套版...')
     setDebugLogs([])
     setBatchResult(null)
+    setCurrentTaskId(null)
+    setProgress({
+      task_id: 'pending',
+      total_groups: Math.max(estimatedGroups, 1),
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      current_group: null,
+      current_stage: 'task_start',
+      verified_outputs: 0,
+    })
     try {
       const scan = await window.api.photoshop.scanPrintFolder({ folder: printFolder })
       setPrintScan(scan)
@@ -360,7 +347,7 @@ export function PhotoshopPage() {
           : null,
       )
     } finally {
-      setRunning(false)
+      setBatchRunning(false)
     }
   }
 
@@ -634,25 +621,30 @@ export function PhotoshopPage() {
             </dl>
             <Button
               className="mt-4 w-full"
-              disabled={running || templatePaths.length === 0}
+              disabled={scanningTemplates || batchRunning || templatePaths.length === 0}
               onClick={() => void scanTemplates()}
               type="button"
             >
               <PlayCircle className="mr-2 h-4 w-4" />
-              {running ? '扫描中...' : '扫描模板'}
+              {scanningTemplates ? '扫描中...' : '扫描模板'}
             </Button>
             <Button
               className="mt-3 w-full"
-              disabled={running || templatePaths.length === 0 || !printFolder.trim()}
+              disabled={
+                scanningTemplates ||
+                batchRunning ||
+                templatePaths.length === 0 ||
+                !printFolder.trim()
+              }
               onClick={() => void runPhotoshopBatch()}
               type="button"
             >
               <PlayCircle className="mr-2 h-4 w-4" />
-              {running ? '执行中...' : '开始套版'}
+              {batchRunning ? '执行中...' : '开始套版'}
             </Button>
             <Button
               className="mt-3 w-full"
-              disabled={!running || !currentTaskId}
+              disabled={!batchRunning || !currentTaskId}
               onClick={() => void cancelPhotoshopBatch()}
               type="button"
               variant="secondary"

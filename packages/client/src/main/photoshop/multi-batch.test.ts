@@ -197,6 +197,38 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(skipFlags).toEqual([false])
   })
 
+  it('uses the full group total before the first multi-template progress event', async () => {
+    const templates = new Map([
+      ['C:\\templates\\cup.psd', createTemplate('C:\\templates\\cup.psd', 'tpl-cup')],
+      ['C:\\templates\\shirt.psd', createTemplate('C:\\templates\\shirt.psd', 'tpl-shirt')],
+    ])
+    const progressTotals: number[] = []
+
+    await runBatch(
+      createPrints(),
+      [...templates.keys()],
+      {
+        taskId: 'batch-stable-total',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+      },
+      {
+        scanner: {
+          scanPsd: async (path) => templates.get(path) as PsdTemplate,
+        },
+        engine: {
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        onProgress: (item) => {
+          progressTotals.push(item.total_groups)
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(progressTotals).not.toHaveLength(0)
+    expect(new Set(progressTotals)).toEqual(new Set([4]))
+  })
+
   it('uses template-level execution when the engine supports it', async () => {
     const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
     const templateBatchCalls: string[] = []
@@ -334,6 +366,7 @@ describe('PhotoshopMultiBatchRunner', () => {
 
   it('keeps cancelled template-level previews limited to completed groups', async () => {
     const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
+    const progressStages: string[] = []
 
     const result = await runBatch(
       createPrints(),
@@ -364,6 +397,9 @@ describe('PhotoshopMultiBatchRunner', () => {
           }),
           runJob: async (job) => createCompletedJobResult(job.output_paths),
         },
+        onProgress: (item) => {
+          progressStages.push(item.current_stage)
+        },
         progressLogger: null,
       },
     )
@@ -383,6 +419,7 @@ describe('PhotoshopMultiBatchRunner', () => {
         outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img2/template/01.jpg'],
       },
     ])
+    expect(progressStages.filter((stage) => stage === 'cancelled')).toHaveLength(1)
   })
 
   it('runs a small real multi-template Photoshop batch when REAL_PS=1', async () => {

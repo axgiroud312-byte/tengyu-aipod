@@ -148,6 +148,13 @@ export class PhotoshopMultiBatchRunner {
 
     logger?.write({ ts: Date.now(), level: 'info', stage: 'task_start' })
 
+    const preparedTemplates: Array<{
+      templateIndex: number
+      template: PsdTemplate
+      templateName: string
+      groups: PhotoshopTaskGroup[]
+    }> = []
+
     for (let templateIndex = 0; templateIndex < templatePaths.length; templateIndex += 1) {
       const template = await this.scanner.scanPsd(templatePaths[templateIndex] ?? '')
       const templateName = sanitizeTemplateName(template.file_path)
@@ -181,7 +188,15 @@ export class PhotoshopMultiBatchRunner {
       }
       const groups = groupTasks(prints, templateWithClipAreas, groupOptions)
       groupsTotal += groups.length
+      preparedTemplates.push({
+        templateIndex,
+        template: templateWithClipAreas,
+        templateName,
+        groups,
+      })
+    }
 
+    for (const { templateIndex, template, templateName, groups } of preparedTemplates) {
       const templateOutputs: string[] = []
       if (this.engine.runTemplateBatch) {
         const realtimeCompletedGroupIndexes = new Set<number>()
@@ -208,7 +223,7 @@ export class PhotoshopMultiBatchRunner {
           message: `开始处理模板：${templateName}`,
         })
         const result = await this.engine.runTemplateBatch(
-          templateWithClipAreas,
+          template,
           groups,
           config.maxRetries ?? 0,
           {
@@ -301,21 +316,6 @@ export class PhotoshopMultiBatchRunner {
             stage: 'cancelled',
             template_name: templateName,
             message: '用户取消任务，当前模板批处理已在组边界停止',
-          })
-          await this.emitProgress({
-            task_id: config.taskId,
-            total_groups: groupsTotal,
-            completed: groupsCompleted - skipped,
-            failed,
-            skipped,
-            current_group: null,
-            current_stage: 'cancelled',
-            verified_outputs: verifiedOutputs,
-            template_index: templateIndex,
-            template_total: templatePaths.length,
-            template_name: templateName,
-            group_total: groups.length,
-            groups_completed: groupsCompleted,
           })
           break
         }
