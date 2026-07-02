@@ -105,6 +105,7 @@ type PipelineImage = {
   artifactId?: string
   printId?: string
   printSkuId?: string
+  prompt?: string
 }
 
 type PipelineVisibleFilenameFields = {
@@ -573,6 +574,7 @@ function imagesFromGeneration(result: GenerationRunResult): PipelineImage[] {
             path: image.localPath,
             ...(image.artifactId ? { artifactId: image.artifactId } : {}),
             ...(image.printId ? { printId: image.printId } : {}),
+            ...(image.prompt ? { prompt: image.prompt } : {}),
           },
         ]
       : [],
@@ -608,6 +610,7 @@ function resultImageFromPipelineImage(
     ...resultImageFromPath(stepKey, label, image.path, index),
     ...(image.artifactId ? { artifact_id: image.artifactId } : {}),
     ...(image.printId ? { print_id: image.printId } : {}),
+    ...(image.prompt ? { prompt: image.prompt } : {}),
   }
 }
 
@@ -2479,6 +2482,7 @@ export class PipelineService {
           path: item.path,
           ...(item.artifactId ? { artifactId: item.artifactId } : {}),
           ...(item.printId ? { printId: item.printId } : {}),
+          ...(item.prompt ? { prompt: item.prompt } : {}),
         })
       }
     })()
@@ -2499,6 +2503,7 @@ export class PipelineService {
             path: payload.path,
             ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
             ...(payload.printId ? { printId: payload.printId } : {}),
+            ...(payload.prompt ? { prompt: payload.prompt } : {}),
           }
           sourceItems.push(image)
           if (config.source.mode !== 'collection') {
@@ -3025,6 +3030,7 @@ export class PipelineService {
                       path: payload.path,
                       artifactId: payload.artifactId,
                       printId: payload.printId,
+                      prompt: payload.prompt,
                       sourceArtifactIds: payload.sourceArtifactIds,
                     })
                   },
@@ -3069,6 +3075,7 @@ export class PipelineService {
                 path: payload.path,
                 artifactId: payload.artifactId,
                 printId: payload.printId,
+                prompt: payload.prompt,
                 sourceArtifactIds: payload.sourceArtifactIds,
               })
             },
@@ -3120,6 +3127,7 @@ export class PipelineService {
                     path: payload.path,
                     artifactId: payload.artifactId,
                     printId: payload.printId,
+                    prompt: payload.prompt,
                     sourceArtifactIds: payload.sourceArtifactIds,
                   })
                 },
@@ -3184,6 +3192,7 @@ export class PipelineService {
                 path: payload.path,
                 artifactId: payload.artifactId,
                 printId: payload.printId,
+                prompt: payload.prompt,
                 sourceArtifactIds: payload.sourceArtifactIds,
               })
             },
@@ -3394,11 +3403,13 @@ export class PipelineService {
               ? sourceItemByArtifactId.get(sourceArtifactId)
               : undefined
             const itemKey = payload.printId ?? sourceItem?.itemKey ?? `extract-${completed + 1}`
+            const prompt = payload.prompt ?? sourceItem?.prompt
             completed += 1
             outputItems.push({
               path: payload.path,
               ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
               ...(payload.printId ? { printId: payload.printId } : {}),
+              ...(prompt ? { prompt } : {}),
             })
             stats.prints = completed
             service.upsertPipelineItem(db, {
@@ -3426,6 +3437,7 @@ export class PipelineService {
               path: payload.path,
               artifactId: payload.artifactId,
               printId: payload.printId,
+              prompt,
               sourceArtifactIds: payload.sourceArtifactIds,
             })
           },
@@ -3578,24 +3590,21 @@ export class PipelineService {
                 throw new AppErrorClass('HTTP_4XX', '混合抠图需要选择 ComfyUI 工作流', false)
               }
               const taskId = `${context.runId}-matting-${item.itemKey}`
-              result = await service.withGenerationCancel(
-                active,
-                taskId,
-                () =>
-                  queue.runExclusive(() =>
-                    runMixedMattingBatch(
-                      {
-                        sourceImagePaths: [item.path],
-                        workflowId,
-                        taskId,
-                        outputTaskName: context.taskName,
-                        filenameStartIndex: outputIndex,
-                        ...visibleFilenameFields,
-                        ...mattingOptionalFields(context.config.matting),
-                      },
-                      {},
-                    ),
+              result = await service.withGenerationCancel(active, taskId, () =>
+                queue.runExclusive(() =>
+                  runMixedMattingBatch(
+                    {
+                      sourceImagePaths: [item.path],
+                      workflowId,
+                      taskId,
+                      outputTaskName: context.taskName,
+                      filenameStartIndex: outputIndex,
+                      ...visibleFilenameFields,
+                      ...mattingOptionalFields(context.config.matting),
+                    },
+                    {},
                   ),
+                ),
               )
             } else {
               const workflowId = context.config.matting.workflowId
@@ -3603,24 +3612,21 @@ export class PipelineService {
                 throw new AppErrorClass('HTTP_4XX', '抠图需要选择 ComfyUI 工作流', false)
               }
               const taskId = `${context.runId}-matting-${item.itemKey}`
-              result = await service.withGenerationCancel(
-                active,
-                taskId,
-                () =>
-                  queue.runExclusive(() =>
-                    runComfyuiMattingBatch(
-                      {
-                        sourceImagePaths: [item.path],
-                        workflowId,
-                        taskId,
-                        outputTaskName: context.taskName,
-                        filenameStartIndex: outputIndex,
-                        ...visibleFilenameFields,
-                        ...mattingOptionalFields(context.config.matting),
-                      },
-                      {},
-                    ),
+              result = await service.withGenerationCancel(active, taskId, () =>
+                queue.runExclusive(() =>
+                  runComfyuiMattingBatch(
+                    {
+                      sourceImagePaths: [item.path],
+                      workflowId,
+                      taskId,
+                      outputTaskName: context.taskName,
+                      filenameStartIndex: outputIndex,
+                      ...visibleFilenameFields,
+                      ...mattingOptionalFields(context.config.matting),
+                    },
+                    {},
                   ),
+                ),
               )
             }
             const output = usableGenerationImages(result, '抠图')[0]
@@ -3629,7 +3635,15 @@ export class PipelineService {
             }
             completed += 1
             outputIndex += result.succeeded
-            outputItems.push(output)
+            const outputWithPrompt: PipelineImage = {
+              ...output,
+              ...(item.prompt
+                ? { prompt: item.prompt }
+                : output.prompt
+                  ? { prompt: output.prompt }
+                  : {}),
+            }
+            outputItems.push(outputWithPrompt)
             stats.prints = completed
             service.upsertPipelineItem(db, {
               runId: context.runId,
@@ -3657,6 +3671,7 @@ export class PipelineService {
               path: output.path,
               artifactId: output.artifactId,
               printId: output.printId,
+              prompt: outputWithPrompt.prompt,
               sourceArtifactIds: item.sourceArtifactIds,
             } satisfies PipelinePrintStreamItem
           } catch (error) {

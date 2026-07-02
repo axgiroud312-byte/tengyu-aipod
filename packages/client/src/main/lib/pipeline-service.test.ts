@@ -30,6 +30,7 @@ type GenerationBatchDependencies = {
     path: string
     printId: string
     artifactId?: string
+    prompt?: string
     sourceArtifactIds: string[]
   }) => void | Promise<void>
 }
@@ -2200,6 +2201,7 @@ describe('PipelineService', () => {
           path: join(mocks.workbenchRoot, 'stream-source-1.png'),
           printId: 'pri-stream-source-1',
           artifactId: 'art-stream-source-1',
+          prompt: 'p1',
           sourceArtifactIds: [],
         })
         return finishSource.promise
@@ -2304,9 +2306,13 @@ describe('PipelineService', () => {
       detail.result_sections?.find((section) => section.key === 'source_images')?.items[0]
         ?.local_path,
     ).toBe(join(mocks.workbenchRoot, 'stream-source-1.png'))
+    expect(
+      detail.result_sections?.find((section) => section.key === 'source_images')?.items[0]?.prompt,
+    ).toBe('p1')
     expect(imageProcessingSection(detail)?.items[0]?.local_path).toBe(
       join(mocks.workbenchRoot, 'stream-matted-1.png'),
     )
+    expect(imageProcessingSection(detail)?.items[0]?.prompt).toBe('p1')
   })
 
   it('serializes source and matting on the same ComfyUI instance instead of failing with a lock conflict', async () => {

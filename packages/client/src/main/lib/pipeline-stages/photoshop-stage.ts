@@ -71,18 +71,26 @@ function outputRoot(workbenchRoot: string, config: PipelinePhotoshopConfig) {
   return config.outputRoot || join(workbenchRoot, WORKBENCH_DIRECTORIES.listing)
 }
 
-function buildResultImage(group: PhotoshopResultGroup, outputPath: string): PipelineResultImage {
+function buildResultImage(
+  group: PhotoshopResultGroup,
+  outputPath: string,
+  prompt?: string | undefined,
+): PipelineResultImage {
   return {
     id: `photoshop-${group.template_name}-${group.sku_folder}-${basename(outputPath)}`,
     status: 'success',
     step_key: 'photoshop',
     label: `${group.template_name} / ${group.sku_folder}`,
     local_path: outputPath,
+    ...(prompt ? { prompt } : {}),
   }
 }
 
-function buildResultGroup(group: PhotoshopResultGroup): PipelineResultGroup {
-  const items = group.outputs.map((outputPath) => buildResultImage(group, outputPath))
+function buildResultGroup(
+  group: PhotoshopResultGroup,
+  prompt?: string | undefined,
+): PipelineResultGroup {
+  const items = group.outputs.map((outputPath) => buildResultImage(group, outputPath, prompt))
   const coverPath = group.outputs[0]
   const folderPath = coverPath ? dirname(coverPath) : undefined
   return {
@@ -122,6 +130,7 @@ function streamItemFromOutput(input: {
   path: string
   artifactId?: string | undefined
   printId?: string | undefined
+  prompt?: string | undefined
   sourceArtifactIds: string[]
 }): PipelinePrintStreamItem {
   return {
@@ -130,6 +139,7 @@ function streamItemFromOutput(input: {
     sourceArtifactIds: input.sourceArtifactIds,
     ...(input.artifactId ? { artifactId: input.artifactId } : {}),
     ...(input.printId ? { printId: input.printId } : {}),
+    ...(input.prompt ? { prompt: input.prompt } : {}),
   }
 }
 
@@ -346,7 +356,7 @@ export function createPhotoshopStage(
                 sourceArtifactIds: item.sourceArtifactIds,
                 completed: true,
               })
-              const resultGroup = buildResultGroup(group)
+              const resultGroup = buildResultGroup(group, item.prompt)
               outputGroups.push(resultGroup)
               outputItems.push(...resultGroup.items)
               refreshSection(failed)
@@ -366,6 +376,7 @@ export function createPhotoshopStage(
                 sourceArtifactIds: item.sourceArtifactIds,
                 ...(item.artifactId ? { artifactId: item.artifactId } : {}),
                 ...(item.printId ? { printId: item.printId } : {}),
+                ...(item.prompt ? { prompt: item.prompt } : {}),
               })
             } catch (error) {
               failed += 1

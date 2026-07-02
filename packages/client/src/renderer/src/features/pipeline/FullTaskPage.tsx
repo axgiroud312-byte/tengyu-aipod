@@ -676,12 +676,22 @@ function pipelineResultLightboxItem(image: PipelineResultImage): ImageLightboxIt
           }`,
         }
       : {}),
-    ...(image.reason
+    ...(image.prompt || image.reason
       ? {
           note: (
-            <div>
-              <p className="text-xs font-medium text-muted-foreground">判断原因</p>
-              <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{image.reason}</p>
+            <div className="space-y-3">
+              {image.prompt ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">提示词</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{image.prompt}</p>
+                </div>
+              ) : null}
+              {image.reason ? (
+                <div>
+                  <p className="text-xs font-medium text-muted-foreground">判断原因</p>
+                  <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">{image.reason}</p>
+                </div>
+              ) : null}
             </div>
           ),
         }
@@ -695,7 +705,6 @@ function pipelineResultLightboxItem(image: PipelineResultImage): ImageLightboxIt
       ...(image.risk_score === undefined ? [] : [{ label: '风险值', value: image.risk_score }]),
       ...(image.local_path ? [{ label: '图片路径', value: image.local_path, mono: true }] : []),
       ...(image.source_path ? [{ label: '来源路径', value: image.source_path, mono: true }] : []),
-      ...(image.prompt ? [{ label: '提示词', value: image.prompt, preserve: true }] : []),
     ],
   }
 }

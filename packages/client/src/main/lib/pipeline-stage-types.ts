@@ -10,6 +10,7 @@ export type PipelineStreamItem = {
   path: string
   artifactId?: string | undefined
   printId?: string | undefined
+  prompt?: string | undefined
   sourceArtifactIds: string[]
 }
 

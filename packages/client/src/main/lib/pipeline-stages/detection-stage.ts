@@ -242,7 +242,10 @@ export function createDetectionStage(
           }
 
           const allowed = shouldPipelineDetectionAllow(detectionItem.riskLevel, allowReview)
-          const image = resultImageFromDetection(detectionItem, allowed, queued - 1)
+          const image = {
+            ...resultImageFromDetection(detectionItem, allowed, queued - 1),
+            ...(item.prompt ? { prompt: item.prompt } : {}),
+          }
           if (allowed) {
             if (detectionItem.riskLevel === 'review') {
               review += 1
@@ -269,6 +272,7 @@ export function createDetectionStage(
               path: detectionItem.outputPath,
               artifactId: detectionItem.artifactId,
               printId: detectionItem.printId,
+              prompt: item.prompt,
               sourceArtifactIds: item.sourceArtifactIds,
             } satisfies PipelinePrintStreamItem
             continue

@@ -154,6 +154,7 @@ export type GenerationImageCompletePayload = {
   path: string
   printId: string
   artifactId?: string | undefined
+  prompt?: string | undefined
   sourceArtifactIds: string[]
 }
 
@@ -761,7 +762,8 @@ async function selectedComfyuiInstance(
   }
 
   const savedComfyuiUrl = savedComfyuiUrlForInstance(db, instanceUuid)
-  const comfyuiUrl = comfyuiUrlCandidates(info.server_map, info.server_url)[0]?.url ?? savedComfyuiUrl
+  const comfyuiUrl =
+    comfyuiUrlCandidates(info.server_map, info.server_url)[0]?.url ?? savedComfyuiUrl
   if (!comfyuiUrl) {
     throw new AppErrorClass(
       'HTTP_4XX',
@@ -2735,6 +2737,7 @@ async function runTxt2imgTask(
                 path: targetPath,
                 printId: artifact.printId,
                 artifactId: artifact.artifactId,
+                prompt,
                 sourceArtifactIds: [],
               })
             }
@@ -2938,6 +2941,7 @@ export async function runExtractBatch(
                 path: targetPath,
                 printId: artifact.printId,
                 artifactId: artifact.artifactId,
+                prompt,
                 sourceArtifactIds: [sourceIdentity.artifactId],
               })
             }
@@ -3107,6 +3111,7 @@ export async function runComfyuiExtractBatch(
               path: localPathFromGeneratedImage(image),
               printId: completedImage.printId ?? sourceIdentity.printId,
               artifactId: completedImage.artifactId,
+              prompt: completedImage.prompt,
               sourceArtifactIds: [sourceIdentity.artifactId],
             })
           }
@@ -3327,6 +3332,7 @@ export async function runComfyuiExtractMattingBatch(
             path: localPathFromGeneratedImage(finalImage),
             printId: completedImage.printId ?? sourceIdentity.printId,
             artifactId: completedImage.artifactId,
+            prompt: completedImage.prompt,
             sourceArtifactIds: [sourceIdentity.artifactId],
           })
         } catch (error) {
@@ -3479,6 +3485,7 @@ export async function runComfyuiMattingBatch(
               path: localPathFromGeneratedImage(image),
               printId: completedImage.printId ?? source.printId,
               artifactId: completedImage.artifactId,
+              prompt: completedImage.prompt,
               sourceArtifactIds: [artifactId],
             })
           }
@@ -3695,6 +3702,7 @@ export async function runMixedMattingBatch(
               path: localPathFromGeneratedImage(image),
               printId: completedImage.printId ?? source.printId,
               artifactId: completedImage.artifactId,
+              prompt: completedImage.prompt,
               sourceArtifactIds: [artifactId],
             })
           }
@@ -3857,6 +3865,7 @@ export async function runComfyuiTxt2imgBatch(
                   path: localPathFromGeneratedImage(image),
                   printId,
                   artifactId: completedImage.artifactId,
+                  prompt: completedImage.prompt,
                   sourceArtifactIds: [],
                 })
               }
@@ -4031,6 +4040,7 @@ export async function runComfyuiImg2imgBatch(
               path: localPathFromGeneratedImage(image),
               printId: completedImage.printId ?? source.printId,
               artifactId: completedImage.artifactId,
+              prompt: completedImage.prompt,
               sourceArtifactIds: [artifactId],
             })
           }
