@@ -28,11 +28,11 @@ function section(
 function config(input: Partial<PipelineRunConfig>): PipelineRunConfig {
   return {
     printMode: 'local',
-    source: { mode: 'txt2img', provider: 'grsai', promptCount: 2 },
-    matting: { enabled: false },
+    source: { mode: 'txt2img', provider: 'grsai', prompt: { mode: 'manual', count: 2 } },
+    matting: { enabled: false, mode: 'comfyui' },
     detection: { enabled: false },
     photoshop: { enabled: false, templates: [] },
-    title: { enabled: false },
+    title: { enabled: false, platform: 'temu', language: 'en', model: 'qwen3.6-flash' },
     ...input,
   } as PipelineRunConfig
 }
@@ -117,11 +117,11 @@ describe('pipeline result preview helpers', () => {
   it('does not emit stats for disabled stages', () => {
     const stats = pipelineResultStats(
       config({
-        source: { mode: 'img2img', provider: 'grsai', promptCount: 2 },
-        matting: { enabled: false },
+        source: { mode: 'img2img', provider: 'grsai', prompt: { mode: 'manual', count: 2 } },
+        matting: { enabled: false, mode: 'comfyui' },
         detection: { enabled: false },
         photoshop: { enabled: true, templates: ['front.psd'] },
-        title: { enabled: false },
+        title: { enabled: false, platform: 'temu', language: 'en', model: 'qwen3.6-flash' },
       }),
       progress([]),
     )
@@ -133,23 +133,33 @@ describe('pipeline result preview helpers', () => {
   it('labels source metric by source mode', () => {
     expect(
       sourceMetricLabel(
-        config({ source: { mode: 'txt2img', provider: 'grsai', promptCount: 1 } }),
+        config({
+          source: { mode: 'txt2img', provider: 'grsai', prompt: { mode: 'manual', count: 1 } },
+        }),
       ),
     ).toBe('文生图产出')
     expect(
       sourceMetricLabel(
-        config({ source: { mode: 'img2img', provider: 'grsai', promptCount: 1 } }),
+        config({
+          source: { mode: 'img2img', provider: 'grsai', prompt: { mode: 'manual', count: 1 } },
+        }),
       ),
     ).toBe('图生图产出')
     expect(
       sourceMetricLabel(
-        config({ source: { mode: 'collection', folder: 'C:\\source', extractProvider: 'grsai' } }),
+        config({
+          source: {
+            mode: 'collection',
+            sourceFolder: 'C:\\source',
+            extract: { provider: 'grsai' },
+          },
+        }),
       ),
     ).toBe('提取印花')
     expect(
       sourceMetricLabel(
         config({
-          source: { mode: 'existing_prints', folder: 'C:\\prints', startStep: 'photoshop' },
+          source: { mode: 'existing_prints', printFolder: 'C:\\prints', startStep: 'photoshop' },
         }),
       ),
     ).toBe('已有印花')
