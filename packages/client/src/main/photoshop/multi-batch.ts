@@ -261,6 +261,12 @@ export class PhotoshopMultiBatchRunner {
                 group_index: group.group_index,
                 group_total: groups.length,
                 groups_completed: groupsCompleted,
+                result_group: batchOutputGroup(
+                  template,
+                  group,
+                  group.job.output_paths,
+                  'completed',
+                ),
               })
             },
           },
@@ -281,7 +287,13 @@ export class PhotoshopMultiBatchRunner {
             skipped += 1
           }
           const groupOutputs = groupResult.outputs
-          resultGroups.push(batchOutputGroup(template, group, groupOutputs))
+          const resultGroup = batchOutputGroup(
+            template,
+            group,
+            groupOutputs,
+            groupResult.skipped ? 'skipped' : 'completed',
+          )
+          resultGroups.push(resultGroup)
           if (!alreadyEmitted) {
             await this.emitProgress({
               task_id: config.taskId,
@@ -298,6 +310,7 @@ export class PhotoshopMultiBatchRunner {
               group_index: group.group_index,
               group_total: groups.length,
               groups_completed: groupsCompleted,
+              result_group: resultGroup,
             })
           }
         }
@@ -371,7 +384,13 @@ export class PhotoshopMultiBatchRunner {
           verifiedOutputs += result.outputs.length
           templateOutputs.push(...result.outputs)
           allOutputs.push(...result.outputs)
-          resultGroups.push(batchOutputGroup(template, group, result.outputs))
+          const resultGroup = batchOutputGroup(
+            template,
+            group,
+            result.outputs,
+            result.skipped ? 'skipped' : 'completed',
+          )
+          resultGroups.push(resultGroup)
           for (const output of result.outputs) {
             logger?.write({
               ts: Date.now(),
@@ -403,6 +422,7 @@ export class PhotoshopMultiBatchRunner {
             group_index: group.group_index,
             group_total: groups.length,
             groups_completed: groupsCompleted,
+            result_group: resultGroup,
           })
         } catch (error) {
           failed += 1
@@ -481,6 +501,7 @@ function batchOutputGroup(
   template: PsdTemplate,
   group: PhotoshopTaskGroup,
   outputs: string[],
+  status: PhotoshopBatchOutputGroup['status'],
 ): PhotoshopBatchOutputGroup {
   return {
     template_id: template.id,
@@ -489,5 +510,6 @@ function batchOutputGroup(
     sku_folder: group.sku_folder,
     print_ids: group.print_assets.map((asset) => asset.id),
     outputs,
+    status,
   }
 }

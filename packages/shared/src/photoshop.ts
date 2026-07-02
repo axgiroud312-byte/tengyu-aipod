@@ -143,6 +143,7 @@ export interface PhotoshopProgressInfo {
   group_index?: number
   group_total?: number
   groups_completed?: number
+  result_group?: PhotoshopBatchOutputGroup
 }
 
 export interface PhotoshopProgressLogEntry {
@@ -190,6 +191,7 @@ export interface PhotoshopBatchOutputGroup {
   sku_folder: string
   print_ids: string[]
   outputs: string[]
+  status: 'completed' | 'skipped'
 }
 
 export interface PhotoshopBatchResult {

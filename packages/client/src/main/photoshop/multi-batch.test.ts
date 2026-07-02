@@ -280,6 +280,7 @@ describe('PhotoshopMultiBatchRunner', () => {
         sku_folder: 'img2',
         print_ids: ['img2'],
         outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img2/template/01.jpg'],
+        status: 'completed',
       },
       {
         template_id: 'tpl-1',
@@ -288,6 +289,7 @@ describe('PhotoshopMultiBatchRunner', () => {
         sku_folder: 'img10',
         print_ids: ['img10'],
         outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img10/template/01.jpg'],
+        status: 'completed',
       },
     ])
   })
@@ -299,6 +301,8 @@ describe('PhotoshopMultiBatchRunner', () => {
       group: number | undefined
       completed: number
       verifiedOutputs: number
+      resultGroupSku?: string | undefined
+      resultGroupOutputs?: string[] | undefined
     }> = []
     let completedProgressBeforeReturn = 0
 
@@ -347,6 +351,8 @@ describe('PhotoshopMultiBatchRunner', () => {
             group: item.group_index,
             completed: item.completed,
             verifiedOutputs: item.verified_outputs,
+            resultGroupSku: item.result_group?.sku_folder,
+            resultGroupOutputs: item.result_group?.outputs,
           })
         },
         progressLogger: null,
@@ -354,6 +360,12 @@ describe('PhotoshopMultiBatchRunner', () => {
     )
 
     expect(completedProgressBeforeReturn).toBe(1)
+    expect(
+      progress.find((item) => item.group === 0 && item.stage === 'group_complete'),
+    ).toMatchObject({
+      resultGroupSku: 'img2',
+      resultGroupOutputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/template/img2/01.jpg'],
+    })
     expect(
       progress.filter((item) => item.stage === 'group_complete').map((item) => item.group),
     ).toEqual([0, 1])
@@ -417,6 +429,7 @@ describe('PhotoshopMultiBatchRunner', () => {
         sku_folder: 'img2',
         print_ids: ['img2'],
         outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img2/template/01.jpg'],
+        status: 'completed',
       },
     ])
     expect(progressStages.filter((stage) => stage === 'cancelled')).toHaveLength(1)

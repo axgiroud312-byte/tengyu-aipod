@@ -2,6 +2,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type {
+  PhotoshopBatchOutputGroup,
   PhotoshopBatchResult,
   PhotoshopOutputLayout,
   PhotoshopProgressInfo,
@@ -19,9 +20,15 @@ import {
   Settings2,
   Terminal,
 } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PhotoshopPrintFolderScan } from '../../../../main/photoshop/print-folder'
 import { formatPhotoshopDebugLogLine, photoshopDebugLogLevelCounts } from './photoshop-debug-log'
+import {
+  type PhotoshopResultFilter,
+  filterPhotoshopSkuCards,
+  mergePhotoshopResultGroup,
+  photoshopSkuCards,
+} from './photoshop-result-groups'
 
 function statusLabel(status: PhotoshopStatus | null) {
   if (!status) {
@@ -106,7 +113,7 @@ const resultFilters = [
   { key: 'done', label: '完成' },
   { key: 'failed', label: '失败' },
   { key: 'skipped', label: '跳过' },
-] as const
+] as const satisfies Array<{ key: PhotoshopResultFilter; label: string }>
 
 function PhotoshopStatusBar() {
   const [status, setStatus] = useState<PhotoshopStatus | null>(null)
@@ -170,11 +177,13 @@ export function PhotoshopPage() {
   const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
   const [format, setFormat] = useState<'jpg' | 'png'>('jpg')
   const [maxRetries, setMaxRetries] = useState(1)
-  const [resultFilter, setResultFilter] = useState<(typeof resultFilters)[number]['key']>('all')
+  const [resultFilter, setResultFilter] = useState<PhotoshopResultFilter>('all')
   const [progress, setProgress] = useState<PhotoshopProgressInfo | null>(null)
   const [debugLogs, setDebugLogs] = useState<PhotoshopProgressLogEntry[]>([])
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
   const [batchResult, setBatchResult] = useState<PhotoshopBatchResult | null>(null)
+  const [resultGroups, setResultGroups] = useState<PhotoshopBatchOutputGroup[]>([])
+  const [selectedSkuFolder, setSelectedSkuFolder] = useState<string | null>(null)
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null)
   const [scannedTemplates, setScannedTemplates] = useState<PsdTemplate[]>([])
   const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
@@ -198,11 +207,24 @@ export function PhotoshopPage() {
     (count, item) => count + item.clip_areas.length,
     0,
   )
+  const skuCards = useMemo(() => photoshopSkuCards(resultGroups), [resultGroups])
+  const filteredSkuCards = useMemo(
+    () => filterPhotoshopSkuCards(skuCards, resultFilter),
+    [resultFilter, skuCards],
+  )
+  const selectedSkuCard = useMemo(
+    () => skuCards.find((card) => card.skuFolder === selectedSkuFolder) ?? null,
+    [selectedSkuFolder, skuCards],
+  )
 
   useEffect(() => {
     return window.api.photoshop.onProgress((nextProgress) => {
       setProgress(nextProgress)
       setCurrentTaskId(nextProgress.task_id)
+      const resultGroup = nextProgress.result_group
+      if (resultGroup) {
+        setResultGroups((current) => mergePhotoshopResultGroup(current, resultGroup))
+      }
     })
   }, [])
 
@@ -304,6 +326,8 @@ export function PhotoshopPage() {
     setMessage('正在执行套版...')
     setDebugLogs([])
     setBatchResult(null)
+    setResultGroups([])
+    setSelectedSkuFolder(null)
     setCurrentTaskId(null)
     setProgress({
       task_id: 'pending',
@@ -333,6 +357,7 @@ export function PhotoshopPage() {
         output_root: outputDir,
       })
       setBatchResult(result)
+      setResultGroups(result.result_groups)
       setCurrentTaskId(result.task_id)
       setMessage(
         result.cancelled
@@ -737,49 +762,37 @@ export function PhotoshopPage() {
           </div>
         </div>
         <div className="mt-4 flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/40 p-6 text-center">
-          {batchResult?.result_groups.length ? (
+          {skuCards.length ? (
             <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {batchResult.result_groups.map((group) => (
-                <div
-                  className="rounded-md border bg-background p-3 text-left shadow-sm"
-                  key={`${group.template_id}-${group.group_index}-${group.sku_folder}`}
-                >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="truncate text-sm font-semibold">{group.sku_folder}</p>
-                      <p className="truncate text-xs text-muted-foreground">
-                        {group.template_name} · {group.print_ids.join(', ')}
-                      </p>
+              {filteredSkuCards.length ? (
+                filteredSkuCards.map((card) => (
+                  <button
+                    className="rounded-md border bg-background p-3 text-left shadow-sm transition hover:border-primary/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                    key={card.skuFolder}
+                    onClick={() => setSelectedSkuFolder(card.skuFolder)}
+                    type="button"
+                  >
+                    <img
+                      alt={card.skuFolder}
+                      className="aspect-[4/3] w-full rounded border bg-muted object-cover"
+                      src={localImageUrl(card.coverPath)}
+                    />
+                    <div className="mt-3 flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-semibold">{card.skuFolder}</p>
+                        <p className="mt-1 truncate text-xs text-muted-foreground">
+                          {card.templates.join('，')} · {card.imageCount} 张
+                        </p>
+                      </div>
+                      <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
                     </div>
-                    <Button
-                      className="h-8 px-2"
-                      onClick={() =>
-                        void window.api.photoshop.openPath(group.outputs[0] ?? outputDir)
-                      }
-                      type="button"
-                      variant="secondary"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                  <div className="mt-3 grid grid-cols-3 gap-2">
-                    {group.outputs.map((output) => (
-                      <button
-                        className="aspect-square overflow-hidden rounded border bg-muted"
-                        key={output}
-                        onDoubleClick={() => void window.api.photoshop.openPath(output)}
-                        type="button"
-                      >
-                        <img
-                          alt=""
-                          className="h-full w-full object-cover"
-                          src={localImageUrl(output)}
-                        />
-                      </button>
-                    ))}
-                  </div>
+                  </button>
+                ))
+              ) : (
+                <div className="col-span-full rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+                  当前筛选下没有可展示的货号文件夹
                 </div>
-              ))}
+              )}
             </div>
           ) : (
             <div className="max-w-sm">
@@ -790,6 +803,55 @@ export function PhotoshopPage() {
           )}
         </div>
       </section>
+
+      <Dialog
+        onOpenChange={(open) => {
+          if (!open) {
+            setSelectedSkuFolder(null)
+          }
+        }}
+        open={Boolean(selectedSkuCard)}
+      >
+        <DialogContent className="max-w-5xl">
+          <DialogHeader>
+            <div className="flex flex-wrap items-center justify-between gap-3 pr-8">
+              <DialogTitle>{selectedSkuCard?.skuFolder ?? '货号图片'}</DialogTitle>
+              <Button
+                className="h-8 px-3"
+                disabled={!selectedSkuCard?.folderPath}
+                onClick={() =>
+                  selectedSkuCard?.folderPath &&
+                  void window.api.photoshop.openPath(selectedSkuCard.folderPath)
+                }
+                type="button"
+                variant="secondary"
+              >
+                <FolderOpen className="mr-2 h-4 w-4" />
+                打开文件夹
+              </Button>
+            </div>
+          </DialogHeader>
+          <ScrollArea className="max-h-[min(70vh,620px)]">
+            <div className="grid gap-3 p-1 sm:grid-cols-2 lg:grid-cols-3">
+              {selectedSkuCard?.outputs.map((output) => (
+                <button
+                  className="rounded-md border bg-muted/30 p-2 text-left transition hover:shadow-sm"
+                  key={output}
+                  onDoubleClick={() => void window.api.photoshop.openPath(output)}
+                  type="button"
+                >
+                  <img
+                    alt=""
+                    className="aspect-square w-full rounded border bg-muted object-cover"
+                    src={localImageUrl(output)}
+                  />
+                  <p className="mt-2 truncate text-xs text-muted-foreground">{output}</p>
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+        </DialogContent>
+      </Dialog>
 
       <Dialog onOpenChange={setIsDebugLogOpen} open={isDebugLogOpen}>
         <DialogContent className="max-w-5xl gap-0 p-0">
