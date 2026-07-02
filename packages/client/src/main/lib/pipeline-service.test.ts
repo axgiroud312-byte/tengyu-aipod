@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import {
   type PhotoshopPrintAsset,
   type PhotoshopOutputLayout,
@@ -622,6 +622,100 @@ describe('PipelineService', () => {
       status: 'completed',
       output_count: 1,
     })
+  })
+
+  it('exposes complete task photoshop outputs as template and sku result groups', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'prints')
+    await mkdir(printFolder, { recursive: true })
+    await writeFile(join(printFolder, 'seed.png'), 'seed')
+
+    mocks.runBatch.mockImplementation(async (prints, templates, config) => {
+      const templatePath = Array.isArray(templates)
+        ? String(templates[0] ?? 'template.psd')
+        : 'template.psd'
+      const templateName = basename(templatePath, extname(templatePath))
+      const sku = prints[0]?.id ?? 'SKU-001'
+      const outputPath = join(config.outputRoot, templateName, sku, '01.jpg')
+      await mkdir(dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, 'mockup')
+      return {
+        ok: true,
+        task_id: config.taskId,
+        output_layout: config.outputLayout,
+        templates_total: 1,
+        groups_total: 1,
+        groups_completed: 1,
+        outputs: [outputPath],
+        templates: [
+          {
+            template_id: `tpl-${templateName}`,
+            template_name: templateName,
+            groups_total: 1,
+            groups_completed: 1,
+            outputs: [outputPath],
+          },
+        ],
+        result_groups: [
+          {
+            template_id: `tpl-${templateName}`,
+            template_name: templateName,
+            group_index: 0,
+            sku_folder: sku,
+            print_ids: [sku],
+            outputs: [outputPath],
+            status: 'completed' as const,
+          },
+        ],
+      }
+    })
+
+    const service = new PipelineService()
+    await service.runPipeline('run-photoshop-groups', {
+      ...baseConfig(printFolder),
+      printSkuCode: 'GZKJ',
+      source: existingPrintSource(printFolder, 'photoshop'),
+      matting: { ...baseConfig(printFolder).matting, enabled: false },
+      detection: { enabled: false },
+      photoshop: {
+        enabled: true,
+        templates: ['C:\\mockups\\front.psd', 'C:\\mockups\\back.psd'],
+        outputRoot: join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing),
+        replaceRange: 'auto',
+        clipMode: 'auto',
+        format: 'jpg',
+        skipCompleted: true,
+        maxRetries: 1,
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        enabled: false,
+      },
+    })
+    const progressEvents = mocks.sentEvents.filter((event) => event.channel === 'pipeline:progress')
+    const lastProgress = progressEvents.at(-1)?.payload as
+      | {
+          result_sections?: Array<{
+            key: string
+            groups?: Array<{
+              label: string
+              template_batch?: string
+              sku_code?: string
+              cover_path?: string
+              folder_path?: string
+              items: Array<{ local_path?: string }>
+            }>
+          }>
+        }
+      | undefined
+    const section = lastProgress?.result_sections?.find((item) => item.key === 'print_products')
+
+    expect(section?.groups?.map((group) => group.label).sort()).toEqual([
+      'back / GZKJ-0001',
+      'front / GZKJ-0001',
+    ])
+    expect(section?.groups?.every((group) => group.items.length === 1)).toBe(true)
+    expect(section?.groups?.every((group) => Boolean(group.cover_path))).toBe(true)
+    expect(section?.groups?.every((group) => Boolean(group.folder_path))).toBe(true)
   })
 
   it('cleans the Photoshop temp task directory after a successful Photoshop step', async () => {

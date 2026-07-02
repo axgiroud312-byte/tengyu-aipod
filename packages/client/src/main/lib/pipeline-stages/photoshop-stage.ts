@@ -1,9 +1,10 @@
 import { copyFile, mkdir, writeFile } from 'node:fs/promises'
-import { basename, extname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import {
   AppErrorClass,
   type PhotoshopBatchResult,
   type PipelinePhotoshopConfig,
+  type PipelineResultGroup,
   type PipelineResultImage,
   type PipelineResultSection,
   WORKBENCH_DIRECTORIES,
@@ -80,14 +81,36 @@ function buildResultImage(group: PhotoshopResultGroup, outputPath: string): Pipe
   }
 }
 
-function resultSection(items: PipelineResultImage[]): PipelineResultSection {
+function buildResultGroup(group: PhotoshopResultGroup): PipelineResultGroup {
+  const items = group.outputs.map((outputPath) => buildResultImage(group, outputPath))
+  const coverPath = group.outputs[0]
+  const folderPath = coverPath ? dirname(coverPath) : undefined
+  return {
+    id: `photoshop-group-${group.template_name}-${group.sku_folder}-${group.group_index}`,
+    label: `${group.template_name} / ${group.sku_folder}`,
+    subtitle: `${items.length} 张成品图`,
+    kind: 'folder',
+    ...(coverPath ? { cover_path: coverPath } : {}),
+    ...(folderPath ? { folder_path: folderPath } : {}),
+    template_batch: group.template_name,
+    sku_code: group.sku_folder,
+    items,
+  }
+}
+
+function resultSection(input: {
+  items: PipelineResultImage[]
+  groups: PipelineResultGroup[]
+  failed: number
+}): PipelineResultSection {
   return {
     key: 'print_products',
     title: '套版成品',
-    items,
-    total: items.length,
-    completed: items.length,
-    failed: 0,
+    items: input.items,
+    groups: input.groups,
+    total: input.groups.length,
+    completed: input.groups.length,
+    failed: input.failed,
     collapsible: true,
     default_collapsed: false,
     paginated: true,
@@ -203,10 +226,14 @@ export function createPhotoshopStage(
     }
 
     const outputItems: PipelineResultImage[] = []
+    const outputGroups: PipelineResultGroup[] = []
     const outputRootPath = outputRoot(dependencies.workbenchRoot, config)
 
-    const refreshSection = () => {
-      dependencies.updateResultSection(context.runId, resultSection(outputItems))
+    const refreshSection = (failed: number) => {
+      dependencies.updateResultSection(
+        context.runId,
+        resultSection({ items: outputItems, groups: outputGroups, failed }),
+      )
     }
 
     return async function* photoshopStage(input: AsyncIterable<PipelinePrintStreamItem>) {
@@ -319,10 +346,10 @@ export function createPhotoshopStage(
                 sourceArtifactIds: item.sourceArtifactIds,
                 completed: true,
               })
-              for (const outputPath of group.outputs) {
-                outputItems.push(buildResultImage(group, outputPath))
-              }
-              refreshSection()
+              const resultGroup = buildResultGroup(group)
+              outputGroups.push(resultGroup)
+              outputItems.push(...resultGroup.items)
+              refreshSection(failed)
               dependencies.db
                 .prepare(
                   `
@@ -400,7 +427,7 @@ export function createPhotoshopStage(
         }
       }
 
-      refreshSection()
+      refreshSection(failed)
       dependencies.db
         .prepare(
           `
