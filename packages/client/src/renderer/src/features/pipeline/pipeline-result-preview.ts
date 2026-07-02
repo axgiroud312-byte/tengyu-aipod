@@ -1,5 +1,6 @@
 import type {
   PipelineProgress,
+  PipelineResultGroup,
   PipelineResultImage,
   PipelineResultSection,
   PipelineRunConfig,
@@ -14,6 +15,14 @@ export type PipelineResultStat = {
   label: string
   value: string
   detail: string
+}
+
+export type PipelineSelectedResultPreview = {
+  groups: PipelineResultGroup[]
+  selectedGroup: PipelineResultGroup | null
+  images: PipelineResultImage[]
+  activeImage: PipelineResultImage | null
+  activeImageIndex: number
 }
 
 const FINAL_SECTION_BY_PRIORITY: Array<PipelineResultSection['key']> = [
@@ -50,6 +59,10 @@ function hasSuccessfulItems(section: PipelineResultSection | null) {
 
 function hasGroups(section: PipelineResultSection | null) {
   return Boolean(section?.groups?.length)
+}
+
+function imageCanPreview(image: PipelineResultImage) {
+  return Boolean(image.status === 'success' && (image.local_path || image.source_path || image.url))
 }
 
 export function finalPipelineResult(
@@ -94,6 +107,28 @@ export function sectionItemsForLightbox(section: PipelineResultSection): Pipelin
     return section.groups.flatMap((group) => group.items)
   }
   return section.items
+}
+
+export function selectedPipelineResultPreview(
+  section: PipelineResultSection | null,
+  selectedGroupId: string | null,
+  imageIndex: number,
+): PipelineSelectedResultPreview {
+  const groups = section?.groups ?? []
+  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? groups[0] ?? null
+  const images = selectedGroup
+    ? selectedGroup.items.filter(imageCanPreview)
+    : (section?.items ?? []).filter(imageCanPreview)
+  const maxIndex = Math.max(0, images.length - 1)
+  const activeImageIndex = Math.max(0, Math.min(maxIndex, imageIndex))
+
+  return {
+    groups,
+    selectedGroup,
+    images,
+    activeImage: images[activeImageIndex] ?? null,
+    activeImageIndex,
+  }
 }
 
 export function pipelineResultStats(

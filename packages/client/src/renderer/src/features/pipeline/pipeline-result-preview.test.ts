@@ -8,6 +8,7 @@ import {
   finalPipelineResult,
   pipelineResultStats,
   sectionItemsForLightbox,
+  selectedPipelineResultPreview,
   sourceMetricLabel,
 } from './pipeline-result-preview'
 
@@ -197,5 +198,77 @@ describe('pipeline result preview helpers', () => {
         local_path: 'C:\\a.jpg',
       },
     ])
+  })
+
+  it('selects one photoshop output folder without merging the same sku across templates', () => {
+    const printProducts = section({
+      key: 'print_products',
+      completed: 4,
+      total: 4,
+      groups: [
+        {
+          id: 'front/GZKJ-0001',
+          label: 'front / GZKJ-0001',
+          subtitle: '2 张',
+          kind: 'folder',
+          cover_path: 'C:\\out\\front\\GZKJ-0001\\01.jpg',
+          folder_path: 'C:\\out\\front\\GZKJ-0001',
+          template_batch: 'front',
+          sku_code: 'GZKJ-0001',
+          items: [
+            {
+              id: 'front-1',
+              status: 'success',
+              step_key: 'photoshop',
+              label: '01',
+              local_path: 'C:\\out\\front\\GZKJ-0001\\01.jpg',
+            },
+            {
+              id: 'front-2',
+              status: 'success',
+              step_key: 'photoshop',
+              label: '02',
+              local_path: 'C:\\out\\front\\GZKJ-0001\\02.jpg',
+            },
+          ],
+        },
+        {
+          id: 'back/GZKJ-0001',
+          label: 'back / GZKJ-0001',
+          subtitle: '2 张',
+          kind: 'folder',
+          cover_path: 'C:\\out\\back\\GZKJ-0001\\01.jpg',
+          folder_path: 'C:\\out\\back\\GZKJ-0001',
+          template_batch: 'back',
+          sku_code: 'GZKJ-0001',
+          items: [
+            {
+              id: 'back-1',
+              status: 'success',
+              step_key: 'photoshop',
+              label: '01',
+              local_path: 'C:\\out\\back\\GZKJ-0001\\01.jpg',
+            },
+            {
+              id: 'back-2',
+              status: 'success',
+              step_key: 'photoshop',
+              label: '02',
+              local_path: 'C:\\out\\back\\GZKJ-0001\\02.jpg',
+            },
+          ],
+        },
+      ],
+    })
+
+    const defaultPreview = selectedPipelineResultPreview(printProducts, null, 0)
+    const selectedPreview = selectedPipelineResultPreview(printProducts, 'back/GZKJ-0001', 1)
+
+    expect(defaultPreview.groups).toHaveLength(2)
+    expect(defaultPreview.selectedGroup?.id).toBe('front/GZKJ-0001')
+    expect(defaultPreview.images.map((item) => item.id)).toEqual(['front-1', 'front-2'])
+    expect(selectedPreview.selectedGroup?.id).toBe('back/GZKJ-0001')
+    expect(selectedPreview.activeImage?.id).toBe('back-2')
+    expect(selectedPreview.images.map((item) => item.id)).toEqual(['back-1', 'back-2'])
   })
 })

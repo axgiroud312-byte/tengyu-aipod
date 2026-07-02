@@ -19,6 +19,7 @@ import {
   finalPipelineResult,
   pipelineResultStats,
   sectionItemsForLightbox,
+  selectedPipelineResultPreview,
 } from '@/features/pipeline/pipeline-result-preview'
 import {
   type TitleExistingStrategy,
@@ -651,6 +652,10 @@ function pipelineResultImageSrc(image: PipelineResultImage) {
   return localPath ? localImageUrl(localPath) : (image.url ?? '')
 }
 
+function pipelineResultImageRawPath(image: PipelineResultImage | null) {
+  return image?.local_path ?? image?.source_path ?? image?.url ?? null
+}
+
 function pipelineResultLightboxItem(image: PipelineResultImage): ImageLightboxItem {
   const riskLabel =
     image.risk_level === 'pass'
@@ -796,24 +801,42 @@ function PipelineResultsPanel({
     items: ImageLightboxItem[]
     index: number
   } | null>(null)
+  const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
+  const [heroImageIndex, setHeroImageIndex] = useState(0)
   const finalResult = finalPipelineResult(config, progress)
   const stats = pipelineResultStats(config, progress)
   const selectedSection = finalResult?.section ?? null
-  const firstGroup = selectedSection?.groups?.[0] ?? null
-  const firstImage =
-    selectedSection?.items.find(
-      (item) => item.status === 'success' && pipelineResultImageSrc(item),
-    ) ?? null
+  const resultPreview = selectedPipelineResultPreview(
+    selectedSection,
+    selectedGroupId,
+    heroImageIndex,
+  )
+  const selectedGroup = resultPreview.selectedGroup
+  const selectedImage = resultPreview.activeImage
   const heroImagePath =
-    firstGroup?.cover_path ??
-    firstImage?.local_path ??
-    firstImage?.source_path ??
-    firstImage?.url ??
-    null
-  const heroTitle = firstGroup?.label ?? firstImage?.label ?? '等待结果'
+    pipelineResultImageRawPath(selectedImage) ?? selectedGroup?.cover_path ?? null
+  const heroTitle = selectedGroup?.label ?? selectedImage?.label ?? '等待结果'
+  const heroImageCountLabel = resultPreview.images.length
+    ? `${resultPreview.activeImageIndex + 1}/${resultPreview.images.length}`
+    : null
   const heroSubtitle =
-    firstGroup?.subtitle ??
+    (selectedGroup
+      ? [heroImageCountLabel, selectedGroup.subtitle].filter(Boolean).join(' · ')
+      : heroImageCountLabel) ??
     (selectedSection ? `${selectedSection.completed}/${selectedSection.total}` : message)
+  const selectedSectionKey = selectedSection?.key ?? ''
+  const selectedGroupIds = selectedSection?.groups?.map((group) => group.id).join('\u0000') ?? ''
+
+  useEffect(() => {
+    const availableGroupIds = selectedGroupIds ? selectedGroupIds.split('\u0000') : []
+    setSelectedGroupId((current) => {
+      if (!selectedSectionKey) {
+        return null
+      }
+      return current && availableGroupIds.includes(current) ? current : null
+    })
+    setHeroImageIndex(0)
+  }, [selectedSectionKey, selectedGroupIds])
 
   function toggleSection(key: string) {
     setCollapsed((current) => ({ ...current, [key]: !current[key] }))
@@ -836,15 +859,15 @@ function PipelineResultsPanel({
     setLightbox({ title: section.title, items, index: Math.max(0, index) })
   }
 
-  function openGroup(section: PipelineResultSection, groupIndex: number) {
-    const group = section.groups?.[groupIndex]
-    if (!group) {
-      return
-    }
-    const items = group.items
-      .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
-      .map(pipelineResultLightboxItem)
-    setLightbox({ title: group.label, items, index: 0 })
+  function selectGroup(groupId: string) {
+    setSelectedGroupId(groupId)
+    setHeroImageIndex(0)
+  }
+
+  function updateHeroImage(delta: number) {
+    setHeroImageIndex((current) =>
+      Math.max(0, Math.min(resultPreview.images.length - 1, current + delta)),
+    )
   }
 
   return (
@@ -878,6 +901,30 @@ function PipelineResultsPanel({
                 </div>
               </div>
             )}
+            {resultPreview.images.length > 1 ? (
+              <div className="pointer-events-none absolute inset-x-3 top-1/2 flex -translate-y-1/2 justify-between">
+                <Button
+                  aria-label="上一张"
+                  className="pointer-events-auto size-9 rounded-full bg-background/90 p-0 shadow-sm backdrop-blur"
+                  disabled={resultPreview.activeImageIndex <= 0}
+                  onClick={() => updateHeroImage(-1)}
+                  type="button"
+                  variant="secondary"
+                >
+                  <ChevronLeft className="size-4" />
+                </Button>
+                <Button
+                  aria-label="下一张"
+                  className="pointer-events-auto size-9 rounded-full bg-background/90 p-0 shadow-sm backdrop-blur"
+                  disabled={resultPreview.activeImageIndex >= resultPreview.images.length - 1}
+                  onClick={() => updateHeroImage(1)}
+                  type="button"
+                  variant="secondary"
+                >
+                  <ChevronRight className="size-4" />
+                </Button>
+              </div>
+            ) : null}
             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent p-4 text-white">
               <div className="truncate text-xl font-semibold">{heroTitle}</div>
               <div className="mt-1 truncate text-sm text-white/70">{heroSubtitle}</div>
@@ -898,23 +945,28 @@ function PipelineResultsPanel({
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {finalResult?.mode === 'groups'
-                      ? '生成一套显示一套，点击查看全部裁剪图。'
+                      ? '按模板批次和货号显示最终产物。'
                       : '展示当前任务最后阶段的产物。'}
                   </div>
                 </div>
               </div>
               <Badge variant="outline">
-                {selectedSection?.groups?.length ?? selectedSection?.completed ?? 0}
+                {resultPreview.groups.length || selectedSection?.completed || 0}
               </Badge>
             </div>
 
-            {selectedSection?.groups?.length ? (
+            {resultPreview.groups.length ? (
               <div className="grid max-h-[430px] grid-cols-2 gap-3 overflow-y-auto pr-1">
-                {selectedSection.groups.map((group, index) => (
+                {resultPreview.groups.map((group) => (
                   <button
-                    className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                    aria-pressed={group.id === selectedGroup?.id}
+                    className={`min-w-0 rounded-md border p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                      group.id === selectedGroup?.id
+                        ? 'border-primary bg-primary/10 shadow-sm'
+                        : 'bg-muted/20'
+                    }`}
                     key={group.id}
-                    onClick={() => openGroup(selectedSection, index)}
+                    onClick={() => selectGroup(group.id)}
                     type="button"
                   >
                     {group.cover_path ? (
