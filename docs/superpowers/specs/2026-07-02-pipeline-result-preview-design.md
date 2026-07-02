@@ -2,6 +2,13 @@
 
 日期：2026-07-02
 
+## 实现状态
+
+- 状态：已实现。
+- 相关提交：`d649d4d`、`8b8b8df`、`4f44702`、`e96f4cb`、`fb2abe0`、`68b659d`。
+- 验证：renderer helper 测试、pipeline service 测试、client type-check、client build、计划内文件 Biome 检查和 Electron 视觉脚本均已通过。
+- 已知限制：全仓 `pnpm -F @tengyu-aipod/client lint` 仍受未改文件既有 Biome 格式 / CRLF 问题影响，不属于本次结果预览改版范围。
+
 ## 背景
 
 完整任务页当前在结果预览、逐项状态下方展示“最近完整任务”。该区域占用了首屏后半段空间，但对当前演示和当前运行帮助有限。用户希望取消历史任务卡片，把空间用于当前完整任务的实时成果展示，让客户一眼看到 Workbench 的处理效率和最终产出。
