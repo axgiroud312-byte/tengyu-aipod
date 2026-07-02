@@ -29,4 +29,37 @@ describe('scanPhotoshopPrintFolder', () => {
       await rm(root, { recursive: true, force: true })
     }
   })
+
+  it('excludes removed print candidates from folder scans', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'photoshop-prints-'))
+    try {
+      const removedPath = join(root, '222-0001.png')
+      await writeFile(removedPath, 'png')
+      await writeFile(join(root, '222-0002.png'), 'png')
+
+      const result = await scanPhotoshopPrintFolder(root, {
+        excludeFilePaths: [removedPath],
+      })
+
+      expect(result.prints.map((item) => item.id)).toEqual(['222-0002'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('skips complete-task waiting mockup staging folders', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'photoshop-prints-'))
+    try {
+      await mkdir(join(root, '等待套版', 'run-1'), { recursive: true })
+      await mkdir(join(root, '文生图'), { recursive: true })
+      await writeFile(join(root, '等待套版', 'run-1', '222-0001.png'), 'png')
+      await writeFile(join(root, '文生图', 'pri_print.png'), 'png')
+
+      const result = await scanPhotoshopPrintFolder(root)
+
+      expect(result.prints.map((item) => item.id)).toEqual(['pri_print'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })

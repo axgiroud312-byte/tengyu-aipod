@@ -747,12 +747,13 @@ const api = {
       >,
     openPath: (path: string) =>
       ipcRenderer.invoke('photoshop:open-path', { path }) as Promise<{ ok: true }>,
-    scanPrintFolder: (input: { folder: string }) =>
+    scanPrintFolder: (input: { excluded_file_paths?: string[]; folder: string }) =>
       ipcRenderer.invoke('photoshop:scan-print-folder', input) as Promise<PhotoshopPrintFolderScan>,
     scanTemplate: (input: PhotoshopScanTemplateRequest) =>
       ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
     runBatch: (input: {
       print_folder: string
+      excluded_print_paths?: string[]
       templates: string[]
       replace_range: 'auto' | 'topmost' | 'top' | 'all'
       output_layout: PhotoshopOutputLayout

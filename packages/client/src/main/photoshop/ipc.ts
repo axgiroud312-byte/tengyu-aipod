@@ -23,10 +23,12 @@ const scanTemplateInputSchema = z.object({
 
 const scanPrintFolderInputSchema = z.object({
   folder: z.string().min(1),
+  excluded_file_paths: z.array(z.string().min(1)).default([]),
 })
 
 const runBatchInputSchema = z.object({
   print_folder: z.string().min(1),
+  excluded_print_paths: z.array(z.string().min(1)).default([]),
   templates: z.array(z.string().min(1)).min(1),
   replace_range: z.enum(['auto', 'topmost', 'top', 'all']).default('topmost'),
   output_layout: z.enum(['template_first', 'sku_first', 'sku_flat']).default('sku_flat'),
@@ -131,7 +133,9 @@ export function registerPhotoshopIpc(): void {
       domain: 'generation',
       label: '印花文件夹',
     })
-    return scanPhotoshopPrintFolder(parsed.data.folder)
+    return scanPhotoshopPrintFolder(parsed.data.folder, {
+      excludeFilePaths: parsed.data.excluded_file_paths,
+    })
   })
   ipcMain.handle('photoshop:scan-template', (_event, input: unknown) => {
     const parsed = scanTemplateInputSchema.safeParse(input)
@@ -161,7 +165,9 @@ export function registerPhotoshopIpc(): void {
       domain: 'listing',
       label: '套版输出目录',
     })
-    const scan = await scanPhotoshopPrintFolder(parsed.data.print_folder)
+    const scan = await scanPhotoshopPrintFolder(parsed.data.print_folder, {
+      excludeFilePaths: parsed.data.excluded_print_paths,
+    })
     if (scan.prints.length === 0) {
       throw new AppErrorClass('INVALID_INPUT', '印花文件夹内没有可套版图片', false, {
         print_folder: parsed.data.print_folder,

@@ -1,17 +1,26 @@
 import { readdir } from 'node:fs/promises'
-import { basename, extname, join } from 'node:path'
+import { basename, extname, join, resolve } from 'node:path'
 import type { PhotoshopPrintAsset } from '@tengyu-aipod/shared'
 import { LOCAL_IMAGE_PROTOCOL } from '../lib/local-image-protocol'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+const WAITING_MOCKUP_DIR = '等待套版'
 
 export interface PhotoshopPrintFolderScan {
   folder: string
   prints: Array<PhotoshopPrintAsset & { thumbnail_url: string }>
 }
 
+export interface PhotoshopPrintFolderScanOptions {
+  excludeFilePaths?: string[]
+}
+
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })
+}
+
+function pathKey(path: string) {
+  return resolve(path).toLowerCase()
 }
 
 function localImageUrl(path: string) {
@@ -25,6 +34,9 @@ async function listImageFiles(folder: string): Promise<string[]> {
   for (const entry of entries) {
     const entryPath = join(folder, entry.name)
     if (entry.isDirectory()) {
+      if (entry.name === WAITING_MOCKUP_DIR) {
+        continue
+      }
       files.push(...(await listImageFiles(entryPath)))
       continue
     }
@@ -36,10 +48,14 @@ async function listImageFiles(folder: string): Promise<string[]> {
   return files
 }
 
-export async function scanPhotoshopPrintFolder(folder: string): Promise<PhotoshopPrintFolderScan> {
-  const files = (await listImageFiles(folder)).sort((left, right) =>
-    naturalCompare(basename(left), basename(right)),
-  )
+export async function scanPhotoshopPrintFolder(
+  folder: string,
+  options: PhotoshopPrintFolderScanOptions = {},
+): Promise<PhotoshopPrintFolderScan> {
+  const excluded = new Set((options.excludeFilePaths ?? []).map(pathKey))
+  const files = (await listImageFiles(folder))
+    .filter((filePath) => !excluded.has(pathKey(filePath)))
+    .sort((left, right) => naturalCompare(basename(left), basename(right)))
   return {
     folder,
     prints: files.map((filePath) => ({

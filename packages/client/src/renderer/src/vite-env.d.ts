@@ -527,7 +527,7 @@ declare global {
           | { ok: false; error: { code: string; message: string } }
         >
         openPath: (path: string) => Promise<{ ok: true }>
-        scanPrintFolder: (input: { folder: string }) => Promise<
+        scanPrintFolder: (input: { excluded_file_paths?: string[]; folder: string }) => Promise<
           import('../../main/photoshop/print-folder').PhotoshopPrintFolderScan
         >
         scanTemplate: (
@@ -535,6 +535,7 @@ declare global {
         ) => Promise<import('@tengyu-aipod/shared').PsdTemplate>
         runBatch: (input: {
           print_folder: string
+          excluded_print_paths?: string[]
           templates: string[]
           replace_range: 'auto' | 'topmost' | 'top' | 'all'
           output_layout: import('@tengyu-aipod/shared').PhotoshopOutputLayout

@@ -19,6 +19,7 @@ import {
   RefreshCw,
   Settings2,
   Terminal,
+  X,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PhotoshopPrintFolderScan } from '../../../../main/photoshop/print-folder'
@@ -171,6 +172,7 @@ export function PhotoshopPage() {
   const [printFolder, setPrintFolder] = useState('02-印花工作区')
   const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
   const [printScan, setPrintScan] = useState<PhotoshopPrintFolderScan | null>(null)
+  const [excludedPrintPaths, setExcludedPrintPaths] = useState<string[]>([])
   const [loadingPrints, setLoadingPrints] = useState(false)
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
   const [replaceRange, setReplaceRange] = useState<'auto' | 'topmost' | 'top' | 'all'>('topmost')
@@ -260,14 +262,17 @@ export function PhotoshopPage() {
       .catch(() => null)
   }, [])
 
-  async function loadPrintFolder(folder = printFolder) {
+  async function loadPrintFolder(folder = printFolder, excludedPaths = excludedPrintPaths) {
     if (!folder.trim()) {
       setPrintScan(null)
       return
     }
     setLoadingPrints(true)
     try {
-      const scan = await window.api.photoshop.scanPrintFolder({ folder })
+      const scan = await window.api.photoshop.scanPrintFolder({
+        excluded_file_paths: excludedPaths,
+        folder,
+      })
       setPrintScan(scan)
       setMessage(`已检索到 ${scan.prints.length} 张印花`)
     } catch (error) {
@@ -281,9 +286,25 @@ export function PhotoshopPage() {
   async function choosePrintFolder() {
     const result = await window.api.photoshop.choosePrintFolder()
     if (result.ok) {
+      setExcludedPrintPaths([])
       setPrintFolder(result.data.path)
-      await loadPrintFolder(result.data.path)
+      await loadPrintFolder(result.data.path, [])
     }
+  }
+
+  function removePrintCandidate(candidate: PhotoshopPrintFolderScan['prints'][number]) {
+    setExcludedPrintPaths((current) =>
+      current.includes(candidate.file_path) ? current : [...current, candidate.file_path],
+    )
+    setPrintScan((current) =>
+      current
+        ? {
+            ...current,
+            prints: current.prints.filter((item) => item.file_path !== candidate.file_path),
+          }
+        : current,
+    )
+    setMessage(`已从本次候选中移除 ${candidate.id}`)
   }
 
   async function chooseTemplates() {
@@ -340,13 +361,17 @@ export function PhotoshopPage() {
       verified_outputs: 0,
     })
     try {
-      const scan = await window.api.photoshop.scanPrintFolder({ folder: printFolder })
+      const scan = await window.api.photoshop.scanPrintFolder({
+        excluded_file_paths: excludedPrintPaths,
+        folder: printFolder,
+      })
       setPrintScan(scan)
       if (scan.prints.length === 0) {
         throw new Error('印花文件夹内没有可套版图片')
       }
       const result = await window.api.photoshop.runBatch({
         print_folder: printFolder,
+        excluded_print_paths: excludedPrintPaths,
         templates: templatePaths,
         replace_range: replaceRange,
         output_layout: outputLayout,
@@ -476,8 +501,8 @@ export function PhotoshopPage() {
               {printAssets.length ? (
                 printAssets.slice(0, 6).map((candidate) => (
                   <div
-                    className="grid grid-cols-[48px_minmax(0,1fr)] gap-3 rounded-md border bg-muted/30 p-2 text-left text-sm hover:bg-muted"
-                    key={candidate.id}
+                    className="grid grid-cols-[48px_minmax(0,1fr)_32px] gap-3 rounded-md border bg-muted/30 p-2 text-left text-sm hover:bg-muted"
+                    key={candidate.file_path}
                   >
                     <img
                       alt=""
@@ -490,6 +515,16 @@ export function PhotoshopPage() {
                         {candidate.file_path}
                       </span>
                     </span>
+                    <Button
+                      aria-label={`移除 ${candidate.id}`}
+                      className="h-8 w-8 p-0"
+                      onClick={() => removePrintCandidate(candidate)}
+                      title="从本次候选中移除"
+                      type="button"
+                      variant="ghost"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
                   </div>
                 ))
               ) : (
