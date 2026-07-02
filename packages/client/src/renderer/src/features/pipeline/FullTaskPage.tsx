@@ -20,6 +20,11 @@ import {
   type TitleKeywordGroupDraft,
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
+import {
+  finalPipelineResult,
+  pipelineResultStats,
+  sectionItemsForLightbox,
+} from '@/features/pipeline/pipeline-result-preview'
 import type {
   PipelineItemRecord,
   PipelinePrintMode,
@@ -29,7 +34,6 @@ import type {
   PipelineResultSection,
   PipelineRunConfig,
   PipelineRunDetail,
-  PipelineRunRecord,
   PipelineRunStats,
   PipelineSourceMode,
   PipelineStartStep,
@@ -40,12 +44,15 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Folder,
   FolderOpen,
+  ImageIcon,
   Loader2,
   Play,
   Plus,
   RefreshCw,
   Settings2,
+  Sparkles,
   Square,
   Trash2,
   Upload,
@@ -161,22 +168,6 @@ function parsePipelineStats(value: string): PipelineRunStats {
   } catch {
     return { ...DEFAULT_PIPELINE_STATS }
   }
-}
-
-function pipelineRunStatusLabel(status: PipelineRunRecord['status']) {
-  if (status === 'running') {
-    return '运行中'
-  }
-  if (status === 'completed') {
-    return '已完成'
-  }
-  if (status === 'cancelled') {
-    return '已取消'
-  }
-  if (status === 'interrupted') {
-    return '已中断'
-  }
-  return '失败'
 }
 
 function pipelineRunMessage(detail: Pick<PipelineRunDetail['run'], 'status' | 'error_summary'>) {
@@ -709,6 +700,16 @@ function pipelineResultLightboxItem(image: PipelineResultImage): ImageLightboxIt
   }
 }
 
+function pipelineRawImageSrc(pathOrUrl: string | null | undefined) {
+  if (!pathOrUrl) {
+    return undefined
+  }
+  if (/^(?:tengyu-local-image|file|https?):\/\//i.test(pathOrUrl)) {
+    return pathOrUrl
+  }
+  return localImageUrl(pathOrUrl)
+}
+
 function AdvancedDisclosure({
   children,
   summary,
@@ -784,9 +785,11 @@ function PipelineLogDialog({
 }
 
 function PipelineResultsPanel({
+  config,
   message,
   progress,
 }: {
+  config: PipelineRunConfig
   message: string
   progress: PipelineProgress | null
 }) {
@@ -798,6 +801,18 @@ function PipelineResultsPanel({
     items: ImageLightboxItem[]
     index: number
   } | null>(null)
+  const finalResult = finalPipelineResult(config, progress)
+  const stats = pipelineResultStats(config, progress)
+  const selectedSection = finalResult?.section ?? null
+  const firstGroup = selectedSection?.groups?.[0] ?? null
+  const firstImage =
+    selectedSection?.items.find((item) => item.status === 'success' && pipelineResultImageSrc(item)) ??
+    null
+  const heroImagePath =
+    firstGroup?.cover_path ?? firstImage?.local_path ?? firstImage?.source_path ?? firstImage?.url ?? null
+  const heroTitle = firstGroup?.label ?? firstImage?.label ?? '等待结果'
+  const heroSubtitle =
+    firstGroup?.subtitle ?? (selectedSection ? `${selectedSection.completed}/${selectedSection.total}` : message)
 
   function toggleSection(key: string) {
     setCollapsed((current) => ({ ...current, [key]: !current[key] }))
@@ -811,133 +826,258 @@ function PipelineResultsPanel({
   }
 
   function openLightbox(section: PipelineResultSection, image: PipelineResultImage) {
-    const items = section.items
-      .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
-      .map(pipelineResultLightboxItem)
-    const index = section.items
-      .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
-      .findIndex((item) => item.id === image.id)
+    const sectionItems = sectionItemsForLightbox(section)
+    const previewItems = sectionItems.filter(
+      (item) => item.status === 'success' && pipelineResultImageSrc(item),
+    )
+    const items = previewItems.map(pipelineResultLightboxItem)
+    const index = previewItems.findIndex((item) => item.id === image.id)
     setLightbox({ title: section.title, items, index: Math.max(0, index) })
   }
 
+  function openGroup(section: PipelineResultSection, groupIndex: number) {
+    const group = section.groups?.[groupIndex]
+    if (!group) {
+      return
+    }
+    const items = group.items
+      .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
+      .map(pipelineResultLightboxItem)
+    setLightbox({ title: group.label, items, index: 0 })
+  }
+
   return (
-    <Card>
-      <CardHeader className="pb-4">
+    <Card className="overflow-hidden">
+      <CardHeader className="border-b bg-gradient-to-r from-blue-50 via-slate-50 to-emerald-50 pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle className="text-lg text-balance">结果预览</CardTitle>
+            <CardTitle className="flex items-center gap-2 text-lg text-balance">
+              <Sparkles className="size-5" />
+              结果预览
+            </CardTitle>
             <CardDescription>{message}</CardDescription>
           </div>
           <Badge variant="secondary">{progress?.status ?? '未启动'}</Badge>
         </div>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {sections.length ? (
-          sections.map((section) => {
-            const isCollapsed = collapsed[section.key] ?? section.default_collapsed ?? false
-            const pageSize = 12
-            const maxPage = Math.max(0, Math.ceil(section.items.length / pageSize) - 1)
-            const page = Math.min(pages[section.key] ?? 0, maxPage)
-            const visibleItems = section.paginated
-              ? section.items.slice(page * pageSize, page * pageSize + pageSize)
-              : section.items
-            return (
-              <section className="rounded-md border bg-background p-4" key={section.key}>
-                <div className="flex flex-wrap items-center justify-between gap-3">
+      <CardContent className="space-y-4 p-5">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+          <div className="relative min-h-[360px] overflow-hidden rounded-md border bg-slate-950">
+            {heroImagePath ? (
+              <img
+                alt={heroTitle}
+                className="h-full min-h-[360px] w-full object-cover"
+                src={pipelineRawImageSrc(heroImagePath)}
+              />
+            ) : (
+              <div className="flex min-h-[360px] items-center justify-center bg-muted text-sm text-muted-foreground">
+                <div className="flex flex-col items-center gap-2 px-4 text-center">
+                  <ImageIcon className="size-6" />
+                  <span>启动完整任务后，这里会展示当前最终产物。</span>
+                </div>
+              </div>
+            )}
+            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent p-4 text-white">
+              <div className="truncate text-xl font-semibold">{heroTitle}</div>
+              <div className="mt-1 truncate text-sm text-white/70">{heroSubtitle}</div>
+            </div>
+          </div>
+
+          <div className="rounded-md border bg-background p-3">
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-start gap-2">
+                {finalResult?.mode === 'groups' ? (
+                  <Folder className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                ) : (
+                  <ImageIcon className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
+                )}
+                <div className="min-w-0">
+                  <div className="font-semibold">
+                    {finalResult?.mode === 'groups' ? '套版后文件夹' : '最终产物'}
+                  </div>
+                  <div className="text-xs text-muted-foreground">
+                    {finalResult?.mode === 'groups'
+                      ? '生成一套显示一套，点击查看全部裁剪图。'
+                      : '展示当前任务最后阶段的产物。'}
+                  </div>
+                </div>
+              </div>
+              <Badge variant="outline">
+                {selectedSection?.groups?.length ?? selectedSection?.completed ?? 0}
+              </Badge>
+            </div>
+
+            {selectedSection?.groups?.length ? (
+              <div className="grid max-h-[430px] grid-cols-2 gap-3 overflow-y-auto pr-1">
+                {selectedSection.groups.map((group, index) => (
                   <button
-                    className="flex min-w-0 items-center gap-2 text-left"
-                    onClick={() => toggleSection(section.key)}
+                    className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                    key={group.id}
+                    onClick={() => openGroup(selectedSection, index)}
                     type="button"
                   >
-                    <ChevronDown
-                      className={`size-4 shrink-0 transition-transform ${
-                        isCollapsed ? '-rotate-90' : ''
-                      }`}
-                    />
-                    <span className="truncate font-semibold">{section.title}</span>
-                    <span className="text-sm tabular-nums text-muted-foreground">
-                      {section.completed}/{section.total}
-                    </span>
-                    {section.failed ? (
-                      <span className="text-sm tabular-nums text-muted-foreground">
-                        失败 {section.failed}
-                      </span>
-                    ) : null}
-                  </button>
-                  {section.paginated && !isCollapsed ? (
-                    <div className="flex items-center gap-2">
-                      <Button
-                        aria-label="上一页"
-                        className="size-8 p-0"
-                        disabled={page === 0}
-                        onClick={() => updatePage(section.key, -1, maxPage)}
-                        type="button"
-                        variant="outline"
-                      >
-                        <ChevronLeft className="size-4" />
-                      </Button>
-                      <span className="min-w-14 text-center text-xs tabular-nums text-muted-foreground">
-                        {page + 1}/{maxPage + 1}
-                      </span>
-                      <Button
-                        aria-label="下一页"
-                        className="size-8 p-0"
-                        disabled={page >= maxPage}
-                        onClick={() => updatePage(section.key, 1, maxPage)}
-                        type="button"
-                        variant="outline"
-                      >
-                        <ChevronRight className="size-4" />
-                      </Button>
-                    </div>
-                  ) : null}
-                </div>
-                {isCollapsed ? null : visibleItems.length ? (
-                  <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
-                    {visibleItems.map((image) =>
-                      image.status === 'loading' ? (
-                        <div
-                          className="flex aspect-square items-center justify-center rounded-md border border-dashed bg-muted/30 text-sm text-muted-foreground"
-                          key={image.id}
-                        >
-                          <Loader2 className="mr-2 size-4 animate-spin" />
-                          图像加载中
-                        </div>
-                      ) : (
-                        <button
-                          className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                          key={image.id}
-                          onClick={() => openLightbox(section, image)}
-                          type="button"
-                        >
-                          <img
-                            alt={image.label}
-                            className="aspect-square w-full rounded-sm bg-muted object-cover"
-                            src={pipelineResultImageSrc(image)}
-                          />
-                          <div className="mt-2 truncate text-xs font-medium">{image.label}</div>
-                          {image.risk_level ? (
-                            <div className="mt-1 text-xs tabular-nums text-muted-foreground">
-                              风险值 {image.risk_score ?? '-'}
-                            </div>
-                          ) : null}
-                        </button>
-                      ),
+                    {group.cover_path ? (
+                      <img
+                        alt={group.label}
+                        className="aspect-[4/3] w-full rounded-sm bg-muted object-cover"
+                        src={pipelineRawImageSrc(group.cover_path)}
+                      />
+                    ) : (
+                      <div className="flex aspect-[4/3] items-center justify-center rounded-sm bg-muted text-muted-foreground">
+                        <FolderOpen className="size-5" />
+                      </div>
                     )}
-                  </div>
-                ) : (
-                  <div className="mt-4 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-                    等待结果
-                  </div>
-                )}
-              </section>
-            )
-          })
-        ) : (
-          <div className="rounded-md bg-muted px-3 py-12 text-center text-sm text-muted-foreground">
-            启动完整任务后，这里会按模块显示预览。
+                    <div className="mt-2 truncate text-xs font-medium">{group.label}</div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {group.subtitle ?? `${group.items.length} 张`}
+                    </div>
+                  </button>
+                ))}
+              </div>
+            ) : selectedSection?.items.length ? (
+              <div className="grid max-h-[430px] grid-cols-2 gap-3 overflow-y-auto pr-1">
+                {selectedSection.items
+                  .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
+                  .map((image) => (
+                    <button
+                      className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      key={image.id}
+                      onClick={() => openLightbox(selectedSection, image)}
+                      type="button"
+                    >
+                      <img
+                        alt={image.label}
+                        className="aspect-[4/3] w-full rounded-sm bg-muted object-cover"
+                        src={pipelineResultImageSrc(image)}
+                      />
+                      <div className="mt-2 truncate text-xs font-medium">{image.label}</div>
+                    </button>
+                  ))}
+              </div>
+            ) : (
+              <div className="flex min-h-[280px] items-center justify-center rounded-md bg-muted text-sm text-muted-foreground">
+                等待结果
+              </div>
+            )}
           </div>
-        )}
+        </div>
+
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
+          {stats.map((item) => (
+            <div className="rounded-md border bg-background p-3" key={item.key}>
+              <div className="text-xs font-medium text-muted-foreground">{item.label}</div>
+              <div className="mt-2 text-2xl font-semibold tabular-nums">{item.value}</div>
+              <div className="mt-1 text-xs text-muted-foreground">{item.detail}</div>
+            </div>
+          ))}
+        </div>
+
+        {sections.length ? (
+          <div className="space-y-3">
+            {sections
+              .filter((section) => section.key !== selectedSection?.key)
+              .map((section) => {
+                const isCollapsed = collapsed[section.key] ?? section.default_collapsed ?? true
+                const pageSize = 12
+                const maxPage = Math.max(0, Math.ceil(section.items.length / pageSize) - 1)
+                const page = Math.min(pages[section.key] ?? 0, maxPage)
+                const visibleItems = section.paginated
+                  ? section.items.slice(page * pageSize, page * pageSize + pageSize)
+                  : section.items
+                return (
+                  <section className="rounded-md border bg-background p-4" key={section.key}>
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <button
+                        className="flex min-w-0 items-center gap-2 text-left"
+                        onClick={() => toggleSection(section.key)}
+                        type="button"
+                      >
+                        <ChevronDown
+                          className={`size-4 shrink-0 transition-transform ${
+                            isCollapsed ? '-rotate-90' : ''
+                          }`}
+                        />
+                        <span className="truncate font-semibold">{section.title}</span>
+                        <span className="text-sm tabular-nums text-muted-foreground">
+                          {section.completed}/{section.total}
+                        </span>
+                        {section.failed ? (
+                          <span className="text-sm tabular-nums text-muted-foreground">
+                            失败 {section.failed}
+                          </span>
+                        ) : null}
+                      </button>
+                      {section.paginated && !isCollapsed ? (
+                        <div className="flex items-center gap-2">
+                          <Button
+                            aria-label="上一页"
+                            className="size-8 p-0"
+                            disabled={page === 0}
+                            onClick={() => updatePage(section.key, -1, maxPage)}
+                            type="button"
+                            variant="outline"
+                          >
+                            <ChevronLeft className="size-4" />
+                          </Button>
+                          <span className="min-w-14 text-center text-xs tabular-nums text-muted-foreground">
+                            {page + 1}/{maxPage + 1}
+                          </span>
+                          <Button
+                            aria-label="下一页"
+                            className="size-8 p-0"
+                            disabled={page >= maxPage}
+                            onClick={() => updatePage(section.key, 1, maxPage)}
+                            type="button"
+                            variant="outline"
+                          >
+                            <ChevronRight className="size-4" />
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                    {isCollapsed ? null : visibleItems.length ? (
+                      <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-4">
+                        {visibleItems.map((image) =>
+                          image.status === 'loading' ? (
+                            <div
+                              className="flex aspect-square items-center justify-center rounded-md border border-dashed bg-muted/30 text-sm text-muted-foreground"
+                              key={image.id}
+                            >
+                              <Loader2 className="mr-2 size-4 animate-spin" />
+                              图像加载中
+                            </div>
+                          ) : (
+                            <button
+                              className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                              key={image.id}
+                              onClick={() => openLightbox(section, image)}
+                              type="button"
+                            >
+                              <img
+                                alt={image.label}
+                                className="aspect-square w-full rounded-sm bg-muted object-cover"
+                                src={pipelineResultImageSrc(image)}
+                              />
+                              <div className="mt-2 truncate text-xs font-medium">{image.label}</div>
+                              {image.risk_level ? (
+                                <div className="mt-1 text-xs tabular-nums text-muted-foreground">
+                                  风险值 {image.risk_score ?? '-'}
+                                </div>
+                              ) : null}
+                            </button>
+                          ),
+                        )}
+                      </div>
+                    ) : (
+                      <div className="mt-4 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+                        等待结果
+                      </div>
+                    )}
+                  </section>
+                )
+              })}
+          </div>
+        ) : null}
       </CardContent>
       <ImageLightbox
         activeIndex={lightbox?.index ?? null}
@@ -1190,7 +1330,6 @@ export function FullTaskPage() {
     'currentRunId',
     null,
   )
-  const [recentRuns, setRecentRuns] = useState<PipelineRunRecord[]>([])
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
@@ -1510,7 +1649,6 @@ export function FullTaskPage() {
         window.api.title.listLanguages(),
         window.api.title.listModels(),
         window.api.generationSettings.get(),
-        window.api.pipeline.listRuns(),
         window.api.detection.getConfig(),
         window.api.detection.listModels(),
         window.api.skill.list({ module: 'detection' }),
@@ -1532,7 +1670,6 @@ export function FullTaskPage() {
         '标题语言',
         '标题模型',
         '生图设置',
-        '最近任务',
         '检测配置',
         '检测模型',
         '检测 Skill',
@@ -1552,10 +1689,9 @@ export function FullTaskPage() {
       const nextLanguages = results[7].status === 'fulfilled' ? results[7].value : []
       const nextTitleModels = results[8].status === 'fulfilled' ? results[8].value : []
       const nextGenerationSettings = results[9].status === 'fulfilled' ? results[9].value : null
-      const runs = results[10].status === 'fulfilled' ? results[10].value : []
-      const nextDetectionConfig = results[11].status === 'fulfilled' ? results[11].value : null
-      const nextDetectionModels = results[12].status === 'fulfilled' ? results[12].value : []
-      const nextDetectionSkills = results[13].status === 'fulfilled' ? results[13].value : []
+      const nextDetectionConfig = results[10].status === 'fulfilled' ? results[10].value : null
+      const nextDetectionModels = results[11].status === 'fulfilled' ? results[11].value : []
+      const nextDetectionSkills = results[12].status === 'fulfilled' ? results[12].value : []
 
       setGenerationSkills(skills)
       setTxt2imgWorkflows(nextTxt2imgWorkflows.map(optionFromWorkflow))
@@ -1567,7 +1703,6 @@ export function FullTaskPage() {
       setLanguages(nextLanguages)
       setTitleModels(nextTitleModels)
       setGenerationSettings(nextGenerationSettings)
-      setRecentRuns(runs)
       setDetectionConfig(nextDetectionConfig)
       setDetectionModels(nextDetectionModels)
       setDetectionSkills(nextDetectionSkills)
@@ -3365,31 +3500,8 @@ export function FullTaskPage() {
         </Card>
       </div>
 
-      <PipelineResultsPanel message={message} progress={progress} />
+      <PipelineResultsPanel config={buildConfig()} message={message} progress={progress} />
       <PipelineItemsPanel progress={progress} />
-
-      <Card>
-        <CardHeader className="pb-4">
-          <CardTitle className="text-base">最近完整任务</CardTitle>
-        </CardHeader>
-        <CardContent className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {recentRuns.length === 0 ? (
-            <div className="text-sm text-muted-foreground">暂无历史记录。</div>
-          ) : (
-            recentRuns.slice(0, 8).map((run) => (
-              <div className="rounded-md border px-3 py-2 text-sm" key={run.id}>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="truncate font-medium">{run.name}</span>
-                  <span className="shrink-0 text-xs text-muted-foreground">
-                    {pipelineRunStatusLabel(run.status)}
-                  </span>
-                </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">{run.source_mode}</div>
-              </div>
-            ))
-          )}
-        </CardContent>
-      </Card>
 
       <PipelineLogDialog logs={progress?.logs ?? []} onOpenChange={setIsLogOpen} open={isLogOpen} />
     </div>
