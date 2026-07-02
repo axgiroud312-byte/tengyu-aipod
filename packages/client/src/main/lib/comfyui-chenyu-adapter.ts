@@ -131,7 +131,9 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
         injectedWorkflow: workflowForDiagnosticLog(injectedWorkflow, workflow.inputSlots),
       },
     })
-    const promptId = await comfyHttp.queuePrompt(injectedWorkflow)
+    const promptId = await comfyHttp.queuePrompt(injectedWorkflow, {
+      extraPngInfo: pngMetadataForWorkflow(workflow),
+    })
     await this.log({
       type: 'response',
       provider: 'comfyui-chenyu',
@@ -479,6 +481,10 @@ function workflowForDiagnosticLog(workflowJson: unknown, slots: ComfyuiWorkflowS
     }
   }
   return workflow
+}
+
+function pngMetadataForWorkflow(workflow: CachedComfyuiWorkflow) {
+  return { workflow: structuredClone(workflow.workflowJson) }
 }
 
 function promptSummary(prompt: string, maxLength = 300) {

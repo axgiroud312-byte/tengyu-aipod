@@ -67,6 +67,38 @@ describe('ComfyHttpClient', () => {
     })
   })
 
+  it('queues prompts with workflow png metadata when provided', async () => {
+    let body: unknown = null
+    server.use(
+      http.post(`${baseUrl}/prompt`, async ({ request }) => {
+        body = await request.json()
+        return HttpResponse.json({
+          prompt_id: 'prompt-1',
+          number: 1,
+          node_errors: {},
+        })
+      }),
+    )
+    const client = new ComfyHttpClient(baseUrl)
+
+    await expect(
+      client.queuePrompt(
+        { '1': { inputs: { text: 'print' } } },
+        { extraPngInfo: { workflow: { nodes: [{ id: 1, type: 'CLIPTextEncode' }] } } },
+      ),
+    ).resolves.toBe('prompt-1')
+    expect(body).toEqual({
+      prompt: {
+        '1': { inputs: { text: 'print' } },
+      },
+      extra_data: {
+        extra_pnginfo: {
+          workflow: { nodes: [{ id: 1, type: 'CLIPTextEncode' }] },
+        },
+      },
+    })
+  })
+
   it('polls history until the prompt is completed', async () => {
     const statuses = [false, true]
     server.use(

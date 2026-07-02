@@ -39,6 +39,10 @@ export type ComfyViewImageInput =
       type?: string | undefined
     }
 
+export type ComfyQueuePromptOptions = {
+  extraPngInfo?: Record<string, unknown> | undefined
+}
+
 const DEFAULT_TIMEOUT_MS = 60_000
 const DEFAULT_POLL_INTERVAL_MS = 2_000
 const DEFAULT_POLL_TIMEOUT_MS = 300_000
@@ -75,13 +79,17 @@ export class ComfyHttpClient {
     return raw.name
   }
 
-  async queuePrompt(workflow: unknown) {
+  async queuePrompt(workflow: unknown, options: ComfyQueuePromptOptions = {}) {
+    const body: Record<string, unknown> = { prompt: workflow }
+    if (options.extraPngInfo && Object.keys(options.extraPngInfo).length > 0) {
+      body.extra_data = { extra_pnginfo: options.extraPngInfo }
+    }
     const response = await this.request('/prompt', {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ prompt: workflow }),
+      body: JSON.stringify(body),
     })
     const raw = await parseJsonBody<ComfyPromptResponse>(response)
 

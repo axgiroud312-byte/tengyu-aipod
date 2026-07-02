@@ -63,6 +63,10 @@ function createDb() {
   }
 }
 
+function normalizedPath(value: string | undefined) {
+  return value?.replaceAll('\\', '/')
+}
+
 beforeEach(() => {
   files = new Map<string, Buffer>()
 })
@@ -105,14 +109,19 @@ describe('ComfyuiChenyuAdapter', () => {
 
     expect(response.status).toBe('succeeded')
     expect(uploadImage).toHaveBeenCalledWith(Buffer.from('source'), 'reference-1.png')
-    expect(queuePrompt).toHaveBeenCalledWith({
-      '1': { inputs: { image: 'uploaded.png' } },
-      '2': { inputs: { text: 'extract the floral print' } },
-      '9': { inputs: {} },
-    })
+    expect(queuePrompt).toHaveBeenCalledWith(
+      {
+        '1': { inputs: { image: 'uploaded.png' } },
+        '2': { inputs: { text: 'extract the floral print' } },
+        '9': { inputs: {} },
+      },
+      { extraPngInfo: { workflow: workflow.workflowJson } },
+    )
     expect(getHistory).toHaveBeenCalledWith('prompt-1')
     expect(viewImage).toHaveBeenCalledWith({ filename: 'result.png' })
-    expect(response.images[0]?.local_path).toContain('/workbench/02-印花工作区/提取/task-1/')
+    expect(normalizedPath(response.images[0]?.local_path)).toContain(
+      '/workbench/02-印花工作区/提取/task-1/',
+    )
     expect(db.rows[0]).toEqual(
       expect.arrayContaining([
         'task-1',
@@ -174,7 +183,7 @@ describe('ComfyuiChenyuAdapter', () => {
     })
 
     expect(response.images).toHaveLength(1)
-    expect(response.images[0]?.local_path).toBe(
+    expect(normalizedPath(response.images[0]?.local_path)).toBe(
       '/workbench/.workbench/tmp/matting/extract-temp-task/extract-1/pri_temp.png',
     )
     expect(viewImage).toHaveBeenCalledTimes(1)
@@ -275,7 +284,7 @@ describe('ComfyuiChenyuAdapter', () => {
       },
     })
 
-    expect(response.images[0]?.local_path).toBe(
+    expect(normalizedPath(response.images[0]?.local_path)).toBe(
       '/workbench/02-印花工作区/图生图/img2img-task/pri_print_v1.png',
     )
     expect(db.rows[0]).toEqual(
@@ -401,6 +410,11 @@ describe('ComfyuiChenyuAdapter', () => {
           inputs: expect.objectContaining({ batch_size: ['2', 0] }),
         }),
       }),
+      {
+        extraPngInfo: {
+          workflow: uiWorkflow.workflowJson,
+        },
+      },
     )
   })
 
@@ -493,12 +507,15 @@ describe('ComfyuiChenyuAdapter', () => {
     })
 
     expect(uploadImage).not.toHaveBeenCalled()
-    expect(queuePrompt).toHaveBeenCalledWith({
-      '2': { inputs: { text: 'centered floral print' } },
-      '3': { inputs: { width: 1024, height: 1024 } },
-      '9': { inputs: {} },
-    })
-    expect(response.images[0]?.local_path).toContain(
+    expect(queuePrompt).toHaveBeenCalledWith(
+      {
+        '2': { inputs: { text: 'centered floral print' } },
+        '3': { inputs: { width: 1024, height: 1024 } },
+        '9': { inputs: {} },
+      },
+      { extraPngInfo: { workflow: txt2imgWorkflow.workflowJson } },
+    )
+    expect(normalizedPath(response.images[0]?.local_path)).toContain(
       '/workbench/02-印花工作区/文生图/txt2img-task/',
     )
     expect(db.rows[0]).toEqual(
@@ -557,7 +574,7 @@ describe('ComfyuiChenyuAdapter', () => {
       },
     })
 
-    expect(response.images[0]?.local_path).toBe(
+    expect(normalizedPath(response.images[0]?.local_path)).toBe(
       '/workbench/02-印花工作区/抠图/matting-task/pri_print.png',
     )
     expect(db.rows[0]).toEqual(
