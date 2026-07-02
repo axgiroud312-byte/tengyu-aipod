@@ -2721,11 +2721,13 @@ export function FullTaskPage() {
 
                 {sourceMode === 'img2img' ? (
                   <>
-                    <ReferenceImagePicker
-                      images={referenceImages}
-                      onAddFiles={(files) => void addReferenceFiles(files)}
-                      onRemove={removeReferenceImage}
-                    />
+                    {img2imgUsesGrsai ? (
+                      <ReferenceImagePicker
+                        images={referenceImages}
+                        onAddFiles={(files) => void addReferenceFiles(files)}
+                        onRemove={removeReferenceImage}
+                      />
+                    ) : null}
 
                     <div className="flex flex-wrap items-center gap-2 text-sm">
                       <Badge variant="secondary">
