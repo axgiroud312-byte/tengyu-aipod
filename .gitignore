@@ -74,6 +74,7 @@ electron-builder.env
 test-results/
 playwright-report/
 playwright/.cache/
+packages/client/output/
 
 # ─── Prisma ─────────────────────────────────
 prisma/generated/
@@ -88,6 +89,9 @@ temp/
 # ─── Trellis 工作目录（per-user，不入库）─────
 # 若 Trellis 配置为入库，可移除此行
 .trellis/workspace/
+
+# ─── Superpowers 本地运行产物（per-user，不入库）─────
+.superpowers/
 
 # ─── Sentry ─────────────────────────────────
 .sentryclirc
