@@ -319,6 +319,18 @@ export interface PipelineResultImage {
   allowed?: boolean
 }
 
+export interface PipelineResultGroup {
+  id: string
+  label: string
+  subtitle?: string
+  kind: 'folder' | 'image-set'
+  cover_path?: string
+  folder_path?: string
+  template_batch?: string
+  sku_code?: string
+  items: PipelineResultImage[]
+}
+
 export interface PipelineResultSection {
   key: PipelineResultSectionKey
   title: string
@@ -329,6 +341,7 @@ export interface PipelineResultSection {
   default_collapsed?: boolean
   paginated: boolean
   items: PipelineResultImage[]
+  groups?: PipelineResultGroup[]
 }
 
 export interface PipelineRuntimeLogEntry {
