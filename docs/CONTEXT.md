@@ -213,6 +213,14 @@ _Avoid_: Template（与"流程模板"冲突）、PSD 文件（指文件类型时
 PSD 中可被替换内容的特殊图层。
 _Avoid_: 替换图层
 
+**最上方智能对象 / Topmost Smart Object**：
+PSD 扫描顺序中最靠上的可替换智能对象。PS 套版默认只替换这个智能对象，适用于同一模板同时存在印花 SO 和颜色 SO 的场景。
+_Avoid_: 顶层智能对象（容易误解为所有根级智能对象）
+
+**根级智能对象 / Root-level Smart Object**：
+PSD 图层树根目录下的智能对象，扫描结果中 `is_top_level = true`。一个模板可以有多个根级智能对象；选择根级智能对象会替换所有根级 SO。
+_Avoid_: 最上方智能对象
+
 **代表智能对象数**：
 PSD 模板中决定"一组任务需要消耗多少张印花"的数字。`independent`、`shared` 等模式由扫描结果决定。
 _Avoid_: SO 数量

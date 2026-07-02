@@ -4,12 +4,12 @@ import type {
   PhotoshopJob,
   PhotoshopOutputLayout,
   PhotoshopPrintAsset,
+  PhotoshopReplaceRange,
   PhotoshopSoReplacement,
   PhotoshopTaskGroup,
+  PsdSmartObject,
   PsdTemplate,
 } from './photoshop'
-
-export type PhotoshopReplaceRange = 'auto' | 'top' | 'all'
 
 export interface GroupPhotoshopTasksOptions {
   taskId: string
@@ -57,16 +57,20 @@ export function representativeSoCount(
   template: Pick<PsdTemplate, 'smart_objects' | 'representative_so_count'>,
   range: PhotoshopReplaceRange = 'auto',
 ): number {
+  const hasTopmost = Boolean(topmostSmartObject(template.smart_objects))
   const topLevelCount = template.smart_objects.filter(
     (smartObject) => smartObject.is_top_level,
   ).length
+  if (range === 'topmost') {
+    return hasTopmost ? 1 : 0
+  }
   if (range === 'top') {
     return topLevelCount
   }
   if (range === 'all') {
     return template.representative_so_count
   }
-  return topLevelCount > 0 ? topLevelCount : template.representative_so_count
+  return hasTopmost ? 1 : template.representative_so_count
 }
 
 function chunkPrintAssets(
@@ -107,13 +111,12 @@ function buildJob(
     options.outputLayout === 'sku_flat'
       ? `${options.outputRoot}/${skuFolder}`
       : options.outputLayout === 'sku_first'
-      ? `${options.outputRoot}/${skuFolder}/${templateName}`
-      : `${options.outputRoot}/${templateName}/${printAssets[0]?.id ?? 'group'}`
-  const outputPaths = clipAreas.map(
-    (_, clipIndex) =>
-      options.outputLayout === 'sku_flat'
-        ? `${outputFolder}/${templateName}-${String(clipIndex + 1).padStart(2, '0')}.${extension}`
-        : `${outputFolder}/${String(clipIndex + 1).padStart(2, '0')}.${extension}`,
+        ? `${options.outputRoot}/${skuFolder}/${templateName}`
+        : `${options.outputRoot}/${templateName}/${printAssets[0]?.id ?? 'group'}`
+  const outputPaths = clipAreas.map((_, clipIndex) =>
+    options.outputLayout === 'sku_flat'
+      ? `${outputFolder}/${templateName}-${String(clipIndex + 1).padStart(2, '0')}.${extension}`
+      : `${outputFolder}/${String(clipIndex + 1).padStart(2, '0')}.${extension}`,
   )
   const soReplacements: PhotoshopSoReplacement[] = selectSmartObjects(
     template,
@@ -139,13 +142,21 @@ function buildJob(
 
 function selectSmartObjects(template: PsdTemplate, range: PhotoshopReplaceRange) {
   const topLevel = template.smart_objects.filter((smartObject) => smartObject.is_top_level)
+  const topmost = topmostSmartObject(template.smart_objects)
+  if (range === 'topmost') {
+    return topmost ? [topmost] : []
+  }
   if (range === 'top') {
     return topLevel
   }
   if (range === 'auto') {
-    return topLevel.length > 0 ? topLevel : template.smart_objects
+    return topmost ? [topmost] : template.smart_objects
   }
   return template.smart_objects
+}
+
+function topmostSmartObject(smartObjects: PsdSmartObject[]) {
+  return smartObjects.find((smartObject) => smartObject.is_top_level) ?? smartObjects[0]
 }
 
 function skuFolderForGroup(

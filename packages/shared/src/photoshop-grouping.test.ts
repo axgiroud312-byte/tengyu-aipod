@@ -49,8 +49,12 @@ describe('sortAlphaNum', () => {
 })
 
 describe('representativeSoCount', () => {
-  it('prefers top level smart objects for auto range', () => {
-    expect(representativeSoCount(createTemplate())).toBe(2)
+  it('prefers the visually topmost smart object for auto range', () => {
+    expect(representativeSoCount(createTemplate())).toBe(1)
+  })
+
+  it('keeps root-level smart object counting for top range', () => {
+    expect(representativeSoCount(createTemplate(), 'top')).toBe(2)
   })
 
   it('falls back to representative count when no top level objects exist', () => {
@@ -81,6 +85,7 @@ describe('groupTasks', () => {
       {
         taskId: 'task-1',
         outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        replaceRange: 'top',
       },
     )
 
@@ -129,6 +134,50 @@ describe('groupTasks', () => {
     )
   })
 
+  it('uses only the visually topmost smart object when requested', () => {
+    const groups = groupTasks(
+      [
+        { id: 'img1', file_path: 'C:\\素材\\img1.png' },
+        { id: 'img2', file_path: 'C:\\素材\\img2.png' },
+      ],
+      createTemplate({
+        smart_objects: [
+          {
+            name: 'zndx',
+            path: 'zndx',
+            sort_order: 0,
+            is_top_level: true,
+            bounds: [172, 4293, 603, 4724],
+            shared_indicator: 'print',
+          },
+          {
+            name: '颜色',
+            path: '颜色',
+            sort_order: 8,
+            is_top_level: true,
+            bounds: [158, 156, 958, 956],
+            shared_indicator: 'color',
+          },
+        ],
+        representative_so_count: 2,
+      }),
+      {
+        taskId: 'task-1',
+        outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+        replaceRange: 'topmost',
+      },
+    )
+
+    expect(groups).toHaveLength(2)
+    expect(groups[0]?.print_assets.map((asset) => asset.id)).toEqual(['img1'])
+    expect(groups[0]?.job.so_replacements).toEqual([
+      {
+        layer_path: 'zndx',
+        input_image: 'C:\\素材\\img1.png',
+      },
+    ])
+  })
+
   it('writes single-print sku-first outputs under sku then template', () => {
     const groups = groupTasks(
       [{ id: 'img2', file_path: 'C:\\素材\\img2.png' }],
@@ -149,6 +198,7 @@ describe('groupTasks', () => {
         taskId: 'task-1',
         outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
         outputLayout: 'sku_first',
+        replaceRange: 'top',
       },
     )
 
@@ -206,6 +256,7 @@ describe('groupTasks', () => {
         taskId: 'task-1',
         outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
         outputLayout: 'sku_first',
+        replaceRange: 'top',
       },
     )
 

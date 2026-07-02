@@ -754,7 +754,7 @@ const api = {
     runBatch: (input: {
       print_folder: string
       templates: string[]
-      replace_range: 'auto' | 'top' | 'all'
+      replace_range: 'auto' | 'topmost' | 'top' | 'all'
       output_layout: PhotoshopOutputLayout
       format: PhotoshopExportFormat
       clip_mode: PhotoshopClipMode

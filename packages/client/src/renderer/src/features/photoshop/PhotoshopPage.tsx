@@ -173,7 +173,7 @@ export function PhotoshopPage() {
   const [printScan, setPrintScan] = useState<PhotoshopPrintFolderScan | null>(null)
   const [loadingPrints, setLoadingPrints] = useState(false)
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
-  const [replaceRange, setReplaceRange] = useState<'auto' | 'top' | 'all'>('auto')
+  const [replaceRange, setReplaceRange] = useState<'auto' | 'topmost' | 'top' | 'all'>('topmost')
   const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
   const [format, setFormat] = useState<'jpg' | 'png'>('jpg')
   const [maxRetries, setMaxRetries] = useState(1)
@@ -543,8 +543,9 @@ export function PhotoshopPage() {
                   onChange={(event) => setReplaceRange(event.target.value as typeof replaceRange)}
                   value={replaceRange}
                 >
-                  <option value="auto">自动识别</option>
-                  <option value="top">顶层智能对象</option>
+                  <option value="topmost">最上方智能对象（推荐）</option>
+                  <option value="auto">自动识别（最上方优先）</option>
+                  <option value="top">根级智能对象</option>
                   <option value="all">全部智能对象</option>
                 </select>
               </label>

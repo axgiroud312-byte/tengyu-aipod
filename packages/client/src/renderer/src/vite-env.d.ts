@@ -536,7 +536,7 @@ declare global {
         runBatch: (input: {
           print_folder: string
           templates: string[]
-          replace_range: 'auto' | 'top' | 'all'
+          replace_range: 'auto' | 'topmost' | 'top' | 'all'
           output_layout: import('@tengyu-aipod/shared').PhotoshopOutputLayout
           format: import('@tengyu-aipod/shared').PhotoshopExportFormat
           clip_mode: import('@tengyu-aipod/shared').PhotoshopClipMode

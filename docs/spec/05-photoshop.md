@@ -217,9 +217,14 @@ function detectMode(smartObjects: SmartObject[]): SmartObjectMode {
 ### 3.5 代表智能对象数
 
 ```ts
-function representativeSoCount(scanResult: ScanResult, range: 'auto' | 'top' | 'all'): number {
+function representativeSoCount(
+  scanResult: ScanResult,
+  range: 'auto' | 'topmost' | 'top' | 'all',
+): number {
   const tops = scanResult.smart_objects.filter(so => so.is_top_level)
+  const topmost = tops[0] ?? scanResult.smart_objects[0]
   
+  if (range === 'topmost') return topmost ? 1 : 0
   if (range === 'top') return tops.length
   if (range === 'all') {
     // 去重（共享 SO 算一个）
@@ -227,11 +232,13 @@ function representativeSoCount(scanResult: ScanResult, range: 'auto' | 'top' | '
     return uniqueIds.size
   }
   // auto
-  if (tops.length > 0) return tops.length
+  if (topmost) return 1
   const uniqueIds = new Set(scanResult.smart_objects.map(so => so.shared_indicator))
   return uniqueIds.size
 }
 ```
+
+`psd_templates.representative_so_count` 保存扫描期的保守代表数，用于 `all` 和无最上方 SO 时兜底；`topmost` / `auto` 的默认运行时分组不依赖该缓存值。
 
 ## 4. 替换范围 / 适配 / 裁切
 
@@ -239,9 +246,12 @@ function representativeSoCount(scanResult: ScanResult, range: 'auto' | 'top' | '
 
 | 选项 | 行为 |
 |---|---|
-| `auto` | 优先用顶层 SO，否则用全部 |
-| `top` | 仅顶层 SO |
+| `topmost` | 仅替换扫描顺序中最上方的 SO，推荐默认值；适合印花 SO 在颜色 SO 上方的模板 |
+| `auto` | 优先用最上方 SO，否则用全部 |
+| `top` | 仅替换根级 SO，即 `is_top_level = true` 的所有 SO |
 | `all` | 全部 SO（含嵌套）|
+
+注意："最上方 SO" 是视觉/图层顺序上的单个首选 SO；"根级 SO" 是图层树层级概念，可能同时包含印花 SO 和颜色 SO。
 
 ### 4.2 适配方式
 
@@ -709,7 +719,7 @@ CREATE TABLE psd_templates (
 'photoshop:run-job'                   → {
                                           input_dir: string,
                                           templates: string[],
-                                          replace_range: 'auto' | 'top' | 'all',
+                                          replace_range: 'auto' | 'topmost' | 'top' | 'all',
                                           adapt_mode: 'fill' | 'fit' | 'center',
                                           format: 'jpg' | 'png',
                                           jpg_quality: number,

@@ -156,7 +156,7 @@ export interface PipelinePhotoshopConfig {
   enabled?: boolean
   templates: string[]
   outputRoot?: string
-  replaceRange?: 'auto' | 'top' | 'all'
+  replaceRange?: 'auto' | 'topmost' | 'top' | 'all'
   format?: 'jpg' | 'png'
   clipMode?: 'none' | 'auto' | 'guides'
   skipCompleted?: boolean

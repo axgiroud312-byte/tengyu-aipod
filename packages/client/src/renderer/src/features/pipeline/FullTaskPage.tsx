@@ -1340,10 +1340,9 @@ export function FullTaskPage() {
     '',
   )
   const [skipCompleted, setSkipCompleted] = useFullTaskSessionState('skipCompleted', true)
-  const [replaceRange, setReplaceRange] = useFullTaskSessionState<'auto' | 'top' | 'all'>(
-    'replaceRange',
-    'auto',
-  )
+  const [replaceRange, setReplaceRange] = useFullTaskSessionState<
+    'auto' | 'topmost' | 'top' | 'all'
+  >('replaceRange', 'topmost')
   const [clipMode, setClipMode] = useFullTaskSessionState<'auto' | 'guides' | 'none'>(
     'clipMode',
     'auto',
@@ -3266,10 +3265,13 @@ export function FullTaskPage() {
                     <div className="grid gap-4 lg:grid-cols-4">
                       <SelectField
                         label="替换范围"
-                        onValueChange={(value) => setReplaceRange(value as 'auto' | 'top' | 'all')}
+                        onValueChange={(value) =>
+                          setReplaceRange(value as 'auto' | 'topmost' | 'top' | 'all')
+                        }
                         options={[
-                          { key: 'auto', label: '自动识别' },
-                          { key: 'top', label: '顶层智能对象' },
+                          { key: 'topmost', label: '最上方智能对象（推荐）' },
+                          { key: 'auto', label: '自动识别（最上方优先）' },
+                          { key: 'top', label: '根级智能对象' },
                           { key: 'all', label: '全部智能对象' },
                         ]}
                         value={replaceRange}

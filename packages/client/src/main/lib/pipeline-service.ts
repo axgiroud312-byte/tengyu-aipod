@@ -291,7 +291,7 @@ const pipelineRunConfigBaseSchema = z.object({
     enabled: z.boolean().optional(),
     templates: z.array(z.string()),
     outputRoot: z.string().optional(),
-    replaceRange: z.enum(['auto', 'top', 'all']).optional(),
+    replaceRange: z.enum(['auto', 'topmost', 'top', 'all']).optional(),
     format: z.enum(['jpg', 'png']).optional(),
     clipMode: z.enum(['none', 'auto', 'guides']).optional(),
     skipCompleted: z.boolean().optional(),
