@@ -16,15 +16,15 @@ import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import {
-  type TitleExistingStrategy,
-  type TitleKeywordGroupDraft,
-  createTitleKeywordGroupDraft,
-} from '@/features/title/TitlePage'
-import {
   finalPipelineResult,
   pipelineResultStats,
   sectionItemsForLightbox,
 } from '@/features/pipeline/pipeline-result-preview'
+import {
+  type TitleExistingStrategy,
+  type TitleKeywordGroupDraft,
+  createTitleKeywordGroupDraft,
+} from '@/features/title/TitlePage'
 import type {
   PipelineItemRecord,
   PipelinePrintMode,
@@ -326,12 +326,7 @@ function ChenyuInstanceSelectField({
     <div className="grid min-w-0 gap-2 text-sm font-medium">
       <div className="flex items-center justify-between gap-2">
         <span>晨羽实例</span>
-        <Button
-          className="h-7 px-2 text-xs"
-          disabled={loading}
-          onClick={onRefresh}
-          variant="ghost"
-        >
+        <Button className="h-7 px-2 text-xs" disabled={loading} onClick={onRefresh} variant="ghost">
           {loading ? (
             <Loader2 className="mr-1 h-3 w-3 animate-spin" />
           ) : (
@@ -806,13 +801,19 @@ function PipelineResultsPanel({
   const selectedSection = finalResult?.section ?? null
   const firstGroup = selectedSection?.groups?.[0] ?? null
   const firstImage =
-    selectedSection?.items.find((item) => item.status === 'success' && pipelineResultImageSrc(item)) ??
-    null
+    selectedSection?.items.find(
+      (item) => item.status === 'success' && pipelineResultImageSrc(item),
+    ) ?? null
   const heroImagePath =
-    firstGroup?.cover_path ?? firstImage?.local_path ?? firstImage?.source_path ?? firstImage?.url ?? null
+    firstGroup?.cover_path ??
+    firstImage?.local_path ??
+    firstImage?.source_path ??
+    firstImage?.url ??
+    null
   const heroTitle = firstGroup?.label ?? firstImage?.label ?? '等待结果'
   const heroSubtitle =
-    firstGroup?.subtitle ?? (selectedSection ? `${selectedSection.completed}/${selectedSection.total}` : message)
+    firstGroup?.subtitle ??
+    (selectedSection ? `${selectedSection.completed}/${selectedSection.total}` : message)
 
   function toggleSection(key: string) {
     setCollapsed((current) => ({ ...current, [key]: !current[key] }))

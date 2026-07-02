@@ -189,7 +189,13 @@ describe('pipeline result preview helpers', () => {
     )
 
     expect(items).toEqual([
-      { id: 'img-1', status: 'success', step_key: 'photoshop', label: '01', local_path: 'C:\\a.jpg' },
+      {
+        id: 'img-1',
+        status: 'success',
+        step_key: 'photoshop',
+        label: '01',
+        local_path: 'C:\\a.jpg',
+      },
     ])
   })
 })

@@ -57,27 +57,32 @@ export function finalPipelineResult(
   progress: PipelineProgress | null,
 ): PipelineFinalResult | null {
   const printProducts = findSection(progress, 'print_products')
-  if (config.photoshop.enabled && hasGroups(printProducts)) {
-    return { mode: 'groups', section: printProducts! }
-  }
-  if (config.photoshop.enabled && hasSuccessfulItems(printProducts)) {
-    return { mode: 'images', section: printProducts! }
+  if (config.photoshop.enabled && printProducts) {
+    if (hasGroups(printProducts)) {
+      return { mode: 'groups', section: printProducts }
+    }
+    if (hasSuccessfulItems(printProducts)) {
+      return { mode: 'images', section: printProducts }
+    }
   }
 
   if (config.detection.enabled) {
     const detectionPassed = findSection(progress, 'detection_passed')
-    if (hasSuccessfulItems(detectionPassed)) {
-      return { mode: 'images', section: detectionPassed! }
+    if (detectionPassed && hasSuccessfulItems(detectionPassed)) {
+      return { mode: 'images', section: detectionPassed }
     }
   }
 
   for (const key of FINAL_SECTION_BY_PRIORITY) {
     const section = findSection(progress, key)
+    if (!section) {
+      continue
+    }
     if (hasGroups(section)) {
-      return { mode: 'groups', section: section! }
+      return { mode: 'groups', section }
     }
     if (hasSuccessfulItems(section)) {
-      return { mode: 'images', section: section! }
+      return { mode: 'images', section }
     }
   }
 

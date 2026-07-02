@@ -2,8 +2,8 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
 import {
-  type PhotoshopPrintAsset,
   type PhotoshopOutputLayout,
+  type PhotoshopPrintAsset,
   type PipelineProgress,
   type PipelineResultSection,
   type PipelineRunConfig,
@@ -278,27 +278,25 @@ const mocks = vi.hoisted(() => ({
       failures: [],
     }),
   ),
-  runComfyuiTxt2imgBatch: vi.fn(
-    async (input: Txt2imgMockInput) => {
-      const taskId = input.taskId ?? 'comfyui-txt2img-task'
-      const outputTaskName = input.outputTaskName ?? taskId
-      return {
-        taskId,
-        total: input.prompts.length,
-        succeeded: input.prompts.length,
-        failed: 0,
-        images: input.prompts.map((prompt, index) => {
-          const outputIndex = (input.filenameStartIndex ?? 0) + index
-          return {
-            prompt,
-            url: `file://comfyui-txt2img-${outputIndex + 1}.png`,
-            localPath: mockGenerationOutputPath('文生图', outputTaskName, outputIndex),
-          }
-        }),
-        failures: [],
-      }
-    },
-  ),
+  runComfyuiTxt2imgBatch: vi.fn(async (input: Txt2imgMockInput) => {
+    const taskId = input.taskId ?? 'comfyui-txt2img-task'
+    const outputTaskName = input.outputTaskName ?? taskId
+    return {
+      taskId,
+      total: input.prompts.length,
+      succeeded: input.prompts.length,
+      failed: 0,
+      images: input.prompts.map((prompt, index) => {
+        const outputIndex = (input.filenameStartIndex ?? 0) + index
+        return {
+          prompt,
+          url: `file://comfyui-txt2img-${outputIndex + 1}.png`,
+          localPath: mockGenerationOutputPath('文生图', outputTaskName, outputIndex),
+        }
+      }),
+      failures: [],
+    }
+  }),
   runComfyuiImg2imgBatch: vi.fn(
     async (
       input: ComfyuiMockInput,
