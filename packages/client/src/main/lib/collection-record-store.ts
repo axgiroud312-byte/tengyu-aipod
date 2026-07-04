@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { workbenchDatabasePath } from './workbench-db'
 
 export const COLLECTION_RECORD_LIST_LIMIT_DEFAULT = 20
 export const COLLECTION_RECORD_LIST_LIMIT_MAX = 10_000
@@ -31,12 +32,8 @@ export type CollectionRecordQuery = {
   limit?: number | undefined
 }
 
-export function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, '.workbench', 'workbench.db')
-}
-
 export function openCollectionDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 export function ensureCollectionRecordTables(db: Pick<SqliteDatabase, 'exec'>) {

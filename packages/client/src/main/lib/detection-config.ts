@@ -1,9 +1,9 @@
-import { join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { workbenchDatabasePath } from './workbench-db'
 
 export type DetectionThresholdConfig = {
   passMax: number
@@ -56,12 +56,8 @@ function parseDetectionConfigIpcInput(input: unknown): DetectionConfig {
   return parsed.data
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, '.workbench', 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function clampScore(value: number) {

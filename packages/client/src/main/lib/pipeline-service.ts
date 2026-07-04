@@ -75,6 +75,7 @@ import {
   nextVisibleImageName,
   normalizedVisibleImageNaming,
 } from './user-visible-filename'
+import { workbenchDatabasePath } from './workbench-db'
 import { assertPathInsideWorkbench, canonicalPath } from './workbench-path-guard'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
@@ -380,12 +381,8 @@ const pipelineRunConfigSchema = pipelineRunConfigBaseSchema.superRefine((config,
   }
 })
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.metadata, 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function ensurePipelineColumn(

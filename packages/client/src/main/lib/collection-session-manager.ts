@@ -26,6 +26,7 @@ import {
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { workbenchDatabasePath } from './workbench-db'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const nodeRequire = createRequire(import.meta.url)
@@ -611,12 +612,8 @@ function nonNegativeInteger(value: number | undefined) {
   return Number.isFinite(value) && value && value > 0 ? Math.floor(value) : 0
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.metadata, 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 async function readWorkbenchRoot(readConfig: ReadAppConfig) {

@@ -30,6 +30,7 @@ import {
 } from './preprocess-pool'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { assertTargetDoesNotExist } from './user-visible-filename'
+import { workbenchDatabasePath } from './workbench-db'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -589,12 +590,8 @@ async function runWithConcurrency<T>(
   await Promise.all(workers)
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, '.workbench', 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function ensureDetectionTables(db: Pick<SqliteDatabase, 'exec'>) {

@@ -1,4 +1,3 @@
-import { join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { readAppConfig } from '../onboarding'
 import {
@@ -11,6 +10,7 @@ import {
   type ChenyuPod,
 } from './chenyu-cloud-client'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { workbenchDatabasePath } from './workbench-db'
 
 export type ComfyuiInstanceState = 'none' | 'starting' | 'running' | 'shutting_down' | 'stopped'
 
@@ -91,12 +91,8 @@ const READY_POLL_INTERVAL_MS = 5_000
 const READY_POLL_TIMEOUT_MS = 10 * 60_000
 const COMFYUI_PROBE_TIMEOUT_MS = 2_500
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, '.workbench', 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function ensureComfyuiInstanceTable(db: Pick<SqliteDatabase, 'exec'>) {

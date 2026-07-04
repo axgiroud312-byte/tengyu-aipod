@@ -63,6 +63,7 @@ import {
   nextVisibleImageName,
   visibleImageNamingEnabled,
 } from './user-visible-filename'
+import { workbenchDatabasePath } from './workbench-db'
 
 export type Txt2imgPromptDraft = {
   id: string
@@ -880,12 +881,8 @@ async function resolveMixedMattingMaskSkill(
   return skillCache.getSkill(first.id, first.version)
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.metadata, 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function createGenerationDiagnostics(

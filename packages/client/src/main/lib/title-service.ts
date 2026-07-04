@@ -30,6 +30,7 @@ import {
 import { skillCacheManager } from './skill-cache'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
+import { workbenchDatabasePath } from './workbench-db'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 export type ExistingTitleStrategy = 'skip' | 'regenerate'
@@ -807,12 +808,8 @@ async function runWithConcurrency<T>(
   await Promise.all(workers)
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, '.workbench', 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function ensureSkuTable(db: Pick<SqliteDatabase, 'exec'>) {

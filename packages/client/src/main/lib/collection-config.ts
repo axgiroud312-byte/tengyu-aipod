@@ -1,9 +1,9 @@
-import { join } from 'node:path'
-import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import { workbenchDatabasePath } from './workbench-db'
 
 export type CollectionConfigMode = 'click' | 'scroll'
 
@@ -72,12 +72,8 @@ function parseCollectionConfigIpcInput(input: unknown): CollectionConfig {
   return parsed.data
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.metadata, 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
+  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 function ensureCollectionConfigTable(db: Pick<SqliteDatabase, 'exec'>) {
