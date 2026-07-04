@@ -183,7 +183,6 @@ export class ChenyuWorkflowRunner {
     await mkdir(outputFolder, { recursive: true })
     const db = this.options.openDatabase(this.options.workbenchRoot)
     try {
-      ensureArtifactsTable(db)
       const images: ChenyuRunImageWorkflowResult['images'] = []
       for (const [index, url] of input.imageUrls.entries()) {
         const buffer = await this.downloadImage(url)
@@ -297,29 +296,6 @@ async function uniqueTargetPath(folder: string, filename: string) {
       return candidate
     }
   }
-}
-
-function ensureArtifactsTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      sku_code TEXT,
-      print_id TEXT,
-      step TEXT NOT NULL,
-      provider TEXT,
-      model_or_workflow TEXT,
-      skill_id TEXT,
-      skill_version TEXT,
-      source_artifact_ids TEXT,
-      file_path TEXT NOT NULL,
-      file_size INTEGER,
-      file_hash TEXT,
-      prompt_snapshot TEXT,
-      params_snapshot TEXT,
-      created_at INTEGER NOT NULL
-    );
-  `)
 }
 
 async function registerWorkflowArtifact(

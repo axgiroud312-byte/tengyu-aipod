@@ -2,8 +2,10 @@ import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
-import { workbenchDatabasePath } from './workbench-db'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 
 export type CollectionConfigMode = 'click' | 'scroll'
 
@@ -73,32 +75,13 @@ function parseCollectionConfigIpcInput(input: unknown): CollectionConfig {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
-}
-
-function ensureCollectionConfigTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS collection_config (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      platform TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      output_dir TEXT NOT NULL,
-      scroll_keywords TEXT NOT NULL,
-      min_width INTEGER NOT NULL,
-      max_width INTEGER NOT NULL,
-      min_height INTEGER NOT NULL,
-      max_height INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-  `)
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 export async function getCollectionConfig(): Promise<CollectionConfig | null> {
   const workbenchRoot = await readWorkbenchRoot()
   const db = openWorkbenchDatabase(workbenchRoot)
   try {
-    ensureCollectionConfigTable(db)
     const row = db
       .prepare(
         `
@@ -129,7 +112,6 @@ export async function saveCollectionConfig(input: unknown): Promise<CollectionCo
   const config = normalizeCollectionConfig(input)
   const db = openWorkbenchDatabase(workbenchRoot)
   try {
-    ensureCollectionConfigTable(db)
     db.prepare(
       `
         INSERT INTO collection_config (

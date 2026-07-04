@@ -19,6 +19,7 @@ type FakeDbState = {
 
 type FakeStatement = {
   get: () => unknown | undefined
+  all: () => unknown[]
   run: (...values: unknown[]) => void
 }
 
@@ -50,6 +51,7 @@ class FakeDatabase {
     if (sql.includes('SELECT name FROM sqlite_master')) {
       return {
         get: () => (this.state.tableCreated ? { name: 'detection_config' } : undefined),
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -57,6 +59,7 @@ class FakeDatabase {
     if (sql.includes('SELECT COUNT(*) AS count FROM detection_config')) {
       return {
         get: () => ({ count: this.state.row ? 1 : 0 }),
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -73,6 +76,7 @@ class FakeDatabase {
                 variables_json: this.state.row.variables_json,
               }
             : undefined,
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -95,6 +99,7 @@ class FakeDatabase {
                 updatedAt: this.state.row.updated_at,
               }
             : undefined,
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -113,12 +118,14 @@ class FakeDatabase {
             updated_at: Number(values[6]),
           }
         },
+        all: () => [],
         get: () => undefined,
       }
     }
 
     return {
       get: () => undefined,
+      all: () => [],
       run: () => undefined,
     }
   }

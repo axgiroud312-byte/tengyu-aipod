@@ -28,9 +28,12 @@ import {
   type PreprocessOptions,
   SharpPreprocessPool,
 } from './preprocess-pool'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import type { SqliteDatabase } from './sqlite'
 import { assertTargetDoesNotExist } from './user-visible-filename'
-import { workbenchDatabasePath } from './workbench-db'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 
 const nodeRequire = createRequire(import.meta.url)
 
@@ -591,58 +594,7 @@ async function runWithConcurrency<T>(
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
-}
-
-function ensureDetectionTables(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      sku_code TEXT,
-      print_id TEXT,
-      step TEXT NOT NULL,
-      provider TEXT,
-      model_or_workflow TEXT,
-      skill_id TEXT,
-      skill_version TEXT,
-      source_artifact_ids TEXT,
-      file_path TEXT NOT NULL,
-      file_size INTEGER,
-      file_hash TEXT,
-      prompt_snapshot TEXT,
-      params_snapshot TEXT,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE TABLE IF NOT EXISTS detection_results (
-      id TEXT PRIMARY KEY,
-      artifact_id TEXT NOT NULL,
-      task_id TEXT NOT NULL,
-      risk_score INTEGER NOT NULL,
-      risk_level TEXT NOT NULL,
-      reason TEXT,
-      model TEXT NOT NULL,
-      skill_id TEXT NOT NULL,
-      skill_version TEXT NOT NULL,
-      threshold_snapshot TEXT NOT NULL,
-      output_path TEXT NOT NULL,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_detection_artifact ON detection_results(artifact_id);
-    CREATE INDEX IF NOT EXISTS idx_detection_level ON detection_results(risk_level);
-
-    CREATE TABLE IF NOT EXISTS matting_candidates (
-      id TEXT PRIMARY KEY,
-      artifact_id TEXT NOT NULL,
-      task_id TEXT NOT NULL,
-      print_id TEXT,
-      source_path TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      UNIQUE(artifact_id)
-    );
-  `)
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 async function readWorkbenchRoot(readConfig: ReadAppConfig = readAppConfig) {
@@ -763,7 +715,6 @@ function registerSourceArtifact(
     createdAt: number
   },
 ) {
-  ensureDetectionTables(db)
   db.prepare(`
     INSERT INTO artifacts (
       id,
@@ -800,7 +751,6 @@ function readCachedDetection(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: { artifactId: string; model: string; skill: SkillSummary; threshold: DetectionThreshold },
 ) {
-  ensureDetectionTables(db)
   const thresholdSnapshot = JSON.stringify(normalizeThreshold(input.threshold))
   const row = db
     .prepare(
@@ -849,7 +799,6 @@ function registerDetectionResult(
     createdAt: number
   },
 ) {
-  ensureDetectionTables(db)
   db.prepare(`
     INSERT INTO detection_results (
       id,
@@ -891,7 +840,6 @@ function registerMattingCandidate(
     sourcePath: string
   },
 ) {
-  ensureDetectionTables(db)
   db.prepare(`
     INSERT INTO matting_candidates (
       id,
@@ -1158,7 +1106,6 @@ export class DetectionService {
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     try {
-      ensureDetectionTables(db)
       const conditions: string[] = []
       const params: string[] = []
       if (input.task_id) {
@@ -1184,7 +1131,6 @@ export class DetectionService {
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     try {
-      ensureDetectionTables(db)
       const row = db
         .prepare(`${resultSelectSql('WHERE dr.artifact_id = ?')} LIMIT 1`)
         .get(input.artifact_id) as DetectionResultRow | undefined
@@ -1208,7 +1154,6 @@ export class DetectionService {
     const db = openWorkbenchDatabase(workbenchRoot)
     let rows: ArtifactImageRow[]
     try {
-      ensureDetectionTables(db)
       const placeholders = artifactIds.map(() => '?').join(',')
       rows = db
         .prepare(
@@ -1263,7 +1208,6 @@ export class DetectionService {
 
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     try {
-      ensureDetectionTables(db)
       const placeholders = artifactIds.map(() => '?').join(',')
       const rows = db
         .prepare(
@@ -1314,7 +1258,6 @@ export class DetectionService {
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     try {
-      ensureDetectionTables(db)
       const rows = db
         .prepare(
           `
@@ -1359,7 +1302,6 @@ export class DetectionService {
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     try {
-      ensureDetectionTables(db)
       const rows = db
         .prepare('SELECT output_path AS outputPath FROM detection_results WHERE artifact_id = ?')
         .all(input.artifact_id) as Array<{ outputPath: string }>

@@ -22,6 +22,7 @@ type FakeDbState = {
 
 type FakeStatement = {
   get: () => unknown | undefined
+  all: () => unknown[]
   run: (...values: unknown[]) => void
 }
 
@@ -53,6 +54,7 @@ class FakeDatabase {
     if (sql.includes('SELECT name FROM sqlite_master')) {
       return {
         get: () => (this.state.tableCreated ? { name: 'collection_config' } : undefined),
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -60,6 +62,7 @@ class FakeDatabase {
     if (sql.includes('SELECT COUNT(*) AS count FROM collection_config')) {
       return {
         get: () => ({ count: this.state.row ? 1 : 0 }),
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -67,6 +70,7 @@ class FakeDatabase {
     if (sql.includes('SELECT') && sql.includes('FROM collection_config')) {
       return {
         get: () => this.state.row,
+        all: () => [],
         run: () => undefined,
       }
     }
@@ -74,6 +78,7 @@ class FakeDatabase {
     if (sql.includes('INSERT INTO collection_config')) {
       return {
         get: () => undefined,
+        all: () => [],
         run: (...values: unknown[]) => {
           this.state.tableCreated = true
           this.state.row = {
@@ -94,6 +99,7 @@ class FakeDatabase {
 
     return {
       get: () => undefined,
+      all: () => [],
       run: () => undefined,
     }
   }

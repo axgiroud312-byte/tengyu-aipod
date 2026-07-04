@@ -25,8 +25,11 @@ import {
 } from './collection-injected-script'
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
-import { workbenchDatabasePath } from './workbench-db'
+import type { SqliteDatabase } from './sqlite'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const nodeRequire = createRequire(import.meta.url)
@@ -613,7 +616,7 @@ function nonNegativeInteger(value: number | undefined) {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 async function readWorkbenchRoot(readConfig: ReadAppConfig) {
@@ -668,22 +671,6 @@ function safePageUrl(page: Page) {
   }
 }
 
-function ensureCollectionSessionTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS collection_sessions (
-      id TEXT PRIMARY KEY,
-      platform TEXT NOT NULL,
-      profile_id TEXT NOT NULL,
-      mode TEXT NOT NULL,
-      status TEXT NOT NULL,
-      output_dir TEXT NOT NULL,
-      started_at INTEGER NOT NULL,
-      ended_at INTEGER,
-      task_id TEXT
-    );
-  `)
-}
-
 function writeSession(
   workbenchRoot: string,
   openDatabase: (workbenchRoot: string) => CollectionDatabase,
@@ -691,7 +678,6 @@ function writeSession(
 ) {
   const db = openDatabase(workbenchRoot)
   try {
-    ensureCollectionSessionTable(db)
     db.prepare(`
       INSERT INTO collection_sessions (
         id,

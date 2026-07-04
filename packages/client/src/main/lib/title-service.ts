@@ -28,9 +28,12 @@ import {
   SharpPreprocessPool,
 } from './preprocess-pool'
 import { skillCacheManager } from './skill-cache'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import type { SqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
-import { workbenchDatabasePath } from './workbench-db'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 export type ExistingTitleStrategy = 'skip' | 'regenerate'
@@ -809,24 +812,7 @@ async function runWithConcurrency<T>(
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
-}
-
-function ensureSkuTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS skus (
-      code TEXT PRIMARY KEY,
-      template_batch TEXT,
-      title TEXT,
-      language TEXT,
-      platform TEXT,
-      title_skill_id TEXT,
-      title_skill_version TEXT,
-      title_model TEXT,
-      title_generated_at INTEGER,
-      created_at INTEGER NOT NULL
-    );
-  `)
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 function registerSkuTitles(
@@ -841,7 +827,6 @@ function registerSkuTitles(
     generatedAt: number
   },
 ) {
-  ensureSkuTable(db)
   const statement = db.prepare(`
     INSERT INTO skus (
       code,
@@ -887,7 +872,6 @@ function readSkuTitle(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: { skuCode: string; batchDir: string },
 ) {
-  ensureSkuTable(db)
   const row = db
     .prepare(
       `

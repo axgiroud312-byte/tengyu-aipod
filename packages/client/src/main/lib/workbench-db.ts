@@ -2,11 +2,19 @@ import { join } from 'node:path'
 import { WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 import { getWorkbenchRoot } from './workbench-config'
+import { runWorkbenchMigrations } from './workbench-migrations'
 
 let defaultDb: SqliteDatabase | null = null
 
 export function openWorkbenchDatabase(dbPath: string): SqliteDatabase {
-  return openSqliteDatabase(dbPath)
+  const db = openSqliteDatabase(dbPath)
+  try {
+    runWorkbenchMigrations(db)
+    return db
+  } catch (error) {
+    db.close()
+    throw error
+  }
 }
 
 export function workbenchDatabasePath(workbenchRoot: string): string {

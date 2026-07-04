@@ -145,70 +145,6 @@ interface RawTemplateBatchResult {
   groups?: unknown
 }
 
-interface TableInfoRow extends Record<string, unknown> {
-  name?: unknown
-}
-
-export function ensurePhotoshopWorkflowTables(db: Pick<SqliteDatabase, 'exec' | 'prepare'>): void {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS workflow_steps (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      module TEXT NOT NULL,
-      step TEXT NOT NULL,
-      status TEXT NOT NULL,
-      attempt INTEGER NOT NULL DEFAULT 0,
-      params_snapshot TEXT NOT NULL DEFAULT '{}',
-      output_json TEXT,
-      error_json TEXT,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_workflow_steps_task ON workflow_steps(task_id);
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      sku_code TEXT,
-      print_id TEXT,
-      step TEXT NOT NULL,
-      provider TEXT,
-      model_or_workflow TEXT,
-      skill_id TEXT,
-      skill_version TEXT,
-      source_artifact_ids TEXT,
-      file_path TEXT NOT NULL,
-      file_size INTEGER,
-      file_hash TEXT,
-      prompt_snapshot TEXT,
-      params_snapshot TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_artifacts_provider_path ON artifacts(provider, file_path);
-  `)
-
-  const artifactColumns = new Set(
-    (db.prepare('PRAGMA table_info(artifacts)').all() as TableInfoRow[]).map((row) =>
-      String(row.name),
-    ),
-  )
-  const optionalColumns: Array<[string, string]> = [
-    ['sku_code', 'TEXT'],
-    ['print_id', 'TEXT'],
-    ['step', 'TEXT'],
-    ['model_or_workflow', 'TEXT'],
-    ['skill_id', 'TEXT'],
-    ['skill_version', 'TEXT'],
-    ['source_artifact_ids', 'TEXT'],
-    ['file_size', 'INTEGER'],
-    ['prompt_snapshot', 'TEXT'],
-    ['params_snapshot', 'TEXT'],
-  ]
-  for (const [column, definition] of optionalColumns) {
-    if (!artifactColumns.has(column)) {
-      db.exec(`ALTER TABLE artifacts ADD COLUMN ${column} ${definition}`)
-    }
-  }
-}
-
 interface ShouldSkipJobOptions {
   db?: SqliteDatabase
   dbProvider?: DatabaseProvider
@@ -226,7 +162,6 @@ export async function shouldSkipJob(
   }
 
   const db = await dbProvider()
-  ensurePhotoshopWorkflowTables(db)
   const signature = createPhotoshopJobSignature(job)
   const rows = db
     .prepare(
@@ -289,7 +224,6 @@ export async function shouldSkipJob(
 export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder {
   private readonly dbProvider: DatabaseProvider
   private readonly hashFile: HashFileFn
-  private schemaReady = false
 
   constructor(
     options: {
@@ -478,15 +412,7 @@ export class SqlitePhotoshopWorkflowStepRecorder implements WorkflowStepRecorder
 
   private async db(): Promise<SqliteDatabase> {
     const db = await this.dbProvider()
-    if (!this.schemaReady) {
-      this.ensureSchema(db)
-      this.schemaReady = true
-    }
     return db
-  }
-
-  private ensureSchema(db: SqliteDatabase): void {
-    ensurePhotoshopWorkflowTables(db)
   }
 
   private stepId(job: PhotoshopJob): string {

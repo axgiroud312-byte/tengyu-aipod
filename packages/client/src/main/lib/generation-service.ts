@@ -56,14 +56,17 @@ import {
   promptGeneratorService,
 } from './prompt-generator-service'
 import { skillCacheManager } from './skill-cache'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import type { SqliteDatabase } from './sqlite'
 import { type TempFileManager, tempFileManager } from './temp-file-manager'
 import {
   assertTargetDoesNotExist,
   nextVisibleImageName,
   visibleImageNamingEnabled,
 } from './user-visible-filename'
-import { workbenchDatabasePath } from './workbench-db'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 
 export type Txt2imgPromptDraft = {
   id: string
@@ -882,7 +885,7 @@ async function resolveMixedMattingMaskSkill(
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 function createGenerationDiagnostics(
@@ -919,29 +922,6 @@ async function finishGenerationResultWithDiagnostics(
     })
     .catch(() => null)
   return finalResult
-}
-
-function ensureGenerationTables(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      sku_code TEXT,
-      print_id TEXT,
-      step TEXT NOT NULL,
-      provider TEXT,
-      model_or_workflow TEXT,
-      skill_id TEXT,
-      skill_version TEXT,
-      source_artifact_ids TEXT,
-      file_path TEXT NOT NULL,
-      file_size INTEGER,
-      file_hash TEXT,
-      prompt_snapshot TEXT,
-      params_snapshot TEXT,
-      created_at INTEGER NOT NULL
-    );
-  `)
 }
 
 async function readWorkbenchRoot(readConfig: typeof readAppConfig = readAppConfig) {
@@ -1215,7 +1195,6 @@ function registerPrintSourceArtifact(
     createdAt: number
   },
 ) {
-  ensureGenerationTables(db)
   db.prepare(`
     INSERT INTO artifacts (
       id,
@@ -1351,7 +1330,6 @@ function registerSourceArtifact(
     createdAt: number
   },
 ) {
-  ensureGenerationTables(db)
   db.prepare(`
     INSERT INTO artifacts (
       id,
@@ -1443,7 +1421,6 @@ async function registerExtractArtifact(
     createdAt: number
   },
 ) {
-  ensureGenerationTables(db)
   const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
   const artifactId = randomUUID()
   db.prepare(`
@@ -1499,7 +1476,6 @@ async function registerGeneratedArtifact(
     createdAt: number
   },
 ) {
-  ensureGenerationTables(db)
   const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
   const artifactId = randomUUID()
   db.prepare(`
@@ -1995,7 +1971,6 @@ export async function listImg2imgSources(
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
   try {
-    ensureGenerationTables(db)
     const initialRows = readImg2imgArtifactRows(db)
     await ensureFolderPrintArtifacts(db, sourceFolders, initialRows)
     const rows = readImg2imgArtifactRows(db)
@@ -2033,7 +2008,6 @@ export async function resolveImg2imgReferences(
   const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
   try {
-    ensureGenerationTables(db)
     return Promise.all(
       artifactIds.map((artifactId) => readReferenceForArtifact(db, workbenchRoot, artifactId)),
     )
@@ -2662,7 +2636,6 @@ async function runTxt2imgTask(
   let outputIndex = input.filenameStartIndex ?? 0
 
   try {
-    ensureGenerationTables(db)
     await mkdir(outputFolder, { recursive: true })
     await Promise.all(
       prompts.map((prompt, index) =>
@@ -2860,7 +2833,6 @@ export async function runExtractBatch(
     )
     db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
     const activeDb = db
-    ensureGenerationTables(db)
     await mkdir(outputFolder, { recursive: true })
     const skill = await skillCache.getSkill(input.skillId.trim(), input.skillVersion)
 
@@ -3049,7 +3021,6 @@ export async function runComfyuiExtractBatch(
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
-      ensureGenerationTables(db)
       const adapter = await createComfyuiAdapterForRun(
         input,
         apiKey,
@@ -3220,7 +3191,6 @@ export async function runComfyuiExtractMattingBatch(
     let createdTempDir = false
 
     try {
-      ensureGenerationTables(db)
       const tempDir = await tempFiles.createTaskDir('matting', taskId)
       createdTempDir = true
       const adapter = await createComfyuiAdapterForRun(
@@ -3410,7 +3380,6 @@ export async function runComfyuiMattingBatch(
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
-      ensureGenerationTables(db)
       const sourceArtifactIds = await comfyuiSourceArtifactIds(db, {
         taskId,
         ...(input.sourceArtifactIds !== undefined
@@ -3566,7 +3535,6 @@ export async function runMixedMattingBatch(
     let createdTempDir = false
 
     try {
-      ensureGenerationTables(db)
       const sourceArtifactIds = await comfyuiSourceArtifactIds(db, {
         taskId,
         ...(input.sourceArtifactIds !== undefined
@@ -3798,7 +3766,6 @@ export async function runComfyuiTxt2imgBatch(
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
-      ensureGenerationTables(db)
       const useVisibleFilenames = visibleImageNamingEnabled({
         prefix: input.filenamePrefix,
         separator: input.filenameSeparator,
@@ -3946,7 +3913,6 @@ export async function runComfyuiImg2imgBatch(
     const db = (dependencies.openDatabase ?? openWorkbenchDatabase)(workbenchRoot)
 
     try {
-      ensureGenerationTables(db)
       const sourceArtifactIds = await comfyuiSourceArtifactIds(db, {
         taskId,
         ...(input.sourceArtifactIds !== undefined

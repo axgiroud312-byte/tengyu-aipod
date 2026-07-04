@@ -2,8 +2,10 @@ import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
 import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
-import { workbenchDatabasePath } from './workbench-db'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 
 export type DetectionThresholdConfig = {
   passMax: number
@@ -57,7 +59,7 @@ function parseDetectionConfigIpcInput(input: unknown): DetectionConfig {
 }
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 function clampScore(value: number) {
@@ -76,21 +78,6 @@ function normalizeThreshold(threshold?: Partial<DetectionThresholdConfig>) {
   }
 }
 
-function ensureDetectionConfigTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS detection_config (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      pass_max INTEGER NOT NULL,
-      review_max INTEGER NOT NULL,
-      skill_id TEXT NOT NULL,
-      skill_version TEXT NOT NULL,
-      model TEXT NOT NULL,
-      variables_json TEXT NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-  `)
-}
-
 export async function getDetectionConfig() {
   const config = await readAppConfig()
   if (!config.workbench_root) {
@@ -99,7 +86,6 @@ export async function getDetectionConfig() {
 
   const db = openWorkbenchDatabase(config.workbench_root)
   try {
-    ensureDetectionConfigTable(db)
     const row = db
       .prepare(
         `
@@ -143,7 +129,6 @@ export async function saveDetectionConfig(input: DetectionConfig) {
   const threshold = normalizeThreshold(input.threshold)
   const variables = input.variables ?? {}
   try {
-    ensureDetectionConfigTable(db)
     db.prepare(
       `
         INSERT INTO detection_config (

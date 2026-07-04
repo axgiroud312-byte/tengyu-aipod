@@ -9,8 +9,11 @@ import {
   ChenyuInstanceStatus,
   type ChenyuPod,
 } from './chenyu-cloud-client'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
-import { workbenchDatabasePath } from './workbench-db'
+import type { SqliteDatabase } from './sqlite'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 
 export type ComfyuiInstanceState = 'none' | 'starting' | 'running' | 'shutting_down' | 'stopped'
 
@@ -92,27 +95,7 @@ const READY_POLL_TIMEOUT_MS = 10 * 60_000
 const COMFYUI_PROBE_TIMEOUT_MS = 2_500
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
-}
-
-function ensureComfyuiInstanceTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS comfyui_instances (
-      id INTEGER PRIMARY KEY CHECK (id = 1),
-      provider TEXT NOT NULL,
-      instance_uuid TEXT NOT NULL,
-      comfyui_url TEXT NOT NULL,
-      pod_uuid TEXT,
-      gpu_uuid TEXT,
-      gpu_name TEXT,
-      status TEXT NOT NULL,
-      pod_price_hour REAL NOT NULL DEFAULT 0,
-      gpu_price_hour REAL NOT NULL DEFAULT 0,
-      auto_shutdown_at INTEGER,
-      created_at INTEGER NOT NULL,
-      last_used_at INTEGER
-    );
-  `)
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 export class ComfyuiInstanceManager {
@@ -358,7 +341,6 @@ export class ComfyuiInstanceManager {
   private withDb<T>(workbenchRoot: string, callback: (db: ComfyuiInstanceDatabase) => T) {
     const db = this.openDatabase(workbenchRoot)
     try {
-      ensureComfyuiInstanceTable(db)
       return callback(db)
     } finally {
       db.close()

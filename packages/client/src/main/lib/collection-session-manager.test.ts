@@ -241,7 +241,6 @@ describe('CollectionSessionManager', () => {
     })
 
     expect(cdp.connectToProfile).toHaveBeenCalledWith('profile-1')
-    expect(db.execCalls[0]).toContain('CREATE TABLE IF NOT EXISTS collection_sessions')
     expect(db.rows.get('session-1')).toMatchObject({ status: 'active' })
     expect(events.filter((event) => event.type !== 'debug-log')).toEqual([
       {

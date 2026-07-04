@@ -220,8 +220,6 @@ export class ComfyuiChenyuAdapter implements ImageGenerationAdapter {
     await mkdir(outputFolder, { recursive: true })
     const db = this.options.openDatabase(this.options.workbenchRoot)
     try {
-      ensureArtifactsTable(db)
-
       const images: NonNullable<GenerateResponse['images']> = []
       for (const output of outputs) {
         if (!output.filename) {
@@ -617,29 +615,6 @@ function validateWorkflowForRequest(workflow: CachedComfyuiWorkflow, req: Genera
       workflowId: workflow.id,
     })
   }
-}
-
-function ensureArtifactsTable(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      sku_code TEXT,
-      print_id TEXT,
-      step TEXT NOT NULL,
-      provider TEXT,
-      model_or_workflow TEXT,
-      skill_id TEXT,
-      skill_version TEXT,
-      source_artifact_ids TEXT,
-      file_path TEXT NOT NULL,
-      file_size INTEGER,
-      file_hash TEXT,
-      prompt_snapshot TEXT,
-      params_snapshot TEXT,
-      created_at INTEGER NOT NULL
-    );
-  `)
 }
 
 async function registerComfyuiArtifact(

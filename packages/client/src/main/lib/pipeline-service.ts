@@ -67,7 +67,7 @@ import type {
 import { createDetectionStage } from './pipeline-stages/detection-stage'
 import { createPhotoshopStage } from './pipeline-stages/photoshop-stage'
 import { createTitleStage } from './pipeline-stages/title-stage'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import type { SqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 import { type TitleBatchResult, titleService } from './title-service'
 import {
@@ -75,7 +75,10 @@ import {
   nextVisibleImageName,
   normalizedVisibleImageNaming,
 } from './user-visible-filename'
-import { workbenchDatabasePath } from './workbench-db'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 import { assertPathInsideWorkbench, canonicalPath } from './workbench-path-guard'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
@@ -382,85 +385,7 @@ const pipelineRunConfigSchema = pipelineRunConfigBaseSchema.superRefine((config,
 })
 
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
-}
-
-function ensurePipelineColumn(
-  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
-  table: 'pipeline_runs',
-  column: string,
-  definition: string,
-) {
-  const rows = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name?: unknown }>
-  if (rows.some((row) => row.name === column)) {
-    return
-  }
-  db.exec(`ALTER TABLE ${table} ADD COLUMN ${definition}`)
-}
-
-function ensurePipelineTables(db: Pick<SqliteDatabase, 'exec' | 'prepare'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS pipeline_runs (
-      id TEXT PRIMARY KEY,
-      name TEXT NOT NULL,
-      source_mode TEXT NOT NULL,
-      status TEXT NOT NULL,
-      config_json TEXT NOT NULL,
-      stats_json TEXT NOT NULL,
-      result_sections_json TEXT DEFAULT '[]',
-      logs_json TEXT DEFAULT '[]',
-      error_summary TEXT,
-      created_at INTEGER NOT NULL,
-      started_at INTEGER,
-      completed_at INTEGER
-    );
-
-    CREATE TABLE IF NOT EXISTS pipeline_steps (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL,
-      step_key TEXT NOT NULL,
-      module TEXT NOT NULL,
-      label TEXT NOT NULL,
-      status TEXT NOT NULL,
-      input_count INTEGER NOT NULL DEFAULT 0,
-      output_count INTEGER NOT NULL DEFAULT 0,
-      output_json TEXT,
-      error_json TEXT,
-      started_at INTEGER,
-      completed_at INTEGER,
-      updated_at INTEGER NOT NULL,
-      UNIQUE(run_id, step_key)
-    );
-
-    CREATE TABLE IF NOT EXISTS pipeline_items (
-      id TEXT PRIMARY KEY,
-      run_id TEXT NOT NULL,
-      item_key TEXT NOT NULL,
-      step_key TEXT NOT NULL,
-      status TEXT NOT NULL,
-      source_path TEXT,
-      output_path TEXT,
-      artifact_id TEXT,
-      print_id TEXT,
-      source_artifact_ids_json TEXT,
-      error_message TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL,
-      completed_at INTEGER,
-      UNIQUE(run_id, item_key, step_key)
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);
-    CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run ON pipeline_steps(run_id);
-    CREATE INDEX IF NOT EXISTS idx_pipeline_items_run ON pipeline_items(run_id);
-  `)
-  ensurePipelineColumn(
-    db,
-    'pipeline_runs',
-    'result_sections_json',
-    "result_sections_json TEXT DEFAULT '[]'",
-  )
-  ensurePipelineColumn(db, 'pipeline_runs', 'logs_json', "logs_json TEXT DEFAULT '[]'")
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 function appErrorMessage(error: unknown) {
@@ -1300,7 +1225,6 @@ export class PipelineService {
     const workbenchRoot = await this.readWorkbenchRoot()
     const db = openWorkbenchDatabase(workbenchRoot)
     try {
-      ensurePipelineTables(db)
       const rows = db
         .prepare('SELECT * FROM pipeline_runs ORDER BY created_at DESC LIMIT 100')
         .all() as unknown[]
@@ -1316,7 +1240,6 @@ export class PipelineService {
     const workbenchRoot = await this.readWorkbenchRoot()
     const db = openWorkbenchDatabase(workbenchRoot)
     try {
-      ensurePipelineTables(db)
       db.prepare(
         `
           UPDATE pipeline_runs
@@ -1402,7 +1325,6 @@ export class PipelineService {
     const workbenchRoot = await this.readWorkbenchRoot()
     const db = openWorkbenchDatabase(workbenchRoot)
     try {
-      ensurePipelineTables(db)
       return readRunDetail(db, runId)
     } finally {
       db.close()
@@ -1446,7 +1368,6 @@ export class PipelineService {
                 runId,
               })
             : null
-        ensurePipelineTables(db)
         this.createRun(db, runId, runName, runConfig)
         this.appendLog(runId, {
           level: 'info',

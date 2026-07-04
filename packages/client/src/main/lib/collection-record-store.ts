@@ -1,7 +1,7 @@
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
-import { workbenchDatabasePath } from './workbench-db'
+import type { SqliteDatabase } from './sqlite'
+import { openWorkbenchDatabase, workbenchDatabasePath } from './workbench-db'
 
 export const COLLECTION_RECORD_LIST_LIMIT_DEFAULT = 20
 export const COLLECTION_RECORD_LIST_LIMIT_MAX = 10_000
@@ -33,35 +33,13 @@ export type CollectionRecordQuery = {
 }
 
 export function openCollectionDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDatabasePath(workbenchRoot))
-}
-
-export function ensureCollectionRecordTables(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS collection_records (
-      id TEXT PRIMARY KEY,
-      session_id TEXT NOT NULL,
-      sku_code TEXT,
-      source_url TEXT NOT NULL,
-      goods_link TEXT,
-      page_url TEXT NOT NULL,
-      saved_path TEXT,
-      status TEXT NOT NULL,
-      reason TEXT,
-      file_size INTEGER,
-      created_at INTEGER NOT NULL
-    );
-
-    CREATE INDEX IF NOT EXISTS idx_records_session ON collection_records(session_id);
-    CREATE INDEX IF NOT EXISTS idx_records_status ON collection_records(status);
-  `)
+  return openWorkbenchDatabase(workbenchDatabasePath(workbenchRoot))
 }
 
 export function insertCollectionRecord(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   record: CollectionRecordInput,
 ) {
-  ensureCollectionRecordTables(db)
   db.prepare(`
     INSERT INTO collection_records (
       id,
@@ -95,7 +73,6 @@ export function updateCollectionRecord(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   record: CollectionRecordInput,
 ) {
-  ensureCollectionRecordTables(db)
   db.prepare(`
     UPDATE collection_records SET
       sku_code = ?,
@@ -126,7 +103,6 @@ export function getCollectionRecord(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   recordId: string,
 ): CollectionRecordRow | null {
-  ensureCollectionRecordTables(db)
   const row = db.prepare('SELECT * FROM collection_records WHERE id = ?').get(recordId) as
     | CollectionRecordDbRow
     | undefined
@@ -137,7 +113,6 @@ export function deleteCollectionRecord(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   recordId: string,
 ) {
-  ensureCollectionRecordTables(db)
   return Number(db.prepare('DELETE FROM collection_records WHERE id = ?').run(recordId).changes)
 }
 
@@ -145,7 +120,6 @@ export function listCollectionRecords(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   query: CollectionRecordQuery,
 ): CollectionRecordRow[] {
-  ensureCollectionRecordTables(db)
   const limit = Math.max(
     1,
     Math.min(

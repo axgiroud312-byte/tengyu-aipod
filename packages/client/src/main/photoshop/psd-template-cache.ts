@@ -40,7 +40,6 @@ function parseJson<T>(value: string): T {
 
 export class SqlitePsdTemplateCache implements PsdTemplateCache {
   private readonly dbProvider: DatabaseProvider
-  private schemaReady = false
 
   constructor(options: { db?: SqliteDatabase; dbProvider?: DatabaseProvider } = {}) {
     this.dbProvider = options.db
@@ -114,43 +113,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
   }
 
   private async db(): Promise<SqliteDatabase> {
-    const db = await this.dbProvider()
-    if (!this.schemaReady) {
-      this.ensureSchema(db)
-      this.schemaReady = true
-    }
-    return db
-  }
-
-  private ensureSchema(db: SqliteDatabase): void {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS psd_templates (
-        id TEXT PRIMARY KEY,
-        file_path TEXT NOT NULL,
-        file_hash TEXT NOT NULL,
-        doc_size_w INTEGER NOT NULL,
-        doc_size_h INTEGER NOT NULL,
-        smart_objects TEXT NOT NULL,
-        guides TEXT NOT NULL,
-        clip_areas TEXT NOT NULL,
-        mode TEXT NOT NULL,
-        representative_so_count INTEGER NOT NULL,
-        scanned_at INTEGER NOT NULL,
-        layers TEXT NOT NULL DEFAULT '[]',
-        text_layers TEXT NOT NULL DEFAULT '[]',
-        UNIQUE(file_hash)
-      );
-      CREATE INDEX IF NOT EXISTS idx_psd_templates_file_path ON psd_templates(file_path);
-    `)
-
-    const columns = db.prepare('PRAGMA table_info(psd_templates)').all() as Array<{ name: string }>
-    const names = new Set(columns.map((column) => column.name))
-    if (!names.has('layers')) {
-      db.exec("ALTER TABLE psd_templates ADD COLUMN layers TEXT NOT NULL DEFAULT '[]'")
-    }
-    if (!names.has('text_layers')) {
-      db.exec("ALTER TABLE psd_templates ADD COLUMN text_layers TEXT NOT NULL DEFAULT '[]'")
-    }
+    return await this.dbProvider()
   }
 
   private toRow(template: PsdTemplate) {

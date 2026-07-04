@@ -11,9 +11,13 @@ import {
   errorForDiagnosticLog,
 } from './diagnostic-log-service'
 import { getSecret } from './keychain'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import type { SqliteDatabase } from './sqlite'
 import { assertTargetDoesNotExist, sanitizeVisibleFilenamePart } from './user-visible-filename'
 import { readAppConfig } from './workbench-config'
+import {
+  openWorkbenchDatabase as openWorkbenchDatabaseFile,
+  workbenchDatabasePath,
+} from './workbench-db'
 import { assertPathInsideWorkbench } from './workbench-path-guard'
 
 const HAPPYHORSE_BASE_URL = 'https://dashscope.aliyuncs.com/api/v1'
@@ -277,60 +281,8 @@ function parseVideoIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: st
   return parsed.data
 }
 
-function workbenchDbPath(workbenchRoot: string) {
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.metadata, 'workbench.db')
-}
-
 function openWorkbenchDatabase(workbenchRoot: string) {
-  return openSqliteDatabase(workbenchDbPath(workbenchRoot))
-}
-
-function ensureVideoTables(db: Pick<SqliteDatabase, 'exec'>) {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS tasks (
-      id TEXT PRIMARY KEY,
-      module TEXT NOT NULL,
-      type TEXT NOT NULL,
-      status TEXT NOT NULL,
-      input_json TEXT NOT NULL DEFAULT '{}',
-      result_json TEXT,
-      error_json TEXT,
-      created_at INTEGER NOT NULL,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE TABLE IF NOT EXISTS workflow_steps (
-      id TEXT PRIMARY KEY,
-      task_id TEXT NOT NULL,
-      module TEXT NOT NULL,
-      step TEXT NOT NULL,
-      status TEXT NOT NULL,
-      attempt INTEGER NOT NULL DEFAULT 0,
-      params_snapshot TEXT NOT NULL DEFAULT '{}',
-      output_json TEXT,
-      error_json TEXT,
-      updated_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_workflow_steps_task ON workflow_steps(task_id);
-    CREATE TABLE IF NOT EXISTS artifacts (
-      id TEXT PRIMARY KEY,
-      task_id TEXT,
-      sku_code TEXT,
-      print_id TEXT,
-      step TEXT NOT NULL,
-      provider TEXT,
-      model_or_workflow TEXT,
-      skill_id TEXT,
-      skill_version TEXT,
-      source_artifact_ids TEXT,
-      file_path TEXT NOT NULL,
-      file_size INTEGER,
-      file_hash TEXT,
-      prompt_snapshot TEXT,
-      params_snapshot TEXT,
-      created_at INTEGER NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_artifacts_provider_path ON artifacts(provider, file_path);
-  `)
+  return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
 function newRuntimeLogEntry(
@@ -585,7 +537,6 @@ function registerVideoTask(
   input: VideoRunInput,
   now: number,
 ) {
-  ensureVideoTables(db)
   db.prepare(`
     INSERT INTO tasks (
       id, module, type, status, input_json, created_at, updated_at
@@ -643,7 +594,6 @@ async function registerVideoArtifact(
     createdAt: number
   },
 ) {
-  ensureVideoTables(db)
   const [fileHash, info] = await Promise.all([hashFile(input.outputPath), stat(input.outputPath)])
   db.prepare(`
     INSERT INTO artifacts (

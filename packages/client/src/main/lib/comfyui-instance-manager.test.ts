@@ -170,7 +170,6 @@ describe('ComfyuiInstanceManager', () => {
       autoShutdownAt: 1_700_003_600,
     })
     expect(db.row).toMatchObject({ instanceUuid: 'inst-1', status: 'running' })
-    expect(db.execCalls[0]).toContain('CREATE TABLE IF NOT EXISTS comfyui_instances')
   })
 
   it('detects ComfyUI from a generic frontend URL when the service title is not stable', async () => {

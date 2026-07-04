@@ -10,8 +10,9 @@ import {
   parseDetectionResponse,
 } from './detection-service'
 import { BAILIAN_VISION_MODELS } from './generation-local-config'
-import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
+import type { SqliteDatabase } from './sqlite'
 import { TempFileManager } from './temp-file-manager'
+import { openWorkbenchDatabase, workbenchDatabasePath } from './workbench-db'
 
 type TestDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
 
@@ -162,7 +163,7 @@ function createSqliteDependencies() {
   return {
     readConfig: async () => ({ workbench_root: workbenchRoot }),
     openDatabase: (_workbenchRoot: string) =>
-      openSqliteDatabase(join(workbenchRoot, '.workbench', 'workbench.db')),
+      openWorkbenchDatabase(workbenchDatabasePath(workbenchRoot)),
   }
 }
 

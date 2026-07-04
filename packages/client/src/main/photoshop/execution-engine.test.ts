@@ -5,6 +5,7 @@ import type { PhotoshopJob, PsdTemplate } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openSqliteDatabase } from '../lib/sqlite'
 import { TempFileManager } from '../lib/temp-file-manager'
+import { runWorkbenchMigrations } from '../lib/workbench-migrations'
 import {
   PhotoshopExecutionEngine,
   SqlitePhotoshopWorkflowStepRecorder,
@@ -513,6 +514,7 @@ describe('PhotoshopExecutionEngine', () => {
     const db = openSqliteDatabase(':memory:')
     const job = createJob({ output_paths: ['C:\\outputs\\01.jpg'] })
     try {
+      runWorkbenchMigrations(db)
       await new SqlitePhotoshopWorkflowStepRecorder({
         db,
         hashFile: async () => 'hash-01',
@@ -574,9 +576,10 @@ describe('PhotoshopExecutionEngine', () => {
     }
   })
 
-  it('returns false from shouldSkipJob when workflow tables do not exist yet', async () => {
+  it('returns false from shouldSkipJob when workflow tables have no completed jobs', async () => {
     const db = openSqliteDatabase(':memory:')
     try {
+      runWorkbenchMigrations(db)
       await expect(shouldSkipJob(createJob(), { db })).resolves.toBe(false)
     } finally {
       db.close()
@@ -588,26 +591,7 @@ describe('PhotoshopExecutionEngine', () => {
     const outputPath = join(tempDir, '01.jpg')
     await writeFile(outputPath, 'fake image', 'utf8')
     try {
-      db.exec(`
-        CREATE TABLE artifacts (
-          id TEXT PRIMARY KEY,
-          task_id TEXT,
-          sku_code TEXT,
-          print_id TEXT,
-          step TEXT NOT NULL,
-          provider TEXT,
-          model_or_workflow TEXT,
-          skill_id TEXT,
-          skill_version TEXT,
-          source_artifact_ids TEXT,
-          file_path TEXT NOT NULL,
-          file_size INTEGER,
-          file_hash TEXT,
-          prompt_snapshot TEXT,
-          params_snapshot TEXT,
-          created_at INTEGER NOT NULL
-        );
-      `)
+      runWorkbenchMigrations(db)
       const recorder = new SqlitePhotoshopWorkflowStepRecorder({
         db,
         hashFile: async () => 'hash-01',
