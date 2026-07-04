@@ -76,6 +76,30 @@ function applyAppIcon(): string | undefined {
   return appIconPath
 }
 
+function installRenderProcessRecovery(window: BrowserWindow): void {
+  window.webContents.on('render-process-gone', (_event, details) => {
+    console.error('Renderer process gone', details)
+    void dialog
+      .showMessageBox(window, {
+        type: 'warning',
+        buttons: ['重新加载', '稍后'],
+        defaultId: 0,
+        cancelId: 1,
+        title: '界面已崩溃',
+        message: '界面已崩溃，是否重新加载？',
+        ...(details.reason ? { detail: `原因：${details.reason}` } : {}),
+      })
+      .then((result) => {
+        if (result.response === 0 && !window.isDestroyed()) {
+          window.webContents.reload()
+        }
+      })
+      .catch((error: unknown) => {
+        console.error('Failed to show renderer recovery dialog', error)
+      })
+  })
+}
+
 function createMainWindow(appIconPath = resolveAppIconPath()): void {
   const mainWindow = new BrowserWindow({
     width: 1400,
@@ -94,6 +118,7 @@ function createMainWindow(appIconPath = resolveAppIconPath()): void {
   mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
     console.error(`Preload failed: ${preloadPath}`, error)
   })
+  installRenderProcessRecovery(mainWindow)
   if (process.env.ELECTRON_RENDERER_URL) {
     void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
     return
