@@ -61,3 +61,36 @@ export class AppErrorClass extends Error implements AppError {
     }
   }
 }
+
+const DEFAULT_IPC_ERROR_MESSAGE = '操作失败，请稍后重试'
+const IPC_REMOTE_PREFIX = /^Error invoking remote method ['"][^'"]+['"]:\s*/
+const ERROR_PREFIX = /^(?:Error:\s*)+/
+
+export function formatIpcError(error: unknown): string {
+  let message = readErrorMessage(error).trim()
+  let previous = ''
+
+  while (message && message !== previous) {
+    previous = message
+    message = message.replace(IPC_REMOTE_PREFIX, '').replace(ERROR_PREFIX, '').trim()
+  }
+
+  return message || DEFAULT_IPC_ERROR_MESSAGE
+}
+
+function readErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message
+  }
+  if (typeof error === 'string') {
+    return error
+  }
+  if (isRecord(error) && typeof error.message === 'string') {
+    return error.message
+  }
+  return ''
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
