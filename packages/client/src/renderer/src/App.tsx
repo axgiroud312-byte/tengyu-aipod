@@ -40,7 +40,8 @@ import {
   moduleFromPath,
   workbenchModules,
 } from '@/layout/navigation'
-import { AlertTriangle, Loader2 } from 'lucide-react'
+import { formatIpcError } from '@tengyu-aipod/shared'
+import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   HashRouter,
@@ -1403,20 +1404,31 @@ function Onboarding() {
     bit_browser_url: '127.0.0.1:54345',
   })
   const [isStateLoaded, setIsStateLoaded] = useState(false)
+  const [onboardingLoadError, setOnboardingLoadError] = useState<string | null>(null)
+  const [onboardingActionError, setOnboardingActionError] = useState<string | null>(null)
+  const [savingApiKeys, setSavingApiKeys] = useState(false)
+  const [completing, setCompleting] = useState(false)
   const [ready, setReady] = useState(false)
 
-  useEffect(() => {
-    async function loadState() {
+  const loadState = useCallback(async () => {
+    setIsStateLoaded(false)
+    setOnboardingLoadError(null)
+    try {
       const state = await window.api.onboarding.getState()
       if (!state.needs_onboarding) {
         setReady(true)
         navigate(getStoredWorkbenchRoute(), { replace: true })
       }
+    } catch (error) {
+      setOnboardingLoadError(formatIpcError(error))
+    } finally {
       setIsStateLoaded(true)
     }
-
-    void loadState()
   }, [navigate])
+
+  useEffect(() => {
+    void loadState()
+  }, [loadState])
 
   useEffect(() => {
     if (requestedStep && onboardingPath(step) !== `/onboarding/${requestedStep}`) {
@@ -1425,14 +1437,25 @@ function Onboarding() {
   }, [navigate, requestedStep, step])
 
   async function saveApiKeys(nextStep: OnboardingStep = 2) {
+    if (savingApiKeys) {
+      return
+    }
     const cleaned: OnboardingApiKeys = {
       chenyu: apiKeys.chenyu.trim(),
       grsai: apiKeys.grsai.trim(),
       bailian: apiKeys.bailian.trim(),
       bit_browser_url: apiKeys.bit_browser_url.trim(),
     }
-    await window.api.onboarding.saveApiKeys(cleaned)
-    navigate(onboardingPath(nextStep))
+    setSavingApiKeys(true)
+    setOnboardingActionError(null)
+    try {
+      await window.api.onboarding.saveApiKeys(cleaned)
+      navigate(onboardingPath(nextStep))
+    } catch (error) {
+      setOnboardingActionError(formatIpcError(error))
+    } finally {
+      setSavingApiKeys(false)
+    }
   }
 
   function updateApiKey(key: OnboardingApiKey, value: string) {
@@ -1440,15 +1463,37 @@ function Onboarding() {
   }
 
   async function complete() {
-    await window.api.onboarding.complete()
-    setReady(true)
-    navigate(getStoredWorkbenchRoute(), { replace: true })
+    if (completing) {
+      return
+    }
+    setCompleting(true)
+    setOnboardingActionError(null)
+    try {
+      await window.api.onboarding.complete()
+      setReady(true)
+      navigate(getStoredWorkbenchRoute(), { replace: true })
+    } catch (error) {
+      setOnboardingActionError(formatIpcError(error))
+    } finally {
+      setCompleting(false)
+    }
   }
 
   async function openTutorial() {
-    await window.api.onboarding.complete()
-    setReady(true)
-    navigate('/tutorial', { replace: true })
+    if (completing) {
+      return
+    }
+    setCompleting(true)
+    setOnboardingActionError(null)
+    try {
+      await window.api.onboarding.complete()
+      setReady(true)
+      navigate('/tutorial', { replace: true })
+    } catch (error) {
+      setOnboardingActionError(formatIpcError(error))
+    } finally {
+      setCompleting(false)
+    }
   }
 
   if (ready) {
@@ -1463,13 +1508,38 @@ function Onboarding() {
     )
   }
 
+  if (onboardingLoadError && !ready) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background px-6 text-foreground">
+        <section className="w-full max-w-md rounded-md border bg-card p-6 shadow-lg">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+            <div className="min-w-0 space-y-4">
+              <div className="space-y-2">
+                <h1 className="text-lg font-semibold">启动状态读取失败</h1>
+                <p className="break-words text-sm text-muted-foreground">{onboardingLoadError}</p>
+              </div>
+              <Button onClick={() => void loadState()} type="button">
+                <RefreshCw className="mr-2 size-4" />
+                重试
+              </Button>
+            </div>
+          </div>
+        </section>
+      </main>
+    )
+  }
+
   return (
     <OnboardingPage
       apiKeys={apiKeys}
+      completing={completing}
+      error={onboardingActionError}
       onApiKeyChange={updateApiKey}
       onComplete={() => void complete()}
       onOpenTutorial={() => void openTutorial()}
       onSaveApiKeys={() => void saveApiKeys()}
+      saving={savingApiKeys}
       step={step}
     />
   )
@@ -1490,18 +1560,55 @@ function WorkbenchRoute() {
   const navigate = useNavigate()
   const location = useLocation()
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
-  useEffect(() => {
-    async function loadState() {
+  const loadState = useCallback(async () => {
+    setLoading(true)
+    setLoadError(null)
+    try {
       const state = await window.api.onboarding.getState()
       setNeedsOnboarding(state.needs_onboarding)
       if (state.needs_onboarding) {
         navigate(onboardingPath(1), { replace: true })
       }
+    } catch (error) {
+      setNeedsOnboarding(null)
+      setLoadError(formatIpcError(error))
+    } finally {
+      setLoading(false)
     }
-
-    void loadState()
   }, [navigate])
+
+  useEffect(() => {
+    void loadState()
+  }, [loadState])
+
+  if (loadError) {
+    return (
+      <main className="grid min-h-screen place-items-center bg-background px-6 text-foreground">
+        <section className="w-full max-w-md rounded-md border bg-card p-6 shadow-lg">
+          <div className="flex items-start gap-3">
+            <AlertTriangle className="mt-0.5 size-5 shrink-0 text-destructive" />
+            <div className="min-w-0 space-y-4">
+              <div className="space-y-2">
+                <h1 className="text-lg font-semibold">进入工作台失败</h1>
+                <p className="break-words text-sm text-muted-foreground">{loadError}</p>
+              </div>
+              <Button disabled={loading} onClick={() => void loadState()} type="button">
+                {loading ? (
+                  <Loader2 className="mr-2 size-4 animate-spin" />
+                ) : (
+                  <RefreshCw className="mr-2 size-4" />
+                )}
+                重试
+              </Button>
+            </div>
+          </div>
+        </section>
+      </main>
+    )
+  }
 
   if (needsOnboarding === null) {
     return <EnteringWorkbench />

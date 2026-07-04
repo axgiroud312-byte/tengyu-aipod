@@ -23,6 +23,9 @@ export type OnboardingApiKeys = Record<OnboardingApiKey, string>
 interface OnboardingPageProps {
   step: OnboardingStep
   apiKeys: OnboardingApiKeys
+  error?: string | null
+  completing?: boolean
+  saving?: boolean
   onApiKeyChange: (key: OnboardingApiKey, value: string) => void
   onSaveApiKeys: () => void
   onComplete: () => void
@@ -134,6 +137,9 @@ function StepRail({ step }: { step: OnboardingStep }) {
 export function OnboardingPage({
   step,
   apiKeys,
+  error,
+  completing = false,
+  saving = false,
   onApiKeyChange,
   onSaveApiKeys,
   onComplete,
@@ -225,6 +231,12 @@ export function OnboardingPage({
           </CardHeader>
 
           <CardContent className="p-6 pt-0">
+            {error ? (
+              <div className="mb-4 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+                {error}
+              </div>
+            ) : null}
+
             {step === 1 ? (
               <div className="grid gap-5">
                 <div className="grid gap-3">
@@ -239,6 +251,7 @@ export function OnboardingPage({
                         <Input
                           className="h-10 min-w-0 flex-1"
                           id={`onboarding-${field.key}`}
+                          disabled={saving}
                           onChange={(event) => onApiKeyChange(field.key, event.target.value)}
                           placeholder={field.placeholder}
                           type={field.type}
@@ -246,13 +259,19 @@ export function OnboardingPage({
                         />
                         <Button
                           className="h-10"
+                          disabled={saving}
                           onClick={() => onApiKeyChange(field.key, '')}
                           type="button"
                           variant="secondary"
                         >
                           跳过
                         </Button>
-                        <Button className="h-10" type="button" variant="secondary">
+                        <Button
+                          className="h-10"
+                          disabled={saving}
+                          type="button"
+                          variant="secondary"
+                        >
                           测试连接
                         </Button>
                       </div>
@@ -267,11 +286,16 @@ export function OnboardingPage({
                 <div className="flex items-center justify-between gap-3 pt-1">
                   <div />
                   <div className="flex gap-2">
-                    <Button onClick={onSaveApiKeys} type="button" variant="secondary">
+                    <Button
+                      disabled={saving}
+                      onClick={onSaveApiKeys}
+                      type="button"
+                      variant="secondary"
+                    >
                       全部跳过
                     </Button>
-                    <Button onClick={onSaveApiKeys} type="button">
-                      保存并继续
+                    <Button disabled={saving} onClick={onSaveApiKeys} type="button">
+                      {saving ? '正在保存...' : '保存并继续'}
                     </Button>
                   </div>
                 </div>
@@ -304,12 +328,17 @@ export function OnboardingPage({
                   </div>
                 </div>
                 <div className="flex justify-center gap-2">
-                  <Button onClick={onOpenTutorial} type="button" variant="secondary">
+                  <Button
+                    disabled={completing}
+                    onClick={onOpenTutorial}
+                    type="button"
+                    variant="secondary"
+                  >
                     <PlayCircle className="mr-2 h-4 w-4" />
                     查看操作教程
                   </Button>
-                  <Button onClick={onComplete} type="button">
-                    开始使用
+                  <Button disabled={completing} onClick={onComplete} type="button">
+                    {completing ? '正在进入...' : '开始使用'}
                   </Button>
                 </div>
               </div>

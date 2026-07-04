@@ -26,6 +26,7 @@ import {
   type TitleKeywordGroupDraft,
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
+import { useIpcMutation } from '@/lib/use-ipc'
 import type {
   PipelineItemRecord,
   PipelinePrintMode,
@@ -1412,6 +1413,18 @@ export function FullTaskPage() {
   const [detectionSkills, setDetectionSkills] = useState<SkillSummary[]>([])
   const previousSourceModeRef = useRef<TaskSourceMode | null>(null)
   const existingPrintToggleSnapshotRef = useRef<FullTaskToggleSnapshot | null>(null)
+  const chooseSourceFolderMutation = useIpcMutation(() => window.api.generation.chooseImageFolder())
+  const chooseImg2imgSourceFolderMutation = useIpcMutation(() =>
+    window.api.generation.chooseImageFolder(),
+  )
+  const chooseExistingPrintFolderMutation = useIpcMutation(() =>
+    window.api.photoshop.choosePrintFolder(),
+  )
+  const chooseTemplatesMutation = useIpcMutation(() => window.api.photoshop.chooseTemplates())
+  const chooseOutputRootMutation = useIpcMutation(() => window.api.photoshop.chooseOutputFolder())
+  const cancelPipelineMutation = useIpcMutation((runId: string) =>
+    window.api.pipeline.cancel({ run_id: runId }),
+  )
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const requiresPromptGeneration =
@@ -2096,22 +2109,22 @@ export function FullTaskPage() {
   }
 
   async function chooseSourceFolder() {
-    const selected = await window.api.generation.chooseImageFolder()
-    if (selected.ok) {
+    const selected = await chooseSourceFolderMutation.run()
+    if (selected?.ok) {
       setSourceFolder(selected.data.path)
     }
   }
 
   async function chooseImg2imgSourceFolder() {
-    const selected = await window.api.generation.chooseImageFolder()
-    if (selected.ok) {
+    const selected = await chooseImg2imgSourceFolderMutation.run()
+    if (selected?.ok) {
       setImg2imgSourceFolder(selected.data.path)
     }
   }
 
   async function chooseExistingPrintFolder() {
-    const selected = await window.api.photoshop.choosePrintFolder()
-    if (selected.ok) {
+    const selected = await chooseExistingPrintFolderMutation.run()
+    if (selected?.ok) {
       setExistingPrintFolder(selected.data.path)
     }
   }
@@ -2141,15 +2154,15 @@ export function FullTaskPage() {
   }
 
   async function chooseTemplates() {
-    const selected = await window.api.photoshop.chooseTemplates()
-    if (selected.ok) {
+    const selected = await chooseTemplatesMutation.run()
+    if (selected?.ok) {
       setTemplatePaths(selected.data.paths)
     }
   }
 
   async function chooseOutputRoot() {
-    const selected = await window.api.photoshop.chooseOutputFolder()
-    if (selected.ok) {
+    const selected = await chooseOutputRootMutation.run()
+    if (selected?.ok) {
       setOutputRoot(selected.data.path)
     }
   }
@@ -2391,7 +2404,10 @@ export function FullTaskPage() {
     if (!currentRunId) {
       return
     }
-    const result = await window.api.pipeline.cancel({ run_id: currentRunId })
+    const result = await cancelPipelineMutation.run(currentRunId)
+    if (!result) {
+      return
+    }
     if (!result.ok) {
       setError('当前完整任务已结束，无法取消')
       return
@@ -2499,6 +2515,7 @@ export function FullTaskPage() {
                       </Field>
                       <Button
                         className="mt-7 h-10"
+                        disabled={chooseSourceFolderMutation.loading}
                         onClick={() => void chooseSourceFolder()}
                         variant="outline"
                       >
@@ -2769,6 +2786,7 @@ export function FullTaskPage() {
                           </Field>
                           <Button
                             className="mt-7 h-10"
+                            disabled={chooseImg2imgSourceFolderMutation.loading}
                             onClick={() => void chooseImg2imgSourceFolder()}
                             variant="outline"
                           >
@@ -2977,6 +2995,7 @@ export function FullTaskPage() {
                       </Field>
                       <Button
                         className="mt-7 h-10"
+                        disabled={chooseExistingPrintFolderMutation.loading}
                         onClick={() => void chooseExistingPrintFolder()}
                         variant="outline"
                       >
@@ -3214,6 +3233,7 @@ export function FullTaskPage() {
                       </Field>
                       <Button
                         className="mt-7 h-10"
+                        disabled={chooseTemplatesMutation.loading}
                         onClick={() => void chooseTemplates()}
                         variant="outline"
                       >
@@ -3239,6 +3259,7 @@ export function FullTaskPage() {
                       </Field>
                       <Button
                         className="mt-7 h-10"
+                        disabled={chooseOutputRootMutation.loading}
                         onClick={() => void chooseOutputRoot()}
                         variant="outline"
                       >
@@ -3545,7 +3566,7 @@ export function FullTaskPage() {
                 启动完整任务
               </Button>
               <Button
-                disabled={!running || !currentRunId}
+                disabled={!running || !currentRunId || cancelPipelineMutation.loading}
                 onClick={() => void cancelPipeline()}
                 variant="outline"
               >
