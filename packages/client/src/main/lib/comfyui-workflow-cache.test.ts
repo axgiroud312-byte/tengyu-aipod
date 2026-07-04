@@ -6,6 +6,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 let userDataDir = ''
 let workbenchRoot = ''
 
+const electronMocks = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
+  showOpenDialog: vi.fn(),
+}))
+
 vi.mock('electron', () => ({
   app: {
     getPath: (name: string) => {
@@ -16,19 +21,31 @@ vi.mock('electron', () => ({
     },
     isPackaged: false,
   },
+  dialog: {
+    showOpenDialog: electronMocks.showOpenDialog,
+  },
+  ipcMain: {
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      electronMocks.handlers.set(channel, handler)
+    },
+  },
 }))
 
 vi.mock('../onboarding', () => ({
   readAppConfig: () => ({ workbench_root: workbenchRoot }),
 }))
 
-const { ComfyuiWorkflowCacheManager, comfyuiUiWorkflowToApiPrompt } = await import(
-  './comfyui-workflow-cache'
-)
+const {
+  ComfyuiWorkflowCacheManager,
+  comfyuiUiWorkflowToApiPrompt,
+  registerComfyuiWorkflowCacheIpc,
+} = await import('./comfyui-workflow-cache')
 
 beforeEach(async () => {
   userDataDir = await mkdtemp(join(tmpdir(), 'tengyu-workflow-cache-'))
   workbenchRoot = await mkdtemp(join(tmpdir(), 'tengyu-workbench-'))
+  electronMocks.handlers.clear()
+  electronMocks.showOpenDialog.mockReset()
   vi.useRealTimers()
   vi.stubGlobal('fetch', vi.fn())
 })
@@ -39,6 +56,14 @@ afterEach(async () => {
   await rm(userDataDir, { recursive: true, force: true })
   await rm(workbenchRoot, { recursive: true, force: true })
 })
+
+function registeredHandler(channel: string) {
+  const handler = electronMocks.handlers.get(channel)
+  if (!handler) {
+    throw new Error(`${channel} handler was not registered`)
+  }
+  return handler
+}
 
 describe('ComfyuiWorkflowCacheManager', () => {
   it('imports and lists local workflow summaries without fetching the server', async () => {
@@ -291,5 +316,18 @@ describe('ComfyuiWorkflowCacheManager', () => {
       '213': { inputs: { value: 4, control_after_generate: 'fixed' } },
       '175': { inputs: { width: ['179', 0], height: 512, batch_size: ['213', 0], color: 0 } },
     })
+  })
+})
+
+describe('comfyui workflow cache ipc', () => {
+  it.each([
+    ['workflow:list-local', 'bad-category', 'ComfyUI 工作流分类参数不正确'],
+    ['workflow:import-local', { name: '测试' }, 'ComfyUI 工作流导入参数不正确'],
+    ['workflow:import-directory', { directoryPath: '' }, 'ComfyUI 工作流文件夹导入参数不正确'],
+    ['workflow:remove-local', { id: '' }, 'ComfyUI 工作流删除参数不正确'],
+  ])('rejects invalid %s input at the IPC boundary', (channel, input, message) => {
+    registerComfyuiWorkflowCacheIpc()
+
+    expect(() => registeredHandler(channel)({}, input)).toThrow(message)
   })
 })

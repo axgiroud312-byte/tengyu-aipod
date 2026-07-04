@@ -1,6 +1,7 @@
 import { join } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
+import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 
@@ -46,6 +47,29 @@ const DEFAULT_COLLECTION_CONFIG: CollectionConfig = {
     min_height: 0,
     max_height: 0,
   },
+}
+const collectionConfigSchema = z.object({
+  platform: z.string(),
+  profile_id: z.string(),
+  mode: z.enum(['click', 'scroll']),
+  output_dir: z.string(),
+  scroll_keywords: z.string(),
+  size_filter: z.object({
+    min_width: z.number(),
+    max_width: z.number(),
+    min_height: z.number(),
+    max_height: z.number(),
+  }),
+})
+
+function parseCollectionConfigIpcInput(input: unknown): CollectionConfig {
+  const parsed = collectionConfigSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', '采集配置参数不正确', false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
 }
 
 function workbenchDbPath(workbenchRoot: string) {
@@ -185,7 +209,9 @@ export function normalizeCollectionConfig(input: unknown): CollectionConfig {
 
 export function registerCollectionConfigIpc() {
   ipcMain.handle('collection:get-config', () => getCollectionConfig())
-  ipcMain.handle('collection:save-config', (_event, input: unknown) => saveCollectionConfig(input))
+  ipcMain.handle('collection:save-config', (_event, input: unknown) =>
+    saveCollectionConfig(parseCollectionConfigIpcInput(input)),
+  )
 }
 
 async function readWorkbenchRoot() {

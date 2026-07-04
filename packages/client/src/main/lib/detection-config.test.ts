@@ -126,9 +126,15 @@ class FakeDatabase {
   close() {}
 }
 
+const electronMocks = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
+}))
+
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: vi.fn(),
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      electronMocks.handlers.set(channel, handler)
+    },
   },
 }))
 
@@ -140,7 +146,9 @@ vi.mock('../onboarding', () => ({
   readAppConfig: () => ({ workbench_root: workbenchRoot }),
 }))
 
-const { getDetectionConfig, saveDetectionConfig } = await import('./detection-config')
+const { getDetectionConfig, registerDetectionConfigIpc, saveDetectionConfig } = await import(
+  './detection-config'
+)
 
 function dbPath() {
   return join(workbenchRoot, '.workbench', 'workbench.db')
@@ -153,6 +161,7 @@ function openDb() {
 beforeEach(() => {
   workbenchRoot = `workbench-${randomUUID()}`
   fakeDbs.clear()
+  electronMocks.handlers.clear()
 })
 
 afterEach(() => {
@@ -266,5 +275,17 @@ describe('detection-config', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('rejects invalid detection:save-config input at the IPC boundary', () => {
+    registerDetectionConfigIpc()
+    const handler = electronMocks.handlers.get('detection:save-config')
+    if (!handler) {
+      throw new Error('detection:save-config handler was not registered')
+    }
+
+    expect(() => handler({}, { threshold: { passMax: 39, reviewMax: 69 } })).toThrow(
+      '侵权检测配置参数不正确',
+    )
   })
 })

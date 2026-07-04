@@ -6,10 +6,27 @@ import type {
   ComfyuiWorkflowSlot,
   GenerationCapability,
 } from '@tengyu-aipod/shared'
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { app, dialog, ipcMain } from 'electron'
+import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 
 const INDEX_FILE_NAME = 'index.json'
+const comfyuiWorkflowCategorySchema = z
+  .enum(['txt2img', 'img2img', 'extract', 'matting', 'matting-mixed'])
+  .optional()
+const importLocalComfyuiWorkflowInputSchema = z.object({
+  name: z.string().min(1),
+  capability: z.enum(['txt2img', 'img2img', 'extract', 'matting', 'matting-mixed']),
+  workflowJsonText: z.string().min(1),
+  requiredModels: z.array(z.string()).optional(),
+})
+const importLocalComfyuiWorkflowDirectoryInputSchema = z.object({
+  directoryPath: z.string().min(1),
+})
+const removeLocalComfyuiWorkflowInputSchema = z.object({
+  id: z.string().min(1),
+})
 
 export type ComfyuiWorkflowCategory = GenerationCapability | 'matting-mixed'
 export type ComfyuiWorkflowFormat = 'api' | 'ui'
@@ -56,6 +73,31 @@ export type ImportLocalComfyuiWorkflowDirectoryResult = {
 export type ChooseLocalComfyuiWorkflowDirectoryResult =
   | { ok: true; data: { path: string } }
   | { ok: false; error: { code: string; message: string } }
+
+function parseComfyuiWorkflowIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
+  const parsed = schema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', message, false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
+}
+
+function parseImportLocalComfyuiWorkflowInput(input: unknown): ImportLocalComfyuiWorkflowInput {
+  const parsed = importLocalComfyuiWorkflowInputSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', 'ComfyUI 工作流导入参数不正确', false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return {
+    name: parsed.data.name,
+    capability: parsed.data.capability,
+    workflowJsonText: parsed.data.workflowJsonText,
+    ...(parsed.data.requiredModels ? { requiredModels: parsed.data.requiredModels } : {}),
+  }
+}
 
 type WorkflowIndexFile = {
   updated_at: number
@@ -1031,18 +1073,34 @@ export function registerComfyuiWorkflowCacheIpc() {
       return { ok: true, data: { path: result.filePaths[0] } }
     },
   )
-  ipcMain.handle('workflow:list-local', (_event, category?: ComfyuiWorkflowCategory) =>
-    comfyuiWorkflowCacheManager.listWorkflows(category),
+  ipcMain.handle('workflow:list-local', (_event, category: unknown) =>
+    comfyuiWorkflowCacheManager.listWorkflows(
+      parseComfyuiWorkflowIpcInput(
+        comfyuiWorkflowCategorySchema,
+        category,
+        'ComfyUI 工作流分类参数不正确',
+      ),
+    ),
   )
-  ipcMain.handle('workflow:import-local', (_event, input: ImportLocalComfyuiWorkflowInput) =>
-    comfyuiWorkflowCacheManager.importWorkflow(input),
+  ipcMain.handle('workflow:import-local', (_event, input: unknown) =>
+    comfyuiWorkflowCacheManager.importWorkflow(parseImportLocalComfyuiWorkflowInput(input)),
   )
-  ipcMain.handle(
-    'workflow:import-directory',
-    (_event, input: ImportLocalComfyuiWorkflowDirectoryInput) =>
-      comfyuiWorkflowCacheManager.importWorkflowDirectory(input),
+  ipcMain.handle('workflow:import-directory', (_event, input: unknown) =>
+    comfyuiWorkflowCacheManager.importWorkflowDirectory(
+      parseComfyuiWorkflowIpcInput(
+        importLocalComfyuiWorkflowDirectoryInputSchema,
+        input,
+        'ComfyUI 工作流文件夹导入参数不正确',
+      ),
+    ),
   )
-  ipcMain.handle('workflow:remove-local', (_event, input: { id: string }) =>
-    comfyuiWorkflowCacheManager.removeWorkflow(input.id),
+  ipcMain.handle('workflow:remove-local', (_event, input: unknown) =>
+    comfyuiWorkflowCacheManager.removeWorkflow(
+      parseComfyuiWorkflowIpcInput(
+        removeLocalComfyuiWorkflowInputSchema,
+        input,
+        'ComfyUI 工作流删除参数不正确',
+      ).id,
+    ),
   )
 }

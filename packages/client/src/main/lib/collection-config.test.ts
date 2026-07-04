@@ -101,9 +101,15 @@ class FakeDatabase {
   close() {}
 }
 
+const electronMocks = vi.hoisted(() => ({
+  handlers: new Map<string, (...args: unknown[]) => unknown>(),
+}))
+
 vi.mock('electron', () => ({
   ipcMain: {
-    handle: vi.fn(),
+    handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
+      electronMocks.handlers.set(channel, handler)
+    },
   },
 }))
 
@@ -115,7 +121,9 @@ vi.mock('../onboarding', () => ({
   readAppConfig: () => ({ workbench_root: workbenchRoot }),
 }))
 
-const { getCollectionConfig, saveCollectionConfig } = await import('./collection-config')
+const { getCollectionConfig, registerCollectionConfigIpc, saveCollectionConfig } = await import(
+  './collection-config'
+)
 
 function dbPath() {
   return join(workbenchRoot, '.workbench', 'workbench.db')
@@ -128,6 +136,7 @@ function openDb() {
 beforeEach(() => {
   workbenchRoot = `workbench-${randomUUID()}`
   fakeDbs.clear()
+  electronMocks.handlers.clear()
 })
 
 afterEach(() => {
@@ -221,5 +230,15 @@ describe('collection-config', () => {
     } finally {
       db.close()
     }
+  })
+
+  it('rejects invalid collection:save-config input at the IPC boundary', () => {
+    registerCollectionConfigIpc()
+    const handler = electronMocks.handlers.get('collection:save-config')
+    if (!handler) {
+      throw new Error('collection:save-config handler was not registered')
+    }
+
+    expect(() => handler({}, null)).toThrow('采集配置参数不正确')
   })
 })

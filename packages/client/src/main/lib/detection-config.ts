@@ -1,5 +1,7 @@
 import { join } from 'node:path'
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { ipcMain } from 'electron'
+import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import { type SqliteDatabase, openSqliteDatabase } from './sqlite'
 
@@ -32,6 +34,26 @@ const DEFAULT_DETECTION_CONFIG: DetectionConfig = {
   skillVersion: '',
   model: 'qwen3.6-flash',
   variables: {},
+}
+const detectionConfigSchema = z.object({
+  threshold: z.object({
+    passMax: z.number(),
+    reviewMax: z.number(),
+  }),
+  skillId: z.string(),
+  skillVersion: z.string(),
+  model: z.string(),
+  variables: z.record(z.unknown()),
+})
+
+function parseDetectionConfigIpcInput(input: unknown): DetectionConfig {
+  const parsed = detectionConfigSchema.safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', '侵权检测配置参数不正确', false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
 }
 
 function workbenchDbPath(workbenchRoot: string) {
@@ -182,7 +204,7 @@ export function resetDetectionConfig() {
 
 export function registerDetectionConfigIpc() {
   ipcMain.handle('detection:get-config', () => getDetectionConfig())
-  ipcMain.handle('detection:save-config', (_event, input: DetectionConfig) =>
-    saveDetectionConfig(input),
+  ipcMain.handle('detection:save-config', (_event, input: unknown) =>
+    saveDetectionConfig(parseDetectionConfigIpcInput(input)),
   )
 }
