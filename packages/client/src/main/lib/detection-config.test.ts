@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type DetectionConfigRow = {
@@ -142,7 +143,7 @@ vi.mock('../onboarding', () => ({
 const { getDetectionConfig, saveDetectionConfig } = await import('./detection-config')
 
 function dbPath() {
-  return `${workbenchRoot}/.workbench/workbench.db`
+  return join(workbenchRoot, '.workbench', 'workbench.db')
 }
 
 function openDb() {

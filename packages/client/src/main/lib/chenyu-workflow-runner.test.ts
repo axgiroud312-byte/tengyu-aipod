@@ -1,6 +1,7 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChenyuWorkflowExecution } from './chenyu-cloud-client'
 import { ChenyuWorkflowRunner } from './chenyu-workflow-runner'
@@ -120,7 +121,9 @@ describe('ChenyuWorkflowRunner', () => {
     if (!firstImage) {
       throw new Error('missing image')
     }
-    expect(firstImage.local_path).toContain('/02-印花工作区/文生图/task-local/')
+    expect(firstImage.local_path).toContain(
+      join(WORKBENCH_DIRECTORIES.generation, '文生图', 'task-local'),
+    )
     await expect(readFile(firstImage.local_path, 'utf8')).resolves.toBe('image-bytes')
     expect(db.artifacts).toHaveLength(1)
     expect(db.artifacts[0]).toEqual(

@@ -840,10 +840,12 @@ export function SettingsPage({
                 <CardContent className="space-y-3">
                   <label
                     className="block space-y-2 text-sm font-medium"
+                    htmlFor="bit-browser-base-url"
                   >
                     <span>服务地址</span>
                     <Input
                       className="font-mono text-xs"
+                      id="bit-browser-base-url"
                       onChange={(event) => setBitBrowserBaseUrl(event.target.value)}
                       placeholder="127.0.0.1:54345"
                       value={bitBrowserBaseUrl}

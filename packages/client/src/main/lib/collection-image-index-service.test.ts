@@ -34,7 +34,7 @@ afterEach(() => {
   mockWorkbenchRoot = ''
 })
 
-const COLLECTION_TASK_DIR = '/tmp/output/temu-20260531-120000'
+const COLLECTION_TASK_DIR = join('/tmp', 'output', 'temu-20260531-120000')
 
 describe('collection image index product folders', () => {
   it('detects Temu regional goods detail URLs from -g-id slugs', () => {
@@ -71,7 +71,7 @@ describe('collection image index product folders', () => {
       },
     )
 
-    expect(targetDir).toBe(`${COLLECTION_TASK_DIR}/商品页/temu-g-601099697798918`)
+    expect(targetDir).toBe(join(COLLECTION_TASK_DIR, '商品页', 'temu-g-601099697798918'))
   })
 
   it('uses an explicit product group key for product folders', () => {
@@ -86,7 +86,7 @@ describe('collection image index product folders', () => {
       },
     )
 
-    expect(targetDir).toBe(`${COLLECTION_TASK_DIR}/商品页/temu-g-606267330393299`)
+    expect(targetDir).toBe(join(COLLECTION_TASK_DIR, '商品页', 'temu-g-606267330393299'))
   })
 
   it('keeps non-product Temu images in the task folder', () => {

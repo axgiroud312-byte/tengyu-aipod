@@ -70,15 +70,19 @@ describe('workbench path guard', () => {
     ).resolves.toContain('0001.mp4')
   })
 
-  it('rejects symlinks that escape the workbench', async () => {
-    tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-path-guard-'))
-    const workbenchRoot = join(tempRoot, 'workbench')
-    const outside = join(tempRoot, 'outside', 'private.jpg')
-    const link = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection, 'linked.jpg')
-    await createFile(outside)
-    await mkdir(dirname(link), { recursive: true })
-    await symlink(outside, link)
+  it.skipIf(process.platform === 'win32')(
+    'rejects symlinks that escape the workbench',
+    async () => {
+      // Windows requires Developer Mode or elevated privileges to create symlinks in this test.
+      tempRoot = await mkdtemp(join(tmpdir(), 'tengyu-path-guard-'))
+      const workbenchRoot = join(tempRoot, 'workbench')
+      const outside = join(tempRoot, 'outside', 'private.jpg')
+      const link = join(workbenchRoot, WORKBENCH_DIRECTORIES.collection, 'linked.jpg')
+      await createFile(outside)
+      await mkdir(dirname(link), { recursive: true })
+      await symlink(outside, link)
 
-    await expect(isPathInsideWorkbench(workbenchRoot, link, 'collection')).resolves.toBe(false)
-  })
+      await expect(isPathInsideWorkbench(workbenchRoot, link, 'collection')).resolves.toBe(false)
+    },
+  )
 })

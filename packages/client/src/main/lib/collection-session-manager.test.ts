@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { join } from 'node:path'
 import type { AppErrorClass } from '@tengyu-aipod/shared'
 import { describe, expect, it, vi } from 'vitest'
 import { BrowserProfileLockManager } from './browser-profile-lock'
@@ -204,7 +205,9 @@ function createManagerBase(
     ),
   }
   const manager = new CollectionSessionManager({
-    readConfig: vi.fn().mockResolvedValue({ workbench_root: options.workbenchRoot ?? '/tmp/wb' }),
+    readConfig: vi.fn().mockResolvedValue({
+      workbench_root: options.workbenchRoot ?? join('/tmp', 'wb'),
+    }),
     openDatabase: () => db as never,
     cdp: cdp as never,
     ...(options.bitBrowser ? { bitBrowser: options.bitBrowser as never } : {}),
@@ -233,7 +236,7 @@ describe('CollectionSessionManager', () => {
       profile_id: 'profile-1',
       mode: 'click',
       status: 'active',
-      output_dir: `/tmp/wb/01-采集工作区/temu-${localTimestampSlug(1000)}`,
+      output_dir: join('/tmp', 'wb', '01-采集工作区', `temu-${localTimestampSlug(1000)}`),
       started_at: 1000,
     })
 

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto'
 import { mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, join, sep } from 'node:path'
 import type { AppErrorClass } from '@tengyu-aipod/shared'
 import sharp from 'sharp'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -28,18 +28,18 @@ const platformRule: CollectionPlatformRule = {
 }
 
 const COLLECTION_TEST_NOW = 1_779_610_000_000
-const COLLECTION_TASK_DIR = '/tmp/wb/01-采集工作区/temu-20260531-120000'
+const COLLECTION_TASK_DIR = join('/tmp', 'wb', '01-采集工作区', 'temu-20260531-120000')
 
 afterEach(() => {
   collectionFolderLock.clearForTests()
 })
 
 function looseImagePath(ext: '.jpg' | '.png' | '.webp') {
-  return `${COLLECTION_TASK_DIR}/temu-${localTimestampSlug(COLLECTION_TEST_NOW)}-001${ext}`
+  return join(COLLECTION_TASK_DIR, `temu-${localTimestampSlug(COLLECTION_TEST_NOW)}-001${ext}`)
 }
 
 function skuImagePath(fileName = 'SKU-001-001.jpg') {
-  return `${COLLECTION_TASK_DIR}/商品页/SKU-001/${fileName}`
+  return join(COLLECTION_TASK_DIR, '商品页', 'SKU-001', fileName)
 }
 
 function localTimestampSlug(value: number) {
@@ -192,7 +192,7 @@ function createFs() {
     }),
     readdir: vi.fn(async (path: string) => {
       const names = Array.from(files.keys())
-        .filter((filePath) => filePath.startsWith(`${path}/`))
+        .filter((filePath) => filePath.startsWith(`${path}${sep}`))
         .map((filePath) => basename(filePath))
       return names.map((name) => ({
         name,
@@ -664,7 +664,7 @@ describe('CollectionClickService', () => {
       session: activeSession({ mode: 'scroll' }),
       image,
     })
-    const existingPath = `${COLLECTION_TASK_DIR}/existing.jpg`
+    const existingPath = join(COLLECTION_TASK_DIR, 'existing.jpg')
     fs.files.set(existingPath, image)
 
     await expect(
