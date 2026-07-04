@@ -1,4 +1,5 @@
 import { getSkill } from '@/lib/skills'
+import { parseOptionalPhpUid } from '@/lib/targeting'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -20,7 +21,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return errorResponse('INVALID_SKILL_QUERY', 'Skill 查询参数不正确', 400)
   }
 
-  const data = await getSkill(id, parsed.data.version)
+  const data = await getSkill(
+    id,
+    parsed.data.version,
+    parseOptionalPhpUid(url.searchParams.get('uid')),
+  )
   if (!data) {
     return errorResponse('SKILL_NOT_FOUND', 'Skill 不存在', 404)
   }

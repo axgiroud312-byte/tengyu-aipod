@@ -141,7 +141,8 @@ export async function parseDraftPage(page: Page): Promise<TemuPopDraftPageState>
 
 function detectTemplateKey(url: string): TemuPopTemplateKey | 'unknown' {
   for (const [key, templateUrl] of Object.entries(TEMU_POP_TEMPLATE_URLS)) {
-    if (url.includes(new URL(templateUrl).search)) {
+    const templateSearch = new URL(templateUrl).search
+    if (templateSearch && url.includes(templateSearch)) {
       return key as TemuPopTemplateKey
     }
   }

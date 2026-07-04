@@ -1,19 +1,21 @@
 import type { Skill } from '@prisma/client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const findMany = vi.fn()
 const findFirst = vi.fn()
+const findMany = vi.fn()
+const deleteMany = vi.fn()
 
 vi.mock('@/lib/db', () => ({
   db: {
     skill: {
+      deleteMany,
       findMany,
       findFirst,
     },
   },
 }))
 
-const { getSkill, listSkills } = await import('./skills')
+const { deleteSkill, getSkill, listSkills } = await import('./skills')
 
 function skill(overrides: Partial<Skill> = {}): Skill {
   const now = new Date('2026-05-23T00:00:00.000Z')
@@ -30,6 +32,8 @@ function skill(overrides: Partial<Skill> = {}): Skill {
     variables_json: '[]',
     recommended_model: 'qwen3-vl-plus',
     notes: null,
+    target_php_uids_json: '[]',
+    target_scope: 'all',
     created_at: now,
     updated_at: now,
     ...overrides,
@@ -37,8 +41,9 @@ function skill(overrides: Partial<Skill> = {}): Skill {
 }
 
 beforeEach(() => {
-  findMany.mockReset()
+  deleteMany.mockReset()
   findFirst.mockReset()
+  findMany.mockReset()
 })
 
 describe('skills queries', () => {
@@ -147,5 +152,36 @@ describe('skills queries', () => {
         where: { id: 'disabled-skill', enabled: true, version: '1.0.0' },
       }),
     )
+  })
+
+  it('filters public skills by php uid target allowlist', async () => {
+    findMany.mockResolvedValueOnce([
+      skill({ id: 'global' }),
+      skill({
+        id: 'hidden',
+        target_php_uids_json: '[456]',
+        target_scope: 'php_uid_list',
+      }),
+      skill({
+        id: 'matched',
+        target_php_uids_json: '[123]',
+        target_scope: 'php_uid_list',
+      }),
+    ])
+
+    await expect(listSkills({ module: 'title', uid: 123 })).resolves.toMatchObject([
+      { id: 'global' },
+      { id: 'matched' },
+    ])
+  })
+
+  it('permanently deletes every version of a skill id', async () => {
+    deleteMany.mockResolvedValueOnce({ count: 2 })
+
+    await expect(deleteSkill('txt2img-local-print')).resolves.toBe(2)
+
+    expect(deleteMany).toHaveBeenCalledWith({
+      where: { id: 'txt2img-local-print' },
+    })
   })
 })

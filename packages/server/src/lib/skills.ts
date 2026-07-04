@@ -1,10 +1,12 @@
 import { db } from '@/lib/db'
+import { type TargetScope, matchesPhpUidTarget } from '@/lib/targeting'
 import type { Prisma, Skill as PrismaSkill, SkillModule } from '@prisma/client'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
 
 export type SkillFilter = {
   module?: SkillModule
   category?: string
+  uid?: number | null
   platform?: string
   language?: string
 }
@@ -21,6 +23,18 @@ export type SkillUpsertInput = {
   variables_json: string
   recommended_model: string | null
   notes: string | null
+  target_php_uids_json: string
+  target_scope: TargetScope
+}
+
+export type AdminSkillSummary = SkillSummary & {
+  targetPhpUidsJson: string
+  targetScope: TargetScope
+}
+
+export type AdminSkill = Skill & {
+  targetPhpUidsJson: string
+  targetScope: TargetScope
 }
 
 function parseVariables(value: string) {
@@ -47,6 +61,22 @@ export function serializeSkill(skill: PrismaSkill): Skill {
     ...serializeSkillSummary(skill),
     systemPrompt: skill.system_prompt,
     variables: parseVariables(skill.variables_json),
+  }
+}
+
+export function serializeAdminSkillSummary(skill: PrismaSkill): AdminSkillSummary {
+  return {
+    ...serializeSkillSummary(skill),
+    targetPhpUidsJson: skill.target_php_uids_json,
+    targetScope: skill.target_scope as TargetScope,
+  }
+}
+
+export function serializeAdminSkill(skill: PrismaSkill): AdminSkill {
+  return {
+    ...serializeSkill(skill),
+    targetPhpUidsJson: skill.target_php_uids_json,
+    targetScope: skill.target_scope as TargetScope,
   }
 }
 
@@ -123,7 +153,13 @@ async function findEnabledSkills(filter: SkillFilter) {
     orderBy: [{ id: 'asc' }, { updated_at: 'desc' }],
   })
 
-  return latestById(skills)
+  return latestById(skills).filter((skill) =>
+    matchesPhpUidTarget({
+      scope: skill.target_scope as TargetScope,
+      targetPhpUidsJson: skill.target_php_uids_json,
+      uid: filter.uid ?? null,
+    }),
+  )
 }
 
 export async function listSkills(filter: SkillFilter) {
@@ -145,7 +181,7 @@ export async function listAdminSkills(filter: { module?: SkillModule } = {}) {
     orderBy: [{ id: 'asc' }, { updated_at: 'desc' }],
   })
 
-  return latestById(skills).map(serializeSkillSummary)
+  return latestById(skills).map(serializeAdminSkillSummary)
 }
 
 export async function listSkillVersions(id: string) {
@@ -156,10 +192,10 @@ export async function listSkillVersions(id: string) {
 
   return skills
     .sort((left, right) => compareVersions(right.version, left.version))
-    .map(serializeSkillSummary)
+    .map(serializeAdminSkillSummary)
 }
 
-export async function getSkill(id: string, version?: string) {
+export async function getSkill(id: string, version?: string, uid?: number | null) {
   const skill = await db.skill.findFirst({
     where: {
       id,
@@ -170,6 +206,16 @@ export async function getSkill(id: string, version?: string) {
   })
 
   if (!skill) {
+    return null
+  }
+
+  if (
+    !matchesPhpUidTarget({
+      scope: skill.target_scope as TargetScope,
+      targetPhpUidsJson: skill.target_php_uids_json,
+      uid: uid ?? null,
+    })
+  ) {
     return null
   }
 
@@ -184,7 +230,18 @@ export async function getSkill(id: string, version?: string) {
     }),
   )
 
-  return latest ? serializeSkill(latest) : null
+  if (
+    latest &&
+    matchesPhpUidTarget({
+      scope: latest.target_scope as TargetScope,
+      targetPhpUidsJson: latest.target_php_uids_json,
+      uid: uid ?? null,
+    })
+  ) {
+    return serializeSkill(latest)
+  }
+
+  return null
 }
 
 export async function getAdminSkill(id: string, version?: string) {
@@ -192,7 +249,7 @@ export async function getAdminSkill(id: string, version?: string) {
     ? await db.skill.findFirst({ where: { id, version } })
     : latestById(await db.skill.findMany({ where: { id }, orderBy: [{ updated_at: 'desc' }] }))[0]
 
-  return skill ? serializeSkill(skill) : null
+  return skill ? serializeAdminSkill(skill) : null
 }
 
 export async function createSkillVersion(input: SkillUpsertInput) {
@@ -220,6 +277,8 @@ export async function createSkillVersion(input: SkillUpsertInput) {
     variables_json: input.variables_json,
     recommended_model: input.recommended_model,
     notes: input.notes,
+    target_php_uids_json: input.target_php_uids_json,
+    target_scope: input.target_scope,
   }
 
   const skill = await db.skill.create({ data })
@@ -256,8 +315,18 @@ export async function updateExistingSkillVersion(
       variables_json: input.variables_json,
       recommended_model: input.recommended_model,
       notes: input.notes,
+      target_php_uids_json: input.target_php_uids_json,
+      target_scope: input.target_scope,
     },
   })
 
   return serializeSkill(skill)
+}
+
+export async function deleteSkill(id: string) {
+  const result = await db.skill.deleteMany({
+    where: { id },
+  })
+
+  return result.count
 }

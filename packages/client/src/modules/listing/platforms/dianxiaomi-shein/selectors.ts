@@ -38,7 +38,7 @@ export type SheinSelectorKey =
   | 'blocking_modal'
 
 export const SHEIN_TEMPLATE_URLS = {
-  shein: 'https://www.dianxiaomi.com/web/sheinProduct/edit?id=128935201966452551',
+  shein: 'https://www.dianxiaomi.com/web/sheinProduct/edit',
 } as const
 
 const SELECTOR_RECORD_VERSION = '1.0.0'

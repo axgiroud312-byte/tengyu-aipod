@@ -68,6 +68,8 @@ model Skill {
   variables_json    String      @db.Text
   recommended_model String?
   notes             String?
+  target_scope      String      @default("all")
+  target_php_uids_json String   @default("[]") @db.Text
   created_at        DateTime    @default(now())
   updated_at        DateTime    @updatedAt
 
@@ -78,29 +80,36 @@ model Skill {
 }
 
 model Announcement {
-  id         String    @id @default(cuid())
-  title      String
-  content    String    @db.Text
-  level      String
-  audience   String?
-  start_at   DateTime
-  end_at     DateTime?
-  created_at DateTime  @default(now())
+  id                   String    @id @default(cuid())
+  title                String
+  content              String    @db.Text
+  level                String
+  audience             String?
+  start_at             DateTime
+  end_at               DateTime?
+  enabled              Boolean   @default(true)
+  target_scope         String    @default("all")
+  target_php_uids_json String    @default("[]") @db.Text
+  created_at           DateTime  @default(now())
 
   @@index([start_at, end_at])
   @@map("announcements")
 }
 
 model ClientVersion {
-  version          String   @id
-  channel          String
-  platform         String
-  force_upgrade    Boolean  @default(false)
-  download_url_win String?
-  download_url_mac String?
-  changelog        String   @db.Text
-  published_at     DateTime @default(now())
+  version              String
+  channel              String
+  platform             String
+  force_upgrade        Boolean  @default(false)
+  download_url_win     String?
+  download_url_mac     String?
+  changelog            String   @db.Text
+  published_at         DateTime @default(now())
+  enabled              Boolean  @default(true)
+  target_scope         String   @default("all")
+  target_php_uids_json String   @default("[]") @db.Text
 
+  @@id([version, platform, channel])
   @@index([channel, published_at])
   @@map("client_versions")
 }

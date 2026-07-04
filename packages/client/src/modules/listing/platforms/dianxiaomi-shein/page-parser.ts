@@ -137,7 +137,8 @@ export async function parseDraftPage(page: Page): Promise<SheinDraftPageState> {
 
 function detectTemplateKey(url: string): SheinTemplateKey | 'unknown' {
   for (const [key, templateUrl] of Object.entries(SHEIN_TEMPLATE_URLS)) {
-    if (url.includes(new URL(templateUrl).search)) {
+    const templateSearch = new URL(templateUrl).search
+    if (templateSearch && url.includes(templateSearch)) {
       return key as SheinTemplateKey
     }
   }

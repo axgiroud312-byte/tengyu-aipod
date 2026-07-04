@@ -37,8 +37,8 @@ export type TemuPopSelectorKey =
   | 'blocking_modal'
 
 export const TEMU_POP_TEMPLATE_URLS = {
-  clothing: 'https://www.dianxiaomi.com/web/popTemu/edit?id=128935194843933515',
-  general: 'https://www.dianxiaomi.com/web/popTemu/edit?id=128935194833519551',
+  clothing: 'https://www.dianxiaomi.com/web/popTemu/edit',
+  general: 'https://www.dianxiaomi.com/web/popTemu/edit',
 } as const
 
 const SELECTOR_RECORD_VERSION = '1.0.0'

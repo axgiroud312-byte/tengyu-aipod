@@ -616,6 +616,17 @@ function isGenerationCancelled(taskId: string) {
   return cancelledGenerationTasks.has(taskId)
 }
 
+export function getActiveGenerationTaskCount() {
+  return activeGenerationTasks.size
+}
+
+export function requestAllGenerationCancels() {
+  for (const taskId of activeGenerationTasks) {
+    cancelledGenerationTasks.add(taskId)
+  }
+  return activeGenerationTasks.size
+}
+
 function markGenerationResultCancelled(result: GenerationRunResult) {
   if (isGenerationCancelled(result.taskId)) {
     result.cancelled = true

@@ -145,6 +145,8 @@ export function SettingsPage({
     useState<GenerationConfig>(defaultGenerationConfig)
   const [grsaiApiKey, setGrsaiApiKey] = useState('')
   const [bailianApiKey, setBailianApiKey] = useState('')
+  const [bitBrowserBaseUrl, setBitBrowserBaseUrl] = useState('')
+  const [savingBitBrowserBaseUrl, setSavingBitBrowserBaseUrl] = useState(false)
   const [savingGenerationSettings, setSavingGenerationSettings] = useState(false)
   const [syncingConfig, setSyncingConfig] = useState(false)
   const [syncResult, setSyncResult] = useState<SkillSyncResult | null>(null)
@@ -191,6 +193,7 @@ export function SettingsPage({
   useEffect(() => {
     void load()
     void loadWorkspaceSettings()
+    void loadBitBrowserSettings()
     void loadSkillCacheStatus()
   }, [])
 
@@ -234,6 +237,14 @@ export function SettingsPage({
     setGrsaiApiKey('')
     setBailianApiKey('')
     setWorkflows(nextWorkflows)
+  }
+
+  async function loadBitBrowserSettings() {
+    try {
+      setBitBrowserBaseUrl((await window.api.bitBrowser.getBaseUrl()) ?? '')
+    } catch (nextError) {
+      setError(errorMessage(nextError, '读取比特浏览器地址失败'))
+    }
   }
 
   async function loadSkillCacheStatus() {
@@ -347,6 +358,21 @@ export function SettingsPage({
       setError(errorMessage(nextError, '保存本地生图设置失败'))
     } finally {
       setSavingGenerationSettings(false)
+    }
+  }
+
+  async function saveBitBrowserSettings() {
+    setSavingBitBrowserBaseUrl(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const saved = await window.api.bitBrowser.saveBaseUrl(bitBrowserBaseUrl)
+      setBitBrowserBaseUrl(saved)
+      setMessage('比特浏览器地址已保存')
+    } catch (nextError) {
+      setError(errorMessage(nextError, '保存比特浏览器地址失败'))
+    } finally {
+      setSavingBitBrowserBaseUrl(false)
     }
   }
 
@@ -805,6 +831,38 @@ export function SettingsPage({
                 onGrsaiApiKeyChange={setGrsaiApiKey}
                 onSave={() => void saveGenerationSettings()}
               />
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>比特浏览器</CardTitle>
+                  <CardDescription>采集和上架模块连接的本地比特浏览器服务地址。</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-3">
+                  <label
+                    className="block space-y-2 text-sm font-medium"
+                  >
+                    <span>服务地址</span>
+                    <Input
+                      className="font-mono text-xs"
+                      onChange={(event) => setBitBrowserBaseUrl(event.target.value)}
+                      placeholder="127.0.0.1:54345"
+                      value={bitBrowserBaseUrl}
+                    />
+                  </label>
+                  <Button
+                    disabled={savingBitBrowserBaseUrl}
+                    onClick={() => void saveBitBrowserSettings()}
+                    type="button"
+                  >
+                    {savingBitBrowserBaseUrl ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    )}
+                    保存地址
+                  </Button>
+                </CardContent>
+              </Card>
 
               <SkillSyncCard
                 result={syncResult}

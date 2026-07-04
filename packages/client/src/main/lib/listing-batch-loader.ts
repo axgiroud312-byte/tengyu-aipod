@@ -131,7 +131,8 @@ async function pathExists(path: string) {
 function inferTemplate(batchDir: string): ListingTemplateConfig {
   const resolvedBatchDir = resolve(batchDir)
   const template = SLICE_8_LISTING_TEMPLATES.find(
-    (candidate) => resolve(candidate.materialRootDir) === resolvedBatchDir,
+    (candidate) =>
+      candidate.materialRootDir.trim() && resolve(candidate.materialRootDir) === resolvedBatchDir,
   )
   return template ?? SLICE_8_LISTING_TEMPLATES[0]
 }

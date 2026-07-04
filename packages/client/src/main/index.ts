@@ -1,8 +1,13 @@
 import { existsSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BrowserWindow, app, ipcMain } from 'electron'
-import { registerListingRunnerIpc } from '../modules/listing/runner'
+import { BrowserWindow, app, dialog, ipcMain } from 'electron'
+import {
+  getActiveListingRunCount,
+  markActiveListingRunsInterrupted,
+  registerListingRunnerIpc,
+} from '../modules/listing/runner'
+import { countRunningTasks, installQuitGuard, installSingleInstanceLock } from './app-lifecycle'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerChenyuInstanceIpc } from './lib/chenyu-instance-service'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
@@ -17,14 +22,18 @@ import {
 } from './lib/customer-auth'
 import { withCustomerAuthorizedIpcHandlers } from './lib/customer-auth-ipc-guard'
 import { registerDetectionConfigIpc } from './lib/detection-config'
-import { registerDetectionIpc } from './lib/detection-service'
+import { detectionService, registerDetectionIpc } from './lib/detection-service'
 import {
   cleanupDiagnosticLogs,
   deleteAllWorkbenchLogFiles,
   startDiagnosticLogCleanupTimer,
 } from './lib/diagnostic-log-service'
 import { registerGenerationLocalConfigIpc } from './lib/generation-local-config'
-import { registerGenerationIpc } from './lib/generation-service'
+import {
+  getActiveGenerationTaskCount,
+  registerGenerationIpc,
+  requestAllGenerationCancels,
+} from './lib/generation-service'
 import {
   registerLocalImageProtocolHandler,
   registerLocalImageProtocolScheme,
@@ -46,6 +55,11 @@ registerLocalImageProtocolScheme()
 if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.TENGYU_ELECTRON_USER_DATA_DIR)
 }
+
+const hasSingleInstanceLock = installSingleInstanceLock({
+  app,
+  getWindows: () => BrowserWindow.getAllWindows(),
+})
 
 function resolveAppIconPath(): string | undefined {
   const appIconPath = app.isPackaged
@@ -97,86 +111,104 @@ function syncSkillCacheWithCustomerAuth(state: CustomerAuthState) {
   skillCacheManager.stop()
 }
 
-app.whenReady().then(() => {
-  void pipelineService.markPersistedRunningRunsInterrupted().catch(() => null)
-  try {
-    runNativeSmoke()
-  } catch {
-    app.quit()
-    return
-  }
-
-  ipcMain.handle('app:ping', () => 'pong')
-  ipcMain.handle('logs:delete-all', async () => {
+if (hasSingleInstanceLock) {
+  app.whenReady().then(() => {
+    void pipelineService.markPersistedRunningRunsInterrupted().catch(() => null)
     try {
-      return {
-        ok: true,
-        data: await deleteAllWorkbenchLogFiles(),
+      runNativeSmoke()
+    } catch {
+      app.quit()
+      return
+    }
+
+    ipcMain.handle('app:ping', () => 'pong')
+    ipcMain.handle('logs:delete-all', async () => {
+      try {
+        return {
+          ok: true,
+          data: await deleteAllWorkbenchLogFiles(),
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          error: {
+            code: 'DELETE_LOGS_FAILED',
+            message: error instanceof Error ? error.message : String(error),
+          },
+        }
       }
-    } catch (error) {
-      return {
-        ok: false,
-        error: {
-          code: 'DELETE_LOGS_FAILED',
-          message: error instanceof Error ? error.message : String(error),
-        },
+    })
+    const customerAuthService = new CustomerAuthService({
+      onStateChanged: syncSkillCacheWithCustomerAuth,
+    })
+    registerCustomerAuthIpc(customerAuthService)
+    registerOnboardingIpc()
+    registerLocalImageProtocolHandler()
+    withCustomerAuthorizedIpcHandlers(ipcMain, customerAuthService, () => {
+      registerChenyuInstanceIpc()
+      registerBrowserProfileLockIpc()
+      registerGenerationLocalConfigIpc()
+      registerComfyuiWorkflowCacheIpc()
+      registerSkillCacheIpc()
+      registerTempFileIpc()
+      registerCollectionConfigIpc()
+      registerCollectionSessionIpc()
+      registerCollectionClickIpc()
+      registerCollectionImageIndexIpc()
+      registerTitleIpc()
+      registerDetectionConfigIpc()
+      registerDetectionIpc()
+      registerGenerationIpc()
+      registerVideoGenerationIpc()
+      registerPipelineIpc()
+      registerListingRunnerIpc()
+      registerPhotoshopIpc()
+    })
+    void tempFileManager.cleanupOrphans().catch(() => null)
+    void cleanupDiagnosticLogs().catch(() => null)
+    diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
+    const appIconPath = applyAppIcon()
+    createMainWindow(appIconPath)
+    void customerAuthService.verify().catch(() => null)
+
+    app.on('activate', () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createMainWindow(appIconPath)
       }
+    })
+  })
+
+  app.on('window-all-closed', () => {
+    skillCacheManager.stop()
+    if (process.platform !== 'darwin') {
+      app.quit()
     }
   })
-  const customerAuthService = new CustomerAuthService({
-    onStateChanged: syncSkillCacheWithCustomerAuth,
-  })
-  registerCustomerAuthIpc(customerAuthService)
-  registerOnboardingIpc()
-  registerLocalImageProtocolHandler()
-  withCustomerAuthorizedIpcHandlers(ipcMain, customerAuthService, () => {
-    registerChenyuInstanceIpc()
-    registerBrowserProfileLockIpc()
-    registerGenerationLocalConfigIpc()
-    registerComfyuiWorkflowCacheIpc()
-    registerSkillCacheIpc()
-    registerTempFileIpc()
-    registerCollectionConfigIpc()
-    registerCollectionSessionIpc()
-    registerCollectionClickIpc()
-    registerCollectionImageIndexIpc()
-    registerTitleIpc()
-    registerDetectionConfigIpc()
-    registerDetectionIpc()
-    registerGenerationIpc()
-    registerVideoGenerationIpc()
-    registerPipelineIpc()
-    registerListingRunnerIpc()
-    registerPhotoshopIpc()
-  })
-  void tempFileManager.cleanupOrphans().catch(() => null)
-  void cleanupDiagnosticLogs().catch(() => null)
-  diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
-  const appIconPath = applyAppIcon()
-  createMainWindow(appIconPath)
-  void customerAuthService.verify().catch(() => null)
 
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createMainWindow(appIconPath)
-    }
+  installQuitGuard({
+    app,
+    dialog,
+    getRunningTaskCount: () =>
+      countRunningTasks({
+        pipeline: pipelineService.getActiveRunCount(),
+        generation: getActiveGenerationTaskCount(),
+        detection: detectionService.getActiveTaskCount(),
+        listing: getActiveListingRunCount(),
+      }),
+    interruptActiveRuns: async () => {
+      requestAllGenerationCancels()
+      detectionService.cancelAllTasks()
+      await markActiveListingRunsInterrupted()
+      await pipelineService.markActiveRunsInterrupted()
+    },
+    cleanup: async () => {
+      browserProfileLocks.clear()
+      await tempFileManager.cleanupSession().catch(() => null)
+      tempFileManager.clearTimers()
+      if (diagnosticLogCleanupTimer) {
+        clearInterval(diagnosticLogCleanupTimer)
+        diagnosticLogCleanupTimer = null
+      }
+    },
   })
-})
-
-app.on('window-all-closed', () => {
-  skillCacheManager.stop()
-  if (process.platform !== 'darwin') {
-    app.quit()
-  }
-})
-
-app.on('before-quit', () => {
-  void pipelineService.markActiveRunsInterrupted().catch(() => null)
-  browserProfileLocks.clear()
-  void tempFileManager.cleanupSession().catch(() => null)
-  tempFileManager.clearTimers()
-  if (diagnosticLogCleanupTimer) {
-    clearInterval(diagnosticLogCleanupTimer)
-    diagnosticLogCleanupTimer = null
-  }
-})
+}

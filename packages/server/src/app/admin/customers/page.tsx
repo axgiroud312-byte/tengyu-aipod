@@ -7,6 +7,25 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 
 type CustomerAuthorizationStatus = 'pending' | 'active' | 'disabled' | 'expired'
 type CustomerDatabaseStatus = 'pending' | 'active' | 'disabled'
+type CustomerFilter =
+  | 'all'
+  | 'pending'
+  | 'active'
+  | 'expires_today'
+  | 'expires_7d'
+  | 'expires_30d'
+  | 'expired'
+  | 'disabled'
+type CustomerBulkAction = 'approve' | 'set_expires_at' | 'append_note' | 'disable' | 'enable'
+
+type CustomerExpirationStats = {
+  disabled: number
+  expired: number
+  expires_7d: number
+  expires_30d: number
+  expires_today: number
+  pending: number
+}
 
 type CustomerAccount = {
   account: string | null
@@ -27,6 +46,7 @@ type CustomerAccountsResponse =
   | {
       data: {
         items: CustomerAccount[]
+        stats: CustomerExpirationStats
       }
       ok: true
     }
@@ -39,6 +59,40 @@ type AccountEdit = {
   expires_at: string
   notes: string
 }
+
+const emptyStats: CustomerExpirationStats = {
+  disabled: 0,
+  expired: 0,
+  expires_7d: 0,
+  expires_30d: 0,
+  expires_today: 0,
+  pending: 0,
+}
+
+const filters: Array<{ key: CustomerFilter; label: string }> = [
+  { key: 'all', label: '全部' },
+  { key: 'pending', label: '待开通' },
+  { key: 'active', label: '已授权' },
+  { key: 'expires_today', label: '今日到期' },
+  { key: 'expires_7d', label: '7 天内到期' },
+  { key: 'expires_30d', label: '30 天内到期' },
+  { key: 'expired', label: '已到期' },
+  { key: 'disabled', label: '已禁用' },
+]
+
+const bulkActions: Array<{ key: CustomerBulkAction; label: string }> = [
+  { key: 'approve', label: '批量授权' },
+  { key: 'set_expires_at', label: '设置到期日' },
+  { key: 'append_note', label: '追加备注' },
+  { key: 'disable', label: '禁用' },
+  { key: 'enable', label: '启用' },
+]
+
+const bulkActionsRequiringDate = new Set<CustomerBulkAction>([
+  'approve',
+  'set_expires_at',
+  'enable',
+])
 
 function formatDateTime(value: string | null) {
   if (!value) {
@@ -111,9 +165,15 @@ function payloadFromEdit(edit: AccountEdit) {
 
 export default function AdminCustomersPage() {
   const [accounts, setAccounts] = useState<CustomerAccount[]>([])
+  const [bulkAction, setBulkAction] = useState<CustomerBulkAction>('approve')
+  const [bulkExpiresAt, setBulkExpiresAt] = useState('')
+  const [bulkNote, setBulkNote] = useState('')
   const [edits, setEdits] = useState<Record<string, AccountEdit>>({})
+  const [filter, setFilter] = useState<CustomerFilter>('all')
   const [search, setSearch] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [message, setMessage] = useState<string | null>(null)
+  const [stats, setStats] = useState<CustomerExpirationStats>(emptyStats)
   const [isLoading, setIsLoading] = useState(false)
 
   const query = useMemo(() => {
@@ -121,8 +181,11 @@ export default function AdminCustomersPage() {
     if (search.trim()) {
       params.set('search', search.trim())
     }
+    if (filter !== 'all') {
+      params.set('filter', filter)
+    }
     return params
-  }, [search])
+  }, [filter, search])
 
   const loadAccounts = useCallback(async () => {
     setIsLoading(true)
@@ -134,6 +197,11 @@ export default function AdminCustomersPage() {
         return
       }
       setAccounts(result.data.items)
+      setStats(result.data.stats)
+      setSelectedIds((current) => {
+        const loadedIds = new Set(result.data.items.map((account) => account.id))
+        return new Set(Array.from(current).filter((id) => loadedIds.has(id)))
+      })
       setEdits(
         Object.fromEntries(result.data.items.map((account) => [account.id, accountEdit(account)])),
       )
@@ -190,6 +258,58 @@ export default function AdminCustomersPage() {
       setMessage('请填写 YYYY-MM-DD 格式的到期日')
     }
     return payload
+  }
+
+  function toggleSelected(id: string, checked: boolean) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (checked) {
+        next.add(id)
+      } else {
+        next.delete(id)
+      }
+      return next
+    })
+  }
+
+  function toggleAll(checked: boolean) {
+    setSelectedIds(checked ? new Set(accounts.map((account) => account.id)) : new Set())
+  }
+
+  async function submitBulkAction() {
+    const ids = Array.from(selectedIds)
+    if (!ids.length) {
+      setMessage('请先选择客户账号')
+      return
+    }
+    const payload: {
+      action: CustomerBulkAction
+      expires_at?: string
+      ids: string[]
+      note?: string
+    } = {
+      action: bulkAction,
+      ids,
+    }
+    if (bulkActionsRequiringDate.has(bulkAction)) {
+      if (!hasValidDate(bulkExpiresAt)) {
+        setMessage('请填写 YYYY-MM-DD 格式的批量到期日')
+        return
+      }
+      payload.expires_at = localDateEndIso(bulkExpiresAt)
+    }
+    if (bulkNote.trim()) {
+      payload.note = bulkNote
+    }
+
+    const ok = await submitJson('/admin/api/customer-accounts/bulk', {
+      body: JSON.stringify(payload),
+      method: 'POST',
+    })
+    if (ok) {
+      setMessage('批量操作已提交，无法更新的客户会在接口结果中返回跳过原因')
+      await loadAccounts()
+    }
   }
 
   async function approve(account: CustomerAccount) {
@@ -261,6 +381,26 @@ export default function AdminCustomersPage() {
         {message ? <p className="text-sm text-muted-foreground">{message}</p> : null}
       </section>
 
+      <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+        {[
+          { label: '待开通', value: stats.pending },
+          { label: '已到期', value: stats.expired },
+          { label: '今日到期', value: stats.expires_today },
+          { label: '7 天内到期', value: stats.expires_7d },
+          { label: '30 天内到期', value: stats.expires_30d },
+          { label: '已禁用', value: stats.disabled },
+        ].map((item) => (
+          <Card key={item.label}>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">{item.label}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="tabular-nums text-2xl font-semibold">{item.value}</p>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
       <Card>
         <CardHeader>
           <CardTitle>授权列表</CardTitle>
@@ -277,11 +417,64 @@ export default function AdminCustomersPage() {
               {isLoading ? '加载中...' : '刷新'}
             </Button>
           </div>
+          <div className="mb-4 flex flex-wrap gap-2">
+            {filters.map((item) => (
+              <Button
+                key={item.key}
+                onClick={() => setFilter(item.key)}
+                type="button"
+                variant={filter === item.key ? 'default' : 'secondary'}
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
+
+          <div className="mb-4 grid gap-3 rounded-md border bg-muted/30 p-3 xl:grid-cols-[160px_160px_minmax(220px,1fr)_auto]">
+            <select
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              onChange={(event) => setBulkAction(event.target.value as CustomerBulkAction)}
+              value={bulkAction}
+            >
+              {bulkActions.map((item) => (
+                <option key={item.key} value={item.key}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+            <input
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              onChange={(event) => setBulkExpiresAt(event.target.value)}
+              type="date"
+              value={bulkExpiresAt}
+            />
+            <input
+              className="h-10 rounded-md border bg-background px-3 text-sm"
+              onChange={(event) => setBulkNote(event.target.value)}
+              placeholder="批量追加备注，可选"
+              value={bulkNote}
+            />
+            <Button
+              disabled={selectedIds.size === 0}
+              onClick={() => void submitBulkAction()}
+              type="button"
+            >
+              对 {selectedIds.size} 个客户执行
+            </Button>
+          </div>
 
           <div className="overflow-x-auto">
             <table className="w-full min-w-[1120px] border-collapse text-left text-sm">
               <thead>
                 <tr className="border-b">
+                  <th className="px-3 py-2">
+                    <input
+                      aria-label="选择当前列表全部客户"
+                      checked={accounts.length > 0 && selectedIds.size === accounts.length}
+                      onChange={(event) => toggleAll(event.target.checked)}
+                      type="checkbox"
+                    />
+                  </th>
                   {['客户', 'PHP uid', '手机', '状态', '到期日', '最后登录', '备注', '操作'].map(
                     (header) => (
                       <th className="px-3 py-2 font-medium" key={header}>
@@ -294,6 +487,14 @@ export default function AdminCustomersPage() {
               <tbody>
                 {accounts.map((account) => (
                   <tr className="border-b align-top" key={account.id}>
+                    <td className="px-3 py-3">
+                      <input
+                        aria-label={`选择 uid ${account.php_uid}`}
+                        checked={selectedIds.has(account.id)}
+                        onChange={(event) => toggleSelected(account.id, event.target.checked)}
+                        type="checkbox"
+                      />
+                    </td>
                     <td className="px-3 py-3">
                       <div className="flex items-center gap-3">
                         {account.avatar_url ? (
@@ -403,7 +604,7 @@ export default function AdminCustomersPage() {
                 ))}
                 {!accounts.length ? (
                   <tr>
-                    <td className="px-3 py-8 text-center text-muted-foreground" colSpan={8}>
+                    <td className="px-3 py-8 text-center text-muted-foreground" colSpan={9}>
                       暂无客户账号
                     </td>
                   </tr>

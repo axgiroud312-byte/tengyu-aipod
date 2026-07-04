@@ -1,9 +1,11 @@
 import { AppErrorClass } from '@tengyu-aipod/shared'
+import { getSecret } from './keychain'
 
 export const BIT_BROWSER_DEFAULT_BASE_URL = 'http://127.0.0.1:54345'
 
 export type BitBrowserClientOptions = {
   baseUrl?: string
+  getSecret?: (key: string) => Promise<string | null>
   timeoutMs?: number
 }
 
@@ -41,13 +43,14 @@ type RecordValue = Record<string, unknown>
 const DEFAULT_TIMEOUT_MS = 10_000
 
 export class BitBrowserClient {
-  private readonly baseUrl: string
+  private readonly baseUrl: string | null
+  private readonly getSecret: (key: string) => Promise<string | null>
   private readonly timeoutMs: number
 
   constructor(options: BitBrowserClientOptions = {}) {
-    this.baseUrl = normalizeBaseUrl(
-      options.baseUrl ?? process.env.TENGYU_BIT_BROWSER_BASE_URL ?? BIT_BROWSER_DEFAULT_BASE_URL,
-    )
+    const configuredBaseUrl = options.baseUrl ?? process.env.TENGYU_BIT_BROWSER_BASE_URL
+    this.baseUrl = configuredBaseUrl?.trim() ? normalizeBaseUrl(configuredBaseUrl) : null
+    this.getSecret = options.getSecret ?? getSecret
     this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS
   }
 
@@ -103,7 +106,7 @@ export class BitBrowserClient {
   }
 
   private async post(path: string, body: Record<string, unknown>) {
-    const url = `${this.baseUrl}${path}`
+    const url = `${await this.resolveBaseUrl()}${path}`
     const controller = new AbortController()
     const timeout = setTimeout(() => controller.abort(), this.timeoutMs)
 
@@ -129,6 +132,14 @@ export class BitBrowserClient {
     } finally {
       clearTimeout(timeout)
     }
+  }
+
+  private async resolveBaseUrl() {
+    if (this.baseUrl) {
+      return this.baseUrl
+    }
+    const savedBaseUrl = await this.getSecret('bit_browser_url').catch(() => null)
+    return normalizeBaseUrl(savedBaseUrl?.trim() || BIT_BROWSER_DEFAULT_BASE_URL)
   }
 }
 

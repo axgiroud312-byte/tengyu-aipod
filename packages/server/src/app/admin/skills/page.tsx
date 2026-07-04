@@ -17,18 +17,27 @@ type SkillSlot = {
   recommendedModel: string | null
   returnHint: string
 }
+type SkillTargetScope = 'all' | 'php_uid_list'
+type AdminSkillSummary = SkillSummary & {
+  targetPhpUidsJson: string
+  targetScope: SkillTargetScope
+}
+type AdminSkill = Skill & {
+  targetPhpUidsJson: string
+  targetScope: SkillTargetScope
+}
 
 const EXTRACT_SKILL_CATEGORY = 'extract-paid-model'
 const LEGACY_COMFYUI_EXTRACT_CATEGORY = 'extract-comfyui-workflow'
 
 type SkillListResponse = {
   ok: true
-  data: { items: SkillSummary[] }
+  data: { items: AdminSkillSummary[] }
 }
 
 type SkillDetailResponse = {
   ok: true
-  data: Skill
+  data: AdminSkill
 }
 
 const promptDefaultSkillSlots: [SkillSlot, ...SkillSlot[]] = [
@@ -201,7 +210,17 @@ function slotNotes(slot: SkillSlot) {
   return `${slot.title}：${slot.description}`
 }
 
-function skillPayload(slot: SkillSlot, systemPrompt: string, enabled: boolean) {
+function allowlistText(value: string | undefined) {
+  return JSON.parse(value || '[]').join(', ')
+}
+
+function skillPayload(
+  slot: SkillSlot,
+  systemPrompt: string,
+  enabled: boolean,
+  targetScope: SkillTargetScope,
+  targetPhpUids: string,
+) {
   return {
     id: slot.id,
     module: slot.module,
@@ -214,6 +233,8 @@ function skillPayload(slot: SkillSlot, systemPrompt: string, enabled: boolean) {
     variables_json: '[]',
     recommended_model: slot.recommendedModel,
     notes: slotNotes(slot),
+    target_php_uids: targetPhpUids,
+    target_scope: targetScope,
   }
 }
 
@@ -226,9 +247,11 @@ async function submitJson(url: string, init: RequestInit) {
 }
 
 export default function AdminSkillsPage() {
-  const [skills, setSkills] = useState<Record<string, SkillSummary>>({})
+  const [skills, setSkills] = useState<Record<string, AdminSkillSummary>>({})
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [enabled, setEnabled] = useState<Record<string, boolean>>({})
+  const [targetPhpUids, setTargetPhpUids] = useState<Record<string, string>>({})
+  const [targetScopes, setTargetScopes] = useState<Record<string, SkillTargetScope>>({})
   const [titles, setTitles] = useState<Record<string, string>>({})
   const [customPromptSlots, setCustomPromptSlots] = useState<SkillSlot[]>([])
   const [customExtractSlots, setCustomExtractSlots] = useState<SkillSlot[]>([])
@@ -271,6 +294,8 @@ export default function AdminSkillsPage() {
   const selectedSkill = skills[selectedSlot.id]
   const selectedPrompt = drafts[selectedSlot.id] ?? ''
   const selectedEnabled = enabled[selectedSlot.id] ?? true
+  const selectedTargetPhpUids = targetPhpUids[selectedSlot.id] ?? ''
+  const selectedTargetScope = targetScopes[selectedSlot.id] ?? 'all'
   const selectedTitle = titles[selectedSlot.id] ?? selectedSlot.title
   const selectedHasEditableTitle = isExtractSlot(selectedSlot) || isPromptCustomSlot(selectedSlot)
 
@@ -285,9 +310,11 @@ export default function AdminSkillsPage() {
       return
     }
 
-    const nextSkills: Record<string, SkillSummary> = {}
+    const nextSkills: Record<string, AdminSkillSummary> = {}
     const nextDrafts: Record<string, string> = {}
     const nextEnabled: Record<string, boolean> = {}
+    const nextTargetPhpUids: Record<string, string> = {}
+    const nextTargetScopes: Record<string, SkillTargetScope> = {}
     const nextTitles: Record<string, string> = {}
     const loadedSlots = [
       ...fixedSkillSlots,
@@ -307,12 +334,16 @@ export default function AdminSkillsPage() {
       if (!summary) {
         nextDrafts[slot.id] = ''
         nextEnabled[slot.id] = true
+        nextTargetPhpUids[slot.id] = ''
+        nextTargetScopes[slot.id] = 'all'
         nextTitles[slot.id] = slot.title
         continue
       }
 
       nextSkills[slot.id] = summary
       nextEnabled[slot.id] = summary.enabled
+      nextTargetPhpUids[slot.id] = allowlistText(summary.targetPhpUidsJson)
+      nextTargetScopes[slot.id] = summary.targetScope
       nextTitles[slot.id] = slot.title
       const detailResponse = await fetch(
         `/admin/api/skills/${encodeURIComponent(summary.id)}?version=${encodeURIComponent(
@@ -321,11 +352,17 @@ export default function AdminSkillsPage() {
       )
       const detail = (await detailResponse.json()) as SkillDetailResponse | { ok: false }
       nextDrafts[slot.id] = detail.ok ? detail.data.systemPrompt : ''
+      if (detail.ok) {
+        nextTargetPhpUids[slot.id] = allowlistText(detail.data.targetPhpUidsJson)
+        nextTargetScopes[slot.id] = detail.data.targetScope
+      }
     }
 
     setSkills(nextSkills)
     setDrafts(nextDrafts)
     setEnabled(nextEnabled)
+    setTargetPhpUids(nextTargetPhpUids)
+    setTargetScopes(nextTargetScopes)
     setTitles(nextTitles)
     setCustomPromptSlots([])
     setCustomExtractSlots([])
@@ -347,7 +384,13 @@ export default function AdminSkillsPage() {
     setMessage(null)
     const existing = skills[slot.id]
     const slotWithTitle = { ...slot, title: (titles[slot.id] ?? slot.title).trim() || slot.title }
-    const payload = skillPayload(slotWithTitle, systemPrompt, enabled[slot.id] ?? true)
+    const payload = skillPayload(
+      slotWithTitle,
+      systemPrompt,
+      enabled[slot.id] ?? true,
+      targetScopes[slot.id] ?? 'all',
+      targetPhpUids[slot.id] ?? '',
+    )
     const result = existing
       ? await submitJson(`/admin/api/skills/${encodeURIComponent(slot.id)}`, {
           method: 'PATCH',
@@ -368,12 +411,45 @@ export default function AdminSkillsPage() {
     await loadSkills()
   }
 
+  async function deleteSlot(slot: SkillSlot) {
+    if (!skills[slot.id]) {
+      setMessage('这个 Skill 尚未创建，无需删除')
+      return
+    }
+
+    if (
+      !window.confirm(
+        `确认永久删除「${titles[slot.id] ?? slot.title}」？此操作会删除该 Skill 的所有版本，不能恢复。`,
+      )
+    ) {
+      return
+    }
+
+    setSavingSlotId(slot.id)
+    setMessage(null)
+    const result = await submitJson(`/admin/api/skills/${encodeURIComponent(slot.id)}`, {
+      method: 'DELETE',
+    })
+    setSavingSlotId(null)
+
+    if (!result.ok) {
+      setMessage(result.error?.message ?? '删除失败')
+      return
+    }
+
+    setMessage(`${titles[slot.id] ?? slot.title} 已永久删除`)
+    setSelectedSlotId(defaultSkillSlot.id)
+    await loadSkills()
+  }
+
   function addPromptSlot(group: (typeof promptSkillGroups)[number]) {
     const id = `${group.defaultSlot.category ?? group.defaultSlot.id}-${Date.now()}`
     const slot = newPromptSlot(group, id, `新的${group.defaultSlot.title}`)
     setCustomPromptSlots((current) => [...current, slot])
     setDrafts((current) => ({ ...current, [id]: '' }))
     setEnabled((current) => ({ ...current, [id]: true }))
+    setTargetPhpUids((current) => ({ ...current, [id]: '' }))
+    setTargetScopes((current) => ({ ...current, [id]: 'all' }))
     setTitles((current) => ({ ...current, [id]: slot.title }))
     setSelectedSlotId(id)
     setMessage(null)
@@ -385,6 +461,8 @@ export default function AdminSkillsPage() {
     setCustomExtractSlots((current) => [...current, slot])
     setDrafts((current) => ({ ...current, [id]: '' }))
     setEnabled((current) => ({ ...current, [id]: true }))
+    setTargetPhpUids((current) => ({ ...current, [id]: '' }))
+    setTargetScopes((current) => ({ ...current, [id]: 'all' }))
     setTitles((current) => ({ ...current, [id]: slot.title }))
     setSelectedSlotId(id)
     setMessage(null)
@@ -542,6 +620,38 @@ export default function AdminSkillsPage() {
                   />
                 </label>
               ) : null}
+              <div className="grid gap-3 md:grid-cols-[180px_minmax(0,1fr)]">
+                <select
+                  className="h-10 rounded-md border bg-background px-3 text-sm"
+                  onChange={(event) =>
+                    setTargetScopes((current) => ({
+                      ...current,
+                      [selectedSlot.id]: event.target.value as SkillTargetScope,
+                    }))
+                  }
+                  value={selectedTargetScope}
+                >
+                  <option value="all">全部客户</option>
+                  <option value="php_uid_list">PHP uid 白名单</option>
+                </select>
+                {selectedTargetScope === 'php_uid_list' ? (
+                  <input
+                    className="h-10 rounded-md border bg-background px-3 text-sm"
+                    onChange={(event) =>
+                      setTargetPhpUids((current) => ({
+                        ...current,
+                        [selectedSlot.id]: event.target.value,
+                      }))
+                    }
+                    placeholder="例如：123, 456"
+                    value={selectedTargetPhpUids}
+                  />
+                ) : (
+                  <div className="flex h-10 items-center rounded-md border bg-muted/30 px-3 text-sm text-muted-foreground">
+                    对所有已授权客户可见
+                  </div>
+                )}
+              </div>
               <textarea
                 className="min-h-[420px] w-full resize-y rounded-md border bg-background p-3 font-mono text-sm leading-6 outline-none focus:border-primary"
                 disabled={isLoading}
@@ -556,13 +666,25 @@ export default function AdminSkillsPage() {
                   ID：<span className="font-mono">{selectedSlot.id}</span>
                   {selectedSkill ? ` · 当前版本 ${selectedSkill.version}` : ' · 尚未创建'}
                 </p>
-                <Button
-                  disabled={isLoading || savingSlotId === selectedSlot.id}
-                  onClick={() => void saveSlot(selectedSlot)}
-                  type="button"
-                >
-                  {savingSlotId === selectedSlot.id ? '保存中...' : '保存提交'}
-                </Button>
+                <div className="flex flex-wrap gap-2">
+                  {selectedSkill ? (
+                    <Button
+                      disabled={isLoading || savingSlotId === selectedSlot.id}
+                      onClick={() => void deleteSlot(selectedSlot)}
+                      type="button"
+                      variant="secondary"
+                    >
+                      永久删除
+                    </Button>
+                  ) : null}
+                  <Button
+                    disabled={isLoading || savingSlotId === selectedSlot.id}
+                    onClick={() => void saveSlot(selectedSlot)}
+                    type="button"
+                  >
+                    {savingSlotId === selectedSlot.id ? '保存中...' : '保存提交'}
+                  </Button>
+                </div>
               </div>
             </div>
           </CardContent>

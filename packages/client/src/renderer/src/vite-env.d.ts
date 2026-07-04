@@ -49,6 +49,10 @@ declare global {
       keychain: {
         has: (key: string) => Promise<boolean>
       }
+      bitBrowser: {
+        getBaseUrl: () => Promise<string | null>
+        saveBaseUrl: (value: string) => Promise<string>
+      }
       customerAuth: {
         getState: () => Promise<import('../../main/lib/customer-auth').CustomerAuthState>
         getQrcode: () => Promise<import('../../main/lib/customer-auth').CustomerAuthQrcode>

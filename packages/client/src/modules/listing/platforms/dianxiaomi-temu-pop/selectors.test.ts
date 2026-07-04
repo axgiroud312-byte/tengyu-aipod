@@ -3,11 +3,18 @@ import {
   TEMU_POP_REQUIRED_REAL_SELECTOR_KEYS,
   TEMU_POP_SELECTORS,
   TEMU_POP_SELECTOR_RECORDS,
+  TEMU_POP_TEMPLATE_URLS,
 } from './selectors'
 
 const VALID_SELECTOR_PREFIXES = ['css=', 'text=', 'label=', 'placeholder=', 'role=']
 
 describe('Temu PopTemu selectors', () => {
+  it('does not embed draft template ids in selector-layer template URLs', () => {
+    for (const url of Object.values(TEMU_POP_TEMPLATE_URLS)) {
+      expect(new URL(url).searchParams.get('id')).toBeNull()
+    }
+  })
+
   it('keeps every selector group static and backed by fallbacks', () => {
     for (const [key, selectors] of Object.entries(TEMU_POP_SELECTORS)) {
       expect(selectors.length, key).toBeGreaterThanOrEqual(2)

@@ -1,7 +1,7 @@
 import type { AppErrorClass } from '@tengyu-aipod/shared'
 import { http, HttpResponse } from 'msw'
 import { setupServer } from 'msw/node'
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { BIT_BROWSER_DEFAULT_BASE_URL, BitBrowserClient } from './bit-browser-client'
 
 const server = setupServer()
@@ -12,6 +12,7 @@ beforeAll(() => {
 
 afterEach(() => {
   server.resetHandlers()
+  vi.unstubAllEnvs()
 })
 
 afterAll(() => {
@@ -57,6 +58,64 @@ describe('BitBrowserClient', () => {
       },
     ])
     expect(body).toEqual({ page: 0, pageSize: 100 })
+  })
+
+  it('uses TENGYU_BIT_BROWSER_BASE_URL before the saved bit_browser_url', async () => {
+    vi.stubEnv('TENGYU_BIT_BROWSER_BASE_URL', 'http://127.0.0.1:54346')
+    server.use(
+      http.post('http://127.0.0.1:54346/browser/list', () =>
+        HttpResponse.json({
+          success: true,
+          data: { list: [{ id: 'env-profile', name: 'Env profile' }] },
+        }),
+      ),
+    )
+
+    const client = new BitBrowserClient({
+      getSecret: async () => 'http://127.0.0.1:54347',
+    })
+
+    await expect(client.listProfiles()).resolves.toEqual([
+      { id: 'env-profile', name: 'Env profile' },
+    ])
+  })
+
+  it('uses the saved bit_browser_url when the environment override is empty', async () => {
+    server.use(
+      http.post('http://127.0.0.1:54346/browser/list', () =>
+        HttpResponse.json({
+          success: true,
+          data: { list: [{ id: 'saved-profile', name: 'Saved profile' }] },
+        }),
+      ),
+    )
+
+    const client = new BitBrowserClient({
+      getSecret: async (key) => (key === 'bit_browser_url' ? '127.0.0.1:54346' : null),
+    })
+
+    await expect(client.listProfiles()).resolves.toEqual([
+      { id: 'saved-profile', name: 'Saved profile' },
+    ])
+  })
+
+  it('falls back to the default BitBrowser URL when neither override is configured', async () => {
+    server.use(
+      http.post(`${BIT_BROWSER_DEFAULT_BASE_URL}/browser/list`, () =>
+        HttpResponse.json({
+          success: true,
+          data: { list: [{ id: 'default-profile', name: 'Default profile' }] },
+        }),
+      ),
+    )
+
+    const client = new BitBrowserClient({
+      getSecret: async () => null,
+    })
+
+    await expect(client.listProfiles()).resolves.toEqual([
+      { id: 'default-profile', name: 'Default profile' },
+    ])
   })
 
   it('opens a profile and returns HTTP and WebSocket CDP endpoints', async () => {

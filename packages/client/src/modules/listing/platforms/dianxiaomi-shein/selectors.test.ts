@@ -9,10 +9,8 @@ import {
 } from './selectors'
 
 describe('Dianxiaomi Shein selectors contract', () => {
-  it('defines the v1 real Shein template URL', () => {
-    expect(SHEIN_TEMPLATE_URLS.shein).toBe(
-      'https://www.dianxiaomi.com/web/sheinProduct/edit?id=128935201966452551',
-    )
+  it('does not embed a draft template id in selector-layer template URLs', () => {
+    expect(new URL(SHEIN_TEMPLATE_URLS.shein).searchParams.get('id')).toBeNull()
   })
 
   it('keeps required real selector keys backed by selector candidates', () => {

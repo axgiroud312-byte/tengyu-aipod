@@ -1295,6 +1295,10 @@ export class PipelineService {
     return true
   }
 
+  getActiveRunCount() {
+    return this.activeRuns.size
+  }
+
   async listRuns(): Promise<PipelineRunRecord[]> {
     const workbenchRoot = await this.readWorkbenchRoot()
     const db = openWorkbenchDatabase(workbenchRoot)

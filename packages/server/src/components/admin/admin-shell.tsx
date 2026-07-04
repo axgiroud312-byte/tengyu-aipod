@@ -16,6 +16,8 @@ const adminNavItems: AdminNavItem[] = [
   { href: '/admin/admins', label: '管理员', description: '账号管理', marker: 'M' },
   { href: '/admin/skills', label: 'Skill', description: '系统提示词', marker: 'S' },
   { href: '/admin/customers', label: '客户', description: '账号授权', marker: 'C' },
+  { href: '/admin/announcements', label: '公告', description: '客户端通知', marker: 'N' },
+  { href: '/admin/versions', label: '版本', description: '升级控制', marker: 'V' },
 ]
 
 function isActivePath(pathname: string, href: string) {

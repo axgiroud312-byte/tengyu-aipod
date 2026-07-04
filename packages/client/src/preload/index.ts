@@ -177,6 +177,11 @@ const api = {
   keychain: {
     has: (key: string) => ipcRenderer.invoke('keychain:has', { key }) as Promise<boolean>,
   },
+  bitBrowser: {
+    getBaseUrl: () => ipcRenderer.invoke('bit-browser:get-base-url') as Promise<string | null>,
+    saveBaseUrl: (value: string) =>
+      ipcRenderer.invoke('bit-browser:save-base-url', value) as Promise<string>,
+  },
   customerAuth: {
     getState: () => ipcRenderer.invoke('customerAuth:getState') as Promise<CustomerAuthState>,
     getQrcode: () => ipcRenderer.invoke('customerAuth:getQrcode') as Promise<CustomerAuthQrcode>,

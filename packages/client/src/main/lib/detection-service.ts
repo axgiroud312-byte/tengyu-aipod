@@ -1057,6 +1057,17 @@ export class DetectionService {
     return true
   }
 
+  getActiveTaskCount() {
+    return this.activeTasks.size
+  }
+
+  cancelAllTasks() {
+    for (const taskId of this.activeTasks) {
+      this.cancelledTasks.add(taskId)
+    }
+    return this.activeTasks.size
+  }
+
   private isCancelled(taskId: string) {
     return this.cancelledTasks.has(taskId)
   }

@@ -1,6 +1,7 @@
 import { AdminShell } from '@/components/admin/admin-shell'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { type CustomerExpirationStats, getCustomerExpirationStats } from '@/lib/customer-accounts'
 import { db } from '@/lib/db'
 
 export const dynamic = 'force-dynamic'
@@ -13,6 +14,7 @@ type CountPair = {
 type DashboardStats = {
   admins: CountPair
   customers: CountPair
+  customerExpiration: CustomerExpirationStats | null
   dbOk: boolean
   skills: CountPair
 }
@@ -20,25 +22,35 @@ type DashboardStats = {
 const emptyStats: DashboardStats = {
   admins: { active: null, total: null },
   customers: { active: null, total: null },
+  customerExpiration: null,
   dbOk: false,
   skills: { active: null, total: null },
 }
 
 async function getDashboardStats(): Promise<DashboardStats> {
   try {
-    const [totalSkills, enabledSkills, totalCustomers, activeCustomers, totalAdmins, activeAdmins] =
-      await Promise.all([
-        db.skill.count(),
-        db.skill.count({ where: { enabled: true } }),
-        db.customerAccount.count(),
-        db.customerAccount.count({ where: { status: 'active' } }),
-        db.admin.count(),
-        db.admin.count({ where: { is_active: true } }),
-      ])
+    const [
+      totalSkills,
+      enabledSkills,
+      totalCustomers,
+      activeCustomers,
+      totalAdmins,
+      activeAdmins,
+      customerAccounts,
+    ] = await Promise.all([
+      db.skill.count(),
+      db.skill.count({ where: { enabled: true } }),
+      db.customerAccount.count(),
+      db.customerAccount.count({ where: { status: 'active' } }),
+      db.admin.count(),
+      db.admin.count({ where: { is_active: true } }),
+      db.customerAccount.findMany(),
+    ])
 
     return {
       admins: { active: activeAdmins, total: totalAdmins },
       customers: { active: activeCustomers, total: totalCustomers },
+      customerExpiration: getCustomerExpirationStats(customerAccounts),
       dbOk: true,
       skills: { active: enabledSkills, total: totalSkills },
     }
@@ -138,6 +150,26 @@ export default async function AdminHomePage() {
               <p className="mt-2 text-sm text-muted-foreground">
                 {formatPair(item.pair, item.label)}
               </p>
+            </CardContent>
+          </Card>
+        ))}
+      </section>
+
+      <section className="grid gap-4 md:grid-cols-3 xl:grid-cols-6">
+        {[
+          { label: '待开通', value: stats.customerExpiration?.pending ?? null },
+          { label: '已到期', value: stats.customerExpiration?.expired ?? null },
+          { label: '今日到期', value: stats.customerExpiration?.expires_today ?? null },
+          { label: '7 天内到期', value: stats.customerExpiration?.expires_7d ?? null },
+          { label: '30 天内到期', value: stats.customerExpiration?.expires_30d ?? null },
+          { label: '已禁用', value: stats.customerExpiration?.disabled ?? null },
+        ].map((item) => (
+          <Card key={item.label}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm">{item.label}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="tabular-nums text-2xl font-semibold">{formatCount(item.value)}</p>
             </CardContent>
           </Card>
         ))}

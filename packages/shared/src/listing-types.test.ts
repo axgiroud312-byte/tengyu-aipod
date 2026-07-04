@@ -17,7 +17,7 @@ import {
 } from './listing-types'
 
 describe('listing shared types', () => {
-  it('defines the three Slice 8 v1 templates and real material roots', () => {
+  it('defines the three Slice 8 v1 templates without local demo paths or draft ids', () => {
     expect(SLICE_8_LISTING_TEMPLATES.map((template) => template.key)).toEqual([
       'temu-clothing',
       'temu-general',
@@ -25,14 +25,18 @@ describe('listing shared types', () => {
     ])
     expect(SLICE_8_LISTING_TEMPLATES[0]).toMatchObject({
       platform: 'temu-pop',
-      editUrl: 'https://www.dianxiaomi.com/web/popTemu/edit?id=128935194843933515',
-      materialRootDir: '/Users/macmini/Desktop/服装素材摆放举例',
+      editUrl: 'https://www.dianxiaomi.com/web/popTemu/edit',
+      materialRootDir: '',
       excludedFolderNames: ['GzG00010'],
     })
-    expect(SLICE_8_LISTING_TEMPLATES[1]?.materialRootDir).toBe('/Users/macmini/Desktop/素材文件夹')
-    expect(SLICE_8_LISTING_TEMPLATES[2]?.editUrl).toBe(
-      'https://www.dianxiaomi.com/web/sheinProduct/edit?id=128935201966452551',
-    )
+    expect(SLICE_8_LISTING_TEMPLATES.map((template) => template.materialRootDir)).toEqual([
+      '',
+      '',
+      '',
+    ])
+    for (const template of SLICE_8_LISTING_TEMPLATES) {
+      expect(new URL(template.editUrl).searchParams.get('id'), template.key).toBeNull()
+    }
   })
 
   it('maps listing errors to retryability and AppError codes', () => {

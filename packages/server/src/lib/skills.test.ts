@@ -19,6 +19,8 @@ function skill(overrides: Partial<Skill> = {}): Skill {
     ]),
     recommended_model: 'qwen3-vl-plus',
     notes: null,
+    target_php_uids_json: '[]',
+    target_scope: 'all',
     created_at: now,
     updated_at: now,
     ...overrides,

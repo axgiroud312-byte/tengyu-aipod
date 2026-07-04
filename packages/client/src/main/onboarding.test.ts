@@ -34,6 +34,11 @@ vi.mock('electron', () => ({
       ipcHandlers.set(channel, handler)
     }),
   },
+  safeStorage: {
+    isEncryptionAvailable: () => true,
+    encryptString: (value: string) => Buffer.from(`encrypted:${value}`, 'utf8'),
+    decryptString: (value: Buffer) => value.toString('utf8').replace(/^encrypted:/, ''),
+  },
 }))
 
 beforeEach(async () => {
@@ -75,5 +80,15 @@ describe('onboarding workbench root save', () => {
       .get()
     reopenedOldDb.close()
     expect(oldTable).toBeUndefined()
+  })
+
+  it('lets settings read and update the saved BitBrowser base URL without exposing API keys', async () => {
+    const { registerOnboardingIpc } = await import('./onboarding')
+    registerOnboardingIpc()
+
+    await ipcHandlers.get('bit-browser:save-base-url')?.({}, '127.0.0.1:54346')
+
+    await expect(ipcHandlers.get('bit-browser:get-base-url')?.({})).resolves.toBe('127.0.0.1:54346')
+    expect(ipcHandlers.has('keychain:get')).toBe(false)
   })
 })

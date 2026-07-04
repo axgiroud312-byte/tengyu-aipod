@@ -11,10 +11,12 @@ import { describe, expect, it, vi } from 'vitest'
 import { BrowserProfileLockManager } from '../../main/lib/browser-profile-lock'
 import type { CDPClient } from '../../main/lib/cdp-client'
 import {
+  type BatchResult,
   type ListingRunConfig,
   type ListingStatusRow,
   type ListingStatusStore,
   type ListingTaskStore,
+  markActiveListingRunsInterrupted,
   runLocalListingBatch,
   startListingRunInBackground,
 } from './runner'
@@ -654,6 +656,57 @@ describe('listing runner', () => {
       { workspaceId: 'workspace-a', status: 'failed', currentTaskId: null },
     ])
     expect(taskStore.closed).toBe(true)
+  })
+
+  it('marks active background listing runs as failed before app quit', async () => {
+    const taskStore = new FakeTaskStore()
+    let releaseRun: () => void = () => undefined
+    const runLocalListingBatch = vi.fn(
+      () =>
+        new Promise<BatchResult>((resolve) => {
+          releaseRun = () =>
+            resolve({
+              taskId: 'run-active',
+              batchId: 'batch-1',
+              totalCount: 1,
+              successCount: 0,
+              failedCount: 0,
+              skippedCount: 0,
+              workspaceResults: [],
+              results: [],
+            })
+        }),
+    )
+
+    startListingRunInBackground(
+      createConfig({
+        task_id: 'run-active',
+        workspaces: [
+          {
+            profile_id: 'profile-a',
+            task_id: 'listing-task-a',
+            workspace_id: 'workspace-a',
+          },
+        ],
+      }),
+      [createItem('SKU-1')],
+      {
+        runner: { runLocalListingBatch },
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openTaskStore: () => taskStore,
+      },
+    )
+
+    await markActiveListingRunsInterrupted()
+
+    expect(taskStore.taskStatuses).toEqual([
+      { taskId: 'listing-task-a', status: 'failed', lastRunTaskId: 'run-active' },
+    ])
+    expect(taskStore.workspaceStatuses).toEqual([
+      { workspaceId: 'workspace-a', status: 'failed', currentTaskId: null },
+    ])
+    expect(taskStore.closed).toBe(true)
+    releaseRun()
   })
 
   it('updates persisted workspace tasks as running and completed', async () => {

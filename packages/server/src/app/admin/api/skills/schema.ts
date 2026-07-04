@@ -1,3 +1,4 @@
+import { parsePhpUidAllowlistInput } from '@/lib/targeting'
 import { z } from 'zod'
 
 export const skillInputSchema = z.object({
@@ -12,6 +13,8 @@ export const skillInputSchema = z.object({
   variables_json: z.string().min(2),
   recommended_model: z.string().nullable().optional(),
   notes: z.string().nullable().optional(),
+  target_php_uids: z.string().optional(),
+  target_scope: z.enum(['all', 'php_uid_list']).default('all'),
 })
 
 export const skillPatchSchema = skillInputSchema.extend({
@@ -29,4 +32,17 @@ export function validateVariablesJson(value: string) {
   } catch {
     return false
   }
+}
+
+export function targetPhpUidsJson(scope: 'all' | 'php_uid_list', value: string | undefined) {
+  if (scope === 'all') {
+    return { ok: true as const, value: '[]' }
+  }
+
+  const parsed = parsePhpUidAllowlistInput(value ?? '')
+  if (!parsed.ok || parsed.uids.length === 0) {
+    return { ok: false as const, value: '[]' }
+  }
+
+  return { ok: true as const, value: JSON.stringify(parsed.uids) }
 }

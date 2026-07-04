@@ -31,6 +31,8 @@ import type { BitBrowserProfile } from '../../../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../../../main/lib/browser-profile-lock'
 import type { ListingBatchLoadResult } from '../../../main/lib/listing-batch-loader'
 import type { ListingStatusRow } from '../../../modules/listing/runner'
+import { reconcileSelectedListingProfileIds } from './listing-workbench-profile-selection'
+import { listingStartValidationIssues } from './listing-workbench-validation'
 
 type WorkspaceProgress = {
   status: ListingProgress['status']
@@ -40,8 +42,6 @@ type WorkspaceProgress = {
   totalCount: number
   lastError?: string
 }
-
-const PROFILE_TARGET = '2-1111'
 
 const platformLabels: Record<ListingPlatformKey, string> = {
   'temu-pop': 'Temu',
@@ -102,12 +102,6 @@ function parseIntInput(value: string, fallback: number, min: number, max: number
     return fallback
   }
   return Math.max(min, Math.min(max, Math.floor(parsed)))
-}
-
-function profileMatchesTarget(profile: BitBrowserProfile) {
-  return [profile.id, profile.name, profile.remark, profile.seq ? String(profile.seq) : '']
-    .filter((value): value is string => Boolean(value))
-    .some((value) => value.includes(PROFILE_TARGET))
 }
 
 function lockLabel(lock: BrowserProfileHolder | undefined) {
@@ -247,13 +241,14 @@ export function ListingWorkbench() {
     0,
     Math.ceil((itemCount * 4) / Math.max(1, selectedProfileIds.length)),
   )
-  const canStart =
-    Boolean(selectedTemplate) &&
-    itemCount > 0 &&
-    selectedProfileIds.length > 0 &&
-    targetShopName.trim().length > 0 &&
-    draftTemplateId.trim().length > 0 &&
-    !starting
+  const validationIssues = listingStartValidationIssues({
+    batchDir,
+    draftTemplateId,
+    itemCount,
+    selectedProfileCount: selectedProfileIds.length,
+    targetShopName,
+  })
+  const canStart = Boolean(selectedTemplate) && validationIssues.length === 0 && !starting
 
   const refreshStatusRows = useCallback(async () => {
     if (!batchDir.trim()) {
@@ -333,7 +328,7 @@ export function ListingWorkbench() {
 
   async function scanBatchDir() {
     if (!batchDir.trim()) {
-      setError('请先选择货号批次目录')
+      setError('请选择素材目录')
       return
     }
     setScanning(true)
@@ -363,13 +358,7 @@ export function ListingWorkbench() {
       setProfiles(nextProfiles)
       setLocks(nextLocks)
       setSelectedProfileIds((current) => {
-        if (current.length > 0) {
-          return current.filter((profileId) =>
-            nextProfiles.some((profile) => profile.id === profileId),
-          )
-        }
-        const targetProfile = nextProfiles.find(profileMatchesTarget)
-        return targetProfile ? [targetProfile.id] : []
+        return reconcileSelectedListingProfileIds(current, nextProfiles)
       })
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
@@ -380,7 +369,7 @@ export function ListingWorkbench() {
 
   async function startListing() {
     if (!selectedTemplate || !scanResult || !canStart) {
-      setError('请先完成批次扫描、选择浏览器档案，并填写店铺名和模板编号')
+      setError(validationIssues[0] ?? '请先完成批次扫描，并填写店铺名')
       return
     }
     setStarting(true)
@@ -849,6 +838,12 @@ export function ListingWorkbench() {
                 </div>
               ) : null}
 
+              {!error && validationIssues.length ? (
+                <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                  {validationIssues[0]}
+                </div>
+              ) : null}
+
               <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
                 <div className="text-sm text-muted-foreground">
                   预估 {itemCount} 个货号，约{' '}
@@ -950,7 +945,7 @@ export function ListingWorkbench() {
               <div>
                 <h2 className="text-lg font-semibold text-balance">比特浏览器环境</h2>
                 <p className="mt-1 text-sm text-muted-foreground text-pretty">
-                  默认优先选择名称、备注或编号包含 {PROFILE_TARGET} 的浏览器档案。
+                  不默认预选浏览器档案，开始前请手动选择要使用的店铺环境。
                 </p>
               </div>
               <span className="text-sm text-muted-foreground tabular-nums">

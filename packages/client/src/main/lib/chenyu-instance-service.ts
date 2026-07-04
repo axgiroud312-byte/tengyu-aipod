@@ -464,8 +464,7 @@ function mapManagedInstance(
     ...comfyuiUrlCandidates(info.server_map, info.server_url).map((candidate) => candidate.url),
     ...(savedComfyuiUrl ? [savedComfyuiUrl] : []),
   ])
-  const comfyuiUrl =
-    extractComfyuiUrl(info.server_map) ?? savedComfyuiUrl ?? serverUrls[0] ?? null
+  const comfyuiUrl = extractComfyuiUrl(info.server_map) ?? savedComfyuiUrl ?? serverUrls[0] ?? null
   return {
     instanceUuid: info.instance_uuid,
     title,

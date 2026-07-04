@@ -225,6 +225,11 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_FAIL_STREAK_LIMIT = 3
 const DEFAULT_STAGE: ListingStage = 'enter_page'
 const DEFAULT_SUBMIT_MODE: ListingConfig['submitMode'] = 'save-draft'
+const activeListingRuns = new Set<string>()
+const activeListingRunContexts = new Map<
+  string,
+  { config: ListingRunConfig; dependencies: ListingBackgroundRunDependencies }
+>()
 const listingPlatformKeySchema = z.enum(['temu-pop', 'shein'])
 const listingTemplateKeySchema = z.enum(['temu-clothing', 'temu-general', 'shein'])
 const listingSkuModeSchema = z.enum(['manual', 'one-click-generate'])
@@ -1032,12 +1037,34 @@ export function startListingRunInBackground(
   const taskId = config.task_id ?? dependencies.randomId?.() ?? randomUUID()
   const runConfig = { ...config, task_id: taskId }
   const runner = dependencies.runner ?? listingRunner
-  void runner.runLocalListingBatch(runConfig, items).catch((error: unknown) =>
-    markBoundListingTasksFailed(runConfig, taskId, dependencies).catch(() => {
-      console.error('Failed to mark background listing run as failed', error)
-    }),
-  )
+  activeListingRuns.add(taskId)
+  activeListingRunContexts.set(taskId, { config: runConfig, dependencies })
+  void runner
+    .runLocalListingBatch(runConfig, items)
+    .catch((error: unknown) =>
+      markBoundListingTasksFailed(runConfig, taskId, dependencies).catch(() => {
+        console.error('Failed to mark background listing run as failed', error)
+      }),
+    )
+    .finally(() => {
+      activeListingRuns.delete(taskId)
+      activeListingRunContexts.delete(taskId)
+    })
   return taskId
+}
+
+export function getActiveListingRunCount() {
+  return activeListingRuns.size
+}
+
+export async function markActiveListingRunsInterrupted() {
+  await Promise.all(
+    Array.from(activeListingRunContexts.entries()).map(([taskId, context]) =>
+      markBoundListingTasksFailed(context.config, taskId, context.dependencies),
+    ),
+  )
+  activeListingRuns.clear()
+  activeListingRunContexts.clear()
 }
 
 async function markBoundListingTasksFailed(

@@ -1,7 +1,7 @@
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { dialog, ipcMain } from 'electron'
 import { z } from 'zod'
-import { hasSecret, setSecret } from './lib/keychain'
+import { getSecret, hasSecret, setSecret } from './lib/keychain'
 import { markOnboardingComplete, readOnboardingStateFile } from './lib/onboarding-state'
 import {
   defaultWorkbenchRoot,
@@ -149,4 +149,13 @@ export function registerOnboardingIpc() {
       parseOnboardingIpcInput(keychainHasInputSchema, input, 'Keychain 查询参数不正确').key,
     ),
   )
+  ipcMain.handle('bit-browser:get-base-url', () => getSecret('bit_browser_url'))
+  ipcMain.handle('bit-browser:save-base-url', async (_event, value: unknown) => {
+    const nextValue = parseOnboardingIpcInput(z.string(), value, '比特浏览器地址参数不正确').trim()
+    if (!nextValue) {
+      throw new AppErrorClass('INVALID_INPUT', '比特浏览器地址不能为空', false)
+    }
+    await setSecret('bit_browser_url', nextValue)
+    return nextValue
+  })
 }

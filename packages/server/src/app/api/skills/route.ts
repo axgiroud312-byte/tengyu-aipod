@@ -1,4 +1,5 @@
 import { listSkills } from '@/lib/skills'
+import { parseOptionalPhpUid } from '@/lib/targeting'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -30,6 +31,7 @@ export async function GET(request: Request) {
     ...(parsed.data.category ? { category: parsed.data.category } : {}),
     ...(parsed.data.platform ? { platform: parsed.data.platform } : {}),
     ...(parsed.data.language ? { language: parsed.data.language } : {}),
+    uid: parseOptionalPhpUid(url.searchParams.get('uid')),
   })
   return NextResponse.json({ ok: true, data })
 }
