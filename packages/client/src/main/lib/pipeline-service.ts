@@ -85,6 +85,7 @@ const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const PIPELINE_RUNS_FOLDER = 'pipeline-runs'
 const IMAGE_PROCESSING_SECTION_KEY = 'image_processing'
+const PHOTOSHOP_MUTEX_TIMEOUT_MS = 10 * 60 * 1000
 const RESULT_SECTION_ORDER: PipelineResultSectionKey[] = [
   IMAGE_PROCESSING_SECTION_KEY,
   'detection_passed',
@@ -143,8 +144,15 @@ type ActivePipelineRun = {
   collectionReadLock: CollectionFolderReadLock | null
 }
 
+type PromiseMutexOptions = {
+  waitTimeoutMs?: number
+  timeoutError?: () => Error
+}
+
 class PromiseMutex {
   private current = Promise.resolve()
+
+  constructor(private readonly defaults: PromiseMutexOptions = {}) {}
 
   async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const previous = this.current
@@ -152,11 +160,37 @@ class PromiseMutex {
     this.current = new Promise<void>((resolve) => {
       release = resolve
     })
-    await previous
     try {
+      await this.waitForPrevious(previous)
       return await fn()
     } finally {
       release()
+    }
+  }
+
+  private async waitForPrevious(previous: Promise<void>) {
+    const waitTimeoutMs = this.defaults.waitTimeoutMs
+    if (waitTimeoutMs === undefined) {
+      await previous
+      return
+    }
+    let timeoutId: ReturnType<typeof setTimeout> | undefined
+    try {
+      await Promise.race([
+        previous,
+        new Promise<never>((_, reject) => {
+          timeoutId = setTimeout(() => {
+            reject(
+              this.defaults.timeoutError?.() ??
+                new AppErrorClass('HTTP_5XX', '任务等待超时,请稍后重试', true),
+            )
+          }, waitTimeoutMs)
+        }),
+      ])
+    } finally {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId)
+      }
     }
   }
 }
@@ -1226,7 +1260,11 @@ function emitGenerationProgressAsPipeline(
 export class PipelineService {
   private readonly activeRuns = new Map<string, ActivePipelineRun>()
   private readonly activePrintSkuRuns = new Map<string, string>()
-  private readonly photoshopMutex = new PromiseMutex()
+  private readonly photoshopMutex = new PromiseMutex({
+    waitTimeoutMs: PHOTOSHOP_MUTEX_TIMEOUT_MS,
+    timeoutError: () =>
+      new AppErrorClass('HTTP_5XX', 'Photoshop 无响应,请检查 PS 后重试', true),
+  })
   private readonly comfyuiInstanceQueues = new Map<string, PromiseMutex>()
 
   private comfyuiQueueForInstance(instanceUuid?: string | undefined) {

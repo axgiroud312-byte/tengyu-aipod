@@ -18,7 +18,7 @@ import type {
   GenerationRunResult,
 } from './generation-service'
 import { generateTxt2imgPrompts } from './generation-service'
-import { PipelineService, registerPipelineIpc } from './pipeline-service'
+import { PipelineService, pipelineService, registerPipelineIpc } from './pipeline-service'
 import { type TitleBatchResult, writeTitlesXlsx } from './title-service'
 import { openWorkbenchDatabase, workbenchDatabasePath } from './workbench-db'
 
@@ -1072,6 +1072,42 @@ describe('PipelineService', () => {
     resolvePhotoshop?.()
     await vi.waitUntil(() => mocks.runBatch.mock.calls.length === 2)
     await expect(Promise.all([firstRun, secondRun])).resolves.toHaveLength(2)
+  })
+
+  it('times out a stuck Photoshop mutex waiter and releases later callers', async () => {
+    vi.useFakeTimers()
+    type PhotoshopMutexForTest = {
+      runExclusive<T>(fn: () => Promise<T>): Promise<T>
+    }
+    const service = new PipelineService()
+    const mutex = (service as unknown as { photoshopMutex: PhotoshopMutexForTest }).photoshopMutex
+    const holderEntered = createDeferred<void>()
+    void mutex.runExclusive(async () => {
+      holderEntered.resolve()
+      return new Promise<never>(() => {})
+    })
+    await holderEntered.promise
+
+    try {
+      const waiter = mutex.runExclusive(async () => 'should-not-run')
+      const waiterResult = waiter.then(
+        (value) => ({ status: 'resolved' as const, value }),
+        (error: unknown) => ({ status: 'rejected' as const, error }),
+      )
+
+      await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
+      await expect(Promise.race([waiterResult, Promise.resolve({ status: 'pending' as const })]))
+        .resolves.toMatchObject({
+          status: 'rejected',
+          error: expect.objectContaining({
+            message: 'Photoshop 无响应,请检查 PS 后重试',
+          }),
+        })
+
+      await expect(mutex.runExclusive(async () => 'released')).resolves.toBe('released')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('completes the title step when every title batch is skipped', async () => {
@@ -3762,36 +3798,44 @@ describe('PipelineService', () => {
     })
   })
 
-  it('accepts ComfyUI txt2img sources at the IPC schema boundary', () => {
+  it('accepts ComfyUI txt2img sources at the IPC schema boundary', async () => {
     registerPipelineIpc()
     const handler = mocks.ipcHandlers.get('pipeline:run')
     if (!handler) {
       throw new Error('pipeline:run handler was not registered')
     }
 
-    expect(() =>
-      handler(
-        {},
-        {
-          ...baseConfig('/prints'),
-          source: {
-            mode: 'txt2img',
-            provider: 'comfyui-chenyu',
-            prompt: { mode: 'manual', prompts: ['flower'] },
-            comfyui: { workflowId: 'wf' },
-          },
-          photoshop: {
-            ...baseConfig('/prints').photoshop,
-            enabled: false,
-            templates: [],
-          },
-          title: {
-            ...baseConfig('/prints').title,
-            enabled: false,
-          },
+    const runId = handler(
+      {},
+      {
+        ...baseConfig('/prints'),
+        source: {
+          mode: 'txt2img',
+          provider: 'comfyui-chenyu',
+          prompt: { mode: 'manual', prompts: ['flower'] },
+          comfyui: { workflowId: 'wf' },
         },
-      ),
-    ).not.toThrow()
+        photoshop: {
+          ...baseConfig('/prints').photoshop,
+          enabled: false,
+          templates: [],
+        },
+        title: {
+          ...baseConfig('/prints').title,
+          enabled: false,
+        },
+      },
+    )
+
+    expect(runId).toEqual(expect.any(String))
+    await vi.waitUntil(
+      () =>
+        pipelineService.getActiveRunCount() === 0 &&
+        mocks.sentEvents.some((event) => {
+          const payload = event.payload as { result?: { run?: { id?: string } } }
+          return event.channel === 'pipeline:completed' && payload.result?.run?.id === runId
+        }),
+    )
   })
 
   it('rejects print sku codes that are empty after filename sanitization at the IPC schema boundary', () => {
