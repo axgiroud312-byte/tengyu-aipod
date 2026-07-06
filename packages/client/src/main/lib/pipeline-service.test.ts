@@ -17,6 +17,7 @@ import type {
   GenerationRunImage,
   GenerationRunResult,
 } from './generation-service'
+import { generateTxt2imgPrompts } from './generation-service'
 import { PipelineService, registerPipelineIpc } from './pipeline-service'
 import { type TitleBatchResult, writeTitlesXlsx } from './title-service'
 import { openWorkbenchDatabase, workbenchDatabasePath } from './workbench-db'
@@ -613,6 +614,7 @@ describe('PipelineService', () => {
     mocks.runExtractBatch.mockClear()
     mocks.runComfyuiMattingBatch.mockClear()
     mocks.runDetectionBatch.mockReset()
+    vi.mocked(generateTxt2imgPrompts).mockReset()
     mocks.sentEvents = []
   })
 
@@ -1727,6 +1729,97 @@ describe('PipelineService', () => {
         (item) => item.step_key === 'source' && item.status === 'completed',
       ),
     ).toHaveLength(2)
+  })
+
+  it('does not regenerate AI prompts when all txt2img source items were completed before resume', async () => {
+    vi.mocked(generateTxt2imgPrompts).mockResolvedValueOnce([
+      { text: 'p1', selected: true },
+      { text: 'p2', selected: true },
+    ])
+    let sourceIndex = 0
+    mocks.runComfyuiTxt2imgBatch.mockImplementation(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        const images = await Promise.all(
+          input.prompts.map(async (prompt) => {
+            sourceIndex += 1
+            const outputPath = join(mocks.workbenchRoot, `ai-resume-source-${sourceIndex}.png`)
+            await createPrint(outputPath)
+            const image = {
+              prompt,
+              url: `file://ai-resume-source-${sourceIndex}.png`,
+              localPath: outputPath,
+              artifactId: `art-ai-resume-source-${sourceIndex}`,
+              printId: `pri-ai-resume-source-${sourceIndex}`,
+            }
+            await dependencies?.onImageComplete?.({
+              taskId: input.taskId ?? `run-resume-all-source-ai-prompts-txt2img-${sourceIndex}`,
+              capability: 'txt2img',
+              path: image.localPath,
+              printId: image.printId,
+              artifactId: image.artifactId,
+              prompt,
+              sourceArtifactIds: [],
+            })
+            return image
+          }),
+        )
+        return {
+          taskId: input.taskId ?? 'run-resume-all-source-ai-prompts-txt2img',
+          total: images.length,
+          succeeded: images.length,
+          failed: 0,
+          images,
+          failures: [],
+        }
+      },
+    )
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const firstRun = await service.runPipeline('run-resume-all-source-ai-prompts', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'comfyui-chenyu',
+        prompt: {
+          mode: 'ai',
+          requirement: 'make two floral prints',
+          count: 2,
+          skillId: 'txt2img-local-print',
+          skillVersion: '1.0.0',
+          model: 'qwen3-vl-flash',
+        },
+        comfyui: {
+          workflowId: 'wf-txt2img',
+          instanceUuid: 'instance-a',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+    expect(firstRun.run.status).toBe('completed')
+    expect(
+      firstRun.items.filter((item) => item.step_key === 'source' && item.status === 'completed'),
+    ).toHaveLength(2)
+
+    updateRunStatusForTest('run-resume-all-source-ai-prompts', 'interrupted')
+    vi.mocked(generateTxt2imgPrompts).mockReset()
+    vi.mocked(generateTxt2imgPrompts).mockRejectedValue(
+      new Error('prompt generator should not run on completed source resume'),
+    )
+    mocks.runComfyuiTxt2imgBatch.mockClear()
+
+    const resumed = await service.resumeRun('run-resume-all-source-ai-prompts')
+
+    expect(resumed?.run.status).toBe('completed')
+    expect(generateTxt2imgPrompts).not.toHaveBeenCalled()
+    expect(mocks.runComfyuiTxt2imgBatch).not.toHaveBeenCalled()
   })
 
   it('resumes past completed Photoshop and title items without rerunning their adapters', async () => {

@@ -129,6 +129,7 @@ type PipelineResumeState = {
   completedItemsByStep: Map<PipelineStepKey, PipelineItemRecord[]>
   completedItemByStepAndKey: Map<string, PipelineItemRecord>
   completedSourceKeys: Set<string>
+  completedSourceStep: PipelineStepRecord | null
 }
 
 type ActivePipelineRun = {
@@ -1791,6 +1792,9 @@ export class PipelineService {
     return {
       completedItemsByStep,
       completedItemByStepAndKey,
+      completedSourceStep:
+        detail.steps.find((step) => step.step_key === 'source' && step.status === 'completed') ??
+        null,
       completedSourceKeys: new Set(
         (detail.items ?? [])
           .filter((item) => item.step_key === 'source' && item.status === 'completed')
@@ -3263,9 +3267,27 @@ export class PipelineService {
       }
     }
     if (source.mode === 'txt2img') {
+      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
+      const completedSourceStep = resumeState?.completedSourceStep
+      if (completedSourceStep && completedSourceCount >= completedSourceStep.output_count) {
+        const total = Math.max(
+          completedSourceStep.input_count,
+          completedSourceStep.output_count,
+          completedSourceCount,
+        )
+        callbacks.onPlannedCount?.(total)
+        return {
+          taskId: `${runId}-txt2img`,
+          total,
+          succeeded: completedSourceCount,
+          failed: Math.max(0, total - completedSourceCount),
+          images: [],
+          failures: [],
+          itemCount: completedSourceCount,
+        }
+      }
       const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
       callbacks.onPlannedCount?.(prompts.length)
-      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
       if (source.provider === 'comfyui-chenyu') {
         const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
         const aggregate: GenerationRunResult = {
