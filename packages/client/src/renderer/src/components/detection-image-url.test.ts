@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { detectionImageSrc, fileUrlLocalPath, localImageUrl } from './detection-image-url'
+import { detectionImageSrc, fileUrlLocalPath, localImageUrl } from '../lib/media'
 
 describe('detection image urls', () => {
   it('uses the local image protocol for absolute paths', () => {

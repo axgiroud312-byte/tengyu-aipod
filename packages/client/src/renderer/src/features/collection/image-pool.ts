@@ -129,9 +129,15 @@ function mergeExistingImagePoolItem(
     incoming.score > existing.score ||
     imageWidthHint(incoming.originalUrl) > imageWidthHint(existing.originalUrl) ||
     (isGoodsPageUrl(incoming.sourcePageUrl) && !isGoodsPageUrl(existing.sourcePageUrl))
-  const base = preferIncoming ? { ...incoming, id: existing.id } : { ...existing }
+  const base = preferIncoming
+    ? { ...incoming, id: existing.id, localPath: existing.localPath ?? incoming.localPath }
+    : { ...existing }
   let changed = preferIncoming
 
+  if (!base.localPath && incoming.localPath) {
+    base.localPath = incoming.localPath
+    changed = true
+  }
   if (!base.goodsLink && incoming.goodsLink) {
     base.goodsLink = incoming.goodsLink
     changed = true

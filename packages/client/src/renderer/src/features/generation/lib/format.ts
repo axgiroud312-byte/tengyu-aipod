@@ -1,3 +1,4 @@
+import { fileUrlLocalPath, localImageUrl } from '@/lib/media'
 import type { GenerationCapability, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import type { ComfyuiWorkflowSummary } from '../../../../../main/lib/comfyui-workflow-cache'
 import type {
@@ -13,7 +14,6 @@ import {
   LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY,
   PROMPT_SKILL_SELECTION_STORAGE_PREFIX,
 } from './constants'
-import { fileUrlLocalPath, localImageUrl } from './media'
 
 export type SkillVariablesState = Record<string, string | boolean>
 export type GenerationSettingsSnapshot = Awaited<

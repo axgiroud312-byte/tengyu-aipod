@@ -1,4 +1,3 @@
-import { localImageUrl } from '@/components/detection-image-url'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -17,6 +16,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { localImageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
 import {
   CheckSquare,
@@ -80,6 +80,7 @@ export interface CollectionPageState {
 }
 
 const EMPTY_IMAGE_ITEMS: CollectionImageIndexItem[] = []
+const PRODUCT_GROUP_DEFAULT_IMAGE_LIMIT = 60
 
 interface CollectionPageProps {
   session: CollectionSession | null
@@ -260,6 +261,18 @@ function sourcePageLabel(item: CollectionImageIndexItem) {
   return item.goodsLink ?? item.originalUrl
 }
 
+function collectionImageIndexItemImageSrc(item: CollectionImageIndexItem) {
+  return item.localPath ? localImageUrl(item.localPath) : item.originalUrl
+}
+
+function collectionImagePoolCoverSrc(group: {
+  coverUrl: string
+  items: CollectionImageIndexItem[]
+}) {
+  const localItem = group.items.find((item) => item.localPath)
+  return localItem?.localPath ? localImageUrl(localItem.localPath) : group.coverUrl
+}
+
 function debugLogLevelClassName(level: CollectionDebugLogEntry['level']) {
   switch (level) {
     case 'error':
@@ -309,6 +322,9 @@ export function CollectionPage({
   const [keyword, setKeyword] = useState('')
   const [shopUrl, setShopUrl] = useState('')
   const [openProductGroupKey, setOpenProductGroupKey] = useState<string | null>(null)
+  const [expandedProductGroupKeys, setExpandedProductGroupKeys] = useState<Set<string>>(
+    () => new Set(),
+  )
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const keywordPreview = state.platform === 'temu' ? temuSearchUrl(keyword) : ''
@@ -321,6 +337,17 @@ export function CollectionPage({
   const openProductGroup = imagePoolGroups.productGroups.find(
     (group) => group.key === openProductGroupKey,
   )
+  const openProductGroupExpanded = openProductGroup
+    ? expandedProductGroupKeys.has(openProductGroup.key)
+    : false
+  const openProductGroupItems = openProductGroup
+    ? openProductGroupExpanded
+      ? openProductGroup.items
+      : openProductGroup.items.slice(0, PRODUCT_GROUP_DEFAULT_IMAGE_LIMIT)
+    : EMPTY_IMAGE_ITEMS
+  const openProductGroupHiddenCount = openProductGroup
+    ? openProductGroup.items.length - openProductGroupItems.length
+    : 0
   const productImageCount = imagePoolGroups.productGroups.reduce(
     (total, group) => total + group.items.length,
     0,
@@ -340,6 +367,18 @@ export function CollectionPage({
     for (const item of items) {
       onToggleImagePoolItem(item.id, checked)
     }
+  }
+
+  function toggleExpandedProductGroup(groupKey: string) {
+    setExpandedProductGroupKeys((current) => {
+      const next = new Set(current)
+      if (next.has(groupKey)) {
+        next.delete(groupKey)
+      } else {
+        next.add(groupKey)
+      }
+      return next
+    })
   }
 
   return (
@@ -662,6 +701,7 @@ export function CollectionPage({
                       <img
                         alt=""
                         className="h-10 w-10 rounded border object-cover"
+                        decoding="async"
                         loading="lazy"
                         src={localImageUrl(item.savedPath)}
                       />
@@ -734,8 +774,9 @@ export function CollectionPage({
                               <img
                                 alt=""
                                 className="h-full w-full object-cover"
+                                decoding="async"
                                 loading="lazy"
-                                src={group.coverUrl}
+                                src={collectionImagePoolCoverSrc(group)}
                               />
                               <div className="absolute bottom-1 right-1 rounded bg-background/90 p-1 shadow-sm">
                                 <FolderOpen className="h-3.5 w-3.5 text-primary" />
@@ -773,7 +814,7 @@ export function CollectionPage({
                         <Badge variant="secondary">{openProductGroup.items.length} 张</Badge>
                       </div>
                       <div className="mt-3 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                        {openProductGroup.items.map((item) => (
+                        {openProductGroupItems.map((item) => (
                           <label
                             className={cn(
                               'grid cursor-pointer grid-cols-[auto_72px_minmax(0,1fr)] gap-3 rounded-md border bg-background p-3 transition-colors',
@@ -794,8 +835,9 @@ export function CollectionPage({
                             <img
                               alt=""
                               className="h-16 w-16 rounded-md border object-cover"
+                              decoding="async"
                               loading="lazy"
-                              src={item.originalUrl}
+                              src={collectionImageIndexItemImageSrc(item)}
                             />
                             <div className="min-w-0 text-sm">
                               <div className="flex items-center gap-2">
@@ -814,6 +856,19 @@ export function CollectionPage({
                           </label>
                         ))}
                       </div>
+                      {openProductGroupHiddenCount > 0 || openProductGroupExpanded ? (
+                        <div className="mt-3 flex justify-center">
+                          <Button
+                            onClick={() => toggleExpandedProductGroup(openProductGroup.key)}
+                            type="button"
+                            variant="secondary"
+                          >
+                            {openProductGroupExpanded
+                              ? `收起到前 ${PRODUCT_GROUP_DEFAULT_IMAGE_LIMIT} 张`
+                              : `查看全部，剩余 ${openProductGroupHiddenCount} 张`}
+                          </Button>
+                        </div>
+                      ) : null}
                     </div>
                   ) : null}
                 </section>
@@ -849,8 +904,9 @@ export function CollectionPage({
                         <img
                           alt=""
                           className="h-16 w-16 rounded-md border object-cover"
+                          decoding="async"
                           loading="lazy"
-                          src={item.originalUrl}
+                          src={collectionImageIndexItemImageSrc(item)}
                         />
                         <div className="min-w-0 text-sm">
                           <div className="flex items-center gap-2">

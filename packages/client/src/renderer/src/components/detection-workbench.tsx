@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { detectionImageSrc } from '@/lib/media'
 import type { RiskLevel, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CheckCircle2,
@@ -23,7 +24,6 @@ import type {
   DetectionProgress,
   DetectionTaskEvent,
 } from '../../../main/lib/detection-service'
-import { detectionImageSrc } from './detection-image-url'
 import { type DetectionPreviewResult, detectionPreviewResults } from './detection-preview'
 import { ImageLightbox, type ImageLightboxItem } from './image-lightbox'
 

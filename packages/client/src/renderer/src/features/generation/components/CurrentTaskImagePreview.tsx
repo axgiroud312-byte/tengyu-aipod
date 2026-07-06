@@ -3,10 +3,10 @@ import {
   type ImageLightboxDetail,
   type ImageLightboxItem,
 } from '@/components/image-lightbox'
+import { fileUrlLocalPath } from '@/lib/media'
 import { useEffect, useMemo, useState } from 'react'
 import type { GenerationRunImage } from '../../../../../main/lib/generation-service'
 import { imagePreviewSrc } from '../lib/format'
-import { fileUrlLocalPath } from '../lib/media'
 
 function presentDetail(
   label: string,

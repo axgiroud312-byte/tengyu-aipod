@@ -28,7 +28,6 @@ import {
   workflowKeyOrFallback,
   workflowOptionKey,
 } from '@/features/generation/lib/format'
-import { readFileAsDataUrl, splitDataUrl } from '@/features/generation/lib/media'
 import {
   type Img2imgMode,
   type ReferenceImageDraft,
@@ -36,6 +35,7 @@ import {
   type Txt2imgMode,
   img2imgModes,
 } from '@/features/generation/lib/panel-options'
+import { readFileAsDataUrl, splitDataUrl } from '@/lib/media'
 import { useGenerationStore } from '@/store/generation'
 import type { GenerationCapability } from '@tengyu-aipod/shared'
 import {

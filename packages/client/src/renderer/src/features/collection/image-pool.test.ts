@@ -85,6 +85,29 @@ describe('collection image pool merge', () => {
     expect(second.items[0]?.id).toBe(first.items[0]?.id)
   })
 
+  it('preserves local paths when a cached pool item is rescanned', () => {
+    const scan = scanResult('https://www.temu.com/search_result.html?search_key=mask')
+    const first = mergeCollectionImagePoolItems(
+      [],
+      [imageItem('https://img.kwcdn.com/product/open/a.jpg?imageView2/2/w/800/q/90')],
+      scan,
+      1,
+    )
+    const cachedItems = first.items.map((item) => ({
+      ...item,
+      localPath: 'C:\\workbench\\01-采集工作区\\temu\\a.jpg',
+    }))
+    const second = mergeCollectionImagePoolItems(
+      cachedItems,
+      [imageItem('https://img.kwcdn.com/product/open/a.jpg?imageView2/2/w/1300/q/90')],
+      scan,
+      2,
+    )
+
+    expect(second.items).toHaveLength(1)
+    expect(second.items[0]?.localPath).toBe('C:\\workbench\\01-采集工作区\\temu\\a.jpg')
+  })
+
   it('groups product entries separately from loose images for preview', () => {
     const searchScan = scanResult('https://www.temu.com/search_result.html?search_key=mask')
     const detailScan = scanResult(

@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
+import { localImageUrl } from '@/lib/media'
 import { FolderOpen, Loader2, RefreshCw } from 'lucide-react'
 import type { GenerationImageSource } from '../../../../../main/lib/generation-service'
-import { localImageUrl } from '../lib/media'
 
 export function ImageFolderPickerPanel({
   title,

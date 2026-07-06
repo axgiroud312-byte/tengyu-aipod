@@ -79,6 +79,7 @@ export type CollectionImageIndexItem = {
   groupTitle: string | null
   coverUrl: string | null
   tag: string
+  localPath?: string | undefined
   sourcePageUrl?: string | undefined
   sourcePageTitle?: string | undefined
   scannedAt?: number | undefined
@@ -513,7 +514,11 @@ export async function downloadCollectionImageIndexItems(input: DownloadInput) {
         image.extension,
       )
       await writeFile(savedPath, image.buffer)
-      saved.push({ item, savedPath, bytes: image.buffer.byteLength })
+      saved.push({
+        item: { ...item, localPath: savedPath },
+        savedPath,
+        bytes: image.buffer.byteLength,
+      })
       debug?.(`第 ${index + 1}/${items.length} 张成功`, 'info', {
         operation: 'download',
         stage: 'success',
@@ -1935,6 +1940,7 @@ const ImageIndexItemSchema = z.object({
   groupTitle: z.string().nullable().default(null),
   coverUrl: z.string().nullable().default(null),
   tag: z.string(),
+  localPath: z.string().optional(),
   sourcePageUrl: z.string().optional(),
   sourcePageTitle: z.string().optional(),
   scannedAt: z.number().optional(),

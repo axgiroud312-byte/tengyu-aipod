@@ -1056,12 +1056,17 @@ function MainWorkbench() {
         ...collectionImageIndexRequest(undefined, pageUrl),
         items,
       })
-      const savedKeys = new Set(result.saved.map((item) => collectionImagePoolKey(item.item)))
+      const savedPathsByKey = new Map(
+        result.saved.map((item) => [collectionImagePoolKey(item.item), item.savedPath]),
+      )
       setCollectionImageIndexDownload(result)
       setCollectionLastDownloadFailedCount(result.failed.length)
-      if (savedKeys.size > 0) {
+      if (savedPathsByKey.size > 0) {
         setCollectionImagePoolItems((current) =>
-          current.filter((item) => !savedKeys.has(collectionImagePoolKey(item))),
+          current.map((item) => {
+            const savedPath = savedPathsByKey.get(collectionImagePoolKey(item))
+            return savedPath ? { ...item, localPath: savedPath } : item
+          }),
         )
         setCollectionSelectedImageIds((current) => {
           const next = new Set(current)
