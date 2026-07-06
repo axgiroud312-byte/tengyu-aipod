@@ -1,10 +1,11 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { readFile, stat } from 'node:fs/promises'
-import { extname, join } from 'node:path'
+import { extname, isAbsolute, join, relative } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
   type GenerationCapability,
+  type Skill,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { BrowserWindow } from 'electron'
@@ -39,7 +40,7 @@ import {
   type GrsaiModel,
 } from '../grsai-adapter'
 import type { getSecret } from '../keychain'
-import type { promptGeneratorService } from '../prompt-generator-service'
+import type { PromptReferenceImage, promptGeneratorService } from '../prompt-generator-service'
 import type { skillCacheManager } from '../skill-cache'
 import type { SqliteDatabase } from '../sqlite'
 import { type TempFileManager, tempFileManager } from '../temp-file-manager'
@@ -153,6 +154,13 @@ export function clampInt(value: number, min: number, max: number, fallback: numb
 
 export function normalizeModel(model: string) {
   return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? model : DEFAULT_GENERATION_MODEL
+}
+
+export function comfyuiSizePx(input: { width?: number | undefined; height?: number | undefined }) {
+  return {
+    width: clampInt(input.width ?? 1024, 256, 4096, 1024),
+    height: clampInt(input.height ?? 1024, 256, 4096, 1024),
+  }
 }
 
 export class ComfyuiInstanceLockManager {
@@ -476,8 +484,147 @@ async function hashFile(path: string) {
   return createHash('sha256').update(buffer).digest('hex')
 }
 
+export async function imageIdentity(imagePath: string) {
+  const [fileHash, info] = await Promise.all([hashFile(imagePath), stat(imagePath)])
+  const shortHash = fileHash.slice(0, 16)
+  const pathHash = createHash('sha1').update(imagePath).digest('hex').slice(0, 8)
+  return {
+    artifactId: `art_${shortHash}_${pathHash}`,
+    printId: `pri_${shortHash}`,
+    fileHash,
+    fileSize: info.size,
+  }
+}
+
+export async function imageReference(imagePath: string): Promise<PromptReferenceImage> {
+  const buffer = await readFile(imagePath)
+  return {
+    base64: buffer.toString('base64'),
+    mime_type: mimeTypeFromPath(imagePath),
+  }
+}
+
+function mimeTypeFromPath(path: string) {
+  const ext = extname(path).toLowerCase()
+  if (ext === '.jpg' || ext === '.jpeg') {
+    return 'image/jpeg'
+  }
+  if (ext === '.webp') {
+    return 'image/webp'
+  }
+  return 'image/png'
+}
+
 export function newPrintId() {
   return `pri_${randomUUID().replace(/-/g, '').slice(0, 12)}`
+}
+
+export function assertInsideFolder(path: string, folder: string) {
+  if (!isAbsolute(path)) {
+    throw new AppErrorClass('HTTP_4XX', '源图路径必须是绝对路径', false)
+  }
+  const rel = relative(folder, path)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    throw new AppErrorClass('HTTP_4XX', '提取只能选择采集工作区下的源图', false, {
+      path,
+    })
+  }
+}
+
+export function registerSourceArtifact(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    identity: Awaited<ReturnType<typeof imageIdentity>>
+    imagePath: string
+    taskId: string
+    createdAt: number
+  },
+) {
+  db.prepare(`
+    INSERT INTO artifacts (
+      id,
+      task_id,
+      print_id,
+      step,
+      provider,
+      source_artifact_ids,
+      file_path,
+      file_size,
+      file_hash,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      file_path = excluded.file_path,
+      file_size = excluded.file_size,
+      file_hash = excluded.file_hash
+  `).run(
+    input.identity.artifactId,
+    input.taskId,
+    input.identity.printId,
+    'manual-import',
+    'manual-import',
+    '[]',
+    input.imagePath,
+    input.identity.fileSize,
+    input.identity.fileHash,
+    input.createdAt,
+  )
+}
+
+export async function registerExtractArtifact(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    taskId: string
+    printId: string
+    targetPath: string
+    sourceArtifactId: string
+    prompt: string
+    model: string
+    skill: Skill
+    params: Record<string, unknown>
+    createdAt: number
+  },
+) {
+  const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
+  const artifactId = randomUUID()
+  db.prepare(`
+    INSERT INTO artifacts (
+      id,
+      task_id,
+      print_id,
+      step,
+      provider,
+      model_or_workflow,
+      skill_id,
+      skill_version,
+      source_artifact_ids,
+      file_path,
+      file_size,
+      file_hash,
+      prompt_snapshot,
+      params_snapshot,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artifactId,
+    input.taskId,
+    input.printId,
+    'extract',
+    'grsai',
+    input.model,
+    input.skill.id,
+    input.skill.version,
+    JSON.stringify([input.sourceArtifactId]),
+    input.targetPath,
+    info.size,
+    fileHash,
+    input.prompt,
+    JSON.stringify(input.params),
+    input.createdAt,
+  )
+  return { artifactId, printId: input.printId }
 }
 
 export async function registerGeneratedArtifact(
@@ -756,17 +903,18 @@ export function emitComfyuiRequestLog(
     promptMode?: string | undefined
   },
 ) {
-  debug('提交 ComfyUI 工作流', 'info', {
-    operation: 'comfyui-submit',
+  debug('发送 ComfyUI 请求', 'debug', {
+    operation: 'request',
+    provider: 'comfyui-chenyu',
     ...workflowLogDetails(input),
     prompt: promptPreview(input.prompt, 240),
-    sourceImage: input.sourceImage ?? null,
-    sourceIndex: input.sourceIndex ?? null,
-    total: input.total ?? null,
-    width: input.width ?? null,
-    height: input.height ?? null,
-    batchSize: input.batchSize ?? null,
-    promptMode: input.promptMode ?? null,
+    sourceImage: input.sourceImage,
+    sourceIndex: input.sourceIndex,
+    total: input.total,
+    width: input.width,
+    height: input.height,
+    batchSize: input.batchSize,
+    promptMode: input.promptMode,
   })
 }
 
@@ -787,6 +935,26 @@ export function emitTxt2imgProgress(
     images: result.images,
     ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
   })
+}
+
+export function emitExtractProgress(
+  result: GenerationRunResult,
+  total: number,
+  taskId: string,
+  emit: (progress: GenerationProgress) => void,
+  currentPrompt?: string,
+) {
+  const progress: GenerationProgress = {
+    task_id: taskId,
+    capability: 'extract',
+    processed: result.succeeded + result.failed,
+    total,
+    succeeded: result.succeeded,
+    failed: result.failed,
+    images: result.images,
+    ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
+  }
+  emit(progress)
 }
 
 function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prepare'>) {
