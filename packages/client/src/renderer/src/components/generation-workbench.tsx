@@ -1,63 +1,60 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
-import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ActiveGenerationTaskNotice } from '@/features/generation/components/ActiveGenerationTaskNotice'
+import { ComfyuiInstanceSelectorCard } from '@/features/generation/components/ComfyuiInstanceSelectorCard'
+import { CurrentTaskImagePreview } from '@/features/generation/components/CurrentTaskImagePreview'
+import { ExtractSkillPicker } from '@/features/generation/components/ExtractSkillPicker'
+import { GenerationCancelButton } from '@/features/generation/components/GenerationCancelButton'
+import { GenerationFeedback } from '@/features/generation/components/GenerationFeedback'
+import { ImageFolderPickerPanel } from '@/features/generation/components/ImageFolderPickerPanel'
+import { PromptSkillPicker } from '@/features/generation/components/PromptSkillPicker'
+import { SkillVariableControl } from '@/features/generation/components/SkillVariableControl'
+import { TaskNameField } from '@/features/generation/components/TaskNameField'
+import { VisibleFilenameFields } from '@/features/generation/components/VisibleFilenameFields'
 import {
   formatGenerationDebugLogLine,
   generationDebugLogLevelCounts,
   generationDebugRawResponse,
 } from '@/features/generation/generation-debug-log'
+import { useComfyuiInstanceSelection } from '@/features/generation/hooks/use-comfyui-instance-selection'
+import { useGenerationLocalSettings } from '@/features/generation/hooks/use-generation-local-settings'
+import { useGenerationTaskEvents } from '@/features/generation/hooks/use-generation-task-events'
 import {
-  COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX,
+  useExtractSkillOptions,
+  usePromptSkillOptions,
+} from '@/features/generation/hooks/use-skill-options'
+import {
   COMFYUI_WORKFLOWS_UPDATED_EVENT,
   GENERATION_DEBUG_LOG_LIMIT,
-  GENERATION_SETTINGS_UPDATED_EVENT,
 } from '@/features/generation/lib/constants'
 import {
   type ActiveGenerationTask,
-  type GenerationSettingsSnapshot,
-  type GrsaiImageModelOption,
-  type LocalModelOption,
   type SkillVariablesState,
   bailianModelsForUse,
-  capabilityLabel,
   clampNumber,
-  defaultPromptSkillId,
   defaultVariableValue,
   generationDebugLogLevelClassName,
   grsaiSizes,
-  imagePreviewSrc,
-  isExtractSkillSummary,
   isGenerationCapabilityKey,
   modelLabel,
   modelOptionsForCapability,
   progressPercent,
   promptSkillCategoryFor,
   promptSkillLabel,
-  promptSkillStorageKey,
   rememberWorkflowKey,
   selectedPromptTexts,
-  skillOptionKey,
-  skillOptionLabel,
-  skillOptionNotes,
-  taskProgressLabel,
   variablePayload,
   workflowKeyOrFallback,
   workflowOptionKey,
 } from '@/features/generation/lib/format'
-import {
-  fileUrlLocalPath,
-  localImageUrl,
-  readFileAsDataUrl,
-  splitDataUrl,
-} from '@/features/generation/lib/media'
-import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
+import { readFileAsDataUrl, splitDataUrl } from '@/features/generation/lib/media'
+import type { GenerationCapability } from '@tengyu-aipod/shared'
 import {
   ChevronDown,
   ChevronUp,
   CircleDashed,
-  FolderOpen,
   ImagePlus,
   Layers3,
   Loader2,
@@ -65,12 +62,11 @@ import {
   Plus,
   RefreshCw,
   Scissors,
-  Square,
   Terminal,
   Trash2,
   WandSparkles,
 } from 'lucide-react'
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ComfyuiWorkflowSummary } from '../../../main/lib/comfyui-workflow-cache'
 import type {
   GenerationDebugLogEntry,
@@ -78,7 +74,6 @@ import type {
   GenerationProgress,
   GenerationRunImage,
   GenerationRunResult,
-  GenerationTaskEvent,
   Txt2imgPromptDraft,
 } from '../../../main/lib/generation-service'
 import {
@@ -89,7 +84,6 @@ import {
   isGenerationProviderAvailable,
   useGenerationStore,
 } from '../store/generation'
-import { ImageLightbox, type ImageLightboxDetail, type ImageLightboxItem } from './image-lightbox'
 
 type Txt2imgMode = 'ai' | 'manual'
 type Img2imgMode = 'layout' | 'style' | 'layout-style' | 'manual'
@@ -103,10 +97,6 @@ type ReferenceImageDraft = {
   base64: string
   mime_type: string
 }
-type ActiveComfyuiInstance = Awaited<ReturnType<typeof window.api.chenyu.getActiveInstance>>
-type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
-type ComfyuiRunTarget = { instanceUuid: string }
-type ComfyuiInstanceStatus = NonNullable<ActiveComfyuiInstance>['status'] | 'none'
 
 const capabilityIcons: Record<GenerationUiCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
@@ -127,22 +117,6 @@ const unavailableText: Record<GenerationUiCapability, string> = {
   extract: '当前组合不可用，请切换实现方式。',
   matting: 'Grsai 不内置透明底抠图，请使用 ComfyUI 或后续混合路径。',
   'extract-matting': '提取后抠图只支持 ComfyUI 工作流路径。',
-}
-
-const comfyuiInstanceStatusText: Record<ComfyuiInstanceStatus, string> = {
-  none: '未设置',
-  starting: '开机中',
-  running: '运行中',
-  shutting_down: '关机中',
-  stopped: '已关机',
-}
-
-const comfyuiInstanceStatusClassName: Record<ComfyuiInstanceStatus, string> = {
-  none: 'border-slate-200 bg-slate-50 text-slate-700',
-  starting: 'border-blue-200 bg-blue-50 text-blue-700',
-  running: 'border-emerald-200 bg-emerald-50 text-emerald-700',
-  shutting_down: 'border-amber-200 bg-amber-50 text-amber-800',
-  stopped: 'border-slate-200 bg-slate-50 text-slate-700',
 }
 
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
@@ -169,902 +143,6 @@ const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string
     instruction: '',
   },
 ]
-
-function useExtractSkillOptions(setError: (error: string | null) => void) {
-  const [extractSkills, setExtractSkills] = useState<SkillSummary[]>([])
-  const [selectedSkillKey, setSelectedSkillKey] = useState('')
-  const [selectedSkill, setSelectedSkill] = useState<Skill | null>(null)
-  const selectedSkillSummary = useMemo(
-    () => extractSkills.find((skill) => skillOptionKey(skill) === selectedSkillKey) ?? null,
-    [extractSkills, selectedSkillKey],
-  )
-
-  useEffect(() => {
-    let mounted = true
-    window.api.skill
-      .list({ module: 'generation' })
-      .then((skills) => {
-        if (!mounted) {
-          return
-        }
-        const nextSkills = skills.filter(isExtractSkillSummary)
-        setExtractSkills(nextSkills)
-        setSelectedSkillKey((current) =>
-          current && nextSkills.some((skill) => skillOptionKey(skill) === current)
-            ? current
-            : nextSkills[0]
-              ? skillOptionKey(nextSkills[0])
-              : '',
-        )
-      })
-      .catch((nextError) => {
-        if (!mounted) {
-          return
-        }
-        setExtractSkills([])
-        setSelectedSkillKey('')
-        setSelectedSkill(null)
-        setError(
-          nextError instanceof Error ? nextError.message : '读取提取 Skill 失败，请先在后台配置',
-        )
-      })
-
-    return () => {
-      mounted = false
-    }
-  }, [setError])
-
-  useEffect(() => {
-    let mounted = true
-    const skillSummary = selectedSkillSummary
-    if (!skillSummary) {
-      setSelectedSkill(null)
-      return () => {
-        mounted = false
-      }
-    }
-
-    window.api.skill
-      .get({ id: skillSummary.id, version: skillSummary.version })
-      .then((skill) => {
-        if (!mounted) {
-          return
-        }
-        setSelectedSkill(skill)
-      })
-      .catch((nextError) => {
-        if (!mounted) {
-          return
-        }
-        setSelectedSkill(null)
-        setError(
-          nextError instanceof Error ? nextError.message : '读取提取 Skill 失败，请先在后台配置',
-        )
-      })
-
-    return () => {
-      mounted = false
-    }
-  }, [selectedSkillSummary, setError])
-
-  return { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey }
-}
-
-function ExtractSkillPicker({
-  extractSkills,
-  selectedSkill,
-  selectedSkillKey,
-  onChange,
-}: {
-  extractSkills: SkillSummary[]
-  selectedSkill: Skill | null
-  selectedSkillKey: string
-  onChange: (key: string) => void
-}) {
-  const selectedNotes = selectedSkill ? skillOptionNotes(selectedSkill) : null
-
-  return (
-    <div className="space-y-3">
-      {extractSkills.length ? (
-        <label className="block space-y-2 text-sm font-medium">
-          <span>提取提示词</span>
-          <select
-            className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-            onChange={(event) => onChange(event.target.value)}
-            value={selectedSkillKey}
-          >
-            {extractSkills.map((skill) => (
-              <option key={skillOptionKey(skill)} value={skillOptionKey(skill)}>
-                {skillOptionLabel(skill)}
-              </option>
-            ))}
-          </select>
-        </label>
-      ) : (
-        <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-          请先在后台配置提取 Skill
-        </div>
-      )}
-      <div className="rounded-md border p-3">
-        <p className="text-sm font-medium">
-          {selectedSkill ? skillOptionLabel(selectedSkill) : '未选择提取 Skill'}
-        </p>
-        <p className="mt-2 text-xs leading-5 text-muted-foreground">
-          {selectedSkill
-            ? `${selectedSkill.id} · ${selectedSkill.version}`
-            : '后台配置后会出现在这里'}
-        </p>
-        {selectedNotes ? (
-          <p className="mt-2 text-xs leading-5 text-muted-foreground">{selectedNotes}</p>
-        ) : null}
-      </div>
-    </div>
-  )
-}
-
-function usePromptSkillOptions(category: string, setError: (error: string | null) => void) {
-  const [promptSkills, setPromptSkills] = useState<SkillSummary[]>([])
-  const [selectedSkillId, setSelectedSkillId] = useState('')
-  const selectedSkill = useMemo(
-    () => promptSkills.find((skill) => skill.id === selectedSkillId) ?? null,
-    [promptSkills, selectedSkillId],
-  )
-
-  useEffect(() => {
-    let mounted = true
-    window.api.skill
-      .list({ module: 'generation', category })
-      .then((skills) => {
-        if (!mounted) {
-          return
-        }
-        setPromptSkills(skills)
-        setSelectedSkillId((current) => {
-          if (current && skills.some((skill) => skill.id === current)) {
-            return current
-          }
-
-          const remembered = window.localStorage.getItem(promptSkillStorageKey(category))
-          if (remembered && skills.some((skill) => skill.id === remembered)) {
-            return remembered
-          }
-
-          const fallbackId = defaultPromptSkillId(category)
-          if (skills.some((skill) => skill.id === fallbackId)) {
-            return fallbackId
-          }
-
-          return skills[0]?.id ?? ''
-        })
-      })
-      .catch((nextError) => {
-        if (!mounted) {
-          return
-        }
-        setPromptSkills([])
-        setSelectedSkillId('')
-        setError(nextError instanceof Error ? nextError.message : '读取提示词 Skill 失败')
-      })
-
-    return () => {
-      mounted = false
-    }
-  }, [category, setError])
-
-  function selectPromptSkill(skillId: string) {
-    setSelectedSkillId(skillId)
-    if (skillId) {
-      window.localStorage.setItem(promptSkillStorageKey(category), skillId)
-    } else {
-      window.localStorage.removeItem(promptSkillStorageKey(category))
-    }
-  }
-
-  return { promptSkills, selectedSkill, selectedSkillId, selectPromptSkill }
-}
-
-function PromptSkillPicker({
-  category,
-  promptSkills,
-  selectedSkill,
-  selectedSkillId,
-  onChange,
-}: {
-  category: string
-  promptSkills: SkillSummary[]
-  selectedSkill: SkillSummary | null
-  selectedSkillId: string
-  onChange: (skillId: string) => void
-}) {
-  const label = promptSkillLabel(category)
-  if (!promptSkills.length) {
-    return (
-      <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
-        暂无可用的{label} Skill，请先在后台配置
-      </div>
-    )
-  }
-
-  return (
-    <label className="block min-w-0 space-y-2 text-sm font-medium">
-      <span>提示词配置</span>
-      <select
-        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        onChange={(event) => onChange(event.target.value)}
-        value={selectedSkillId}
-      >
-        {promptSkills.map((skill) => (
-          <option key={skill.id} value={skill.id}>
-            {skillOptionLabel(skill)}
-          </option>
-        ))}
-      </select>
-      <span className="block truncate text-xs font-normal text-muted-foreground">
-        {selectedSkill ? `${selectedSkill.id} · ${selectedSkill.version}` : `当前组合：${label}`}
-      </span>
-    </label>
-  )
-}
-
-function useGenerationTaskEvents({
-  expectedCapability,
-  setProgress,
-  setPreviewImages,
-  setResult,
-  setError,
-  setRunning,
-}: {
-  expectedCapability: GenerationCapability
-  setProgress: (progress: GenerationProgress) => void
-  setPreviewImages: (images: GenerationRunImage[]) => void
-  setResult: (result: GenerationRunResult | null) => void
-  setError: (error: string | null) => void
-  setRunning: (running: boolean) => void
-}) {
-  const [taskId, setTaskId] = useState<string | null>(null)
-  const activeTaskIdRef = useRef<string | null>(null)
-  const awaitingTaskStartRef = useRef(false)
-  const handledTaskEventRef = useRef(false)
-  const cancelWhenTaskStartsRef = useRef(false)
-
-  useEffect(() => {
-    const shouldHandleTask = (nextTaskId: string, nextCapability?: GenerationCapability) => {
-      const activeTaskId = activeTaskIdRef.current ?? taskId
-      if (activeTaskId) {
-        return nextTaskId === activeTaskId
-      }
-      if (
-        awaitingTaskStartRef.current &&
-        (!nextCapability || nextCapability === expectedCapability)
-      ) {
-        activeTaskIdRef.current = nextTaskId
-        awaitingTaskStartRef.current = false
-        setTaskId(nextTaskId)
-        return true
-      }
-      return false
-    }
-
-    const offProgress = window.api.generation.onProgress((nextProgress) => {
-      if (!shouldHandleTask(nextProgress.task_id, nextProgress.capability)) {
-        return
-      }
-      handledTaskEventRef.current = true
-      setProgress(nextProgress)
-      if (nextProgress.images) {
-        setPreviewImages(nextProgress.images)
-      }
-    })
-    const offCompleted = window.api.generation.onCompleted((event: GenerationTaskEvent) => {
-      const nextTaskId = event.ok ? event.result.taskId : event.taskId
-      if (!shouldHandleTask(nextTaskId)) {
-        return
-      }
-      handledTaskEventRef.current = true
-      setRunning(false)
-      awaitingTaskStartRef.current = false
-      if (event.ok) {
-        setResult(event.result)
-        setPreviewImages(event.result.images)
-        setError(null)
-        return
-      }
-      setError(event.error)
-    })
-    return () => {
-      offProgress()
-      offCompleted()
-    }
-  }, [expectedCapability, taskId, setError, setPreviewImages, setProgress, setResult, setRunning])
-
-  return {
-    beginTask() {
-      activeTaskIdRef.current = null
-      awaitingTaskStartRef.current = true
-      handledTaskEventRef.current = false
-      cancelWhenTaskStartsRef.current = false
-      setTaskId(null)
-    },
-    activateTask(nextTaskId: string) {
-      const alreadyHandled = activeTaskIdRef.current === nextTaskId && handledTaskEventRef.current
-      activeTaskIdRef.current = nextTaskId
-      awaitingTaskStartRef.current = false
-      setTaskId(nextTaskId)
-      if (cancelWhenTaskStartsRef.current) {
-        cancelWhenTaskStartsRef.current = false
-        void window.api.generation.cancel({ task_id: nextTaskId })
-      }
-      return alreadyHandled
-    },
-    async cancelTask() {
-      const activeTaskId = activeTaskIdRef.current ?? taskId
-      if (!activeTaskId && awaitingTaskStartRef.current) {
-        cancelWhenTaskStartsRef.current = true
-        setError(null)
-        return true
-      }
-      if (!activeTaskId) {
-        setError('没有正在运行的生图任务')
-        return false
-      }
-      const response = await window.api.generation.cancel({ task_id: activeTaskId })
-      if (!response.ok) {
-        setError('当前生图任务已结束，无法取消')
-        return false
-      }
-      setError(null)
-      return true
-    },
-    clearTaskStart() {
-      awaitingTaskStartRef.current = false
-      cancelWhenTaskStartsRef.current = false
-    },
-    taskId,
-  }
-}
-
-function useGenerationLocalSettings() {
-  const [settings, setSettings] = useState<GenerationSettingsSnapshot | null>(null)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    const loadSettings = () => {
-      window.api.generationSettings
-        .get()
-        .then((nextSettings) => {
-          if (!cancelled) {
-            setSettings(nextSettings)
-            setError(null)
-          }
-        })
-        .catch((nextError) => {
-          if (!cancelled) {
-            setError(nextError instanceof Error ? nextError.message : '读取本地生图设置失败')
-          }
-        })
-    }
-
-    loadSettings()
-    window.addEventListener(GENERATION_SETTINGS_UPDATED_EVENT, loadSettings)
-
-    return () => {
-      cancelled = true
-      window.removeEventListener(GENERATION_SETTINGS_UPDATED_EVENT, loadSettings)
-    }
-  }, [])
-
-  return { settings, error }
-}
-
-function isBusyComfyuiStatus(status: ComfyuiInstanceStatus) {
-  return status === 'starting' || status === 'shutting_down'
-}
-
-function ComfyuiInstanceStatusBadge({ status }: { status: ComfyuiInstanceStatus }) {
-  return (
-    <span
-      className={`inline-flex items-center gap-1 rounded-sm border px-2 py-1 text-xs font-medium ${comfyuiInstanceStatusClassName[status]}`}
-    >
-      {isBusyComfyuiStatus(status) ? <Loader2 className="h-3 w-3 animate-spin" /> : null}
-      {comfyuiInstanceStatusText[status]}
-    </span>
-  )
-}
-
-function instanceComfyuiUrl(instance: ChenyuManagedInstance) {
-  return instance.comfyuiUrl ?? instance.serverUrls[0] ?? ''
-}
-
-function useComfyuiInstanceSelection(scope: string, enabled = true) {
-  const storageKey = `${COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX}${scope}`
-  const [instances, setInstances] = useState<ChenyuManagedInstance[]>([])
-  const [selectedInstanceUuid, setSelectedInstanceUuid] = useState(() => {
-    try {
-      return window.localStorage.getItem(storageKey) ?? ''
-    } catch {
-      return ''
-    }
-  })
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-
-  useEffect(() => {
-    if (!enabled) {
-      return
-    }
-    void refreshInstances()
-  }, [enabled])
-
-  const runningInstances = useMemo(
-    () =>
-      instances.filter(
-        (instance) => instance.statusName === 'running' && Boolean(instanceComfyuiUrl(instance)),
-      ),
-    [instances],
-  )
-  const selectedInstance =
-    runningInstances.find((instance) => instance.instanceUuid === selectedInstanceUuid) ?? null
-  const runTarget = selectedInstance
-    ? {
-        instanceUuid: selectedInstance.instanceUuid,
-      }
-    : null
-
-  useEffect(() => {
-    if (runningInstances.length === 0) {
-      if (selectedInstanceUuid) {
-        setSelectedInstanceUuid('')
-      }
-      return
-    }
-    if (runningInstances.some((instance) => instance.instanceUuid === selectedInstanceUuid)) {
-      return
-    }
-    const fallback = runningInstances.find((instance) => instance.isCurrent) ?? runningInstances[0]
-    setSelectedInstanceUuid(fallback?.instanceUuid ?? '')
-  }, [runningInstances, selectedInstanceUuid])
-
-  useEffect(() => {
-    try {
-      if (selectedInstanceUuid) {
-        window.localStorage.setItem(storageKey, selectedInstanceUuid)
-      } else {
-        window.localStorage.removeItem(storageKey)
-      }
-    } catch {}
-  }, [selectedInstanceUuid, storageKey])
-
-  async function refreshInstances() {
-    setLoading(true)
-    setError(null)
-    try {
-      const nextInstances = await window.api.chenyu.listInstances()
-      setInstances(nextInstances)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '刷新云机列表失败')
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  function selectInstance(instanceUuid: string) {
-    setSelectedInstanceUuid(instanceUuid)
-  }
-
-  return {
-    error,
-    loading,
-    refreshInstances,
-    runTarget,
-    runningInstances,
-    selectedInstance,
-    selectedInstanceUuid,
-    selectInstance,
-  }
-}
-
-function ComfyuiInstanceSelectorCard({
-  selection,
-}: {
-  selection: ReturnType<typeof useComfyuiInstanceSelection>
-}) {
-  const status = selection.selectedInstance ? 'running' : 'none'
-  return (
-    <div className="rounded-md border bg-background p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h4 className="font-semibold">运行云机</h4>
-          <p className="mt-1 text-sm text-muted-foreground">选择本次任务使用的 ComfyUI 实例</p>
-        </div>
-        <Button
-          className="h-9 px-3"
-          disabled={selection.loading}
-          onClick={() => void selection.refreshInstances()}
-          type="button"
-          variant="secondary"
-        >
-          {selection.loading ? (
-            <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="mr-2 h-4 w-4" />
-          )}
-          刷新
-        </Button>
-      </div>
-      <div className="mt-4">
-        <ComfyuiInstanceStatusBadge status={status} />
-      </div>
-      <label className="mt-4 block space-y-2 text-sm font-medium">
-        <span>云机</span>
-        <select
-          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          disabled={selection.runningInstances.length === 0}
-          onChange={(event) => selection.selectInstance(event.target.value)}
-          value={selection.selectedInstanceUuid}
-        >
-          {selection.runningInstances.length === 0 ? (
-            <option value="">暂无运行中云机</option>
-          ) : null}
-          {selection.runningInstances.map((instance) => (
-            <option key={instance.instanceUuid} value={instance.instanceUuid}>
-              {instance.title || instance.instanceUuid} {instance.isCurrent ? '· 默认' : ''}
-            </option>
-          ))}
-        </select>
-      </label>
-      <dl className="mt-4 grid gap-3 text-sm">
-        <div>
-          <dt className="text-muted-foreground">实例 UUID</dt>
-          <dd className="mt-1 break-all font-mono text-xs font-medium">
-            {selection.selectedInstance?.instanceUuid ?? '未选择运行中云机'}
-          </dd>
-        </div>
-        <div>
-          <dt className="text-muted-foreground">ComfyUI 地址</dt>
-          <dd className="mt-1 break-all font-mono text-xs font-medium">
-            {selection.selectedInstance ? instanceComfyuiUrl(selection.selectedInstance) : '未配置'}
-          </dd>
-        </div>
-      </dl>
-      {selection.runningInstances.length === 0 ? (
-        <div className="mt-3 rounded-md bg-amber-50 px-3 py-2 text-sm text-amber-800">
-          无运行中云机，请到设置页开机。
-        </div>
-      ) : null}
-      {selection.error ? (
-        <div className="mt-3 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">
-          {selection.error}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function GenerationFeedback({
-  error,
-  result,
-}: {
-  error: string | null
-  result: GenerationRunResult | null
-}) {
-  if (!error && !result) {
-    return null
-  }
-
-  return (
-    <div className="rounded-md border bg-background p-4">
-      {error ? (
-        <div className="rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>
-      ) : null}
-      {result ? (
-        <div className="rounded-md bg-muted px-3 py-2 text-sm">
-          {result.cancelled ? '已取消' : '完成'}：成功 {result.succeeded}，失败 {result.failed}
-          {result.diagnosticsLogPath ? (
-            <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
-              诊断日志：{result.diagnosticsLogPath}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function GenerationCancelButton({
-  running,
-  onCancel,
-}: {
-  running: boolean
-  onCancel: () => void
-}) {
-  if (!running) {
-    return null
-  }
-  return (
-    <Button onClick={onCancel} type="button" variant="secondary">
-      <Square className="mr-2 h-4 w-4" />
-      取消任务
-    </Button>
-  )
-}
-
-function ActiveGenerationTaskNotice({
-  tasks,
-  onCancelAll,
-}: {
-  tasks: ActiveGenerationTask[]
-  onCancelAll: () => void
-}) {
-  if (tasks.length === 0) {
-    return null
-  }
-  return (
-    <div className="rounded-md border border-amber-200 bg-amber-50 p-4 text-amber-900">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">后台仍有生图任务运行</h3>
-          <p className="mt-1 text-sm leading-6">
-            切换入口或实现方式不会自动停止旧任务；需要停止时请在这里统一取消。
-          </p>
-        </div>
-        <Button onClick={onCancelAll} type="button" variant="secondary">
-          <Square className="mr-2 h-4 w-4" />
-          取消全部后台任务
-        </Button>
-      </div>
-      <div className="mt-3 space-y-2">
-        {tasks.map((task) => (
-          <div className="rounded-md bg-white/70 px-3 py-2 text-sm" key={task.taskId}>
-            <div className="font-medium">{task.taskId}</div>
-            <div className="mt-1 text-xs text-amber-800">
-              {taskProgressLabel(task)}
-              {task.cancelRequested ? ' · 已请求取消，等待当前项结束' : ''}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-function presentDetail(
-  label: string,
-  value: string | undefined,
-  options?: Pick<ImageLightboxDetail, 'mono' | 'preserve'>,
-): ImageLightboxDetail | null {
-  const displayValue = value?.trim()
-  if (!displayValue) {
-    return null
-  }
-
-  const detail: ImageLightboxDetail = { label, value: displayValue }
-  if (options?.mono) {
-    detail.mono = true
-  }
-  if (options?.preserve) {
-    detail.preserve = true
-  }
-  return detail
-}
-
-function generationPreviewItem(image: GenerationRunImage, index: number): ImageLightboxItem {
-  const savedPath = image.localPath ?? fileUrlLocalPath(image.url) ?? ''
-  const details = [
-    presentDetail('印花 ID', image.printId, { mono: true }),
-    presentDetail('Artifact ID', image.artifactId, { mono: true }),
-    presentDetail('源图路径', image.sourcePath, { mono: true }),
-    presentDetail('保存路径', savedPath, { mono: true }),
-    presentDetail('图片 URL', savedPath ? '' : image.url, { mono: true }),
-  ].filter((detail): detail is ImageLightboxDetail => detail !== null)
-
-  return {
-    alt: `结果图 ${index + 1}`,
-    eyebrow: `结果 ${index + 1}`,
-    note: (
-      <div>
-        <p className="text-xs font-medium text-muted-foreground">提示词</p>
-        <p className="mt-1 whitespace-pre-wrap text-sm text-foreground">
-          {image.prompt.trim() || '暂无提示词'}
-        </p>
-      </div>
-    ),
-    src: imagePreviewSrc(image),
-    title: image.printId ?? image.artifactId ?? `结果 ${index + 1}`,
-    details,
-  }
-}
-
-function CurrentTaskImagePreview({ images }: { images: GenerationRunImage[] }) {
-  const [activeIndex, setActiveIndex] = useState<number | null>(null)
-  const previewItems = useMemo(
-    () => images.map((image, index) => generationPreviewItem(image, index)),
-    [images],
-  )
-
-  useEffect(() => {
-    setActiveIndex((current) =>
-      current !== null && current >= previewItems.length ? null : current,
-    )
-  }, [previewItems.length])
-
-  function openImage(index: number) {
-    setActiveIndex(index)
-  }
-
-  return (
-    <div className="mt-5 rounded-md border bg-background p-4">
-      <div className="flex items-center justify-between gap-3">
-        <h4 className="font-semibold">当前任务图片预览</h4>
-        <span className="text-sm tabular-nums text-muted-foreground">{images.length} 张</span>
-      </div>
-      {images.length ? (
-        <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {images.map((image, index) => (
-            <button
-              className="group min-w-0 rounded-md border bg-muted/30 p-2 text-left"
-              key={`${image.url}-${index}`}
-              onClick={() => openImage(index)}
-              type="button"
-            >
-              <img
-                alt={`结果图 ${index + 1}`}
-                className="aspect-square w-full rounded-sm object-cover"
-                src={imagePreviewSrc(image)}
-              />
-              <span className="mt-2 block truncate text-xs text-muted-foreground">
-                {image.printId ?? image.artifactId ?? `结果 ${index + 1}`}
-              </span>
-            </button>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-4 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-          当前任务暂无图片输出
-        </div>
-      )}
-
-      <ImageLightbox
-        activeIndex={activeIndex}
-        items={previewItems}
-        title="图片预览"
-        onActiveIndexChange={setActiveIndex}
-      />
-    </div>
-  )
-}
-
-function ImageFolderPickerPanel({
-  title,
-  folderPath,
-  images,
-  loading,
-  emptyText,
-  onChoose,
-  onScan,
-}: {
-  title: string
-  folderPath: string
-  images: GenerationImageSource[]
-  loading: boolean
-  emptyText: string
-  onChoose: () => void
-  onScan: () => void
-}) {
-  return (
-    <div className="rounded-md border bg-background p-4">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h4 className="font-semibold">{title}</h4>
-          <p className="mt-1 truncate text-sm text-muted-foreground">
-            {folderPath || '未选择文件夹'}
-          </p>
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={onChoose} type="button" variant="secondary">
-            <FolderOpen className="mr-2 h-4 w-4" />
-            选择文件夹
-          </Button>
-          <Button disabled={!folderPath || loading} onClick={onScan} type="button">
-            {loading ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="mr-2 h-4 w-4" />
-            )}
-            检索图片
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-4 rounded-md border bg-muted/30 px-3 py-2 text-sm">
-        共 {images.length} 张，将运行 {images.length} 次
-      </div>
-
-      <div className="mt-4 grid max-h-[430px] gap-3 overflow-auto pr-1 sm:grid-cols-2 lg:grid-cols-3">
-        {images.length ? (
-          images.map((source) => (
-            <div className="min-w-0 rounded-md border bg-muted/30 p-2 text-sm" key={source.path}>
-              <img
-                alt={source.name}
-                className="h-28 w-full rounded-sm object-cover"
-                src={localImageUrl(source.path)}
-              />
-              <span className="mt-2 block truncate font-medium">{source.name}</span>
-              <span className="block truncate text-xs text-muted-foreground">
-                {source.relativePath}
-              </span>
-            </div>
-          ))
-        ) : (
-          <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground sm:col-span-2 lg:col-span-3">
-            {emptyText}
-          </div>
-        )}
-      </div>
-    </div>
-  )
-}
-
-function TaskNameField({
-  value,
-  onChange,
-  placeholder,
-}: {
-  value: string
-  onChange: (value: string) => void
-  placeholder: string
-}) {
-  const id = useId()
-  return (
-    <label className="block space-y-2 text-sm font-medium" htmlFor={id}>
-      <span>任务文件夹名</span>
-      <Input
-        id={id}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={placeholder}
-        value={value}
-      />
-    </label>
-  )
-}
-
-function VisibleFilenameFields({
-  prefix,
-  separator,
-  onPrefixChange,
-  onSeparatorChange,
-}: {
-  prefix: string
-  separator: string
-  onPrefixChange: (value: string) => void
-  onSeparatorChange: (value: string) => void
-}) {
-  const prefixId = useId()
-  const separatorId = useId()
-
-  return (
-    <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
-      <label className="block space-y-2 text-sm font-medium" htmlFor={prefixId}>
-        <span>图片名前缀</span>
-        <Input
-          id={prefixId}
-          onChange={(event) => onPrefixChange(event.target.value)}
-          placeholder="不填则使用默认命名"
-          value={prefix}
-        />
-      </label>
-      <label className="block space-y-2 text-sm font-medium" htmlFor={separatorId}>
-        <span>分隔符</span>
-        <Input
-          id={separatorId}
-          onChange={(event) => onSeparatorChange(event.target.value)}
-          placeholder="-"
-          value={separator}
-        />
-      </label>
-    </div>
-  )
-}
 
 function capabilityCopy(capability: GenerationUiCapability, provider: GenerationProvider) {
   if (!isGenerationProviderAvailable(capability, provider)) {
@@ -3519,77 +2597,6 @@ function ComfyuiMattingPanel() {
       </div>
       <CurrentTaskImagePreview images={previewImages} />
     </>
-  )
-}
-
-function SkillVariableControl({
-  variable,
-  value,
-  onChange,
-}: {
-  variable: SkillVariable
-  value: string | boolean
-  onChange: (value: string | boolean) => void
-}) {
-  if (variable.type === 'checkbox') {
-    return (
-      <label className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium">
-        <input
-          checked={Boolean(value)}
-          onChange={(event) => onChange(event.target.checked)}
-          type="checkbox"
-        />
-        {variable.label}
-      </label>
-    )
-  }
-
-  if (variable.type === 'select') {
-    return (
-      <label className="block space-y-2 text-sm font-medium">
-        <span>{variable.label}</span>
-        <select
-          className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          onChange={(event) => onChange(event.target.value)}
-          value={String(value)}
-        >
-          {(variable.options ?? []).map((option) => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-      </label>
-    )
-  }
-
-  if (variable.type === 'textarea') {
-    return (
-      <label className="block space-y-2 text-sm font-medium md:col-span-2">
-        <span>{variable.label}</span>
-        <textarea
-          className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-          onChange={(event) => onChange(event.target.value)}
-          placeholder={variable.placeholder}
-          value={String(value)}
-        />
-      </label>
-    )
-  }
-
-  return (
-    <label className="block space-y-2 text-sm font-medium">
-      <span>{variable.label}</span>
-      <input
-        className="h-10 w-full rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-        max={variable.max}
-        min={variable.min}
-        onChange={(event) => onChange(event.target.value)}
-        placeholder={variable.placeholder}
-        type={variable.type === 'number' ? 'number' : 'text'}
-        value={String(value)}
-      />
-    </label>
   )
 }
 
