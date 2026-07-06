@@ -9,8 +9,6 @@ import {
   type PipelineDetectionConfig,
   type PipelineExtractConfig,
   type PipelineGrsaiImageConfig,
-  type PipelineItemRecord,
-  type PipelineItemStatus,
   type PipelineMattingConfig,
   type PipelinePreviewImage,
   type PipelineProgress,
@@ -21,14 +19,9 @@ import {
   type PipelineResultSectionKey,
   type PipelineRunConfig,
   type PipelineRunDetail,
-  type PipelineRunRecord,
   type PipelineRunStats,
-  type PipelineRunStatus,
   type PipelineRuntimeLogEntry,
   type PipelineSourceConfig,
-  type PipelineStepKey,
-  type PipelineStepRecord,
-  type PipelineStepStatus,
   type PipelineTaskEvent,
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
@@ -67,6 +60,15 @@ import type {
 import { createDetectionStage } from './pipeline-stages/detection-stage'
 import { createPhotoshopStage } from './pipeline-stages/photoshop-stage'
 import { createTitleStage } from './pipeline-stages/title-stage'
+import type {
+  PipelineItemRecord,
+  PipelineItemStatus,
+  PipelineRunRecord,
+  PipelineRunStatus,
+  PipelineStepKey,
+  PipelineStepRecord,
+  PipelineStepStatus,
+} from './pipeline/types'
 import type { SqliteDatabase } from './sqlite'
 import { tempFileManager } from './temp-file-manager'
 import { type TitleBatchResult, titleService } from './title-service'
