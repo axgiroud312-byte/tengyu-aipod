@@ -8,6 +8,50 @@ import {
   generationDebugLogLevelCounts,
   generationDebugRawResponse,
 } from '@/features/generation/generation-debug-log'
+import {
+  COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX,
+  COMFYUI_WORKFLOWS_UPDATED_EVENT,
+  GENERATION_DEBUG_LOG_LIMIT,
+  GENERATION_SETTINGS_UPDATED_EVENT,
+} from '@/features/generation/lib/constants'
+import {
+  type ActiveGenerationTask,
+  type GenerationSettingsSnapshot,
+  type GrsaiImageModelOption,
+  type LocalModelOption,
+  type SkillVariablesState,
+  bailianModelsForUse,
+  capabilityLabel,
+  clampNumber,
+  defaultPromptSkillId,
+  defaultVariableValue,
+  generationDebugLogLevelClassName,
+  grsaiSizes,
+  imagePreviewSrc,
+  isExtractSkillSummary,
+  isGenerationCapabilityKey,
+  modelLabel,
+  modelOptionsForCapability,
+  progressPercent,
+  promptSkillCategoryFor,
+  promptSkillLabel,
+  promptSkillStorageKey,
+  rememberWorkflowKey,
+  selectedPromptTexts,
+  skillOptionKey,
+  skillOptionLabel,
+  skillOptionNotes,
+  taskProgressLabel,
+  variablePayload,
+  workflowKeyOrFallback,
+  workflowOptionKey,
+} from '@/features/generation/lib/format'
+import {
+  fileUrlLocalPath,
+  localImageUrl,
+  readFileAsDataUrl,
+  splitDataUrl,
+} from '@/features/generation/lib/media'
 import type { GenerationCapability, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   ChevronDown,
@@ -59,23 +103,10 @@ type ReferenceImageDraft = {
   base64: string
   mime_type: string
 }
-type SkillVariablesState = Record<string, string | boolean>
 type ActiveComfyuiInstance = Awaited<ReturnType<typeof window.api.chenyu.getActiveInstance>>
 type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
 type ComfyuiRunTarget = { instanceUuid: string }
 type ComfyuiInstanceStatus = NonNullable<ActiveComfyuiInstance>['status'] | 'none'
-type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
-type GrsaiImageModelOption = GenerationSettingsSnapshot['grsaiModels'][number]
-type LocalModelOption = GenerationSettingsSnapshot['bailianTextModels'][number]
-type ActiveGenerationTask = {
-  taskId: string
-  capability: GenerationCapability
-  processed: number
-  total: number
-  succeeded: number
-  failed: number
-  cancelRequested?: boolean
-}
 
 const capabilityIcons: Record<GenerationUiCapability, typeof WandSparkles> = {
   txt2img: WandSparkles,
@@ -114,70 +145,6 @@ const comfyuiInstanceStatusClassName: Record<ComfyuiInstanceStatus, string> = {
   stopped: 'border-slate-200 bg-slate-50 text-slate-700',
 }
 
-function generationDebugLogLevelClassName(level: GenerationDebugLogEntry['level']) {
-  switch (level) {
-    case 'error':
-      return 'break-all whitespace-pre-wrap text-red-300'
-    case 'warn':
-      return 'break-all whitespace-pre-wrap text-amber-300'
-    case 'info':
-      return 'break-all whitespace-pre-wrap text-emerald-200'
-    default:
-      return 'break-all whitespace-pre-wrap text-zinc-400'
-  }
-}
-
-const fallbackGrsaiModels: GrsaiImageModelOption[] = [
-  {
-    id: 'gpt-image-2',
-    label: 'gpt-image-2',
-    sizes: ['1024x1024', '1536x1024', '1024x1536'],
-    allowCustomSize: false,
-  },
-  {
-    id: 'gpt-image-2-vip',
-    label: 'gpt-image-2-vip',
-    sizes: ['1024x1024', '2048x2048', '3840x2160', '2160x3840'],
-    allowCustomSize: true,
-  },
-]
-const fallbackGrsaiSizes = ['1024x1024', '1536x1024', '1024x1536']
-
-const fallbackBailianTextModels: LocalModelOption[] = [
-  { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'text' },
-  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'text' },
-]
-const fallbackBailianVisionModels: LocalModelOption[] = [
-  { id: 'qwen3.6-flash', label: 'qwen3.6-flash', modality: 'vision' },
-  { id: 'qwen3-vl-flash', label: 'qwen3-vl-flash', modality: 'vision' },
-]
-const EXTRACT_SKILL_CATEGORY = 'extract-paid-model'
-const LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY = 'extract-comfyui-workflow'
-const COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-workflow:'
-const COMFYUI_INSTANCE_SELECTION_STORAGE_PREFIX = 'tengyu:comfyui-instance:'
-const PROMPT_SKILL_SELECTION_STORAGE_PREFIX = 'tengyu:generation-prompt-skill:'
-const GENERATION_SETTINGS_UPDATED_EVENT = 'tengyu:generation-settings-updated'
-const COMFYUI_WORKFLOWS_UPDATED_EVENT = 'tengyu:comfyui-workflows-updated'
-const GENERATION_DEBUG_LOG_LIMIT = 1000
-const promptSkillCategories: Record<
-  Extract<GenerationCapability, 'txt2img' | 'img2img'>,
-  Record<'local' | 'full', string>
-> = {
-  txt2img: {
-    local: 'txt2img-local-print',
-    full: 'txt2img-full-print',
-  },
-  img2img: {
-    local: 'img2img-local-reference',
-    full: 'img2img-full-reference',
-  },
-}
-const promptSkillLabels: Record<string, string> = {
-  'txt2img-local-print': '文生图局部',
-  'txt2img-full-print': '文生图满印',
-  'img2img-local-reference': '图生图局部',
-  'img2img-full-reference': '图生图满印',
-}
 const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string }> = [
   {
     key: 'layout',
@@ -202,101 +169,6 @@ const img2imgModes: Array<{ key: Img2imgMode; label: string; instruction: string
     instruction: '',
   },
 ]
-
-function localImageUrl(path: string) {
-  return `tengyu-local-image://image/${encodeURIComponent(path)}`
-}
-
-function fileUrlLocalPath(url: string) {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'file:') {
-      return null
-    }
-    const path = decodeURIComponent(parsed.pathname)
-    return /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path
-  } catch {
-    return null
-  }
-}
-
-function skillOptionKey(skill: Pick<SkillSummary, 'id' | 'version'>) {
-  return `${skill.id}@${skill.version}`
-}
-
-function skillOptionLabel(skill: SkillSummary) {
-  const noteTitle = skill.notes?.split('：')[0]?.trim()
-  let title = noteTitle && !noteTitle.startsWith('用于') ? noteTitle : skill.id
-  if (title.includes('付费模型提取') || title.includes('ComfyUI 提取')) {
-    title = '提取提示词'
-  }
-  return `${title} · ${skill.version}`
-}
-
-function skillOptionNotes(skill: SkillSummary) {
-  if (
-    skill.notes?.includes('付费模型提取') ||
-    skill.notes?.includes('ComfyUI 提取') ||
-    skill.notes?.includes('Grsai 路径')
-  ) {
-    return null
-  }
-  return skill.notes
-}
-
-function isExtractSkillSummary(skill: SkillSummary) {
-  return (
-    skill.module === 'generation' &&
-    (skill.category === EXTRACT_SKILL_CATEGORY ||
-      skill.category === LEGACY_COMFYUI_EXTRACT_SKILL_CATEGORY)
-  )
-}
-
-function promptSkillCategoryFor(
-  capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>,
-  printMode: 'local' | 'full',
-) {
-  return promptSkillCategories[capability][printMode]
-}
-
-function promptSkillStorageKey(category: string) {
-  return `${PROMPT_SKILL_SELECTION_STORAGE_PREFIX}${category}`
-}
-
-function defaultPromptSkillId(category: string) {
-  return category
-}
-
-function promptSkillLabel(category: string) {
-  return promptSkillLabels[category] ?? category
-}
-
-function clampNumber(value: string, min: number, max: number, fallback: number) {
-  const parsed = Number(value)
-  if (!Number.isFinite(parsed)) {
-    return fallback
-  }
-  return Math.max(min, Math.min(max, Math.floor(parsed)))
-}
-
-function progressPercent(progress: GenerationProgress | null) {
-  if (!progress || progress.total === 0) {
-    return 0
-  }
-  return Math.round((progress.processed / progress.total) * 100)
-}
-
-function capabilityLabel(capability: GenerationCapability) {
-  return generationCapabilities.find((item) => item.key === capability)?.label ?? capability
-}
-
-function taskProgressLabel(task: ActiveGenerationTask) {
-  return `${capabilityLabel(task.capability)} · ${task.processed}/${task.total} · 成功 ${task.succeeded} · 失败 ${task.failed}`
-}
-
-function selectedPromptTexts(drafts: Txt2imgPromptDraft[]) {
-  return drafts.filter((draft) => draft.selected && draft.text.trim()).map((draft) => draft.text)
-}
 
 function useExtractSkillOptions(setError: (error: string | null) => void) {
   const [extractSkills, setExtractSkills] = useState<SkillSummary[]>([])
@@ -651,59 +523,6 @@ function useGenerationTaskEvents({
   }
 }
 
-function splitDataUrl(dataUrl: string) {
-  const match = dataUrl.match(/^data:([^;]+);base64,(.*)$/)
-  return {
-    mime_type: match?.[1] ?? 'image/png',
-    base64: match?.[2] ?? dataUrl,
-  }
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader()
-    reader.addEventListener('load', () => resolve(String(reader.result ?? '')))
-    reader.addEventListener('error', () => reject(reader.error ?? new Error('读取参考图失败')))
-    reader.readAsDataURL(file)
-  })
-}
-
-function workflowOptionKey(workflow: Pick<ComfyuiWorkflowSummary, 'id' | 'version'>) {
-  return `${workflow.id}@${workflow.version}`
-}
-
-function workflowStorageKey(scope: string) {
-  return `${COMFYUI_WORKFLOW_SELECTION_STORAGE_PREFIX}${scope}`
-}
-
-function storedWorkflowKey(scope: string) {
-  try {
-    return window.localStorage.getItem(workflowStorageKey(scope)) ?? ''
-  } catch {
-    return ''
-  }
-}
-
-function rememberWorkflowKey(scope: string, key: string) {
-  try {
-    if (key) {
-      window.localStorage.setItem(workflowStorageKey(scope), key)
-    } else {
-      window.localStorage.removeItem(workflowStorageKey(scope))
-    }
-  } catch {
-    // Storage failure should not block generation.
-  }
-}
-
-function workflowKeyOrFallback(scope: string, workflows: ComfyuiWorkflowSummary[]) {
-  const stored = storedWorkflowKey(scope)
-  if (stored && workflows.some((workflow) => workflowOptionKey(workflow) === stored)) {
-    return stored
-  }
-  return workflows[0] ? workflowOptionKey(workflows[0]) : ''
-}
-
 function useGenerationLocalSettings() {
   const [settings, setSettings] = useState<GenerationSettingsSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -736,55 +555,6 @@ function useGenerationLocalSettings() {
   }, [])
 
   return { settings, error }
-}
-
-function modelOptionsForCapability(
-  settings: GenerationSettingsSnapshot | null,
-  capability: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>,
-) {
-  void capability
-  return settings?.grsaiModels.length ? settings.grsaiModels : fallbackGrsaiModels
-}
-
-function bailianModelsForUse(settings: GenerationSettingsSnapshot | null, needsVision: boolean) {
-  if (needsVision) {
-    return settings?.bailianVisionModels.length
-      ? settings.bailianVisionModels
-      : fallbackBailianVisionModels
-  }
-  return settings?.bailianTextModels.length ? settings.bailianTextModels : fallbackBailianTextModels
-}
-
-function modelLabel(model: { id: string; label?: string }) {
-  return model.label ?? model.id
-}
-
-function grsaiSizes(model: GrsaiImageModelOption | null) {
-  return model?.sizes.length ? model.sizes : fallbackGrsaiSizes
-}
-
-function isGenerationCapabilityKey(value: string): value is GenerationUiCapability {
-  return generationCapabilities.some((capability) => capability.key === value)
-}
-
-function defaultVariableValue(variable: SkillVariable): string | boolean {
-  if (variable.type === 'checkbox') {
-    return Boolean(variable.default)
-  }
-  return String(variable.default ?? '')
-}
-
-function variablePayload(variables: SkillVariable[], values: SkillVariablesState) {
-  return Object.fromEntries(
-    variables.map((variable) => {
-      const value = values[variable.key] ?? defaultVariableValue(variable)
-      if (variable.type === 'number') {
-        const parsed = Number(value)
-        return [variable.key, Number.isFinite(parsed) ? parsed : value]
-      }
-      return [variable.key, value]
-    }),
-  )
 }
 
 function isBusyComfyuiStatus(status: ComfyuiInstanceStatus) {
@@ -1056,11 +826,6 @@ function ActiveGenerationTaskNotice({
       </div>
     </div>
   )
-}
-
-function imagePreviewSrc(image: GenerationRunImage) {
-  const localPath = image.localPath ?? fileUrlLocalPath(image.url)
-  return localPath ? localImageUrl(localPath) : image.url
 }
 
 function presentDetail(
