@@ -10,6 +10,7 @@ import type {
   PipelinePrintStreamItem,
   PipelineStageRuntimeContext,
 } from '../pipeline-stage-types'
+import * as pipelineStore from '../pipeline/store'
 import type { SqliteDatabase } from '../sqlite'
 import {
   appErrorMessage,
@@ -63,34 +64,14 @@ function insertRunningStep(
   inputCount: number,
   outputCount: number,
 ) {
-  db.prepare(
-    `
-      INSERT INTO pipeline_steps (
-        id, run_id, step_key, module, label, status, input_count, output_count, output_json,
-        error_json, started_at, completed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
-      ON CONFLICT(run_id, step_key) DO UPDATE SET
-        status = excluded.status,
-        input_count = excluded.input_count,
-        output_count = excluded.output_count,
-        output_json = NULL,
-        error_json = NULL,
-        started_at = excluded.started_at,
-        completed_at = NULL,
-        updated_at = excluded.updated_at
-    `,
-  ).run(
-    `${runId}:title`,
+  pipelineStore.upsertPipelineStepRunning(db, {
     runId,
-    'title',
-    'title',
-    '标题生成',
-    'running',
+    stepKey: 'title',
+    module: 'title',
+    label: '标题生成',
     inputCount,
     outputCount,
-    Date.now(),
-    Date.now(),
-  )
+  })
 }
 
 function batchDirFromProductImage(path: string) {
@@ -299,15 +280,11 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
                 sourceArtifactIds: item.sourceArtifactIds,
                 completed: true,
               })
-              dependencies.db
-                .prepare(
-                  `
-                    UPDATE pipeline_steps
-                    SET output_count = ?, updated_at = ?
-                    WHERE run_id = ? AND step_key = 'title'
-                  `,
-                )
-                .run(completed + skipped, Date.now(), context.runId)
+              pipelineStore.updatePipelineStepOutputCount(dependencies.db, {
+                runId: context.runId,
+                stepKey: 'title',
+                outputCount: completed + skipped,
+              })
               yield item
               continue
             }
@@ -347,15 +324,11 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
               sourceArtifactIds: item.sourceArtifactIds,
               completed: true,
             })
-            dependencies.db
-              .prepare(
-                `
-                  UPDATE pipeline_steps
-                  SET output_count = ?, updated_at = ?
-                  WHERE run_id = ? AND step_key = 'title'
-                `,
-              )
-              .run(completed + skipped, Date.now(), context.runId)
+            pipelineStore.updatePipelineStepOutputCount(dependencies.db, {
+              runId: context.runId,
+              stepKey: 'title',
+              outputCount: completed + skipped,
+            })
             dependencies.emitRunningProgress(context.runId, '标题流处理中')
             yield item
           } catch (error) {
@@ -406,34 +379,20 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
           }
         }
 
-        dependencies.db
-          .prepare(
-            `
-              UPDATE pipeline_steps
-              SET status = 'completed',
-                  input_count = ?,
-                  output_count = ?,
-                  output_json = ?,
-                  completed_at = ?,
-                  updated_at = ?
-              WHERE run_id = ? AND step_key = 'title'
-            `,
-          )
-          .run(
-            queued,
-            completed + skipped,
-            JSON.stringify({
-              succeeded: completed,
-              failed,
-              skipped,
-              pendingFlushBatches: Array.from(batchStates.values()).filter(
-                (state) => state.pendingFlush,
-              ).length,
-            }),
-            Date.now(),
-            Date.now(),
-            context.runId,
-          )
+        pipelineStore.updatePipelineStepCompletedWithInput(dependencies.db, {
+          runId: context.runId,
+          stepKey: 'title',
+          inputCount: queued,
+          outputCount: completed + skipped,
+          outputJson: {
+            succeeded: completed,
+            failed,
+            skipped,
+            pendingFlushBatches: Array.from(batchStates.values()).filter(
+              (state) => state.pendingFlush,
+            ).length,
+          },
+        })
       } finally {
         await session.close({ keepFailedTemp: keepFailedTemp || failed > 0 })
       }

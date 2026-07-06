@@ -16,6 +16,7 @@ import type {
   PipelinePrintStreamItem,
   PipelineStageRuntimeContext,
 } from '../pipeline-stage-types'
+import * as pipelineStore from '../pipeline/store'
 import type { SqliteDatabase } from '../sqlite'
 import { tempFileManager } from '../temp-file-manager'
 import {
@@ -149,34 +150,14 @@ function insertRunningStep(
   inputCount: number,
   outputCount: number,
 ) {
-  db.prepare(
-    `
-      INSERT INTO pipeline_steps (
-        id, run_id, step_key, module, label, status, input_count, output_count, output_json,
-        error_json, started_at, completed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
-      ON CONFLICT(run_id, step_key) DO UPDATE SET
-        status = excluded.status,
-        input_count = excluded.input_count,
-        output_count = excluded.output_count,
-        output_json = NULL,
-        error_json = NULL,
-        started_at = excluded.started_at,
-        completed_at = NULL,
-        updated_at = excluded.updated_at
-    `,
-  ).run(
-    `${runId}:photoshop`,
+  pipelineStore.upsertPipelineStepRunning(db, {
     runId,
-    'photoshop',
-    'photoshop',
-    'PS 套版',
-    'running',
+    stepKey: 'photoshop',
+    module: 'photoshop',
+    label: 'PS 套版',
     inputCount,
     outputCount,
-    Date.now(),
-    Date.now(),
-  )
+  })
 }
 
 async function prepareWaitingPrint(input: {
@@ -360,15 +341,11 @@ export function createPhotoshopStage(
               outputGroups.push(resultGroup)
               outputItems.push(...resultGroup.items)
               refreshSection(failed)
-              dependencies.db
-                .prepare(
-                  `
-                    UPDATE pipeline_steps
-                    SET output_count = ?, updated_at = ?
-                    WHERE run_id = ? AND step_key = 'photoshop'
-                  `,
-                )
-                .run(completed, Date.now(), context.runId)
+              pipelineStore.updatePipelineStepOutputCount(dependencies.db, {
+                runId: context.runId,
+                stepKey: 'photoshop',
+                outputCount: completed,
+              })
               dependencies.emitRunningProgress(context.runId, 'PS 套版流处理中')
               yield streamItemFromOutput({
                 itemKey: stageItemKey,
@@ -439,33 +416,19 @@ export function createPhotoshopStage(
       }
 
       refreshSection(failed)
-      dependencies.db
-        .prepare(
-          `
-            UPDATE pipeline_steps
-            SET status = 'completed',
-                input_count = ?,
-                output_count = ?,
-                output_json = ?,
-                completed_at = ?,
-                updated_at = ?
-            WHERE run_id = ? AND step_key = 'photoshop'
-          `,
-        )
-        .run(
-          queued,
-          completed,
-          JSON.stringify({
-            total: queued,
-            groupsCompleted: completed,
-            failed,
-            waitingPrintFolder: waitingFolderPath,
-            outputRoot: outputRootPath,
-          }),
-          Date.now(),
-          Date.now(),
-          context.runId,
-        )
+      pipelineStore.updatePipelineStepCompletedWithInput(dependencies.db, {
+        runId: context.runId,
+        stepKey: 'photoshop',
+        inputCount: queued,
+        outputCount: completed,
+        outputJson: {
+          total: queued,
+          groupsCompleted: completed,
+          failed,
+          waitingPrintFolder: waitingFolderPath,
+          outputRoot: outputRootPath,
+        },
+      })
       dependencies.emitRunningProgress(context.runId, 'PS 套版完成')
     }
   }

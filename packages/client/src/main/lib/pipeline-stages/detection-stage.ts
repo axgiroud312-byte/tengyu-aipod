@@ -13,6 +13,7 @@ import type {
   PipelinePrintStreamItem,
   PipelineStageRuntimeContext,
 } from '../pipeline-stage-types'
+import * as pipelineStore from '../pipeline/store'
 import type { SqliteDatabase } from '../sqlite'
 
 type DetectionStageDependencies = {
@@ -83,34 +84,14 @@ function insertRunningStep(
   inputCount: number,
   outputCount: number,
 ) {
-  db.prepare(
-    `
-      INSERT INTO pipeline_steps (
-        id, run_id, step_key, module, label, status, input_count, output_count, output_json,
-        error_json, started_at, completed_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, NULL, ?)
-      ON CONFLICT(run_id, step_key) DO UPDATE SET
-        status = excluded.status,
-        input_count = excluded.input_count,
-        output_count = excluded.output_count,
-        output_json = NULL,
-        error_json = NULL,
-        started_at = excluded.started_at,
-        completed_at = NULL,
-        updated_at = excluded.updated_at
-    `,
-  ).run(
-    `${runId}:detection`,
+  pipelineStore.upsertPipelineStepRunning(db, {
     runId,
-    'detection',
-    'detection',
-    '侵权检测',
-    'running',
+    stepKey: 'detection',
+    module: 'detection',
+    label: '侵权检测',
     inputCount,
     outputCount,
-    Date.now(),
-    Date.now(),
-  )
+  })
 }
 
 export function createDetectionStage(
@@ -334,35 +315,21 @@ export function createDetectionStage(
           details: { total: queued, block },
         })
       }
-      dependencies.db
-        .prepare(
-          `
-            UPDATE pipeline_steps
-            SET status = 'completed',
-                input_count = ?,
-                output_count = ?,
-                output_json = ?,
-                completed_at = ?,
-                updated_at = ?
-            WHERE run_id = ? AND step_key = 'detection'
-          `,
-        )
-        .run(
-          queued,
-          pass + review,
-          JSON.stringify({
-            total: queued,
-            pass,
-            review,
-            block,
-            failed,
-            passed,
-            blocked,
-          }),
-          Date.now(),
-          Date.now(),
-          context.runId,
-        )
+      pipelineStore.updatePipelineStepCompletedWithInput(dependencies.db, {
+        runId: context.runId,
+        stepKey: 'detection',
+        inputCount: queued,
+        outputCount: pass + review,
+        outputJson: {
+          total: queued,
+          pass,
+          review,
+          block,
+          failed,
+          passed,
+          blocked,
+        },
+      })
       dependencies.emitRunningProgress(context.runId, '侵权检测完成')
     }
   }
