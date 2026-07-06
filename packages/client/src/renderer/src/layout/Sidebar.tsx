@@ -31,6 +31,9 @@ const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>
   tutorial: HelpCircle,
 }
 
+const activeClassName = 'bg-primary text-primary-foreground'
+const inactiveClassName = 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+
 interface SidebarProps {
   collapsed: boolean
   onToggleCollapsed: () => void
@@ -40,7 +43,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'relative z-20 flex h-screen shrink-0 flex-col border-r border-white/70 bg-card/90 shadow-[10px_0_34px_rgba(30,64,175,0.08)] backdrop-blur-xl transition-[width] duration-150',
+        'relative z-20 flex h-screen shrink-0 flex-col border-r bg-card shadow-sm transition-[width] duration-150',
         collapsed ? 'w-[60px]' : 'w-[180px]',
       )}
     >
@@ -56,7 +59,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
           alt=""
           aria-hidden="true"
           className={cn(
-            'shrink-0 rounded-md border border-white/70 bg-white/80 object-contain shadow-[0_12px_28px_rgba(37,99,235,0.14)]',
+            'shrink-0 rounded-md border bg-background object-contain shadow-sm',
             collapsed ? 'h-10 w-10' : 'h-16 w-16',
           )}
           loading="lazy"
@@ -78,9 +81,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
                 cn(
                   'flex h-10 items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
                   collapsed ? 'justify-center px-0' : null,
-                  isActive
-                    ? 'bg-[linear-gradient(135deg,_hsl(var(--primary)),_hsl(var(--brand-deep)))] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)]'
-                    : 'text-muted-foreground hover:bg-white/75 hover:text-foreground hover:shadow-xs',
+                  isActive ? activeClassName : inactiveClassName,
                 )
               }
               key={module.key}
@@ -100,9 +101,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             cn(
               'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
               collapsed ? 'justify-center px-0' : null,
-              isActive
-                ? 'bg-[linear-gradient(135deg,_hsl(var(--primary)),_hsl(var(--brand-deep)))] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)]'
-                : 'text-muted-foreground hover:bg-white/75 hover:text-foreground hover:shadow-xs',
+              isActive ? activeClassName : inactiveClassName,
             )
           }
           title={collapsed ? '设置' : undefined}
@@ -116,9 +115,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             cn(
               'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
               collapsed ? 'justify-center px-0' : null,
-              isActive
-                ? 'bg-[linear-gradient(135deg,_hsl(var(--primary)),_hsl(var(--brand-deep)))] text-primary-foreground shadow-[0_10px_24px_rgba(37,99,235,0.22)]'
-                : 'text-muted-foreground hover:bg-white/75 hover:text-foreground hover:shadow-xs',
+              isActive ? activeClassName : inactiveClassName,
             )
           }
           title={collapsed ? '教程' : undefined}
