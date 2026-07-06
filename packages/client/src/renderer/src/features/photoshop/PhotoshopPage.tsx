@@ -507,6 +507,7 @@ export function PhotoshopPage() {
                     <img
                       alt=""
                       className="h-12 w-12 rounded border object-cover"
+                      loading="lazy"
                       src={candidate.thumbnail_url}
                     />
                     <span className="min-w-0">
@@ -811,6 +812,7 @@ export function PhotoshopPage() {
                     <img
                       alt={card.skuFolder}
                       className="aspect-[4/3] w-full rounded border bg-muted object-cover"
+                      loading="lazy"
                       src={localImageUrl(card.coverPath)}
                     />
                     <div className="mt-3 flex items-start justify-between gap-2">
@@ -879,6 +881,7 @@ export function PhotoshopPage() {
                   <img
                     alt=""
                     className="aspect-square w-full rounded border bg-muted object-cover"
+                    loading="lazy"
                     src={localImageUrl(output)}
                   />
                   <p className="mt-2 truncate text-xs text-muted-foreground">{output}</p>

@@ -401,6 +401,7 @@ function ImageFolderPanel({
                 <img
                   alt={image.name}
                   className="h-28 w-full rounded-sm bg-muted object-cover"
+                  loading="lazy"
                   src={detectionImageSrc({ path: image.path, thumbnailUrl: image.thumbnailUrl })}
                 />
                 <span className="mt-2 flex items-center gap-2">
@@ -597,6 +598,7 @@ function RiskResults({
               <img
                 alt={fileName(result.imagePath)}
                 className="h-28 w-full rounded-sm bg-muted object-cover"
+                loading="lazy"
                 src={detectionImageSrc({
                   path: result.imagePath,
                   thumbnailUrl: result.thumbnailUrl,
@@ -650,6 +652,7 @@ function FailedResults({
             <img
               alt={fileName(result.imagePath)}
               className="h-28 w-full rounded-sm bg-muted object-cover"
+              loading="lazy"
               src={detectionImageSrc({
                 path: result.imagePath,
                 thumbnailUrl: result.thumbnailUrl,

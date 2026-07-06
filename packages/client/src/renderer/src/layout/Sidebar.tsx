@@ -59,6 +59,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
             'shrink-0 rounded-md border border-white/70 bg-white/80 object-contain shadow-[0_12px_28px_rgba(37,99,235,0.14)]',
             collapsed ? 'h-10 w-10' : 'h-16 w-16',
           )}
+          loading="lazy"
           src="brand/brand-logo.svg"
         />
         {collapsed ? null : (

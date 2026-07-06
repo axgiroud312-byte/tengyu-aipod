@@ -471,6 +471,7 @@ function ReferenceImagePicker({
               <img
                 alt={image.name}
                 className="h-20 w-full rounded-sm object-cover"
+                loading="lazy"
                 src={image.dataUrl}
               />
               <div className="mt-1 truncate">{image.name}</div>
@@ -902,6 +903,7 @@ function PipelineResultsPanel({
               <img
                 alt={heroTitle}
                 className="h-full min-h-[360px] w-full object-cover"
+                loading="lazy"
                 src={pipelineRawImageSrc(heroImagePath)}
               />
             ) : (
@@ -984,6 +986,7 @@ function PipelineResultsPanel({
                       <img
                         alt={group.label}
                         className="aspect-[4/3] w-full rounded-sm bg-muted object-cover"
+                        loading="lazy"
                         src={pipelineRawImageSrc(group.cover_path)}
                       />
                     ) : (
@@ -1012,6 +1015,7 @@ function PipelineResultsPanel({
                       <img
                         alt={image.label}
                         className="aspect-[4/3] w-full rounded-sm bg-muted object-cover"
+                        loading="lazy"
                         src={pipelineResultImageSrc(image)}
                       />
                       <div className="mt-2 truncate text-xs font-medium">{image.label}</div>
@@ -1120,6 +1124,7 @@ function PipelineResultsPanel({
                               <img
                                 alt={image.label}
                                 className="aspect-square w-full rounded-sm bg-muted object-cover"
+                                loading="lazy"
                                 src={pipelineResultImageSrc(image)}
                               />
                               <div className="mt-2 truncate text-xs font-medium">{image.label}</div>

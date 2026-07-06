@@ -59,6 +59,7 @@ const markdownComponents = {
       <img
         alt={alt ?? ''}
         className="max-h-[420px] w-full rounded-md border object-contain"
+        loading="lazy"
         src={tutorialAssetSrc(src)}
       />
       {alt ? <figcaption className="mt-2 text-xs text-muted-foreground">{alt}</figcaption> : null}

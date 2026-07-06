@@ -249,6 +249,7 @@ export function CustomerLoginPage({
               <img
                 alt="腾域 aipod"
                 className="size-14 rounded-md border border-white/70 bg-white object-contain shadow-[0_14px_28px_rgba(37,99,235,0.14)]"
+                loading="lazy"
                 src="brand/brand-logo.svg"
               />
               <div>
@@ -423,6 +424,7 @@ export function CustomerLoginPage({
                     <img
                       alt={logo.alt}
                       className="max-h-7 max-w-full object-contain"
+                      loading="lazy"
                       src={logo.src}
                     />
                   </div>

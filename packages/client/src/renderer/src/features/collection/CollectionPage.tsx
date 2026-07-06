@@ -662,6 +662,7 @@ export function CollectionPage({
                       <img
                         alt=""
                         className="h-10 w-10 rounded border object-cover"
+                        loading="lazy"
                         src={localImageUrl(item.savedPath)}
                       />
                       <div className="min-w-0 text-xs">
@@ -733,6 +734,7 @@ export function CollectionPage({
                               <img
                                 alt=""
                                 className="h-full w-full object-cover"
+                                loading="lazy"
                                 src={group.coverUrl}
                               />
                               <div className="absolute bottom-1 right-1 rounded bg-background/90 p-1 shadow-sm">
@@ -792,6 +794,7 @@ export function CollectionPage({
                             <img
                               alt=""
                               className="h-16 w-16 rounded-md border object-cover"
+                              loading="lazy"
                               src={item.originalUrl}
                             />
                             <div className="min-w-0 text-sm">
@@ -846,6 +849,7 @@ export function CollectionPage({
                         <img
                           alt=""
                           className="h-16 w-16 rounded-md border object-cover"
+                          loading="lazy"
                           src={item.originalUrl}
                         />
                         <div className="min-w-0 text-sm">

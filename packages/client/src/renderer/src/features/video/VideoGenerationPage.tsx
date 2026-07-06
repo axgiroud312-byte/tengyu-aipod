@@ -414,6 +414,7 @@ export function VideoGenerationPage() {
                     <img
                       alt={image.name}
                       className="h-full w-full object-cover"
+                      loading="lazy"
                       src={localImageUrl(image.path)}
                     />
                   </div>

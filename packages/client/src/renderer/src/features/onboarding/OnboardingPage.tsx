@@ -167,6 +167,7 @@ export function OnboardingPage({
                   alt=""
                   aria-hidden="true"
                   className="h-10 w-10 rounded-md border border-white/70 bg-white object-contain shadow-[0_12px_24px_rgba(37,99,235,0.12)]"
+                  loading="lazy"
                   src="brand/brand-logo.svg"
                 />
                 <div>

@@ -56,6 +56,7 @@ export function ImageFolderPickerPanel({
               <img
                 alt={source.name}
                 className="h-28 w-full rounded-sm object-cover"
+                loading="lazy"
                 src={localImageUrl(source.path)}
               />
               <span className="mt-2 block truncate font-medium">{source.name}</span>

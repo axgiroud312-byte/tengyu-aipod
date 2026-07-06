@@ -501,6 +501,7 @@ export default function AdminCustomersPage() {
                           <img
                             alt="头像"
                             className="h-10 w-10 rounded-md object-cover"
+                            loading="lazy"
                             src={account.avatar_url}
                           />
                         ) : (

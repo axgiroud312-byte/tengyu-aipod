@@ -458,6 +458,7 @@ export function GrsaiPromptGenerationPanel({
                         <img
                           alt={image.name}
                           className="h-20 w-full rounded-sm object-cover"
+                          loading="lazy"
                           src={image.dataUrl}
                         />
                         <div className="mt-1 truncate">{image.name}</div>
