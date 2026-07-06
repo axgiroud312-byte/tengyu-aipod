@@ -8,9 +8,22 @@ export type GenerationTabState = {
   provider: GenerationProvider
 }
 
+export type GenerationSettingsSnapshot = Awaited<
+  ReturnType<typeof window.api.generationSettings.get>
+>
+
 export type GenerationState = {
   activeCapability: GenerationUiCapability
+  generationSettings: GenerationSettingsSnapshot | null
+  generationSettingsError: string | null
+  generationSettingsLoading: boolean
+  settingsLoadedVersion: number
+  settingsVersion: number
   tabs: Record<GenerationUiCapability, GenerationTabState>
+  workflowsVersion: number
+  loadGenerationSettings: () => Promise<void>
+  notifyComfyuiWorkflowsUpdated: () => void
+  notifyGenerationSettingsUpdated: (settings?: GenerationSettingsSnapshot) => void
   setActiveCapability: (capability: GenerationUiCapability) => void
   setProvider: (capability: GenerationUiCapability, provider: GenerationProvider) => void
 }
@@ -59,9 +72,58 @@ function defaultProviderFor(capability: GenerationUiCapability) {
   return generationProviderMatrix[capability][0] ?? 'grsai'
 }
 
-export const useGenerationStore = create<GenerationState>((set) => ({
+function generationSettingsErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : '读取本地生图设置失败'
+}
+
+export const useGenerationStore = create<GenerationState>((set, get) => ({
   activeCapability: 'txt2img',
+  generationSettings: null,
+  generationSettingsError: null,
+  generationSettingsLoading: false,
+  settingsLoadedVersion: -1,
+  settingsVersion: 0,
   tabs: defaultTabs,
+  workflowsVersion: 0,
+  loadGenerationSettings: async () => {
+    const current = get()
+    if (
+      current.generationSettingsLoading ||
+      (current.generationSettings && current.settingsLoadedVersion === current.settingsVersion)
+    ) {
+      return
+    }
+
+    const targetVersion = current.settingsVersion
+    set({ generationSettingsError: null, generationSettingsLoading: true })
+    try {
+      const settings = await window.api.generationSettings.get()
+      set({
+        generationSettings: settings,
+        generationSettingsError: null,
+        settingsLoadedVersion: targetVersion,
+      })
+    } catch (error) {
+      set({
+        generationSettingsError: generationSettingsErrorMessage(error),
+        settingsLoadedVersion: targetVersion,
+      })
+    } finally {
+      set({ generationSettingsLoading: false })
+    }
+  },
+  notifyComfyuiWorkflowsUpdated: () =>
+    set((state) => ({ workflowsVersion: state.workflowsVersion + 1 })),
+  notifyGenerationSettingsUpdated: (settings) =>
+    set((state) => {
+      const nextVersion = state.settingsVersion + 1
+      return {
+        generationSettings: settings ?? state.generationSettings,
+        generationSettingsError: settings ? null : state.generationSettingsError,
+        settingsLoadedVersion: settings ? nextVersion : state.settingsLoadedVersion,
+        settingsVersion: nextVersion,
+      }
+    }),
   setActiveCapability: (capability) =>
     set((state) => {
       const currentProvider = state.tabs[capability].provider

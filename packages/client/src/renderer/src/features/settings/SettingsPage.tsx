@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useGenerationStore } from '@/store/generation'
 import {
   CheckCircle2,
   Cloud,
@@ -78,9 +79,6 @@ const defaultGenerationConfig: GenerationConfig = {
   grsai_concurrency: 20,
   grsai_retries: 2,
 }
-const GENERATION_SETTINGS_UPDATED_EVENT = 'tengyu:generation-settings-updated'
-const COMFYUI_WORKFLOWS_UPDATED_EVENT = 'tengyu:comfyui-workflows-updated'
-
 const workflowCategoryOptions: Array<{ key: LocalWorkflowSummary['capability']; label: string }> = [
   { key: 'txt2img', label: '文生图' },
   { key: 'img2img', label: '图生图' },
@@ -353,7 +351,7 @@ export function SettingsPage({
       setGrsaiApiKey('')
       setBailianApiKey('')
       setMessage('本地生图设置已保存')
-      window.dispatchEvent(new Event(GENERATION_SETTINGS_UPDATED_EVENT))
+      useGenerationStore.getState().notifyGenerationSettingsUpdated(snapshot)
     } catch (nextError) {
       setError(errorMessage(nextError, '保存本地生图设置失败'))
     } finally {
@@ -484,7 +482,7 @@ export function SettingsPage({
           imported.skippedCount ? `，跳过 ${imported.skippedCount} 个文件` : ''
         }`,
       )
-      window.dispatchEvent(new Event(COMFYUI_WORKFLOWS_UPDATED_EVENT))
+      useGenerationStore.getState().notifyComfyuiWorkflowsUpdated()
       await loadGenerationSettings()
     } catch (nextError) {
       setError(errorMessage(nextError, '导入 Workflow 文件夹失败'))

@@ -25,10 +25,7 @@ import {
   useExtractSkillOptions,
   usePromptSkillOptions,
 } from '@/features/generation/hooks/use-skill-options'
-import {
-  COMFYUI_WORKFLOWS_UPDATED_EVENT,
-  GENERATION_DEBUG_LOG_LIMIT,
-} from '@/features/generation/lib/constants'
+import { GENERATION_DEBUG_LOG_LIMIT } from '@/features/generation/lib/constants'
 import {
   type ActiveGenerationTask,
   type SkillVariablesState,
@@ -191,6 +188,7 @@ function GrsaiPromptGenerationPanel({
   capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>
 }) {
   const { settings, error: settingsError } = useGenerationLocalSettings()
+  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const [mode, setMode] = useState<Txt2imgMode>('ai')
   const [img2imgMode, setImg2imgMode] = useState<Img2imgMode>('layout')
   const [printMode, setPrintMode] = useState<'local' | 'full'>('local')
@@ -285,15 +283,12 @@ function GrsaiPromptGenerationPanel({
   }, [llmModel, llmModels, settings, usesPromptReference])
 
   useEffect(() => {
+    void workflowsVersion
     if (capability !== 'txt2img') {
       return
     }
     void loadComfyuiTxt2imgWorkflows()
-    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadComfyuiTxt2imgWorkflows)
-    return () => {
-      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadComfyuiTxt2imgWorkflows)
-    }
-  }, [capability])
+  }, [capability, workflowsVersion])
 
   async function loadComfyuiTxt2imgWorkflows() {
     setLoadingComfyuiTxt2imgWorkflows(true)
@@ -1294,6 +1289,7 @@ function GrsaiExtractPanel() {
 
 function ComfyuiImg2imgPanel() {
   const { settings, error: settingsError } = useGenerationLocalSettings()
+  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const workflowScope = 'img2img'
   const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
   const [sourceFolder, setSourceFolder] = useState('')
@@ -1349,12 +1345,9 @@ function ComfyuiImg2imgPanel() {
   }, [promptModel, promptModelOptions, settings])
 
   useEffect(() => {
+    void workflowsVersion
     void loadWorkflows()
-    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    return () => {
-      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    }
-  }, [])
+  }, [workflowsVersion])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
   const outputCount = clampNumber(batchSize, 1, 8, 1)
@@ -1729,6 +1722,7 @@ function ComfyuiImg2imgPanel() {
 }
 
 function ComfyuiExtractPanel() {
+  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const workflowScope = 'extract'
   const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
   const [sources, setSources] = useState<GenerationImageSource[]>([])
@@ -1758,12 +1752,9 @@ function ComfyuiExtractPanel() {
   })
 
   useEffect(() => {
+    void workflowsVersion
     void loadWorkflows()
-    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    return () => {
-      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    }
-  }, [])
+  }, [workflowsVersion])
 
   const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
 
@@ -1995,6 +1986,7 @@ function ComfyuiExtractPanel() {
 }
 
 function ComfyuiExtractMattingPanel() {
+  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const extractWorkflowScope = 'extract-matting:extract'
   const mattingWorkflowScope = 'extract-matting:matting'
   const comfyuiInstanceSelection = useComfyuiInstanceSelection('extract-matting')
@@ -2027,12 +2019,9 @@ function ComfyuiExtractMattingPanel() {
   })
 
   useEffect(() => {
+    void workflowsVersion
     void loadWorkflows()
-    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    return () => {
-      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    }
-  }, [])
+  }, [workflowsVersion])
 
   const selectedExtractWorkflow = extractWorkflows.find(
     (workflow) => workflowOptionKey(workflow) === extractWorkflowKey,
@@ -2314,6 +2303,7 @@ function ComfyuiExtractMattingPanel() {
 }
 
 function ComfyuiMattingPanel() {
+  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const workflowScope = 'matting'
   const mixedWorkflowScope = 'matting-mixed'
   const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
@@ -2343,12 +2333,9 @@ function ComfyuiMattingPanel() {
   })
 
   useEffect(() => {
+    void workflowsVersion
     void loadWorkflows()
-    window.addEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    return () => {
-      window.removeEventListener(COMFYUI_WORKFLOWS_UPDATED_EVENT, loadWorkflows)
-    }
-  }, [])
+  }, [workflowsVersion])
 
   const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows
   const activeWorkflowKey = mode === 'mixed' ? mixedWorkflowKey : workflowKey
