@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### P3 预备
+
+- 拆分 P3 为路由壳、完整任务页、设置页、IPC 类型、主题 token、自动更新与 selector 热修 ADR 六条独立轨道。
+- 明确自动更新和 selector 热修必须先走 ADR-0017，不在 UI 拆分提交中顺手实现。
+
 ### P0-P2 收官
 
 - P0 手测闸门：完成本机 `.workbench/` 备份；用本机登录/允许 mock 的方式手测 6 个生图 panel 的选文件夹、扫描、单张运行和取消；验证 renderer ErrorBoundary 与 IPC 错误 toast 中文文案，临时代码已撤回。
