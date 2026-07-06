@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### P0-P2 收官
+
+- P0 手测闸门：完成本机 `.workbench/` 备份；用本机登录/允许 mock 的方式手测 6 个生图 panel 的选文件夹、扫描、单张运行和取消；验证 renderer ErrorBoundary 与 IPC 错误 toast 中文文案，临时代码已撤回。
+- P2-3 完整任务持久层：抽出 pipeline 行类型、`main/lib/pipeline/store.ts` SQL store，并把 pipeline service 迁入 `main/lib/pipeline/service.ts`，原路径保留 re-export 壳。
+- P2-4 长列表与图片性能：列表图片补 `loading="lazy"`，采集图池优先使用本地缓存缩略图，并用 `@tanstack/react-virtual` 虚拟化采集图池与生图历史/结果长列表。
+- P2-6 诊断日志：设置页新增“打开日志目录”和“导出日志包”；导出 zip 覆盖 `.workbench/logs/`、上架 evidence、pipeline/photoshop SQLite JSONL，并补充 collection/listing/photoshop/pipeline 关键失败诊断写入。
+- P2 收官清理：合并 renderer 侧 `localImageUrl`、`progressPercent`、debug log `levelCounts/formatTimestamp` 重复工具；设置中心后续 PRD 已落在 `design/PRD-settings-center.md`。
+
 ### Added
 
 - 采集模块：比特浏览器接入 / CDP / 点击 / 滚动 / 会话 FSM / 注入脚本 / records / 图池扫描 / 商品页主图分组 / 运行期日志弹窗
