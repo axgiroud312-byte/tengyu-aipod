@@ -62,6 +62,7 @@ import type {
   GenerationProgress,
   GenerationRunResult,
   GenerationTaskEvent,
+  Img2imgReferencePayload,
 } from './types'
 
 export type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
@@ -161,6 +162,51 @@ export function comfyuiSizePx(input: { width?: number | undefined; height?: numb
     width: clampInt(input.width ?? 1024, 256, 4096, 1024),
     height: clampInt(input.height ?? 1024, 256, 4096, 1024),
   }
+}
+
+export function requestedComfyuiSourceCount(input: {
+  sourceArtifactIds?: string[] | undefined
+  sourceImagePaths?: string[] | undefined
+}) {
+  const artifactCount = new Set(
+    (input.sourceArtifactIds ?? []).map((artifactId) => artifactId.trim()).filter(Boolean),
+  ).size
+  const imagePathCount = new Set(
+    (input.sourceImagePaths ?? []).map((imagePath) => imagePath.trim()).filter(Boolean),
+  ).size
+  return artifactCount + imagePathCount
+}
+
+export function comfyuiImg2imgBatchSize(input: { batchSize?: number | undefined }) {
+  return clampInt(input.batchSize ?? 1, 1, 8, 1)
+}
+
+export function comfyuiImg2imgPromptMode(input: {
+  promptMode?: 'ai' | 'workflow' | 'manual' | undefined
+  prompt?: string | undefined
+}) {
+  if (input.promptMode) {
+    return input.promptMode
+  }
+  return input.prompt?.trim() ? 'manual' : 'workflow'
+}
+
+export function promptGeneratorDependencies(dependencies: GenerationServiceDependencies) {
+  return {
+    ...(dependencies.skillCache ? { skillCache: dependencies.skillCache } : {}),
+    ...(dependencies.getSecret ? { getSecret: dependencies.getSecret } : {}),
+    ...(dependencies.readConfig ? { readConfig: dependencies.readConfig } : {}),
+  }
+}
+
+export function promptSkillCategory(
+  capability: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'>,
+  printMode: 'local' | 'full' = 'local',
+) {
+  if (capability === 'txt2img') {
+    return printMode === 'full' ? 'txt2img-full-print' : 'txt2img-local-print'
+  }
+  return printMode === 'full' ? 'img2img-full-reference' : 'img2img-local-reference'
 }
 
 export class ComfyuiInstanceLockManager {
@@ -531,6 +577,23 @@ export function assertInsideFolder(path: string, folder: string) {
   }
 }
 
+export function assertNotInsideFolder(path: string, folder: string) {
+  if (!isAbsolute(path)) {
+    throw new AppErrorClass('HTTP_4XX', '印花路径必须是绝对路径', false)
+  }
+  const rel = relative(folder, path)
+  if (!rel.startsWith('..') && !isAbsolute(rel)) {
+    throw new AppErrorClass('HTTP_4XX', '图生图不能直接选择采集原图，请先提取成印花', false, {
+      path,
+    })
+  }
+}
+
+function rowString(row: Record<string, unknown>, key: string) {
+  const value = row[key]
+  return typeof value === 'string' ? value : ''
+}
+
 export function registerSourceArtifact(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
@@ -570,6 +633,84 @@ export function registerSourceArtifact(
     input.identity.fileHash,
     input.createdAt,
   )
+}
+
+export async function registerManualPrintSourceArtifacts(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    imagePaths?: string[] | undefined
+    taskId: string
+  },
+) {
+  const imagePaths = Array.from(
+    new Set((input.imagePaths ?? []).map((imagePath) => imagePath.trim()).filter(Boolean)),
+  )
+  const artifactIds: string[] = []
+  for (const imagePath of imagePaths) {
+    if (!isAbsolute(imagePath) || !IMAGE_EXTENSIONS.test(imagePath)) {
+      throw new AppErrorClass('HTTP_4XX', '请选择有效的图片文件', false, { imagePath })
+    }
+    const identity = await imageIdentity(imagePath)
+    registerSourceArtifact(db, {
+      identity,
+      imagePath,
+      taskId: input.taskId,
+      createdAt: Date.now(),
+    })
+    artifactIds.push(identity.artifactId)
+  }
+  return artifactIds
+}
+
+export async function comfyuiSourceArtifactIds(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    sourceArtifactIds?: string[] | undefined
+    sourceImagePaths?: string[] | undefined
+    taskId: string
+  },
+) {
+  const existingArtifactIds = (input.sourceArtifactIds ?? [])
+    .map((artifactId) => artifactId.trim())
+    .filter(Boolean)
+  const importedArtifactIds = await registerManualPrintSourceArtifacts(db, {
+    imagePaths: input.sourceImagePaths,
+    taskId: input.taskId,
+  })
+  return [...Array.from(new Set(existingArtifactIds)), ...importedArtifactIds]
+}
+
+export async function readReferenceForArtifact(
+  db: Pick<SqliteDatabase, 'prepare'>,
+  workbenchRoot: string,
+  artifactId: string,
+): Promise<Img2imgReferencePayload> {
+  const row = db
+    .prepare('SELECT id, print_id, file_path, step FROM artifacts WHERE id = ?')
+    .get(artifactId) as Record<string, unknown> | undefined
+  if (!row) {
+    throw new AppErrorClass('HTTP_4XX', '选择的印花不存在', false, { artifactId })
+  }
+
+  const rowArtifactId = rowString(row, 'id')
+  const imagePath = rowString(row, 'file_path')
+  const step = rowString(row, 'step')
+  if (!['txt2img', 'img2img', 'extract', 'matting', 'manual-import'].includes(step)) {
+    throw new AppErrorClass('HTTP_4XX', '图生图只能选择已生成或导入的印花', false, {
+      artifactId,
+      step,
+    })
+  }
+  const rel = relative(workbenchRoot, imagePath)
+  if (rel.startsWith('..') || isAbsolute(rel)) {
+    // 外部导入允许不在工作台内，但路径必须来自 artifacts 表。
+  }
+  return {
+    artifactId: rowArtifactId,
+    imagePath,
+    reference: await imageReference(imagePath),
+    printId: rowString(row, 'print_id') || rowArtifactId,
+  }
 }
 
 export async function registerExtractArtifact(
@@ -717,6 +858,24 @@ export function appErrorMessage(error: unknown) {
     return error.message
   }
   return String(error)
+}
+
+export function promptGenerationErrorDetails(error: unknown): GenerationDebugLogDetails {
+  if (!(error instanceof AppErrorClass) || !error.details) {
+    return {}
+  }
+  const details = error.details
+  return {
+    rawResponsePreview:
+      typeof details.rawResponsePreview === 'string' ? details.rawResponsePreview : undefined,
+    responseModel: typeof details.responseModel === 'string' ? details.responseModel : undefined,
+    finishReason:
+      typeof details.finishReason === 'string' || details.finishReason === null
+        ? details.finishReason
+        : undefined,
+    expected: typeof details.expected === 'number' ? details.expected : undefined,
+    actual: typeof details.actual === 'number' ? details.actual : undefined,
+  }
 }
 
 export function emitProgress(progress: GenerationProgress) {
@@ -934,6 +1093,23 @@ export function emitTxt2imgProgress(
     failed: result.failed,
     images: result.images,
     ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
+  })
+}
+
+export function emitImg2imgProgress(
+  result: GenerationRunResult,
+  taskId: string,
+  total: number,
+  emit: (progress: GenerationProgress) => void,
+) {
+  emit({
+    task_id: taskId,
+    capability: 'img2img',
+    processed: result.succeeded + result.failed,
+    total,
+    succeeded: result.succeeded,
+    failed: result.failed,
+    images: result.images,
   })
 }
 
