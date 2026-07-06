@@ -1,4 +1,7 @@
-import { join } from 'node:path'
+import { createHash, randomUUID } from 'node:crypto'
+import { readFile, stat } from 'node:fs/promises'
+import { extname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import {
   AppErrorClass,
   type GenerationCapability,
@@ -6,24 +9,41 @@ import {
 } from '@tengyu-aipod/shared'
 import { BrowserWindow } from 'electron'
 import { readAppConfig } from '../../onboarding'
-import type { ChenyuInstanceInfo } from '../chenyu-cloud-client'
+import {
+  ChenyuCloudClient,
+  type ChenyuInstanceInfo,
+  chenyuStatusName,
+} from '../chenyu-cloud-client'
 import type { ChenyuWorkflowRunner } from '../chenyu-workflow-runner'
-import type { ComfyuiChenyuAdapter } from '../comfyui-chenyu-adapter'
-import type { ComfyuiInstanceSummary } from '../comfyui-instance-manager'
-import type {
-  ComfyuiWorkflowCategory,
+import { ComfyHttpClient } from '../comfy-http-client'
+import { ComfyuiChenyuAdapter } from '../comfyui-chenyu-adapter'
+import {
+  ComfyuiInstanceManager,
+  type ComfyuiInstanceRecord,
+  type ComfyuiInstanceSummary,
+  comfyuiUrlCandidates,
+} from '../comfyui-instance-manager'
+import {
+  type ComfyuiWorkflowCategory,
   comfyuiWorkflowCacheManager,
 } from '../comfyui-workflow-cache'
 import {
   type DiagnosticLogWriter,
   createOptionalDiagnosticLogWriter,
 } from '../diagnostic-log-service'
-import type { GrsaiAdapter } from '../grsai-adapter'
+import type { GenerationConcurrencyController } from '../generation-concurrency'
+import {
+  GRSAI_SUPPORTED_MODELS,
+  type GenerateResponse,
+  type GrsaiAdapter,
+  type GrsaiModel,
+} from '../grsai-adapter'
 import type { getSecret } from '../keychain'
 import type { promptGeneratorService } from '../prompt-generator-service'
 import type { skillCacheManager } from '../skill-cache'
 import type { SqliteDatabase } from '../sqlite'
 import { type TempFileManager, tempFileManager } from '../temp-file-manager'
+import { assertTargetDoesNotExist, nextVisibleImageName } from '../user-visible-filename'
 import {
   openWorkbenchDatabase as openWorkbenchDatabaseFile,
   workbenchDatabasePath,
@@ -95,6 +115,20 @@ const GENERATION_TASK_PREFIX: Record<GenerationCapability, string> = {
 }
 
 let generationDebugLogSequence = 0
+const DEFAULT_GENERATION_MODEL: GrsaiModel = 'gpt-image-2'
+const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
+
+export function generationImageIdentity(
+  image: GenerateResponse['images'][number],
+  fallback: { artifactId?: string | null; printId?: string | null } = {},
+) {
+  const artifactId = image.artifact_id ?? fallback.artifactId ?? undefined
+  const printId = image.print_id ?? fallback.printId ?? undefined
+  return {
+    ...(artifactId ? { artifactId } : {}),
+    ...(printId ? { printId } : {}),
+  }
+}
 
 export function submitGenerationTask(taskId: string, run: () => Promise<GenerationRunResult>) {
   beginGenerationTask(taskId)
@@ -108,6 +142,160 @@ export function submitGenerationTask(taskId: string, run: () => Promise<Generati
     .finally(() => {
       finishGenerationTask(taskId)
     })
+}
+
+export function clampInt(value: number, min: number, max: number, fallback: number) {
+  if (!Number.isFinite(value)) {
+    return fallback
+  }
+  return Math.max(min, Math.min(max, Math.floor(value)))
+}
+
+export function normalizeModel(model: string) {
+  return GRSAI_SUPPORTED_MODELS.includes(model as GrsaiModel) ? model : DEFAULT_GENERATION_MODEL
+}
+
+export class ComfyuiInstanceLockManager {
+  private readonly locks = new Map<string, string>()
+
+  async run<T>(
+    input: { instanceUuid?: string | undefined },
+    taskId: string,
+    operation: () => Promise<T>,
+  ) {
+    const lockKey = comfyuiInstanceLockKey(input)
+    const runId = randomUUID()
+    const holder = this.locks.get(lockKey)
+    if (holder) {
+      throw new AppErrorClass('HTTP_4XX', '该云机正在执行其他任务，请换一台或稍后再试', false, {
+        provider: 'comfyui-chenyu',
+        instance: lockKey,
+        taskId,
+      })
+    }
+
+    this.locks.set(lockKey, runId)
+    try {
+      return await operation()
+    } finally {
+      if (this.locks.get(lockKey) === runId) {
+        this.locks.delete(lockKey)
+      }
+    }
+  }
+}
+
+export const comfyuiInstanceLocks = new ComfyuiInstanceLockManager()
+
+function comfyuiInstanceLockKey(input: { instanceUuid?: string | undefined }) {
+  return input.instanceUuid?.trim() || 'default'
+}
+
+async function selectedComfyuiInstance(
+  input: { instanceUuid?: string | undefined },
+  apiKey: string,
+  dependencies: GenerationServiceDependencies,
+  db: Pick<SqliteDatabase, 'prepare'>,
+): Promise<ComfyuiInstanceSummary | undefined> {
+  const instanceUuid = input.instanceUuid?.trim()
+  if (!instanceUuid) {
+    return undefined
+  }
+
+  const info =
+    (await dependencies.getChenyuInstanceInfo?.({ apiKey, instanceUuid })) ??
+    (await new ChenyuCloudClient(apiKey).getInstanceInfo(instanceUuid))
+  const status = chenyuStatusName(info.status)
+  if (status !== 'running') {
+    throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '所选云机未运行，请到设置页开机后重试', false, {
+      provider: 'comfyui-chenyu',
+      instanceUuid,
+      status,
+    })
+  }
+
+  const savedComfyuiUrl = savedComfyuiUrlForInstance(db, instanceUuid)
+  const comfyuiUrl =
+    comfyuiUrlCandidates(info.server_map, info.server_url)[0]?.url ?? savedComfyuiUrl
+  if (!comfyuiUrl) {
+    throw new AppErrorClass(
+      'HTTP_4XX',
+      '所选云机没有可用 ComfyUI 地址，请刷新实例列表或到设置页确认端口映射',
+      false,
+      {
+        provider: 'comfyui-chenyu',
+        instanceUuid,
+      },
+    )
+  }
+
+  const now = Date.now()
+  return {
+    provider: 'chenyu',
+    instanceUuid: info.instance_uuid,
+    comfyuiUrl,
+    podUuid: null,
+    gpuUuid: null,
+    gpuName: null,
+    status: 'running',
+    podPriceHour: 0,
+    gpuPriceHour: 0,
+    autoShutdownAt: null,
+    createdAt: now,
+    lastUsedAt: now,
+    runningMinutes: 0,
+    estimatedCost: 0,
+  }
+}
+
+export async function createComfyuiAdapterForRun(
+  input: { instanceUuid?: string | undefined },
+  apiKey: string,
+  workbenchRoot: string,
+  db: Pick<SqliteDatabase, 'prepare'>,
+  dependencies: GenerationServiceDependencies,
+  diagnostics?: DiagnosticLogWriter | null,
+) {
+  const instance = await selectedComfyuiInstance(input, apiKey, dependencies, db)
+  const currentInstance = instance ? null : readCurrentComfyuiInstanceRecord(db)
+  return (
+    dependencies.createComfyuiAdapter?.({
+      apiKey,
+      workbenchRoot,
+      ...(instance ? { instance } : {}),
+      ...(diagnostics ? { diagnostics } : {}),
+    }) ??
+    new ComfyuiChenyuAdapter({
+      ...(instance ? { selectedInstance: instance } : {}),
+      ...(currentInstance
+        ? {
+            selectedInstance: {
+              ...currentInstance,
+              runningMinutes: 0,
+              estimatedCost: 0,
+            } satisfies ComfyuiInstanceSummary,
+          }
+        : {}),
+      instanceManager: new ComfyuiInstanceManager({
+        chenyu: new ChenyuCloudClient(apiKey),
+      }),
+      comfyHttp: new ComfyHttpClient(instance?.comfyuiUrl ?? currentComfyuiUrl(workbenchRoot, db)),
+      createComfyHttp: (baseUrl) => new ComfyHttpClient(baseUrl),
+      workflowCache: dependencies.workflowCache ?? comfyuiWorkflowCacheManager,
+      workbenchRoot,
+      openDatabase: dependencies.openDatabase ?? openWorkbenchDatabase,
+      ...(diagnostics ? { diagnostics } : {}),
+    })
+  )
+}
+
+export function observeGenerationError(
+  controller: Pick<GenerationConcurrencyController, 'onResponse'>,
+  error: unknown,
+) {
+  if (error instanceof AppErrorClass && error.code === 'HTTP_429') {
+    controller.onResponse(429)
+  }
 }
 
 export function openWorkbenchDatabase(workbenchRoot: string) {
@@ -158,6 +346,21 @@ export async function readWorkbenchRoot(readConfig: typeof readAppConfig = readA
   return workbenchConfig.workbench_root
 }
 
+export async function assertLocalComfyuiWorkflowExists(
+  dependencies: GenerationServiceDependencies,
+  input: {
+    workflowId: string
+    capability: ComfyuiWorkflowCategory
+    workflowVersion?: string | undefined
+  },
+) {
+  await (dependencies.workflowCache ?? comfyuiWorkflowCacheManager).get(
+    input.workflowId.trim(),
+    input.capability,
+    input.workflowVersion,
+  )
+}
+
 export function safeBaseName(value: string) {
   const safe = (value || 'print').replace(/[\\/:*?"<>|]/g, '_').trim()
   return safe || 'print'
@@ -188,6 +391,175 @@ export function generationTaskOutputFolder(
     GENERATION_CAPABILITY_FOLDERS[capability],
     safeBaseName(taskId),
   )
+}
+
+export function generationOutputTaskName(
+  input: { outputTaskName?: string | undefined },
+  taskId: string,
+) {
+  return input.outputTaskName?.trim() || taskId
+}
+
+async function uniqueTargetPath(folder: string, baseName: string, ext: string) {
+  let index = 0
+  while (true) {
+    const suffix = index === 0 ? '' : `_v${index + 1}`
+    const candidate = join(folder, `${safeBaseName(baseName)}${suffix}${ext}`)
+    try {
+      await stat(candidate)
+      index += 1
+    } catch {
+      return candidate
+    }
+  }
+}
+
+export async function generationTargetPath(
+  folder: string,
+  fallbackBaseName: string,
+  ext: string,
+  naming: { filenamePrefix?: string | undefined; filenameSeparator?: string | undefined },
+  outputIndex: number,
+) {
+  const visibleName = nextVisibleImageName({
+    prefix: naming.filenamePrefix,
+    separator: naming.filenameSeparator,
+    index: outputIndex,
+    ext,
+  })
+  if (!visibleName) {
+    return uniqueTargetPath(folder, fallbackBaseName, ext)
+  }
+  const targetPath = join(folder, visibleName)
+  await assertTargetDoesNotExist(targetPath)
+  return targetPath
+}
+
+function visibleFilenameOptions(
+  input: { filenamePrefix?: string | undefined; filenameSeparator?: string | undefined },
+  index: number,
+) {
+  return {
+    filenameIndex: index,
+    ...(input.filenamePrefix ? { filenamePrefix: input.filenamePrefix } : {}),
+    ...(input.filenameSeparator ? { filenameSeparator: input.filenameSeparator } : {}),
+  }
+}
+
+export function comfyuiRunOptions(
+  workbenchRoot: string,
+  capability: GenerationCapability,
+  taskId: string,
+  input: {
+    outputTaskName?: string | undefined
+    filenamePrefix?: string | undefined
+    filenameSeparator?: string | undefined
+  },
+  index: number,
+) {
+  return {
+    ...visibleFilenameOptions(input, index),
+    outputFolderOverride: generationTaskOutputFolder(
+      workbenchRoot,
+      capability,
+      generationOutputTaskName(input, taskId),
+    ),
+  }
+}
+
+export function fileUrl(path: string) {
+  return pathToFileURL(path).toString()
+}
+
+async function hashFile(path: string) {
+  const buffer = await readFile(path)
+  return createHash('sha256').update(buffer).digest('hex')
+}
+
+export function newPrintId() {
+  return `pri_${randomUUID().replace(/-/g, '').slice(0, 12)}`
+}
+
+export async function registerGeneratedArtifact(
+  db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
+  input: {
+    taskId: string
+    printId: string
+    targetPath: string
+    capability: Extract<GenerationCapability, 'txt2img' | 'img2img'>
+    prompt: string
+    model: string
+    params: Record<string, unknown>
+    sourceArtifactIds?: string[] | undefined
+    createdAt: number
+  },
+) {
+  const [fileHash, info] = await Promise.all([hashFile(input.targetPath), stat(input.targetPath)])
+  const artifactId = randomUUID()
+  db.prepare(`
+    INSERT INTO artifacts (
+      id,
+      task_id,
+      print_id,
+      step,
+      provider,
+      model_or_workflow,
+      source_artifact_ids,
+      file_path,
+      file_size,
+      file_hash,
+      prompt_snapshot,
+      params_snapshot,
+      created_at
+    )
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    artifactId,
+    input.taskId,
+    input.printId,
+    input.capability,
+    'grsai',
+    input.model,
+    JSON.stringify(input.sourceArtifactIds ?? []),
+    input.targetPath,
+    info.size,
+    fileHash,
+    input.prompt,
+    JSON.stringify(input.params),
+    input.createdAt,
+  )
+  return { artifactId, printId: input.printId }
+}
+
+export async function defaultDownloadImage(url: string) {
+  if (url.startsWith('file://')) {
+    return readFile(new URL(url))
+  }
+
+  const response = await fetch(url)
+  if (!response.ok) {
+    throw new AppErrorClass('HTTP_5XX', '下载 Grsai 结果图失败', true, {
+      status: response.status,
+      url,
+    })
+  }
+  return Buffer.from(await response.arrayBuffer())
+}
+
+export function generatedImageExtension(image: { url: string; local_path?: string }) {
+  const localExt = image.local_path ? extname(image.local_path).toLowerCase() : ''
+  if (localExt && IMAGE_EXTENSIONS.test(localExt)) {
+    return localExt
+  }
+
+  try {
+    const urlExt = extname(new URL(image.url).pathname).toLowerCase()
+    if (urlExt && IMAGE_EXTENSIONS.test(urlExt)) {
+      return urlExt
+    }
+  } catch {}
+
+  return '.png'
 }
 
 export function appErrorMessage(error: unknown) {
@@ -305,6 +677,16 @@ export async function emitImageComplete(
   }
 }
 
+export function localPathFromGeneratedImage(image: { local_path?: string; url: string }) {
+  if (image.local_path?.trim()) {
+    return image.local_path
+  }
+  if (image.url.startsWith('file://')) {
+    return fileURLToPath(image.url)
+  }
+  throw new AppErrorClass('HTTP_5XX', '生成结果缺少本地路径', true)
+}
+
 export function generationProgressMessage(progress: GenerationProgress) {
   if (progress.total > 0 && progress.processed >= progress.total) {
     return progress.failed > 0 ? '任务处理完成，有失败项' : '任务处理完成'
@@ -344,6 +726,131 @@ export function promptPreview(prompt: string, maxLength = 120) {
     return normalized
   }
   return `${normalized.slice(0, maxLength)}...`
+}
+
+export function workflowLogDetails(input: {
+  workflowId: string
+  workflowName?: string | undefined
+  workflowVersion?: string | undefined
+}) {
+  return {
+    workflowId: input.workflowId,
+    ...(input.workflowName?.trim() ? { workflowName: input.workflowName.trim() } : {}),
+    ...(input.workflowVersion ? { workflowVersion: input.workflowVersion } : {}),
+  }
+}
+
+export function emitComfyuiRequestLog(
+  debug: ReturnType<typeof createGenerationDebugLogger>,
+  input: {
+    workflowId: string
+    workflowName?: string | undefined
+    workflowVersion?: string | undefined
+    prompt: string
+    sourceImage?: string | undefined
+    sourceIndex?: number | undefined
+    total?: number | undefined
+    width?: number | undefined
+    height?: number | undefined
+    batchSize?: number | undefined
+    promptMode?: string | undefined
+  },
+) {
+  debug('提交 ComfyUI 工作流', 'info', {
+    operation: 'comfyui-submit',
+    ...workflowLogDetails(input),
+    prompt: promptPreview(input.prompt, 240),
+    sourceImage: input.sourceImage ?? null,
+    sourceIndex: input.sourceIndex ?? null,
+    total: input.total ?? null,
+    width: input.width ?? null,
+    height: input.height ?? null,
+    batchSize: input.batchSize ?? null,
+    promptMode: input.promptMode ?? null,
+  })
+}
+
+export function emitTxt2imgProgress(
+  result: GenerationRunResult,
+  taskId: string,
+  total: number,
+  emit: (progress: GenerationProgress) => void,
+  currentPrompt?: string,
+) {
+  emit({
+    task_id: taskId,
+    capability: 'txt2img',
+    processed: result.succeeded + result.failed,
+    total,
+    succeeded: result.succeeded,
+    failed: result.failed,
+    images: result.images,
+    ...(currentPrompt ? { current_prompt: currentPrompt } : {}),
+  })
+}
+
+function currentComfyuiUrl(workbenchRoot: string, db: Pick<SqliteDatabase, 'prepare'>) {
+  try {
+    const row = db.prepare('SELECT comfyui_url FROM comfyui_instances WHERE id = 1').get() as
+      | { comfyui_url?: string }
+      | undefined
+    if (row?.comfyui_url) {
+      return row.comfyui_url
+    }
+  } catch {}
+
+  throw new AppErrorClass('CHENYU_INSTANCE_DOWN', '请先到设置页选择默认云机并开机', false, {
+    provider: 'comfyui-chenyu',
+    workbenchRoot,
+  })
+}
+
+function savedComfyuiUrlForInstance(db: Pick<SqliteDatabase, 'prepare'>, instanceUuid: string) {
+  try {
+    const row = db
+      .prepare(
+        `
+          SELECT comfyui_url
+          FROM comfyui_instances
+          WHERE id = 1 AND instance_uuid = ?
+        `,
+      )
+      .get(instanceUuid) as { comfyui_url?: string } | undefined
+    return row?.comfyui_url?.trim() || null
+  } catch {
+    return null
+  }
+}
+
+function readCurrentComfyuiInstanceRecord(
+  db: Pick<SqliteDatabase, 'prepare'>,
+): ComfyuiInstanceRecord | null {
+  try {
+    const row = db
+      .prepare(
+        `
+          SELECT
+            provider,
+            instance_uuid AS instanceUuid,
+            comfyui_url AS comfyuiUrl,
+            pod_uuid AS podUuid,
+            gpu_uuid AS gpuUuid,
+            gpu_name AS gpuName,
+            status,
+            pod_price_hour AS podPriceHour,
+            gpu_price_hour AS gpuPriceHour,
+            auto_shutdown_at AS autoShutdownAt,
+            created_at AS createdAt,
+            last_used_at AS lastUsedAt
+          FROM comfyui_instances
+          WHERE id = 1
+        `,
+      )
+      .get() as ComfyuiInstanceRecord | undefined
+    return row?.status === 'running' ? row : null
+  } catch {
+    return null
+  }
 }
 
 export { tempFileManager }
