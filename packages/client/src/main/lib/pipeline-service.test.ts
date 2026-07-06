@@ -1096,13 +1096,14 @@ describe('PipelineService', () => {
       )
 
       await vi.advanceTimersByTimeAsync(10 * 60 * 1000)
-      await expect(Promise.race([waiterResult, Promise.resolve({ status: 'pending' as const })]))
-        .resolves.toMatchObject({
-          status: 'rejected',
-          error: expect.objectContaining({
-            message: 'Photoshop 无响应,请检查 PS 后重试',
-          }),
-        })
+      await expect(
+        Promise.race([waiterResult, Promise.resolve({ status: 'pending' as const })]),
+      ).resolves.toMatchObject({
+        status: 'rejected',
+        error: expect.objectContaining({
+          message: 'Photoshop 无响应,请检查 PS 后重试',
+        }),
+      })
 
       await expect(mutex.runExclusive(async () => 'released')).resolves.toBe('released')
     } finally {

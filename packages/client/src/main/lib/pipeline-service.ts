@@ -1262,8 +1262,7 @@ export class PipelineService {
   private readonly activePrintSkuRuns = new Map<string, string>()
   private readonly photoshopMutex = new PromiseMutex({
     waitTimeoutMs: PHOTOSHOP_MUTEX_TIMEOUT_MS,
-    timeoutError: () =>
-      new AppErrorClass('HTTP_5XX', 'Photoshop 无响应,请检查 PS 后重试', true),
+    timeoutError: () => new AppErrorClass('HTTP_5XX', 'Photoshop 无响应,请检查 PS 后重试', true),
   })
   private readonly comfyuiInstanceQueues = new Map<string, PromiseMutex>()
 
