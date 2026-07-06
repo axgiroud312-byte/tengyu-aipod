@@ -1769,8 +1769,8 @@ describe('PipelineService', () => {
 
   it('does not regenerate AI prompts when all txt2img source items were completed before resume', async () => {
     vi.mocked(generateTxt2imgPrompts).mockResolvedValueOnce([
-      { text: 'p1', selected: true },
-      { text: 'p2', selected: true },
+      { id: '00000000-0000-4000-8000-000000000001', text: 'p1', selected: true },
+      { id: '00000000-0000-4000-8000-000000000002', text: 'p2', selected: true },
     ])
     let sourceIndex = 0
     mocks.runComfyuiTxt2imgBatch.mockImplementation(
@@ -1841,7 +1841,9 @@ describe('PipelineService', () => {
     })
     expect(firstRun.run.status).toBe('completed')
     expect(
-      firstRun.items.filter((item) => item.step_key === 'source' && item.status === 'completed'),
+      (firstRun.items ?? []).filter(
+        (item) => item.step_key === 'source' && item.status === 'completed',
+      ),
     ).toHaveLength(2)
 
     updateRunStatusForTest('run-resume-all-source-ai-prompts', 'interrupted')
