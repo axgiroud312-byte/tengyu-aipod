@@ -36,6 +36,7 @@ import type {
   PipelineResultSection,
   PipelineRunConfig,
   PipelineRunDetail,
+  PipelineRunRecord,
   PipelineRunStats,
   PipelineSourceMode,
   PipelineStartStep,
@@ -1196,6 +1197,120 @@ function itemStatusLabel(status: PipelineItemRecord['status']) {
   return status
 }
 
+function runStatusVariant(
+  status: PipelineRunRecord['status'],
+): 'default' | 'secondary' | 'destructive' | 'outline' {
+  if (status === 'failed') {
+    return 'destructive'
+  }
+  if (status === 'completed') {
+    return 'default'
+  }
+  if (status === 'running') {
+    return 'secondary'
+  }
+  return 'outline'
+}
+
+function runStatusLabel(status: PipelineRunRecord['status']) {
+  if (status === 'running') {
+    return '进行中'
+  }
+  if (status === 'completed') {
+    return '已完成'
+  }
+  if (status === 'failed') {
+    return '失败'
+  }
+  if (status === 'cancelled') {
+    return '已取消'
+  }
+  if (status === 'interrupted') {
+    return '已中断'
+  }
+  return status
+}
+
+function runTimeLabel(value: number) {
+  return new Date(value).toLocaleString()
+}
+
+function PipelineRunHistoryPanel({
+  currentRunId,
+  loading,
+  onRefresh,
+  onResume,
+  resumeLoading,
+  runs,
+}: {
+  currentRunId: string | null
+  loading: boolean
+  onRefresh: () => void
+  onResume: (runId: string) => void
+  resumeLoading: boolean
+  runs: PipelineRunRecord[]
+}) {
+  return (
+    <Card>
+      <CardHeader className="pb-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <CardTitle className="text-base">历史记录</CardTitle>
+            <CardDescription>失败或已中断的完整任务可从中断处继续。</CardDescription>
+          </div>
+          <Button disabled={loading} onClick={onRefresh} variant="ghost">
+            <RefreshCw className="mr-2 h-4 w-4" />
+            刷新
+          </Button>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {runs.length ? (
+          <div className="space-y-2">
+            {runs.slice(0, 12).map((run) => {
+              const canResume = run.status === 'failed' || run.status === 'interrupted'
+              return (
+                <div
+                  className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
+                  key={run.id}
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="truncate font-medium">{run.name}</span>
+                      <Badge variant={runStatusVariant(run.status)}>
+                        {runStatusLabel(run.status)}
+                      </Badge>
+                      {run.id === currentRunId ? <Badge variant="outline">当前</Badge> : null}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {runTimeLabel(run.created_at)}
+                      {run.error_summary ? ` · ${run.error_summary}` : ''}
+                    </div>
+                  </div>
+                  {canResume ? (
+                    <Button
+                      disabled={resumeLoading}
+                      onClick={() => onResume(run.id)}
+                      variant="outline"
+                    >
+                      <Play className="mr-2 h-4 w-4" />
+                      从中断处继续
+                    </Button>
+                  ) : null}
+                </div>
+              )
+            })}
+          </div>
+        ) : (
+          <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
+            暂无历史记录
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  )
+}
+
 function PipelineItemsPanel({ progress }: { progress: PipelineProgress | null }) {
   const items = (progress?.items ?? [])
     .slice()
@@ -1392,6 +1507,8 @@ export function FullTaskPage() {
     'currentRunId',
     null,
   )
+  const [runHistory, setRunHistory] = useState<PipelineRunRecord[]>([])
+  const [runHistoryLoading, setRunHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
@@ -1424,6 +1541,10 @@ export function FullTaskPage() {
   const chooseOutputRootMutation = useIpcMutation(() => window.api.photoshop.chooseOutputFolder())
   const cancelPipelineMutation = useIpcMutation((runId: string) =>
     window.api.pipeline.cancel({ run_id: runId }),
+  )
+  const resumePipelineMutation = useIpcMutation(
+    (runId: string) => window.api.pipeline.resume({ run_id: runId }),
+    { successMessage: '已从中断处继续' },
   )
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
@@ -1785,11 +1906,26 @@ export function FullTaskPage() {
     }
   }, [])
 
+  const refreshRunHistory = useCallback(async () => {
+    setRunHistoryLoading(true)
+    try {
+      setRunHistory(await window.api.pipeline.listRuns())
+    } catch (nextError) {
+      setError(nextError instanceof Error ? nextError.message : '读取完整任务历史失败')
+    } finally {
+      setRunHistoryLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void refreshOptions().catch((nextError) =>
       setError(nextError instanceof Error ? nextError.message : '读取完整任务配置失败'),
     )
   }, [refreshOptions])
+
+  useEffect(() => {
+    void refreshRunHistory()
+  }, [refreshRunHistory])
 
   useEffect(() => {
     if (!currentRunId) {
@@ -1840,8 +1976,9 @@ export function FullTaskPage() {
       }
       setRunning(false)
       void refreshOptions()
+      void refreshRunHistory()
     })
-  }, [refreshOptions, setCurrentRunId])
+  }, [refreshOptions, refreshRunHistory, setCurrentRunId])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
@@ -2395,9 +2532,23 @@ export function FullTaskPage() {
       setCurrentRunId(runId)
       setRunning(true)
       setMessage('完整任务已启动')
+      void refreshRunHistory()
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '完整任务启动失败')
     }
+  }
+
+  async function resumePipeline(runId: string) {
+    setError(null)
+    setMessage('正在从中断处继续')
+    const resumedRunId = await resumePipelineMutation.run(runId)
+    if (!resumedRunId) {
+      return
+    }
+    setCurrentRunId(resumedRunId)
+    setRunning(true)
+    setMessage('完整任务续跑已启动')
+    void refreshRunHistory()
   }
 
   async function cancelPipeline() {
@@ -3588,6 +3739,14 @@ export function FullTaskPage() {
       </div>
 
       <PipelineResultsPanel config={buildConfig()} message={message} progress={progress} />
+      <PipelineRunHistoryPanel
+        currentRunId={currentRunId}
+        loading={runHistoryLoading}
+        onRefresh={() => void refreshRunHistory()}
+        onResume={(runId) => void resumePipeline(runId)}
+        resumeLoading={resumePipelineMutation.loading}
+        runs={runHistory}
+      />
       <PipelineItemsPanel progress={progress} />
 
       <PipelineLogDialog logs={progress?.logs ?? []} onOpenChange={setIsLogOpen} open={isLogOpen} />
