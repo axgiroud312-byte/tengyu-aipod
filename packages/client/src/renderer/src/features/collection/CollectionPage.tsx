@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { localImageUrl } from '@/lib/media'
+import { type VirtualGridBreakpoint, useVirtualGrid } from '@/lib/use-virtual-grid'
 import { cn } from '@/lib/utils'
 import {
   CheckSquare,
@@ -81,6 +82,10 @@ export interface CollectionPageState {
 
 const EMPTY_IMAGE_ITEMS: CollectionImageIndexItem[] = []
 const PRODUCT_GROUP_DEFAULT_IMAGE_LIMIT = 60
+const COLLECTION_IMAGE_POOL_GRID_BREAKPOINTS: VirtualGridBreakpoint[] = [
+  { query: '(min-width: 1280px)', columns: 3 },
+  { query: '(min-width: 768px)', columns: 2 },
+]
 
 interface CollectionPageProps {
   session: CollectionSession | null
@@ -348,6 +353,14 @@ export function CollectionPage({
   const openProductGroupHiddenCount = openProductGroup
     ? openProductGroup.items.length - openProductGroupItems.length
     : 0
+  const looseImageGrid = useVirtualGrid({
+    count: imagePoolGroups.looseItems.length,
+    defaultColumns: 1,
+    breakpoints: COLLECTION_IMAGE_POOL_GRID_BREAKPOINTS,
+    estimateRowHeight: 92,
+    gap: 12,
+    overscan: 5,
+  })
   const productImageCount = imagePoolGroups.productGroups.reduce(
     (total, group) => total + group.items.length,
     0,
@@ -882,48 +895,67 @@ export function CollectionPage({
                       {imagePoolGroups.looseItems.length} 张
                     </div>
                   </div>
-                  <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-                    {imagePoolGroups.looseItems.map((item) => (
-                      <label
-                        className={cn(
-                          'grid cursor-pointer grid-cols-[auto_72px_minmax(0,1fr)] gap-3 rounded-md border p-3 transition-colors',
-                          selectedImageIds.has(item.id)
-                            ? 'border-primary bg-primary/5'
-                            : 'hover:bg-muted/40',
-                        )}
-                        htmlFor={`image-index-${item.id}`}
-                        key={item.id}
-                      >
-                        <Checkbox
-                          checked={selectedImageIds.has(item.id)}
-                          id={`image-index-${item.id}`}
-                          onCheckedChange={(checked) =>
-                            onToggleImagePoolItem(item.id, checked === true)
-                          }
-                        />
-                        <img
-                          alt=""
-                          className="h-16 w-16 rounded-md border object-cover"
-                          decoding="async"
-                          loading="lazy"
-                          src={collectionImageIndexItemImageSrc(item)}
-                        />
-                        <div className="min-w-0 text-sm">
-                          <div className="flex items-center gap-2">
-                            <Badge variant="secondary">{sourceLabel(item.source)}</Badge>
-                            <span className="text-xs text-muted-foreground">
-                              score {item.score}
-                            </span>
+                  <div className="max-h-[640px] overflow-auto pr-1" ref={looseImageGrid.parentRef}>
+                    <div className="relative" style={{ height: `${looseImageGrid.totalSize}px` }}>
+                      {looseImageGrid.virtualRows.map((virtualRow) => {
+                        const rowStart = virtualRow.index * looseImageGrid.columns
+                        const rowItems = imagePoolGroups.looseItems.slice(
+                          rowStart,
+                          rowStart + looseImageGrid.columns,
+                        )
+                        return (
+                          <div
+                            className="absolute left-0 top-0 grid w-full gap-3 md:grid-cols-2 xl:grid-cols-3"
+                            data-index={virtualRow.index}
+                            key={virtualRow.key}
+                            ref={looseImageGrid.measureElement}
+                            style={{ transform: `translateY(${virtualRow.start}px)` }}
+                          >
+                            {rowItems.map((item) => (
+                              <label
+                                className={cn(
+                                  'grid cursor-pointer grid-cols-[auto_72px_minmax(0,1fr)] gap-3 rounded-md border p-3 transition-colors',
+                                  selectedImageIds.has(item.id)
+                                    ? 'border-primary bg-primary/5'
+                                    : 'hover:bg-muted/40',
+                                )}
+                                htmlFor={`image-index-${item.id}`}
+                                key={item.id}
+                              >
+                                <Checkbox
+                                  checked={selectedImageIds.has(item.id)}
+                                  id={`image-index-${item.id}`}
+                                  onCheckedChange={(checked) =>
+                                    onToggleImagePoolItem(item.id, checked === true)
+                                  }
+                                />
+                                <img
+                                  alt=""
+                                  className="h-16 w-16 rounded-md border object-cover"
+                                  decoding="async"
+                                  loading="lazy"
+                                  src={collectionImageIndexItemImageSrc(item)}
+                                />
+                                <div className="min-w-0 text-sm">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="secondary">{sourceLabel(item.source)}</Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      score {item.score}
+                                    </span>
+                                  </div>
+                                  <div className="mt-2 truncate text-xs text-muted-foreground">
+                                    {sourcePageLabel(item)}
+                                  </div>
+                                  <div className="mt-1 text-xs text-muted-foreground">
+                                    {rectLabel(item)}
+                                  </div>
+                                </div>
+                              </label>
+                            ))}
                           </div>
-                          <div className="mt-2 truncate text-xs text-muted-foreground">
-                            {sourcePageLabel(item)}
-                          </div>
-                          <div className="mt-1 text-xs text-muted-foreground">
-                            {rectLabel(item)}
-                          </div>
-                        </div>
-                      </label>
-                    ))}
+                        )
+                      })}
+                    </div>
                   </div>
                 </section>
               ) : null}

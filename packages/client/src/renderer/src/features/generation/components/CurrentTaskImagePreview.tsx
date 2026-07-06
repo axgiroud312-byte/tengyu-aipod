@@ -4,9 +4,15 @@ import {
   type ImageLightboxItem,
 } from '@/components/image-lightbox'
 import { fileUrlLocalPath } from '@/lib/media'
+import { type VirtualGridBreakpoint, useVirtualGrid } from '@/lib/use-virtual-grid'
 import { useEffect, useMemo, useState } from 'react'
 import type { GenerationRunImage } from '../../../../../main/lib/generation-service'
 import { imagePreviewSrc } from '../lib/format'
+
+const GENERATION_PREVIEW_GRID_BREAKPOINTS: VirtualGridBreakpoint[] = [
+  { query: '(min-width: 1024px)', columns: 5 },
+  { query: '(min-width: 640px)', columns: 3 },
+]
 
 function presentDetail(
   label: string,
@@ -57,6 +63,14 @@ function generationPreviewItem(image: GenerationRunImage, index: number): ImageL
 
 export function CurrentTaskImagePreview({ images }: { images: GenerationRunImage[] }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null)
+  const imageGrid = useVirtualGrid({
+    count: images.length,
+    defaultColumns: 1,
+    breakpoints: GENERATION_PREVIEW_GRID_BREAKPOINTS,
+    estimateRowHeight: 190,
+    gap: 12,
+    overscan: 4,
+  })
   const previewItems = useMemo(
     () => images.map((image, index) => generationPreviewItem(image, index)),
     [images],
@@ -79,24 +93,45 @@ export function CurrentTaskImagePreview({ images }: { images: GenerationRunImage
         <span className="text-sm tabular-nums text-muted-foreground">{images.length} 张</span>
       </div>
       {images.length ? (
-        <div className="mt-4 grid gap-3 sm:grid-cols-3 lg:grid-cols-5">
-          {images.map((image, index) => (
-            <button
-              className="group min-w-0 rounded-md border bg-muted/30 p-2 text-left"
-              key={`${image.url}-${index}`}
-              onClick={() => openImage(index)}
-              type="button"
-            >
-              <img
-                alt={`结果图 ${index + 1}`}
-                className="aspect-square w-full rounded-sm object-cover"
-                src={imagePreviewSrc(image)}
-              />
-              <span className="mt-2 block truncate text-xs text-muted-foreground">
-                {image.printId ?? image.artifactId ?? `结果 ${index + 1}`}
-              </span>
-            </button>
-          ))}
+        <div className="mt-4 max-h-[560px] overflow-auto pr-1" ref={imageGrid.parentRef}>
+          <div className="relative" style={{ height: `${imageGrid.totalSize}px` }}>
+            {imageGrid.virtualRows.map((virtualRow) => {
+              const rowStart = virtualRow.index * imageGrid.columns
+              const rowImages = images.slice(rowStart, rowStart + imageGrid.columns)
+              return (
+                <div
+                  className="absolute left-0 top-0 grid w-full gap-3 sm:grid-cols-3 lg:grid-cols-5"
+                  data-index={virtualRow.index}
+                  key={virtualRow.key}
+                  ref={imageGrid.measureElement}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                >
+                  {rowImages.map((image, rowOffset) => {
+                    const index = rowStart + rowOffset
+                    return (
+                      <button
+                        className="group min-w-0 rounded-md border bg-muted/30 p-2 text-left"
+                        key={`${image.url}-${index}`}
+                        onClick={() => openImage(index)}
+                        type="button"
+                      >
+                        <img
+                          alt={`结果图 ${index + 1}`}
+                          className="aspect-square w-full rounded-sm object-cover"
+                          decoding="async"
+                          loading="lazy"
+                          src={imagePreviewSrc(image)}
+                        />
+                        <span className="mt-2 block truncate text-xs text-muted-foreground">
+                          {image.printId ?? image.artifactId ?? `结果 ${index + 1}`}
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
         </div>
       ) : (
         <div className="mt-4 rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
