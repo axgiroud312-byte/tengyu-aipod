@@ -19,7 +19,6 @@ import {
   grsaiSizes,
   modelLabel,
   modelOptionsForCapability,
-  progressPercent,
   promptSkillCategoryFor,
   promptSkillLabel,
   rememberWorkflowKey,
@@ -35,6 +34,7 @@ import {
   type Txt2imgMode,
   img2imgModes,
 } from '@/features/generation/lib/panel-options'
+import { progressPercent } from '@/lib/format'
 import { readFileAsDataUrl, splitDataUrl } from '@/lib/media'
 import { useGenerationStore } from '@/store/generation'
 import type { GenerationCapability } from '@tengyu-aipod/shared'

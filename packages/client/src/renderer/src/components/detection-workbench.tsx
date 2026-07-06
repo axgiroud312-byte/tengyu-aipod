@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { progressPercent } from '@/lib/format'
 import { detectionImageSrc } from '@/lib/media'
 import type { RiskLevel, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
@@ -72,13 +73,6 @@ function detectionPreviewItem(result: DetectionPreviewResult): ImageLightboxItem
       { label: '图片路径', value: result.imagePath, mono: true },
     ],
   }
-}
-
-function progressPercent(progress: DetectionProgress | null) {
-  if (!progress?.total) {
-    return 0
-  }
-  return Math.round((progress.processed / progress.total) * 100)
 }
 
 function defaultVariableValue(variable: SkillVariable) {

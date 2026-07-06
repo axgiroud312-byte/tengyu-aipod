@@ -1,38 +1,19 @@
 import type { CollectionDebugLogEntry } from '../../../../main/lib/collection-session-manager'
+import { formatTimestamp, levelCounts } from '../../lib/debug-log'
 
 export function collectionDebugLogLevelCounts(logs: CollectionDebugLogEntry[]) {
-  return logs.reduce(
-    (counts, item) => {
-      if (item.level === 'warn') {
-        counts.warn += 1
-      }
-      if (item.level === 'error') {
-        counts.error += 1
-      }
-      return counts
-    },
-    { warn: 0, error: 0 },
-  )
+  return levelCounts(logs)
 }
 
 export function formatCollectionDebugLogLine(entry: CollectionDebugLogEntry) {
   const parts = [
-    `[${formatCollectionDebugTimestamp(entry.timestamp)}]`,
+    `[${formatTimestamp(entry.timestamp)}]`,
     `[${entry.level.toUpperCase()}]`,
     `[${collectionDebugOperationLabel(entry)}]`,
     entry.message,
   ]
   const detailText = collectionDebugDetailText(entry.details)
   return detailText ? `${parts.join(' ')} · ${detailText}` : parts.join(' ')
-}
-
-function formatCollectionDebugTimestamp(timestamp: number) {
-  const date = new Date(timestamp)
-  const pad = (value: number, size = 2) => String(value).padStart(size, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(
-    date.getMilliseconds(),
-    3,
-  )}`
 }
 
 function collectionDebugOperationLabel(entry: CollectionDebugLogEntry) {

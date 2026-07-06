@@ -16,6 +16,7 @@ import {
   AlertDialogTrigger,
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
+import { progressPercent } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import type {
   ListingItem,
@@ -134,13 +135,6 @@ function profileStatusLabel(profile: BitBrowserProfile, lock: BrowserProfileHold
     return '未登录'
   }
   return '可用'
-}
-
-function progressPercent(progress: ListingProgress | null) {
-  if (!progress || progress.totalCount === 0) {
-    return 0
-  }
-  return Math.round((progress.finishedCount / progress.totalCount) * 100)
 }
 
 function warningTitleMissing(warning: string) {

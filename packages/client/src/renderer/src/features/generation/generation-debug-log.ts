@@ -1,23 +1,13 @@
 import type { GenerationDebugLogEntry } from '../../../../main/lib/generation-service'
+import { formatTimestamp, levelCounts } from '../../lib/debug-log'
 
 export function generationDebugLogLevelCounts(logs: GenerationDebugLogEntry[]) {
-  return logs.reduce(
-    (counts, item) => {
-      if (item.level === 'warn') {
-        counts.warn += 1
-      }
-      if (item.level === 'error') {
-        counts.error += 1
-      }
-      return counts
-    },
-    { warn: 0, error: 0 },
-  )
+  return levelCounts(logs)
 }
 
 export function formatGenerationDebugLogLine(entry: GenerationDebugLogEntry) {
   const parts = [
-    `[${formatGenerationDebugTimestamp(entry.timestamp)}]`,
+    `[${formatTimestamp(entry.timestamp)}]`,
     `[${entry.level.toUpperCase()}]`,
     `[${generationDebugCapabilityLabel(entry)}]`,
     entry.message,
@@ -29,15 +19,6 @@ export function formatGenerationDebugLogLine(entry: GenerationDebugLogEntry) {
 export function generationDebugRawResponse(entry: GenerationDebugLogEntry) {
   const rawResponse = entry.details?.rawResponse
   return typeof rawResponse === 'string' ? rawResponse : null
-}
-
-function formatGenerationDebugTimestamp(timestamp: number) {
-  const date = new Date(timestamp)
-  const pad = (value: number, size = 2) => String(value).padStart(size, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(
-    date.getMilliseconds(),
-    3,
-  )}`
 }
 
 function generationDebugCapabilityLabel(entry: GenerationDebugLogEntry) {

@@ -26,6 +26,7 @@ import {
   type TitleKeywordGroupDraft,
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
+import { fileUrlLocalPath, localImageUrl } from '@/lib/media'
 import { useIpcMutation } from '@/lib/use-ipc'
 import type {
   PipelineItemRecord,
@@ -631,23 +632,6 @@ function selectFallbackChenyuInstance(instances: ChenyuManagedInstance[]) {
 
 function skillInCategories(skill: SkillSummary, categories: readonly string[]) {
   return categories.includes(skill.category ?? '')
-}
-
-function localImageUrl(path: string) {
-  return `tengyu-local-image://image/${encodeURIComponent(path)}`
-}
-
-function fileUrlLocalPath(url: string) {
-  try {
-    const parsed = new URL(url)
-    if (parsed.protocol !== 'file:') {
-      return null
-    }
-    const path = decodeURIComponent(parsed.pathname)
-    return /^\/[A-Za-z]:/.test(path) ? path.slice(1) : path
-  } catch {
-    return null
-  }
 }
 
 function pipelineResultImageSrc(image: PipelineResultImage) {

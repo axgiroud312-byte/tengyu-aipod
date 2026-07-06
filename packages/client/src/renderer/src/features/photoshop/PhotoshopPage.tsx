@@ -1,6 +1,8 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
+import { progressPercent } from '@/lib/format'
+import { localImageUrl } from '@/lib/media'
 import type {
   PhotoshopBatchOutputGroup,
   PhotoshopBatchResult,
@@ -77,13 +79,6 @@ function templateLabel(path: string) {
   return path.split(/[\\/]/).pop() ?? path
 }
 
-function progressPercent(progress: PhotoshopProgressInfo | null) {
-  if (!progress || progress.total_groups <= 0) {
-    return 0
-  }
-  return Math.round(((progress.completed + progress.skipped) / progress.total_groups) * 100)
-}
-
 function timestampSlug(value: number) {
   const date = new Date(value)
   const pad = (item: number) => String(item).padStart(2, '0')
@@ -93,10 +88,6 @@ function timestampSlug(value: number) {
 function joinLocalPath(root: string, ...parts: string[]) {
   const separator = root.includes('\\') ? '\\' : '/'
   return [root.replace(/[\\/]+$/, ''), ...parts].join(separator)
-}
-
-function localImageUrl(path: string) {
-  return `tengyu-local-image://image/${encodeURIComponent(path)}`
 }
 
 function photoshopDebugLogLevelClassName(level: PhotoshopProgressLogEntry['level']) {

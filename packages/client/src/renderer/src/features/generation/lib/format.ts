@@ -3,7 +3,6 @@ import type { GenerationCapability, SkillSummary, SkillVariable } from '@tengyu-
 import type { ComfyuiWorkflowSummary } from '../../../../../main/lib/comfyui-workflow-cache'
 import type {
   GenerationDebugLogEntry,
-  GenerationProgress,
   GenerationRunImage,
   Txt2imgPromptDraft,
 } from '../../../../../main/lib/generation-service'
@@ -147,13 +146,6 @@ export function clampNumber(value: string, min: number, max: number, fallback: n
     return fallback
   }
   return Math.max(min, Math.min(max, Math.floor(parsed)))
-}
-
-export function progressPercent(progress: GenerationProgress | null) {
-  if (!progress || progress.total === 0) {
-    return 0
-  }
-  return Math.round((progress.processed / progress.total) * 100)
 }
 
 export function capabilityLabel(capability: GenerationCapability) {

@@ -1,38 +1,19 @@
 import type { PhotoshopProgressLogEntry, PhotoshopProgressStage } from '@tengyu-aipod/shared'
+import { formatTimestamp, levelCounts } from '../../lib/debug-log'
 
 export function photoshopDebugLogLevelCounts(logs: PhotoshopProgressLogEntry[]) {
-  return logs.reduce(
-    (counts, item) => {
-      if (item.level === 'warn') {
-        counts.warn += 1
-      }
-      if (item.level === 'error') {
-        counts.error += 1
-      }
-      return counts
-    },
-    { warn: 0, error: 0 },
-  )
+  return levelCounts(logs)
 }
 
 export function formatPhotoshopDebugLogLine(entry: PhotoshopProgressLogEntry) {
   const parts = [
-    `[${formatPhotoshopDebugTimestamp(entry.ts)}]`,
+    `[${formatTimestamp(entry.ts)}]`,
     `[${entry.level.toUpperCase()}]`,
     `[${photoshopStageLabel(entry.stage)}]`,
     entry.message ?? photoshopStageLabel(entry.stage),
   ]
   const detailText = photoshopDebugDetailText(entry)
   return detailText ? `${parts.join(' ')} · ${detailText}` : parts.join(' ')
-}
-
-function formatPhotoshopDebugTimestamp(timestamp: number) {
-  const date = new Date(timestamp)
-  const pad = (value: number, size = 2) => String(value).padStart(size, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(
-    date.getMilliseconds(),
-    3,
-  )}`
 }
 
 function photoshopStageLabel(stage: PhotoshopProgressStage) {

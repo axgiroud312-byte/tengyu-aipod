@@ -13,8 +13,8 @@ import {
   grsaiSizes,
   modelLabel,
   modelOptionsForCapability,
-  progressPercent,
 } from '@/features/generation/lib/format'
+import { progressPercent } from '@/lib/format'
 import { Loader2, Play } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type {

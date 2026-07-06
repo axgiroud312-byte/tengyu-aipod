@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { progressPercent } from '@/lib/format'
 import { FolderOpen, Loader2, Play, Plus, RotateCcw, ScanLine, Square, Trash2 } from 'lucide-react'
 import type {
   TitleBatchConfig,
@@ -93,13 +94,6 @@ type TitlePageProps = {
   onCancelBatch: () => void
   onRetryFailed: () => void
   onOpenPath: (path: string) => void
-}
-
-function progressPercent(progress: TitleProgress | null) {
-  if (!progress || progress.total === 0) {
-    return 0
-  }
-  return Math.round((progress.processed / progress.total) * 100)
 }
 
 function titleProgressText(state: TitlePageState, isRunning: boolean) {

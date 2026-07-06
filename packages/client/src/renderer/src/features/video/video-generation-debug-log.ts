@@ -1,38 +1,19 @@
 import type { VideoRuntimeLogEntry } from '../../../../main/lib/video-generation-service'
+import { formatTimestamp, levelCounts } from '../../lib/debug-log'
 
 export function videoDebugLogLevelCounts(logs: VideoRuntimeLogEntry[]) {
-  return logs.reduce(
-    (counts, item) => {
-      if (item.level === 'warn') {
-        counts.warn += 1
-      }
-      if (item.level === 'error') {
-        counts.error += 1
-      }
-      return counts
-    },
-    { warn: 0, error: 0 },
-  )
+  return levelCounts(logs)
 }
 
 export function formatVideoDebugLogLine(entry: VideoRuntimeLogEntry) {
   const parts = [
-    `[${formatVideoDebugTimestamp(entry.timestamp)}]`,
+    `[${formatTimestamp(entry.timestamp)}]`,
     `[${entry.level.toUpperCase()}]`,
     `[${entry.mode === 'image-to-video' ? '图生视频' : '参考生视频'}]`,
     entry.message,
   ]
   const detailText = videoDebugDetailText(entry)
   return detailText ? `${parts.join(' ')} · ${detailText}` : parts.join(' ')
-}
-
-function formatVideoDebugTimestamp(timestamp: number) {
-  const date = new Date(timestamp)
-  const pad = (value: number, size = 2) => String(value).padStart(size, '0')
-  return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}.${pad(
-    date.getMilliseconds(),
-    3,
-  )}`
 }
 
 function videoDebugDetailText(entry: VideoRuntimeLogEntry) {
