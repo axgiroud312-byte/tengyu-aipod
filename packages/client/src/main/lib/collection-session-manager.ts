@@ -25,6 +25,7 @@ import {
 } from './collection-injected-script'
 import { getPlatformRule, listPlatformRules } from './collection-platform-rules'
 import { exportCollectionManifest } from './collection-record-store'
+import { errorForDiagnosticLog, writeOptionalDiagnosticLogEvent } from './diagnostic-log-service'
 import type { SqliteDatabase } from './sqlite'
 import {
   openWorkbenchDatabase as openWorkbenchDatabaseFile,
@@ -250,6 +251,26 @@ export class CollectionSessionManager {
         profile_id: config.profile_id,
         error: appErrorMessage(error),
       })
+      await writeOptionalDiagnosticLogEvent({
+        module: 'collection',
+        runId: session.id,
+        workbenchRoot,
+        meta: {
+          operation: 'startSession',
+          platform: config.platform,
+          profileId: config.profile_id,
+          mode: config.mode,
+        },
+        event: {
+          type: 'collection_session_start_failed',
+          operation: 'startSession',
+          data: {
+            session,
+            outputDir,
+          },
+          error: errorForDiagnosticLog(error),
+        },
+      }).catch(() => null)
       const failedSession = { ...session, ended_at: this.now(), status: 'failed' as const }
       writeSession(workbenchRoot, this.openDatabase, failedSession)
       await this.cdp.disconnect(config.profile_id).catch(() => null)
@@ -430,6 +451,25 @@ export class CollectionSessionManager {
             page_url: safePageUrl(page),
             error: appErrorMessage(error),
           })
+          void writeOptionalDiagnosticLogEvent({
+            module: 'collection',
+            runId: runtime.session.id,
+            workbenchRoot: runtime.workbenchRoot,
+            meta: {
+              operation: 'wirePage',
+              platform: runtime.session.platform,
+              profileId: runtime.session.profile_id,
+            },
+            event: {
+              type: 'collection_page_wire_failed',
+              operation: 'wirePage',
+              data: {
+                sessionId: runtime.session.id,
+                pageUrl: safePageUrl(page),
+              },
+              error: errorForDiagnosticLog(error),
+            },
+          }).catch(() => null)
         })
       }
     }

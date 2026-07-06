@@ -35,6 +35,7 @@ import {
   type DetectionImageResult,
   detectionService,
 } from '../detection-service'
+import { errorForDiagnosticLog, writeOptionalDiagnosticLogEvent } from '../diagnostic-log-service'
 import {
   type GenerationImageCompletePayload,
   type GenerationProgress,
@@ -1343,6 +1344,21 @@ export class PipelineService {
           message: active.cancelRequested ? '完整任务已取消' : '完整任务续跑失败',
           details: { error: appErrorMessage(error) },
         })
+        if (!active.cancelRequested) {
+          await this.writePipelineDiagnostic({
+            workbenchRoot,
+            runId,
+            type: 'pipeline_resume_failed',
+            operation: 'resumeRun',
+            error,
+            data: {
+              sourceMode: parsedConfig.source.mode,
+              printMode: parsedConfig.printMode,
+              status,
+              stats,
+            },
+          })
+        }
         this.completeRun(db, runId, status, stats, appErrorMessage(error))
         if (!active.cancelRequested) {
           throw error
@@ -1426,6 +1442,21 @@ export class PipelineService {
           message: active.cancelRequested ? '完整任务已取消' : '完整任务失败',
           details: { error: appErrorMessage(error) },
         })
+        if (!active.cancelRequested) {
+          await this.writePipelineDiagnostic({
+            workbenchRoot,
+            runId,
+            type: 'pipeline_run_failed',
+            operation: 'runPipeline',
+            error,
+            data: {
+              sourceMode: runConfig.source.mode,
+              printMode: runConfig.printMode,
+              status,
+              stats,
+            },
+          })
+        }
         this.completeRun(db, runId, status, stats, appErrorMessage(error))
         if (!active.cancelRequested) {
           throw error
@@ -1457,6 +1488,31 @@ export class PipelineService {
     }
     this.activePrintSkuRuns.set(lockKey, runId)
     return lockKey
+  }
+
+  private async writePipelineDiagnostic(input: {
+    workbenchRoot: string
+    runId: string
+    type: string
+    operation: string
+    error: unknown
+    data?: Record<string, unknown> | undefined
+  }) {
+    await writeOptionalDiagnosticLogEvent({
+      module: 'pipeline',
+      runId: input.runId,
+      workbenchRoot: input.workbenchRoot,
+      meta: {
+        operation: input.operation,
+        runId: input.runId,
+      },
+      event: {
+        type: input.type,
+        operation: input.operation,
+        data: input.data ?? {},
+        error: errorForDiagnosticLog(input.error),
+      },
+    }).catch(() => null)
   }
 
   private releasePrintSkuLock(lockKey: string | null, runId: string) {

@@ -1,4 +1,5 @@
 import { EventEmitter } from 'node:events'
+import { readFile, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import type { AppErrorClass } from '@tengyu-aipod/shared'
 import { describe, expect, it, vi } from 'vitest'
@@ -514,19 +515,31 @@ describe('CollectionSessionManager', () => {
   })
 
   it('marks the session failed and releases the profile lock if CDP connection fails', async () => {
+    const workbenchRoot = join('/tmp', `wb-collection-diagnostics-${Date.now()}`)
     const locks = new BrowserProfileLockManager()
     const cdp = {
       connectToProfile: vi.fn().mockRejectedValue(new Error('CDP down')),
       disconnect: vi.fn().mockResolvedValue(undefined),
       injectPageScript: vi.fn(),
     }
-    const { manager, db } = createManager({ locks, cdp })
+    const { manager, db } = createManager({ locks, cdp, workbenchRoot })
 
-    await expect(
-      manager.startSession({ platform: 'temu', profile_id: 'profile-1', mode: 'click' }),
-    ).rejects.toThrow('CDP down')
-    expect(locks.status('profile-1')).toBeNull()
-    expect(db.rows.get('session-1')).toMatchObject({ ended_at: 1000, status: 'failed' })
+    try {
+      await expect(
+        manager.startSession({ platform: 'temu', profile_id: 'profile-1', mode: 'click' }),
+      ).rejects.toThrow('CDP down')
+      expect(locks.status('profile-1')).toBeNull()
+      expect(db.rows.get('session-1')).toMatchObject({ ended_at: 1000, status: 'failed' })
+
+      const diagnostic = await readFile(
+        join(workbenchRoot, '.workbench', 'logs', 'diagnostics', 'collection', 'session-1.jsonl'),
+        'utf8',
+      )
+      expect(diagnostic).toContain('collection_session_start_failed')
+      expect(diagnostic).toContain('CDP down')
+    } finally {
+      await rm(workbenchRoot, { recursive: true, force: true })
+    }
   })
 
   it('pauses and resumes active sessions with IPC-friendly events', async () => {

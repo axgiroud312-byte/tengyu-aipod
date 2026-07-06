@@ -63,6 +63,26 @@ describe('diagnostic log service', () => {
     ])
   })
 
+  it('supports collection, listing, photoshop, and pipeline diagnostic modules', async () => {
+    for (const module of ['collection', 'listing', 'photoshop', 'pipeline'] as const) {
+      const writer = await createDiagnosticLogWriter({
+        module,
+        taskId: `${module}-task`,
+        workbenchRoot,
+      })
+
+      await writer.append({ type: 'failure', error: { message: `${module} failed` } })
+
+      expect(writer.path).toContain(join('.workbench', 'logs', 'diagnostics', module))
+      const events = await readJsonl(writer.path)
+      expect(events.at(-1)).toMatchObject({
+        module,
+        type: 'failure',
+        error: { message: `${module} failed` },
+      })
+    }
+  })
+
   it('redacts secrets and image payloads', async () => {
     const dataUrl = `data:image/png;base64,${Buffer.from('image bytes').toString('base64')}`
     const writer = await createDiagnosticLogWriter({

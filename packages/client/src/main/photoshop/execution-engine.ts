@@ -9,7 +9,12 @@ import {
   type PhotoshopTaskGroup,
   type PsdTemplate,
 } from '@tengyu-aipod/shared'
+import {
+  errorForDiagnosticLog,
+  writeOptionalDiagnosticLogEvent,
+} from '../lib/diagnostic-log-service'
 import type { SqliteDatabase } from '../lib/sqlite'
+import { getConfiguredWorkbenchRoot } from '../lib/workbench-config'
 import { getDefaultWorkbenchDatabase } from '../lib/workbench-db'
 import { type PhotoshopComAdapter, photoshopComAdapter } from './com-adapter'
 import {
@@ -49,6 +54,7 @@ interface PhotoshopExecutionEngineOptions {
   recorder?: WorkflowStepRecorder
   shouldSkipJob?: (job: PhotoshopJob) => Promise<boolean>
   writeTemplateBatchJsx?: TemplateBatchJsxWriter
+  readDiagnosticWorkbenchRoot?: () => Promise<string | null>
 }
 
 interface RawJsxResult {
@@ -518,6 +524,7 @@ export class PhotoshopExecutionEngine {
   private readonly recorder: WorkflowStepRecorder
   private readonly shouldSkipJob: (job: PhotoshopJob) => Promise<boolean>
   private readonly writeTemplateBatchJsx: TemplateBatchJsxWriter
+  private readonly readDiagnosticWorkbenchRoot: () => Promise<string | null>
 
   constructor(options: PhotoshopExecutionEngineOptions = {}) {
     this.platform = options.platform ?? process.platform
@@ -530,6 +537,8 @@ export class PhotoshopExecutionEngine {
     this.shouldSkipJob =
       options.shouldSkipJob ??
       ((job) => shouldSkipJob(job, { dbProvider: getDefaultWorkbenchDatabase }))
+    this.readDiagnosticWorkbenchRoot =
+      options.readDiagnosticWorkbenchRoot ?? getConfiguredWorkbenchRoot
     this.writeTemplateBatchJsx =
       options.writeTemplateBatchJsx ??
       ((template, groups, cancelFilePath) =>
@@ -575,6 +584,13 @@ export class PhotoshopExecutionEngine {
           lastError = appError
           await this.recorder.recordFailed(job, attempt, appError)
           if (!isRetryable(appError) || attempt === attempts - 1) {
+            await this.writePhotoshopDiagnostic({
+              type: 'photoshop_job_failed',
+              operation: 'runJob',
+              job,
+              attempt,
+              error: appError,
+            })
             throw appError
           }
           await this.sleep(retryDelayMs(attempt))
@@ -707,9 +723,55 @@ export class PhotoshopExecutionEngine {
         for (const group of pendingGroups) {
           await this.recorder.recordFailed(group.job, 0, appError)
         }
+        await this.writePhotoshopDiagnostic({
+          type: 'photoshop_template_batch_failed',
+          operation: 'runTemplateBatch',
+          job: pendingGroups[0]?.job,
+          attempt: 0,
+          error: appError,
+          data: {
+            templateId: template.id,
+            templateName: pathBasename(template.file_path),
+            groups: pendingGroups.length,
+          },
+        })
         throw appError
       }
     })
+  }
+
+  private async writePhotoshopDiagnostic(input: {
+    type: string
+    operation: string
+    job?: PhotoshopJob | undefined
+    attempt: number
+    error: AppErrorClass
+    data?: Record<string, unknown> | undefined
+  }) {
+    const workbenchRoot = await this.readDiagnosticWorkbenchRoot().catch(() => null)
+    await writeOptionalDiagnosticLogEvent({
+      module: 'photoshop',
+      runId: input.job?.task_id ?? 'photoshop',
+      workbenchRoot: workbenchRoot ?? undefined,
+      meta: {
+        operation: input.operation,
+        taskId: input.job?.task_id ?? null,
+      },
+      event: {
+        type: input.type,
+        operation: input.operation,
+        ...(input.job?.group_index === undefined ? {} : { itemKey: String(input.job.group_index) }),
+        attempt: input.attempt,
+        data: {
+          taskId: input.job?.task_id ?? null,
+          groupIndex: input.job?.group_index ?? null,
+          mockupPath: input.job?.mockup_path ?? null,
+          outputPaths: input.job?.output_paths ?? [],
+          ...(input.data ?? {}),
+        },
+        error: errorForDiagnosticLog(input.error),
+      },
+    }).catch(() => null)
   }
 
   private async runOnce(job: PhotoshopJob): Promise<Omit<PhotoshopJobResult, 'attempts'>> {

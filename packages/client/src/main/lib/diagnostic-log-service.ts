@@ -4,7 +4,15 @@ import { basename, join } from 'node:path'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { readAppConfig } from './workbench-config'
 
-export type DiagnosticModule = 'generation' | 'video' | 'detection' | 'title'
+export type DiagnosticModule =
+  | 'generation'
+  | 'video'
+  | 'detection'
+  | 'title'
+  | 'collection'
+  | 'listing'
+  | 'photoshop'
+  | 'pipeline'
 
 export type DiagnosticLogEvent = {
   type: string
@@ -88,6 +96,20 @@ export async function createOptionalDiagnosticLogWriter(
     ...input,
     workbenchRoot: input.workbenchRoot,
   })
+}
+
+export async function writeOptionalDiagnosticLogEvent(
+  input: Omit<DiagnosticLogWriterInput, 'workbenchRoot'> & {
+    workbenchRoot?: string | undefined
+    event: DiagnosticLogEvent
+  },
+): Promise<string | null> {
+  const writer = await createOptionalDiagnosticLogWriter(input)
+  if (!writer) {
+    return null
+  }
+  await writer.append(input.event)
+  return writer.path
 }
 
 export function diagnosticRunId(module: DiagnosticModule) {

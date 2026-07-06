@@ -32,6 +32,10 @@ import {
   browserProfileLocks,
 } from '../../main/lib/browser-profile-lock'
 import { type CDPClient, cdpClient } from '../../main/lib/cdp-client'
+import {
+  errorForDiagnosticLog,
+  writeOptionalDiagnosticLogEvent,
+} from '../../main/lib/diagnostic-log-service'
 import { loadBatchAsListingItems } from '../../main/lib/listing-batch-loader'
 import { type SqliteDatabase, openSqliteDatabase } from '../../main/lib/sqlite'
 import { assertPathInsideWorkbench } from '../../main/lib/workbench-path-guard'
@@ -176,6 +180,7 @@ type ResolvedRunConfig = Required<
   > & {
     task_id: string
     timeout_ms: number
+    workbench_root: string
   }
 
 type ListingStatusKey = {
@@ -467,6 +472,16 @@ export class ListingRunner {
       } catch (error) {
         lastFailure = failureFromUnknown(error, DEFAULT_STAGE)
         if (!lastFailure.retryable || attempt === config.max_attempts) {
+          await this.writeListingDiagnostic({
+            config,
+            profileId,
+            item,
+            type: 'listing_item_failed',
+            operation: 'runItemWithRetries',
+            attempt: attempt + previousRetryCount,
+            failure: lastFailure,
+            error,
+          })
           return createFailedResult(
             item,
             config,
@@ -602,6 +617,17 @@ export class ListingRunner {
             stage: 'verify_result',
           })
           progress.lastError = pausedFailure
+          await this.writeListingDiagnostic({
+            config,
+            profileId,
+            item,
+            type: 'listing_workspace_paused',
+            operation: 'runWorkspaceQueue',
+            attempt: result.attemptCount,
+            failure: pausedFailure,
+            error: pausedFailure,
+            data: { failStreak },
+          })
           for (const remaining of queue.slice(queue.indexOf(item) + 1)) {
             const skipped = createSkippedResult(remaining, config, profileId, pausedFailure.message)
             results.push(skipped)
@@ -622,6 +648,15 @@ export class ListingRunner {
       }
     } catch (error) {
       await markWorkspaceTaskFailed(taskStore, binding, config.task_id)
+      const failure = failureFromUnknown(error, DEFAULT_STAGE)
+      await this.writeListingDiagnostic({
+        config,
+        profileId,
+        type: 'listing_workspace_failed',
+        operation: 'runWorkspaceQueue',
+        failure,
+        error,
+      })
       throw error
     } finally {
       await page?.close().catch(() => undefined)
@@ -702,6 +737,44 @@ export class ListingRunner {
 
   private async createListingEvidenceRoot(taskId: string) {
     return this.tempFiles.createTaskDir('listing', taskId)
+  }
+
+  private async writeListingDiagnostic(input: {
+    config: ResolvedRunConfig
+    profileId: string
+    type: string
+    operation: string
+    failure: ListingFailure
+    error: unknown
+    item?: ListingItem | undefined
+    attempt?: number | undefined
+    data?: Record<string, unknown> | undefined
+  }) {
+    await writeOptionalDiagnosticLogEvent({
+      module: 'listing',
+      runId: input.config.task_id,
+      workbenchRoot: input.config.workbench_root,
+      meta: {
+        platform: input.config.platform,
+        batchId: input.config.batch_id,
+        operation: input.operation,
+      },
+      event: {
+        type: input.type,
+        operation: input.operation,
+        ...(input.item ? { itemKey: input.item.sku } : {}),
+        ...(input.attempt !== undefined ? { attempt: input.attempt } : {}),
+        data: {
+          profileId: input.profileId,
+          sku: input.item?.sku ?? null,
+          stage: input.failure.stage,
+          code: input.failure.code,
+          retryable: input.failure.retryable,
+          ...(input.data ?? {}),
+        },
+        error: errorForDiagnosticLog(input.error),
+      },
+    }).catch(() => null)
   }
 }
 
@@ -996,6 +1069,7 @@ function normalizeRunConfig(
     submit_mode: config.submit_mode ?? DEFAULT_SUBMIT_MODE,
     max_attempts: config.max_attempts ?? DEFAULT_MAX_ATTEMPTS,
     timeout_ms: config.timeout_ms ?? DEFAULT_TIMEOUT_MS,
+    workbench_root: dependencies.workbenchRoot ?? config.batch_dir,
     fail_streak_limit: config.fail_streak_limit ?? DEFAULT_FAIL_STREAK_LIMIT,
     resume: config.resume ?? true,
     retry_failed_only: config.retry_failed_only ?? false,
