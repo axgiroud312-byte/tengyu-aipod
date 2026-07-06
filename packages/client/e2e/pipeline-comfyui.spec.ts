@@ -441,6 +441,82 @@ async function runPipeline(page: Page, input: Parameters<Window['api']['pipeline
   }, input)
 }
 
+async function resumePipeline(page: Page, runId: string) {
+  return page.evaluate(async (inputRunId) => {
+    return new Promise<Awaited<ReturnType<Window['api']['pipeline']['getRun']>>>(
+      (resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          offCompleted()
+          reject(new Error('pipeline resume timed out'))
+        }, 60_000)
+        const offCompleted = window.api.pipeline.onCompleted((event) => {
+          const eventRunId = event.ok ? event.result.run.id : event.run_id
+          if (eventRunId !== inputRunId) {
+            return
+          }
+          window.clearTimeout(timer)
+          offCompleted()
+          if (event.ok) {
+            resolve(event.result)
+            return
+          }
+          reject(new Error(event.error))
+        })
+        window.api.pipeline.resume({ run_id: inputRunId }).catch((error) => {
+          window.clearTimeout(timer)
+          offCompleted()
+          reject(error)
+        })
+      },
+    )
+  }, runId)
+}
+
+function markRunInterruptedAfterFirstSource(workbenchRoot: string, runId: string) {
+  const db = openSqliteDatabase(join(workbenchRoot, '.workbench', 'workbench.db'))
+  try {
+    const sourceItems = db
+      .prepare(
+        `
+          SELECT item_key
+          FROM pipeline_items
+          WHERE run_id = ? AND step_key = 'source' AND status = 'completed'
+          ORDER BY created_at ASC
+        `,
+      )
+      .all(runId) as Array<{ item_key: string }>
+    for (const item of sourceItems.slice(1)) {
+      db.prepare(
+        `
+          DELETE FROM pipeline_items
+          WHERE run_id = ? AND item_key = ?
+        `,
+      ).run(runId, item.item_key)
+    }
+    db.prepare(
+      `
+        UPDATE pipeline_steps
+        SET status = 'interrupted',
+            output_count = 1,
+            completed_at = ?,
+            updated_at = ?
+        WHERE run_id = ? AND step_key = 'source'
+      `,
+    ).run(Date.now(), Date.now(), runId)
+    db.prepare(
+      `
+        UPDATE pipeline_runs
+        SET status = 'interrupted',
+            error_summary = '完整任务已中断，已完成产物已保留',
+            completed_at = ?
+        WHERE id = ?
+      `,
+    ).run(Date.now(), runId)
+  } finally {
+    db.close()
+  }
+}
+
 function txt2imgWorkflowJson() {
   return {
     '1': {
@@ -842,6 +918,75 @@ test.describe('pipeline comfyui real probe', () => {
         ?.items[0]?.local_path ?? ''
     expect(firstGeneratedPath).toContain(join('02-印花工作区', '图生图'))
     expect(await readFile(firstGeneratedPath, 'utf8')).toContain('image:')
+  })
+
+  test('resumes interrupted txt2img comfyui runs without resubmitting completed prompts', async () => {
+    const state: MockState = { bailianCalls: 0, queuedPrompts: [] }
+    const mockServer = await startMockServer(state)
+    closeMockServer = mockServer.close
+
+    const workbenchRoot = join(tempRoot, 'workbench-resume')
+    await seedCurrentComfyuiInstance(workbenchRoot, `${mockServer.baseUrl}/comfy`)
+
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-resume'),
+    })
+    const page = await app.firstWindow()
+    await prepareApp(page, workbenchRoot)
+
+    const txtWorkflow = await importWorkflow(page, {
+      name: 'Pipeline Resume Txt2img Workflow',
+      capability: 'txt2img',
+      workflowJson: txt2imgWorkflowJson(),
+    })
+
+    const initialResult = await runPipeline(page, {
+      name: 'pipeline-comfyui-resume',
+      printMode: 'local',
+      source: {
+        mode: 'txt2img',
+        provider: 'comfyui-chenyu',
+        prompt: {
+          mode: 'manual',
+          prompts: ['resume prompt 1', 'resume prompt 2'],
+        },
+        comfyui: {
+          workflowId: txtWorkflow.id,
+          width: 1024,
+          height: 1024,
+          concurrency: 1,
+        },
+      },
+      matting: { enabled: false, mode: 'comfyui' },
+      detection: { enabled: false },
+      photoshop: { enabled: false, templates: [] },
+      title: {
+        enabled: false,
+        platform: 'temu',
+        language: 'en',
+        model: 'qwen3.6-flash',
+      },
+    })
+
+    expect(initialResult?.run.status).toBe('completed')
+    expect(state.queuedPrompts).toHaveLength(2)
+
+    const runId = initialResult?.run.id
+    if (!runId) {
+      throw new Error('resume e2e did not create a run id')
+    }
+    markRunInterruptedAfterFirstSource(workbenchRoot, runId)
+    state.queuedPrompts.length = 0
+
+    const resumedResult = await resumePipeline(page, runId)
+
+    expect(resumedResult?.run.status).toBe('completed')
+    expect(state.queuedPrompts).toHaveLength(1)
+    const resumedPromptNode = state.queuedPrompts[0]?.workflow['1'] as
+      | { inputs?: { text?: string } }
+      | undefined
+    expect(resumedPromptNode?.inputs?.text).toBe('resume prompt 2')
   })
 
   test('runs collection extract and existing prints matting complete tasks through electron IPC', async () => {
