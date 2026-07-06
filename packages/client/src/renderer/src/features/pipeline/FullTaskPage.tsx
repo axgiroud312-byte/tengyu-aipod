@@ -21,6 +21,7 @@ import {
   sectionItemsForLightbox,
   selectedPipelineResultPreview,
 } from '@/features/pipeline/pipeline-result-preview'
+import { validatePipelineConfig } from '@/features/pipeline/pipeline-validation'
 import {
   type TitleExistingStrategy,
   type TitleKeywordGroupDraft,
@@ -1643,180 +1644,88 @@ export function FullTaskPage() {
     detectionLockedOn || (!detectionLockedSkipped && detectionEnabled)
   const effectivePhotoshopEnabled = photoshopLockedOn || photoshopEnabled
   const effectiveTitleEnabled = titleEnabled && effectivePhotoshopEnabled
-  const validationIssues = useMemo(() => {
-    const issues: string[] = []
-    const normalizedPrintSkuCode = printSkuCode.trim()
-    if (effectivePhotoshopEnabled && !normalizedPrintSkuCode) {
-      issues.push('请先填写印花货号')
-    }
-    if (effectivePhotoshopEnabled && isMac) {
-      issues.push('PS 套版仅支持 Windows，关闭 PS 套版后可在当前电脑运行前置步骤')
-    }
-    if (effectivePhotoshopEnabled && templatePaths.length === 0) {
-      issues.push('请先选择 PSD 模板')
-    }
-    if (sourceMode === 'collection') {
-      if (!sourceFolder.trim()) {
-        issues.push('请先选择采集文件夹')
-      }
-      if (extractSkillOptions.length === 0) {
-        issues.push('请先在后台配置提取 Skill')
-      }
-      if (!selectedExtractSkill) {
-        issues.push('请先选择提取 Skill')
-      }
-      if (extractProvider === 'comfyui-chenyu') {
-        if (runningInstances.length === 0) {
-          issues.push('请先开机晨羽云机')
-        }
-        if (!extractWorkflowId.trim()) {
-          issues.push('请先选择晨羽提取工作流')
-        }
-        if (!extractInstanceUuid.trim()) {
-          issues.push('请先选择晨羽提取实例')
-        }
-      }
-    }
-    if (sourceMode === 'existing_prints') {
-      if (!existingPrintFolder.trim()) {
-        issues.push('请先选择已有印花文件夹')
-      }
-    }
-    if (sourceMode === 'txt2img') {
-      if (promptSkillOptions.length === 0) {
-        issues.push('请先在后台配置提示词 Skill')
-      }
-      if (!selectedPromptSkill) {
-        issues.push('请先选择提示词 Skill')
-      }
-      if (!promptModel.trim()) {
-        issues.push('请先选择提示词模型')
-      }
-      if (!promptRequirement.trim()) {
-        issues.push('请先填写印花要求')
-      }
-    }
-    if (sourceMode === 'txt2img' && txt2imgProvider === 'comfyui-chenyu') {
-      if (runningInstances.length === 0) {
-        issues.push('请先开机晨羽云机')
-      }
-      if (!txt2imgComfyuiWorkflowId.trim()) {
-        issues.push('请先选择晨羽文生图工作流')
-      }
-      if (!txt2imgComfyuiInstanceUuid.trim()) {
-        issues.push('请先选择晨羽文生图实例')
-      }
-    }
-    if (sourceMode === 'img2img' && img2imgProvider === 'grsai') {
-      if (referenceImages.length === 0) {
-        issues.push('请先添加至少一张图生图参考图')
-      }
-      if (promptSkillOptions.length === 0) {
-        issues.push('请先在后台配置提示词 Skill')
-      }
-      if (!selectedPromptSkill) {
-        issues.push('请先选择提示词 Skill')
-      }
-      if (!promptModel.trim()) {
-        issues.push('请先选择提示词模型')
-      }
-      if (!promptRequirement.trim()) {
-        issues.push('请先填写印花要求')
-      }
-    }
-    if (sourceMode === 'img2img' && img2imgProvider === 'comfyui-chenyu') {
-      if (!img2imgSourceFolder.trim()) {
-        issues.push('请先选择图生图图片文件夹')
-      }
-      if (runningInstances.length === 0) {
-        issues.push('请先开机晨羽云机')
-      }
-      if (!img2imgComfyuiWorkflowId.trim()) {
-        issues.push('请先选择晨羽图生图工作流')
-      }
-      if (!img2imgComfyuiInstanceUuid.trim()) {
-        issues.push('请先选择晨羽图生图实例')
-      }
-      if (img2imgComfyuiPromptMode === 'ai') {
-        if (promptSkillOptions.length === 0) {
-          issues.push('请先在后台配置提示词 Skill')
-        }
-        if (!selectedPromptSkill) {
-          issues.push('请先选择提示词 Skill')
-        }
-        if (!promptModel.trim()) {
-          issues.push('请先选择提示词模型')
-        }
-      }
-    }
-    if (effectiveMattingEnabled) {
-      if (runningInstances.length === 0) {
-        issues.push('请先开机晨羽云机')
-      }
-      if (!mattingWorkflowId.trim()) {
-        issues.push('请先选择抠图工作流')
-      }
-      if (!mattingInstanceUuid.trim()) {
-        issues.push('请先选择抠图晨羽实例')
-      }
-    }
-    if (effectiveDetectionEnabled) {
-      if (!detectionModel.trim()) {
-        issues.push('请先选择侵权检测模型')
-      }
-      if (!selectedDetectionSkill) {
-        issues.push('请先选择侵权检测 Skill')
-      }
-    }
-    if (titleEnabled && !effectivePhotoshopEnabled) {
-      issues.push('标题生成需要先启用 PS 套版')
-    }
-    if (
-      effectiveTitleEnabled &&
-      (!titlePlatform.trim() || !titleLanguage.trim() || !titleModel.trim())
-    ) {
-      issues.push('请先完成标题设置')
-    }
-    return issues
-  }, [
-    extractProvider,
-    extractSkillOptions.length,
-    extractInstanceUuid,
-    extractWorkflowId,
-    detectionModel,
-    effectiveDetectionEnabled,
-    effectiveMattingEnabled,
-    effectivePhotoshopEnabled,
-    effectiveTitleEnabled,
-    isMac,
-    mattingInstanceUuid,
-    mattingWorkflowId,
-    promptModel,
-    promptRequirement,
-    promptSkillOptions.length,
-    printSkuCode,
-    referenceImages.length,
-    runningInstances.length,
-    selectedExtractSkill,
-    selectedDetectionSkill,
-    selectedPromptSkill,
-    img2imgComfyuiPromptMode,
-    img2imgComfyuiInstanceUuid,
-    img2imgComfyuiWorkflowId,
-    img2imgProvider,
-    img2imgSourceFolder,
-    sourceFolder,
-    existingPrintFolder,
-    sourceMode,
-    templatePaths.length,
-    txt2imgComfyuiInstanceUuid,
-    txt2imgComfyuiWorkflowId,
-    txt2imgProvider,
-    titleEnabled,
-    titleLanguage,
-    titleModel,
-    titlePlatform,
-  ])
+  const validationIssues = useMemo(
+    () =>
+      validatePipelineConfig({
+        effectivePhotoshopEnabled,
+        effectiveMattingEnabled,
+        effectiveDetectionEnabled,
+        effectiveTitleEnabled,
+        isMac,
+        printSkuCode,
+        templateCount: templatePaths.length,
+        sourceMode,
+        sourceFolder,
+        existingPrintFolder,
+        extractSkillOptionCount: extractSkillOptions.length,
+        hasSelectedExtractSkill: Boolean(selectedExtractSkill),
+        extractProvider,
+        runningInstanceCount: runningInstances.length,
+        extractWorkflowId,
+        extractInstanceUuid,
+        promptSkillOptionCount: promptSkillOptions.length,
+        hasSelectedPromptSkill: Boolean(selectedPromptSkill),
+        promptModel,
+        promptRequirement,
+        txt2imgProvider,
+        txt2imgComfyuiWorkflowId,
+        txt2imgComfyuiInstanceUuid,
+        img2imgProvider,
+        referenceImageCount: referenceImages.length,
+        img2imgSourceFolder,
+        img2imgComfyuiWorkflowId,
+        img2imgComfyuiInstanceUuid,
+        img2imgComfyuiPromptMode,
+        mattingWorkflowId,
+        mattingInstanceUuid,
+        detectionModel,
+        hasSelectedDetectionSkill: Boolean(selectedDetectionSkill),
+        titleEnabled,
+        titlePlatform,
+        titleLanguage,
+        titleModel,
+      }),
+    [
+      extractProvider,
+      extractSkillOptions.length,
+      extractInstanceUuid,
+      extractWorkflowId,
+      detectionModel,
+      effectiveDetectionEnabled,
+      effectiveMattingEnabled,
+      effectivePhotoshopEnabled,
+      effectiveTitleEnabled,
+      isMac,
+      mattingInstanceUuid,
+      mattingWorkflowId,
+      promptModel,
+      promptRequirement,
+      promptSkillOptions.length,
+      printSkuCode,
+      referenceImages.length,
+      runningInstances.length,
+      selectedExtractSkill,
+      selectedDetectionSkill,
+      selectedPromptSkill,
+      img2imgComfyuiPromptMode,
+      img2imgComfyuiInstanceUuid,
+      img2imgComfyuiWorkflowId,
+      img2imgProvider,
+      img2imgSourceFolder,
+      sourceFolder,
+      existingPrintFolder,
+      sourceMode,
+      templatePaths.length,
+      txt2imgComfyuiInstanceUuid,
+      txt2imgComfyuiWorkflowId,
+      txt2imgProvider,
+      titleEnabled,
+      titleLanguage,
+      titleModel,
+      titlePlatform,
+    ],
+  )
+  const validationMessages = validationIssues.map((issue) => issue.message)
   const canStart = !running && validationIssues.length === 0
 
   const refreshOptions = useCallback(async () => {
@@ -2511,7 +2420,7 @@ export function FullTaskPage() {
 
   async function runPipeline() {
     if (validationIssues.length > 0) {
-      setError(validationIssues[0] ?? '请先补齐完整任务配置')
+      setError(validationMessages[0] ?? '请先补齐完整任务配置')
       return
     }
     setError(null)
@@ -3685,12 +3594,12 @@ export function FullTaskPage() {
               </CardContent>
             </Card>
 
-            {!running && validationIssues.length ? (
+            {!running && validationMessages.length ? (
               <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
                 <p className="font-medium">暂不能启动</p>
                 <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {validationIssues.map((issue) => (
-                    <li key={issue}>{issue}</li>
+                  {validationMessages.map((message) => (
+                    <li key={message}>{message}</li>
                   ))}
                 </ul>
               </div>
@@ -3700,7 +3609,7 @@ export function FullTaskPage() {
               <Button
                 disabled={!canStart}
                 onClick={() => void runPipeline()}
-                title={validationIssues[0] ?? undefined}
+                title={validationMessages[0] ?? undefined}
               >
                 <Play className="mr-2 h-4 w-4" />
                 启动完整任务
