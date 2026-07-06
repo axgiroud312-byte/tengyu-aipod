@@ -621,6 +621,8 @@ packages/client/src/modules/listing/platforms/
 
 客户端启动时读取本地版本和用户自定义覆盖项。这样店小秘改版时，直接随客户端更新或本地替换选择器文件即可。
 
+P3 若启动 selector 热修，必须先按 ADR-0017 执行：远端只能派发 JSON selector records，不能派发可执行动作代码；平台仍按 selectors / page-parser / action-executor / workflow 四层运行，远端 record 只替换 selectors 数据源。
+
 ## 13. IPC 接口
 
 ```ts
