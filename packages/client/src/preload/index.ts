@@ -652,6 +652,8 @@ const api = {
   },
   pipeline: {
     run: (input: PipelineRunConfig) => ipcRenderer.invoke('pipeline:run', input) as Promise<string>,
+    resume: (input: { run_id: string }) =>
+      ipcRenderer.invoke('pipeline:resume', input) as Promise<string>,
     cancel: (input: { run_id: string }) =>
       ipcRenderer.invoke('pipeline:cancel', input) as Promise<{ ok: boolean }>,
     listRuns: () => ipcRenderer.invoke('pipeline:list-runs') as Promise<PipelineRunRecord[]>,

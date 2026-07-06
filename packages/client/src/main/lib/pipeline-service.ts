@@ -125,6 +125,12 @@ type StreamingSourceProducerCallbacks = {
   onPlannedCount?: (count: number) => void
 }
 
+type PipelineResumeState = {
+  completedItemsByStep: Map<PipelineStepKey, PipelineItemRecord[]>
+  completedItemByStepAndKey: Map<string, PipelineItemRecord>
+  completedSourceKeys: Set<string>
+}
+
 type ActivePipelineRun = {
   db: Pick<SqliteDatabase, 'prepare'>
   cancelRequested: boolean
@@ -484,6 +490,32 @@ async function scanImageFiles(folder: string): Promise<string[]> {
   return files.sort(naturalCompare)
 }
 
+async function pathExists(path: string) {
+  return Boolean(await stat(path).catch(() => null))
+}
+
+function resumeItemMapKey(stepKey: PipelineStepKey, itemKey: string) {
+  return `${stepKey}:${itemKey}`
+}
+
+function sourceArtifactIdsFromRecord(item: PipelineItemRecord) {
+  return parseJsonArray<string>(item.source_artifact_ids_json)
+}
+
+function streamItemFromPipelineItem(item: PipelineItemRecord): PipelinePrintStreamItem | null {
+  const path = item.output_path ?? item.source_path
+  if (!path) {
+    return null
+  }
+  return {
+    itemKey: item.item_key,
+    path,
+    sourceArtifactIds: sourceArtifactIdsFromRecord(item),
+    ...(item.artifact_id ? { artifactId: item.artifact_id } : {}),
+    ...(item.print_id ? { printId: item.print_id } : {}),
+  }
+}
+
 function imagesFromPaths(paths: string[]): PipelineImage[] {
   return Array.from(new Set(paths.filter(Boolean))).map((path) => ({ path }))
 }
@@ -703,6 +735,16 @@ function parsePipelineRunConfig(input: unknown): PipelineRunConfig {
     })
   }
   return parsed.data as PipelineRunConfig
+}
+
+function parsePipelineRunIdInput(input: unknown) {
+  const parsed = z.object({ run_id: z.string().min(1) }).safeParse(input)
+  if (!parsed.success) {
+    throw new AppErrorClass('INVALID_INPUT', '完整任务 ID 无效', false, {
+      issues: parsed.error.issues,
+    })
+  }
+  return parsed.data
 }
 
 function printSkuLockKey(config: PipelineRunConfig) {
@@ -1207,6 +1249,15 @@ export class PipelineService {
     return runId
   }
 
+  startResume(runId: string) {
+    void this.resumeRun(runId)
+      .then((detail) => emitPipelineCompleted({ ok: true, result: detail }))
+      .catch((error) =>
+        emitPipelineCompleted({ ok: false, run_id: runId, error: appErrorMessage(error) }),
+      )
+    return runId
+  }
+
   cancelRun(runId: string) {
     const active = this.activeRuns.get(runId)
     if (!active) {
@@ -1327,6 +1378,111 @@ export class PipelineService {
     try {
       return readRunDetail(db, runId)
     } finally {
+      db.close()
+    }
+  }
+
+  async resumeRun(runId: string): Promise<PipelineRunDetail> {
+    const workbenchRoot = await this.readWorkbenchRoot()
+    const db = openWorkbenchDatabase(workbenchRoot)
+    let activePrintSkuLock: string | null = null
+    try {
+      const detail = this.requireRunDetail(db, runId)
+      if (detail.run.status === 'running') {
+        throw new AppErrorClass('HTTP_4XX', '完整任务正在运行,不能续跑', false, { runId })
+      }
+      if (detail.run.status !== 'interrupted' && detail.run.status !== 'failed') {
+        throw new AppErrorClass('HTTP_4XX', '只有已中断或失败的完整任务可以续跑', false, {
+          runId,
+          status: detail.run.status,
+        })
+      }
+
+      const parsedConfig = parsePipelineRunConfig(JSON.parse(detail.run.config_json))
+      if (process.platform === 'darwin' && parsedConfig.photoshop.enabled !== false) {
+        throw new AppErrorClass(
+          'HTTP_4XX',
+          '完整任务包含 PS 套版，当前 v1 仅支持在 Windows 执行',
+          false,
+        )
+      }
+      activePrintSkuLock = this.acquirePrintSkuLock(runId, parsedConfig)
+      await this.assertRunConfigPaths(workbenchRoot, parsedConfig)
+      await this.assertResumeDiskState(workbenchRoot, runId, parsedConfig, detail)
+
+      const active: ActivePipelineRun = {
+        db,
+        cancelRequested: false,
+        interrupted: false,
+        currentCancel: null,
+        previewImages: [],
+        resultSections: detail.result_sections ?? [],
+        logs: detail.logs ?? [],
+        collectionReadLock: null,
+      }
+      this.activeRuns.set(runId, active)
+      const stats = parseStats(detail.run.stats_json)
+      const resumeState = this.buildResumeState(detail)
+
+      try {
+        active.collectionReadLock =
+          parsedConfig.source.mode === 'collection'
+            ? collectionFolderLock.acquireRead(parsedConfig.source.sourceFolder, {
+                kind: 'pipeline',
+                runId,
+              })
+            : null
+        this.markRunResuming(db, runId, stats)
+        this.appendLog(runId, {
+          level: 'info',
+          message: '完整任务从中断处继续',
+          details: { sourceMode: parsedConfig.source.mode, printMode: parsedConfig.printMode },
+        })
+        this.emitRunProgress(db, runId, 'running', null, stats, '完整任务从中断处继续')
+
+        await this.runStreamingPipeline(
+          db,
+          active,
+          runId,
+          detail.run.name,
+          workbenchRoot,
+          parsedConfig,
+          stats,
+          resumeState,
+        )
+
+        if (active.interrupted) {
+          return this.requireRunDetail(db, runId)
+        }
+        if (active.cancelRequested) {
+          this.appendLog(runId, { level: 'warn', message: '完整任务已取消' })
+          this.completeRun(db, runId, 'cancelled', stats, '完整任务已取消')
+        } else {
+          this.appendLog(runId, { level: 'info', message: '完整任务续跑完成' })
+          this.completeRun(db, runId, 'completed', stats, null)
+        }
+        return this.requireRunDetail(db, runId)
+      } catch (error) {
+        if (active.interrupted) {
+          return this.requireRunDetail(db, runId)
+        }
+        const status: PipelineRunStatus = active.cancelRequested ? 'cancelled' : 'failed'
+        this.appendLog(runId, {
+          level: active.cancelRequested ? 'warn' : 'error',
+          message: active.cancelRequested ? '完整任务已取消' : '完整任务续跑失败',
+          details: { error: appErrorMessage(error) },
+        })
+        this.completeRun(db, runId, status, stats, appErrorMessage(error))
+        if (!active.cancelRequested) {
+          throw error
+        }
+        return this.requireRunDetail(db, runId)
+      } finally {
+        active.collectionReadLock?.release()
+        this.activeRuns.delete(runId)
+      }
+    } finally {
+      this.releasePrintSkuLock(activePrintSkuLock, runId)
       db.close()
     }
   }
@@ -1600,6 +1756,83 @@ export class PipelineService {
       `,
     ).run(status, JSON.stringify(stats), error, Date.now(), runId)
     this.emitRunProgress(db, runId, status, null, stats, error ?? '完整任务完成')
+  }
+
+  private markRunResuming(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    stats: PipelineRunStats,
+  ) {
+    db.prepare(
+      `
+        UPDATE pipeline_runs
+        SET status = 'running',
+            stats_json = ?,
+            error_summary = NULL,
+            started_at = COALESCE(started_at, ?),
+            completed_at = NULL
+        WHERE id = ?
+      `,
+    ).run(JSON.stringify(stats), Date.now(), runId)
+  }
+
+  private buildResumeState(detail: PipelineRunDetail): PipelineResumeState {
+    const completedItemsByStep = new Map<PipelineStepKey, PipelineItemRecord[]>()
+    const completedItemByStepAndKey = new Map<string, PipelineItemRecord>()
+    for (const item of detail.items ?? []) {
+      if (item.status !== 'completed' && item.status !== 'skipped' && item.status !== 'filtered') {
+        continue
+      }
+      const items = completedItemsByStep.get(item.step_key) ?? []
+      items.push(item)
+      completedItemsByStep.set(item.step_key, items)
+      completedItemByStepAndKey.set(resumeItemMapKey(item.step_key, item.item_key), item)
+    }
+    return {
+      completedItemsByStep,
+      completedItemByStepAndKey,
+      completedSourceKeys: new Set(
+        (detail.items ?? [])
+          .filter((item) => item.step_key === 'source' && item.status === 'completed')
+          .map((item) => item.item_key),
+      ),
+    }
+  }
+
+  private async assertResumeDiskState(
+    workbenchRoot: string,
+    runId: string,
+    config: PipelineRunConfig,
+    detail: PipelineRunDetail,
+  ) {
+    if (config.photoshop.enabled !== false) {
+      const waitingFolder = join(
+        workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        WAITING_PHOTOSHOP_PRINT_FOLDER,
+        safePathSegment(runId),
+      )
+      const waitingStat = await stat(waitingFolder).catch(() => null)
+      if (!waitingStat?.isDirectory()) {
+        throw new AppErrorClass('HTTP_4XX', '源目录已被清理,无法续跑', false, {
+          runId,
+          waitingFolder,
+        })
+      }
+    }
+
+    for (const item of detail.items ?? []) {
+      if (item.step_key !== 'source' || item.status !== 'completed') {
+        continue
+      }
+      const sourcePath = item.output_path ?? item.source_path
+      if (sourcePath && !(await pathExists(sourcePath))) {
+        throw new AppErrorClass('HTTP_4XX', '源目录已被清理,无法续跑', false, {
+          runId,
+          sourcePath,
+        })
+      }
+    }
   }
 
   private requireRunDetail(db: Pick<SqliteDatabase, 'prepare'>, runId: string): PipelineRunDetail {
@@ -2260,6 +2493,7 @@ export class PipelineService {
     input: AsyncIterable<PipelinePrintStreamItem>,
     stages: PipelinePrintStageRegistration[],
     createContext: (stepKey: PipelineStepKey) => PipelineStageRuntimeContext,
+    resumeState?: PipelineResumeState | undefined,
   ) {
     let current: AsyncIterable<PipelinePrintStreamItem> = input
     const pumps: Promise<void>[] = []
@@ -2270,7 +2504,14 @@ export class PipelineService {
       pumps.push(
         (async () => {
           try {
-            for await (const item of stage.create(context)(stageInput, context)) {
+            const stageItems = this.createResumeAwareStage(
+              stage.stepKey,
+              stage.create(context),
+              stageInput,
+              context,
+              resumeState,
+            )
+            for await (const item of stageItems) {
               stageOutput.push(item)
             }
             stageOutput.end()
@@ -2287,6 +2528,81 @@ export class PipelineService {
     }
   }
 
+  private createResumeAwareStage(
+    stepKey: PipelineStepKey,
+    stage: ReturnType<PipelinePrintStageRegistration['create']>,
+    input: AsyncIterable<PipelinePrintStreamItem>,
+    context: PipelineStageRuntimeContext,
+    resumeState?: PipelineResumeState | undefined,
+  ): AsyncIterable<PipelinePrintStreamItem> {
+    if (!resumeState) {
+      return stage(input, context)
+    }
+    const activeResumeState = resumeState
+    const service = this
+    async function* resumeAwareStage() {
+      const pendingItems: PipelinePrintStreamItem[] = []
+      for await (const item of input) {
+        const resumedItems = service.resumeOutputItemsForStage(
+          stepKey,
+          item,
+          context.config,
+          activeResumeState,
+        )
+        if (resumedItems) {
+          for (const resumedItem of resumedItems) {
+            yield resumedItem
+          }
+          continue
+        }
+        pendingItems.push(item)
+      }
+      if (pendingItems.length === 0) {
+        return
+      }
+      async function* pendingInput() {
+        for (const item of pendingItems) {
+          yield item
+        }
+      }
+      for await (const item of stage(pendingInput(), context)) {
+        yield item
+      }
+    }
+    return resumeAwareStage()
+  }
+
+  private resumeOutputItemsForStage(
+    stepKey: PipelineStepKey,
+    item: PipelinePrintStreamItem,
+    config: PipelineRunConfig,
+    resumeState: PipelineResumeState,
+  ): PipelinePrintStreamItem[] | null {
+    if (stepKey === 'photoshop') {
+      const completed = config.photoshop.templates.flatMap((templatePath) => {
+        const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
+        const record = resumeState.completedItemByStepAndKey.get(
+          resumeItemMapKey('photoshop', stageItemKey),
+        )
+        const streamItem = record ? streamItemFromPipelineItem(record) : null
+        return streamItem ? [streamItem] : []
+      })
+      return completed.length === config.photoshop.templates.length ? completed : null
+    }
+
+    const record = resumeState.completedItemByStepAndKey.get(
+      resumeItemMapKey(stepKey, item.itemKey),
+    )
+    if (!record) {
+      return null
+    }
+    const streamItem = streamItemFromPipelineItem(record)
+    if (streamItem) {
+      return [streamItem]
+    }
+    return stepKey === 'title' ? [item] : []
+  }
+
   private async runStreamingPipeline(
     db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
     active: ActivePipelineRun,
@@ -2295,6 +2611,7 @@ export class PipelineService {
     workbenchRoot: string,
     config: PipelineRunConfig,
     stats: PipelineRunStats,
+    resumeState?: PipelineResumeState | undefined,
   ) {
     const visibleFilenameFields = pipelineVisibleFilenameFields(config)
     const sourceQueue = new AsyncItemQueue<PipelinePrintStreamItem>()
@@ -2397,6 +2714,7 @@ export class PipelineService {
         stepKey,
         isCancelled: () => active.cancelRequested,
       }),
+      resumeState,
     )
     const consumeOutputPromise = (async () => {
       for await (const item of stagePipeline.output) {
@@ -2408,6 +2726,28 @@ export class PipelineService {
         })
       }
     })()
+
+    for (const item of resumeState?.completedItemsByStep.get('source') ?? []) {
+      const payload = streamItemFromPipelineItem(item)
+      if (!payload) {
+        continue
+      }
+      sourceTotalRef.value += 1
+      const image: PipelineImage = {
+        path: payload.path,
+        ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
+        ...(payload.printId ? { printId: payload.printId } : {}),
+        ...(payload.prompt ? { prompt: payload.prompt } : {}),
+      }
+      sourceItems.push(image)
+      if (config.source.mode !== 'collection') {
+        stats.prints = sourceItems.length
+      }
+      refreshSourceSection()
+      if (!this.stopAcceptingMoreWork(active)) {
+        sourceQueue.push(payload)
+      }
+    }
 
     try {
       const result = await this.runStreamingSourceProducer(
@@ -2468,6 +2808,7 @@ export class PipelineService {
             refreshSourceSection()
           },
         },
+        resumeState,
       )
       sourceFailedRef.value = result.failed
       const failureLogLabel = sourceFailureLogLabel(config)
@@ -2858,6 +3199,7 @@ export class PipelineService {
     _queue: AsyncItemQueue<PipelinePrintStreamItem>,
     onItem: (item: PipelinePrintStreamItem) => void,
     callbacks: StreamingSourceProducerCallbacks = {},
+    resumeState?: PipelineResumeState | undefined,
   ): Promise<StreamingSourceProducerResult> {
     const source = config.source
     if (source.mode === 'collection') {
@@ -2868,8 +3210,12 @@ export class PipelineService {
       callbacks.onPlannedCount?.(sourcePaths.length)
       for (const [index, sourcePath] of sourcePaths.entries()) {
         this.assertCanAcceptMoreWork(active)
+        const itemKey = `source-${index + 1}`
+        if (resumeState?.completedSourceKeys.has(itemKey)) {
+          continue
+        }
         onItem({
-          itemKey: `source-${index + 1}`,
+          itemKey,
           path: sourcePath,
           sourceArtifactIds: [],
         })
@@ -2892,8 +3238,12 @@ export class PipelineService {
       callbacks.onPlannedCount?.(paths.length)
       for (const [index, path] of paths.entries()) {
         this.assertCanAcceptMoreWork(active)
+        const itemKey = `existing-print-${index + 1}`
+        if (resumeState?.completedSourceKeys.has(itemKey)) {
+          continue
+        }
         onItem({
-          itemKey: `existing-print-${index + 1}`,
+          itemKey,
           path,
           sourceArtifactIds: [],
         })
@@ -2915,18 +3265,22 @@ export class PipelineService {
     if (source.mode === 'txt2img') {
       const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
       callbacks.onPlannedCount?.(prompts.length)
+      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
       if (source.provider === 'comfyui-chenyu') {
         const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
         const aggregate: GenerationRunResult = {
           taskId: `${runId}-txt2img`,
           total: prompts.length,
-          succeeded: 0,
+          succeeded: completedSourceCount,
           failed: 0,
           images: [],
           failures: [],
         }
-        let itemCount = 0
+        let itemCount = completedSourceCount
         for (const [index, prompt] of prompts.entries()) {
+          if (index < completedSourceCount) {
+            continue
+          }
           this.assertCanAcceptMoreWork(active)
           const taskId = `${runId}-txt2img-${index + 1}`
           const result = await this.withGenerationCancel(active, taskId, async () =>
@@ -2973,11 +3327,23 @@ export class PipelineService {
       }
       const grsaiConfig = source.grsai
       let itemCount = 0
+      const promptsToRun = prompts.slice(completedSourceCount)
+      if (promptsToRun.length === 0) {
+        return {
+          taskId: `${runId}-txt2img`,
+          total: prompts.length,
+          succeeded: completedSourceCount,
+          failed: 0,
+          images: [],
+          failures: [],
+          itemCount: completedSourceCount,
+        }
+      }
       const result = await this.withGenerationCancel(active, `${runId}-txt2img`, async () =>
         runTxt2imgBatch(
           {
             capability: 'txt2img',
-            prompts,
+            prompts: promptsToRun,
             model: grsaiConfig.model,
             aspectRatio: grsaiConfig.aspectRatio,
             concurrency: grsaiConfig.concurrency ?? 3,
@@ -3005,8 +3371,13 @@ export class PipelineService {
           },
         ),
       )
-      this.recordStreamingSourceFailures(db, runId, result, itemCount)
-      return { ...result, itemCount }
+      this.recordStreamingSourceFailures(db, runId, result, completedSourceCount + itemCount)
+      return {
+        ...result,
+        total: prompts.length,
+        succeeded: completedSourceCount + result.succeeded,
+        itemCount: completedSourceCount + itemCount,
+      }
     }
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
       const sourcePaths = await scanImageFiles(source.sourceFolder)
@@ -4069,6 +4440,9 @@ export const pipelineService = new PipelineService()
 export function registerPipelineIpc() {
   ipcMain.handle('pipeline:run', (_event, input: unknown) => {
     return pipelineService.startRun(parsePipelineRunConfig(input))
+  })
+  ipcMain.handle('pipeline:resume', (_event, input: unknown) => {
+    return pipelineService.startResume(parsePipelineRunIdInput(input).run_id)
   })
   ipcMain.handle('pipeline:cancel', (_event, input: { run_id: string }) => ({
     ok: pipelineService.cancelRun(input.run_id),

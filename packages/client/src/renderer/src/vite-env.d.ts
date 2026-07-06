@@ -455,6 +455,7 @@ declare global {
       }
       pipeline: {
         run: (input: import('@tengyu-aipod/shared').PipelineRunConfig) => Promise<string>
+        resume: (input: { run_id: string }) => Promise<string>
         cancel: (input: { run_id: string }) => Promise<{ ok: boolean }>
         listRuns: () => Promise<import('@tengyu-aipod/shared').PipelineRunRecord[]>
         getRun: (input: { run_id: string }) => Promise<

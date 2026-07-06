@@ -19,6 +19,7 @@ import type {
 } from './generation-service'
 import { PipelineService, registerPipelineIpc } from './pipeline-service'
 import { type TitleBatchResult, writeTitlesXlsx } from './title-service'
+import { openWorkbenchDatabase, workbenchDatabasePath } from './workbench-db'
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
@@ -541,6 +542,26 @@ function existingPrintSource(
 
 function windowsBaseName(value: string) {
   return value.split(/[/\\]/).pop() ?? value
+}
+
+function updateRunStatusForTest(runId: string, status: 'running' | 'interrupted' | 'failed') {
+  const db = openWorkbenchDatabase(workbenchDatabasePath(mocks.workbenchRoot))
+  try {
+    db.prepare(
+      `
+        UPDATE pipeline_runs
+        SET status = ?,
+            completed_at = ?
+        WHERE id = ?
+      `,
+    ).run(status, Date.now(), runId)
+  } finally {
+    db.close()
+  }
+}
+
+type ResumeCapablePipelineService = PipelineService & {
+  resumeRun(runId: string): Promise<Awaited<ReturnType<PipelineService['getRun']>>>
 }
 
 describe('PipelineService', () => {
@@ -1529,6 +1550,234 @@ describe('PipelineService', () => {
     detail = await service.getRun('run-interrupted')
     expect(detail?.run.status).toBe('interrupted')
     expect(detail?.run.error_summary).toBe('完整任务已中断，已完成产物已保留')
+  })
+
+  it('rejects resuming a run that is already running', async () => {
+    const service = new PipelineService() as ResumeCapablePipelineService
+    await service.runPipeline('run-resume-running', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'comfyui-chenyu',
+        prompt: { mode: 'manual', prompts: ['flower print'] },
+        comfyui: {
+          workflowId: 'wf-txt2img',
+          instanceUuid: 'instance-a',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+    updateRunStatusForTest('run-resume-running', 'running')
+
+    await expect(service.resumeRun('run-resume-running')).rejects.toThrow('正在运行')
+  })
+
+  it('validates the waiting Photoshop copy folder before resuming', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    await service.runPipeline('run-resume-missing-waiting-folder', baseConfig(printFolder))
+    await rm(
+      join(
+        mocks.workbenchRoot,
+        WORKBENCH_DIRECTORIES.generation,
+        '等待套版',
+        'run-resume-missing-waiting-folder',
+      ),
+      { recursive: true, force: true },
+    )
+    updateRunStatusForTest('run-resume-missing-waiting-folder', 'interrupted')
+
+    await expect(service.resumeRun('run-resume-missing-waiting-folder')).rejects.toThrow(
+      '源目录已被清理,无法续跑',
+    )
+  })
+
+  it('resumes an interrupted ComfyUI txt2img run without regenerating completed source items', async () => {
+    const secondSourceStarted = createDeferred<void>()
+    const finishSecondSource = createDeferred<GenerationRunResult>()
+    const firstSourcePath = join(mocks.workbenchRoot, 'resume-source-1.png')
+    const secondSourcePath = join(mocks.workbenchRoot, 'resume-source-2.png')
+
+    mocks.runComfyuiTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        const prompt = input.prompts[0] ?? ''
+        await createPrint(firstSourcePath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-resume-source-txt2img-1',
+          capability: 'txt2img',
+          path: firstSourcePath,
+          printId: 'pri-resume-source-1',
+          artifactId: 'art-resume-source-1',
+          prompt,
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-resume-source-txt2img-1',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [
+            {
+              prompt,
+              url: 'file://resume-source-1.png',
+              localPath: firstSourcePath,
+              artifactId: 'art-resume-source-1',
+              printId: 'pri-resume-source-1',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+    mocks.runComfyuiTxt2imgBatch.mockImplementationOnce(async () => {
+      secondSourceStarted.resolve()
+      await finishSecondSource.promise
+      return {
+        taskId: 'run-resume-source-txt2img-2',
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+        images: [],
+        failures: [],
+      }
+    })
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const runPromise = service.runPipeline('run-resume-source', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'comfyui-chenyu',
+        prompt: { mode: 'manual', prompts: ['p1', 'p2'] },
+        comfyui: {
+          workflowId: 'wf-txt2img',
+          instanceUuid: 'instance-a',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    await secondSourceStarted.promise
+    await service.markActiveRunsInterrupted()
+    finishSecondSource.reject(new Error('source process exited'))
+    const interrupted = await runPromise
+    expect(interrupted.run.status).toBe('interrupted')
+
+    mocks.runComfyuiTxt2imgBatch.mockClear()
+    mocks.runComfyuiTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        const prompt = input.prompts[0] ?? ''
+        await createPrint(secondSourcePath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-resume-source-txt2img-2',
+          capability: 'txt2img',
+          path: secondSourcePath,
+          printId: 'pri-resume-source-2',
+          artifactId: 'art-resume-source-2',
+          prompt,
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-resume-source-txt2img-2',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [
+            {
+              prompt,
+              url: 'file://resume-source-2.png',
+              localPath: secondSourcePath,
+              artifactId: 'art-resume-source-2',
+              printId: 'pri-resume-source-2',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+
+    const resumed = await service.resumeRun('run-resume-source')
+
+    expect(resumed?.run.status).toBe('completed')
+    expect(mocks.runComfyuiTxt2imgBatch).toHaveBeenCalledOnce()
+    expect(mocks.runComfyuiTxt2imgBatch.mock.calls[0]?.[0]).toMatchObject({
+      prompts: ['p2'],
+      filenameStartIndex: 1,
+    })
+    expect(
+      (resumed?.items ?? []).filter(
+        (item) => item.step_key === 'source' && item.status === 'completed',
+      ),
+    ).toHaveLength(2)
+  })
+
+  it('resumes past completed Photoshop and title items without rerunning their adapters', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    mocks.runBatch.mockImplementationOnce(async (prints, _templates, config) => {
+      const result = createPhotoshopBatchResult(prints, config)
+      const outputPath = result.result_groups[0]?.outputs[0]
+      if (outputPath) {
+        await createTitleProductImage(outputPath)
+      }
+      return result
+    })
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const firstRun = await service.runPipeline('run-resume-ps-title', {
+      ...baseConfig(printFolder),
+      title: {
+        ...baseConfig(printFolder).title,
+        existingStrategy: 'regenerate',
+      },
+    })
+    expect(
+      (firstRun.items ?? []).filter(
+        (item) => item.step_key === 'photoshop' && item.status === 'completed',
+      ),
+    ).toHaveLength(1)
+    expect(
+      (firstRun.items ?? []).filter(
+        (item) => item.step_key === 'title' && item.status === 'completed',
+      ),
+    ).toHaveLength(1)
+    updateRunStatusForTest('run-resume-ps-title', 'interrupted')
+    mocks.runBatch.mockClear()
+    mocks.createTitleProcessingSession.mockClear()
+
+    const resumed = await service.resumeRun('run-resume-ps-title')
+
+    expect(resumed?.run.status).toBe('completed')
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+    expect(mocks.createTitleProcessingSession).not.toHaveBeenCalled()
+    expect(
+      (resumed?.items ?? []).filter(
+        (item) => item.step_key === 'photoshop' && item.status === 'completed',
+      ),
+    ).toHaveLength(1)
+    expect(
+      (resumed?.items ?? []).filter(
+        (item) => item.step_key === 'title' && item.status === 'completed',
+      ),
+    ).toHaveLength(1)
   })
 
   it('completes a detection-only run when every print is blocked', async () => {
@@ -3468,5 +3717,15 @@ describe('PipelineService', () => {
         },
       ),
     ).toThrow('完整任务参数无效')
+  })
+
+  it('rejects empty resume run ids at the IPC schema boundary', () => {
+    registerPipelineIpc()
+    const handler = mocks.ipcHandlers.get('pipeline:resume')
+    if (!handler) {
+      throw new Error('pipeline:resume handler was not registered')
+    }
+
+    expect(() => handler({}, { run_id: '' })).toThrow('完整任务 ID 无效')
   })
 })
