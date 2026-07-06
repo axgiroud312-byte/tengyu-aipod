@@ -1,4 +1,4 @@
-import { GenerationWorkbench } from '@/components/generation-workbench'
+import { GenerationWorkbench } from './GenerationWorkbench'
 
 export function GenerationPage() {
   return <GenerationWorkbench />
