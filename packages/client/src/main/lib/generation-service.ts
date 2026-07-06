@@ -9,7 +9,6 @@ import {
   WORKBENCH_DIRECTORIES,
 } from '@tengyu-aipod/shared'
 import { BrowserWindow, dialog, ipcMain } from 'electron'
-import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
 import {
   ChenyuCloudClient,
@@ -43,6 +42,42 @@ import {
 import { GenerationConcurrencyController } from './generation-concurrency'
 import { normalizeGenerationLocalConfig } from './generation-local-config'
 import {
+  beginGenerationTask,
+  finishGenerationTask,
+  isGenerationCancelled,
+  markGenerationResultCancelled,
+  requestGenerationTaskCancel,
+} from './generation/task-registry'
+import type {
+  ChenyuWorkflowMarketListInput,
+  ChenyuWorkflowRunInput,
+  ChooseGenerationImageFolderResult,
+  ComfyuiExtractMattingRunInput,
+  ComfyuiExtractRunInput,
+  ComfyuiImg2imgRunInput,
+  ComfyuiInstanceRunInput,
+  ComfyuiMattingRunInput,
+  ComfyuiTxt2imgRunInput,
+  ExtractRunInput,
+  ExtractSourcesResult,
+  GenerationDebugLogDetails,
+  GenerationDebugLogEntry,
+  GenerationDebugLogLevel,
+  GenerationImageCompletePayload,
+  GenerationImageSource,
+  GenerationProgress,
+  GenerationPromptInput,
+  GenerationRunImage,
+  GenerationRunResult,
+  GenerationTaskEvent,
+  Img2imgPrintSource,
+  Img2imgReferencePayload,
+  Img2imgSourcesResult,
+  MixedMattingRunInput,
+  Txt2imgPromptDraft,
+  Txt2imgRunInput,
+} from './generation/types'
+import {
   GRSAI_SUPPORTED_MODELS,
   type GenerateRequest,
   type GenerateResponse,
@@ -67,104 +102,58 @@ import {
   openWorkbenchDatabase as openWorkbenchDatabaseFile,
   workbenchDatabasePath,
 } from './workbench-db'
-
-export type Txt2imgPromptDraft = {
-  id: string
-  text: string
-  selected: boolean
-}
-
-export type GenerationPromptInput = {
-  capability?: Extract<GenerationCapability, 'txt2img' | 'img2img' | 'extract'> | undefined
-  skillId?: string | undefined
-  skillVersion?: string | undefined
-  printMode?: 'local' | 'full' | undefined
-  requirement: string
-  count: number
-  model?: string | undefined
-  modeInstruction?: string | undefined
-  referenceImages?: Array<{ base64: string; mime_type: string }> | undefined
-}
-
-export type Txt2imgRunInput = {
-  capability?: 'txt2img' | 'img2img' | undefined
-  prompts: string[]
-  model: string
-  aspectRatio: string
-  imageSize?: '1K' | '2K' | '4K' | undefined
-  referenceImages?: Array<{ base64: string; mime_type: string }> | undefined
-  concurrency: number
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type ComfyuiInstanceRunInput = {
-  instanceUuid?: string | undefined
-}
-
-export type ComfyuiTxt2imgRunInput = ComfyuiInstanceRunInput & {
-  prompts: string[]
-  workflowId: string
-  workflowName?: string | undefined
-  workflowVersion?: string | undefined
-  width?: number | undefined
-  height?: number | undefined
-  concurrency?: number | undefined
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type GenerationProgress = {
-  task_id: string
-  capability: GenerationCapability
-  processed: number
-  total: number
-  succeeded: number
-  failed: number
-  current_prompt?: string | undefined
-  images?: GenerationRunImage[] | undefined
-  status?: 'running' | 'cancelled' | undefined
-}
-
-export type GenerationRunImage = {
-  prompt: string
-  url: string
-  localPath?: string | undefined
-  sourcePath?: string | undefined
-  artifactId?: string | undefined
-  printId?: string | undefined
-}
-
-export type GenerationRunResult = {
-  taskId: string
-  total: number
-  succeeded: number
-  failed: number
-  images: GenerationRunImage[]
-  failures: Array<{ prompt: string; error: string; sourcePath?: string }>
-  cancelled?: boolean | undefined
-  diagnosticsLogPath?: string | undefined
-}
-
-export type GenerationImageCompletePayload = {
-  taskId: string
-  capability: GenerationCapability
-  path: string
-  printId: string
-  artifactId?: string | undefined
-  prompt?: string | undefined
-  sourceArtifactIds: string[]
-}
-
-export type GenerationTaskEvent =
-  | { ok: true; result: GenerationRunResult }
-  | { ok: false; taskId: string; error: string }
+export {
+  getActiveGenerationTaskCount,
+  requestAllGenerationCancels,
+} from './generation/task-registry'
+export type {
+  ChenyuWorkflowMarketListInput,
+  ChenyuWorkflowRunInput,
+  ChooseGenerationImageFolderResult,
+  ComfyuiExtractMattingRunInput,
+  ComfyuiExtractRunInput,
+  ComfyuiImg2imgRunInput,
+  ComfyuiInstanceRunInput,
+  ComfyuiMattingRunInput,
+  ComfyuiTxt2imgRunInput,
+  ExtractRunInput,
+  ExtractSourcesResult,
+  GenerationDebugLogDetails,
+  GenerationDebugLogEntry,
+  GenerationDebugLogLevel,
+  GenerationImageCompletePayload,
+  GenerationImageSource,
+  GenerationProgress,
+  GenerationPromptInput,
+  GenerationRunImage,
+  GenerationRunResult,
+  GenerationTaskEvent,
+  Img2imgPrintSource,
+  Img2imgReferencePayload,
+  Img2imgSourcesResult,
+  MixedMattingRunInput,
+  Txt2imgPromptDraft,
+  Txt2imgRunInput,
+} from './generation/types'
+import {
+  chenyuWorkflowInfoInputSchema,
+  chenyuWorkflowMarketListInputSchema,
+  chenyuWorkflowRunInputSchema,
+  comfyuiExtractMattingRunInputSchema,
+  comfyuiExtractRunInputSchema,
+  comfyuiImg2imgRunInputSchema,
+  comfyuiMattingRunInputSchema,
+  comfyuiTxt2imgRunInputSchema,
+  extractRunInputSchema,
+  generationCancelInputSchema,
+  generationPromptInputSchema,
+  manualPromptsTextInputSchema,
+  mixedMattingRunInputSchema,
+  parseGenerationIpcInput,
+  resolveImg2imgReferencesInputSchema,
+  scanGenerationImageFolderInputSchema,
+  txt2imgRunInputSchema,
+} from './generation/schemas'
 
 function generationImageIdentity(
   image: GenerateResponse['images'][number],
@@ -176,166 +165,6 @@ function generationImageIdentity(
     ...(artifactId ? { artifactId } : {}),
     ...(printId ? { printId } : {}),
   }
-}
-
-export type GenerationDebugLogLevel = 'debug' | 'info' | 'warn' | 'error'
-
-export type GenerationDebugLogEntry = {
-  id: string
-  timestamp: number
-  level: GenerationDebugLogLevel
-  message: string
-  taskId?: string
-  capability?: GenerationCapability
-  details?: GenerationDebugLogDetails
-}
-
-export type GenerationImageSource = {
-  id: string
-  path: string
-  name: string
-  relativePath: string
-  sizeBytes: number
-  modifiedAt: number
-  thumbnailUrl: string
-}
-
-export type ExtractSourcesResult = {
-  folder: string
-  images: GenerationImageSource[]
-}
-
-export type Img2imgPrintSource = GenerationImageSource & {
-  artifactId: string
-  printId: string | null
-  step: string
-}
-
-export type Img2imgSourcesResult = {
-  folders: string[]
-  images: Img2imgPrintSource[]
-}
-
-export type ChooseGenerationImageFolderResult =
-  | { ok: true; data: { path: string } }
-  | { ok: false; error: { code: string; message: string } }
-
-export type ExtractRunInput = {
-  sourceImagePaths: string[]
-  skillId: string
-  skillVersion?: string | undefined
-  variables?: Record<string, unknown> | undefined
-  model: string
-  aspectRatio: string
-  imageSize?: '1K' | '2K' | '4K' | undefined
-  concurrency: number
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
-  sourceArtifactIds?: string[] | undefined
-  sourceImagePaths?: string[] | undefined
-  workflowId: string
-  workflowName?: string | undefined
-  workflowVersion?: string | undefined
-  promptMode?: 'ai' | 'workflow' | 'manual' | undefined
-  prompt?: string | undefined
-  promptSkillId?: string | undefined
-  promptSkillVersion?: string | undefined
-  promptModel?: string | undefined
-  printMode?: 'local' | 'full' | undefined
-  modeInstruction?: string | undefined
-  requirement?: string | undefined
-  width?: number | undefined
-  height?: number | undefined
-  batchSize?: number | undefined
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {
-  sourceImagePaths: string[]
-  workflowId: string
-  workflowName?: string | undefined
-  workflowVersion?: string | undefined
-  skillId?: string | undefined
-  skillVersion?: string | undefined
-  prompt?: string | undefined
-  width?: number | undefined
-  height?: number | undefined
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type ComfyuiMattingRunInput = ComfyuiInstanceRunInput & {
-  sourceArtifactIds?: string[] | undefined
-  sourceImagePaths?: string[] | undefined
-  workflowId: string
-  workflowName?: string | undefined
-  workflowVersion?: string | undefined
-  prompt?: string | undefined
-  width?: number | undefined
-  height?: number | undefined
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type MixedMattingRunInput = Omit<ComfyuiMattingRunInput, 'workflowId'> & {
-  workflowId: string
-  maskSkillId?: string | undefined
-  maskSkillVersion?: string | undefined
-  maskModel?: string | undefined
-}
-
-export type ComfyuiExtractMattingRunInput = ComfyuiInstanceRunInput & {
-  sourceImagePaths: string[]
-  extractWorkflowId: string
-  extractWorkflowName?: string | undefined
-  extractWorkflowVersion?: string | undefined
-  mattingWorkflowId: string
-  mattingWorkflowName?: string | undefined
-  mattingWorkflowVersion?: string | undefined
-  skillId?: string | undefined
-  skillVersion?: string | undefined
-  prompt?: string | undefined
-  width?: number | undefined
-  height?: number | undefined
-  taskId?: string | undefined
-  outputTaskName?: string | undefined
-  filenamePrefix?: string | undefined
-  filenameSeparator?: string | undefined
-  filenameStartIndex?: number | undefined
-}
-
-export type ChenyuWorkflowMarketListInput = {
-  keyword?: string | undefined
-  tag?: string | undefined
-  sort?: string | undefined
-  page?: number | undefined
-  page_size?: number | undefined
-}
-
-export type ChenyuWorkflowRunInput = {
-  capability: GenerationCapability
-  workflowId: string
-  revisionId?: string | undefined
-  inputs?: Record<string, unknown> | undefined
-  prompt?: string | undefined
-  acceptExternalCostRisk?: boolean | undefined
-  taskId?: string | undefined
 }
 
 function chenyuWorkflowMarketParams(
@@ -351,19 +180,11 @@ function chenyuWorkflowMarketParams(
 }
 
 type GenerationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare' | 'close'>
-export type GenerationDebugLogDetails = Record<string, string | number | boolean | null | undefined>
 type GenerationDebugLogContext = {
   taskId?: string | undefined
   capability?: GenerationCapability | undefined
 }
-type Img2imgReference = {
-  artifactId: string
-  printId: string
-  imagePath: string
-  reference: PromptReferenceImage
-}
-
-export type Img2imgReferencePayload = Img2imgReference
+type Img2imgReference = Img2imgReferencePayload
 
 type GenerationServiceDependencies = {
   readConfig?: typeof readAppConfig
@@ -427,215 +248,15 @@ const GENERATION_CAPABILITY_FOLDERS = {
   matting: '抠图',
 } satisfies Record<GenerationCapability, string>
 let generationDebugLogSequence = 0
-const activeGenerationTasks = new Set<string>()
-const cancelledGenerationTasks = new Set<string>()
-
-const generationCapabilitySchema = z.enum(['txt2img', 'img2img', 'extract', 'matting'])
-const promptCapabilitySchema = z.enum(['txt2img', 'img2img', 'extract'])
-const txt2imgCapabilitySchema = z.enum(['txt2img', 'img2img'])
-const imageSizeSchema = z.enum(['1K', '2K', '4K'])
-const referenceImageSchema = z.object({
-  base64: z.string().min(1),
-  mime_type: z.string().min(1),
-})
-const stringArraySchema = z.array(z.string())
-const optionalStringSchema = z.string().optional()
-const positiveNumberSchema = z.number().positive().optional()
-const comfyuiImg2imgBatchSizeSchema = z.number().int().min(1).max(8).optional()
-
-const generationPromptInputSchema = z.object({
-  capability: promptCapabilitySchema.optional(),
-  skillId: optionalStringSchema,
-  skillVersion: optionalStringSchema,
-  printMode: z.enum(['local', 'full']).optional(),
-  requirement: z.string(),
-  count: z.number(),
-  model: optionalStringSchema,
-  modeInstruction: optionalStringSchema,
-  referenceImages: z.array(referenceImageSchema).optional(),
-})
-
-const txt2imgRunInputSchema = z.object({
-  capability: txt2imgCapabilitySchema.optional(),
-  prompts: stringArraySchema,
-  model: z.string(),
-  aspectRatio: z.string(),
-  imageSize: imageSizeSchema.optional(),
-  referenceImages: z.array(referenceImageSchema).optional(),
-  concurrency: z.number(),
-  taskId: optionalStringSchema,
-  filenamePrefix: optionalStringSchema,
-  filenameSeparator: optionalStringSchema,
-})
-
-const comfyuiInstanceRunInputSchema = z.object({
-  instanceUuid: optionalStringSchema,
-})
-
-const comfyuiTxt2imgRunInputSchema = comfyuiInstanceRunInputSchema.extend({
-  prompts: stringArraySchema,
-  workflowId: z.string(),
-  workflowName: optionalStringSchema,
-  workflowVersion: optionalStringSchema,
-  width: positiveNumberSchema,
-  height: positiveNumberSchema,
-  concurrency: positiveNumberSchema,
-  taskId: optionalStringSchema,
-  filenamePrefix: optionalStringSchema,
-  filenameSeparator: optionalStringSchema,
-})
-
-const extractRunInputSchema = z.object({
-  sourceImagePaths: stringArraySchema,
-  skillId: z.string(),
-  skillVersion: optionalStringSchema,
-  variables: z.record(z.unknown()).optional(),
-  model: z.string(),
-  aspectRatio: z.string(),
-  imageSize: imageSizeSchema.optional(),
-  concurrency: z.number(),
-  taskId: optionalStringSchema,
-  filenamePrefix: optionalStringSchema,
-  filenameSeparator: optionalStringSchema,
-})
-
-const comfyuiSourceInputSchema = comfyuiInstanceRunInputSchema.extend({
-  sourceArtifactIds: stringArraySchema.optional(),
-  sourceImagePaths: stringArraySchema.optional(),
-  workflowId: z.string(),
-  workflowName: optionalStringSchema,
-  workflowVersion: optionalStringSchema,
-  promptMode: z.enum(['ai', 'workflow', 'manual']).optional(),
-  prompt: optionalStringSchema,
-  promptSkillId: optionalStringSchema,
-  promptSkillVersion: optionalStringSchema,
-  promptModel: optionalStringSchema,
-  printMode: z.enum(['local', 'full']).optional(),
-  modeInstruction: optionalStringSchema,
-  requirement: optionalStringSchema,
-  width: positiveNumberSchema,
-  height: positiveNumberSchema,
-  batchSize: comfyuiImg2imgBatchSizeSchema,
-  taskId: optionalStringSchema,
-  filenamePrefix: optionalStringSchema,
-  filenameSeparator: optionalStringSchema,
-})
-
-const comfyuiExtractRunInputSchema = comfyuiInstanceRunInputSchema.extend({
-  sourceImagePaths: stringArraySchema,
-  workflowId: z.string(),
-  workflowName: optionalStringSchema,
-  workflowVersion: optionalStringSchema,
-  skillId: optionalStringSchema,
-  skillVersion: optionalStringSchema,
-  prompt: optionalStringSchema,
-  width: positiveNumberSchema,
-  height: positiveNumberSchema,
-  taskId: optionalStringSchema,
-  filenamePrefix: optionalStringSchema,
-  filenameSeparator: optionalStringSchema,
-})
-
-const comfyuiExtractMattingRunInputSchema = comfyuiInstanceRunInputSchema.extend({
-  sourceImagePaths: stringArraySchema,
-  extractWorkflowId: z.string(),
-  extractWorkflowName: optionalStringSchema,
-  extractWorkflowVersion: optionalStringSchema,
-  mattingWorkflowId: z.string(),
-  mattingWorkflowName: optionalStringSchema,
-  mattingWorkflowVersion: optionalStringSchema,
-  skillId: optionalStringSchema,
-  skillVersion: optionalStringSchema,
-  prompt: optionalStringSchema,
-  width: positiveNumberSchema,
-  height: positiveNumberSchema,
-  taskId: optionalStringSchema,
-  filenamePrefix: optionalStringSchema,
-  filenameSeparator: optionalStringSchema,
-})
-
-const mixedMattingRunInputSchema = comfyuiSourceInputSchema.extend({
-  maskSkillId: optionalStringSchema,
-  maskSkillVersion: optionalStringSchema,
-  maskModel: optionalStringSchema,
-})
-
-const chenyuWorkflowMarketListInputSchema = z
-  .object({
-    keyword: optionalStringSchema,
-    tag: optionalStringSchema,
-    sort: optionalStringSchema,
-    page: z.number().optional(),
-    page_size: z.number().optional(),
-  })
-  .optional()
-
-const chenyuWorkflowRunInputSchema = z.object({
-  capability: generationCapabilitySchema,
-  workflowId: z.string(),
-  revisionId: optionalStringSchema,
-  inputs: z.record(z.unknown()).optional(),
-  prompt: optionalStringSchema,
-  acceptExternalCostRisk: z.boolean().optional(),
-  taskId: optionalStringSchema,
-})
-
-const scanGenerationImageFolderInputSchema = z.object({ folder: z.string() })
-const resolveImg2imgReferencesInputSchema = z.object({ artifactIds: stringArraySchema })
-const chenyuWorkflowInfoInputSchema = z.object({ workflowId: z.string() })
-const generationCancelInputSchema = z.object({ task_id: z.string() })
-
-function parseGenerationIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
-  const parsed = schema.safeParse(input)
-  if (!parsed.success) {
-    throw new AppErrorClass('INVALID_INPUT', message, false, {
-      issues: parsed.error.issues,
-    })
-  }
-  return parsed.data
-}
 
 export function requestGenerationCancel(taskId: string) {
-  if (!activeGenerationTasks.has(taskId)) {
+  if (!requestGenerationTaskCancel(taskId)) {
     return false
   }
-  cancelledGenerationTasks.add(taskId)
   createGenerationDebugLogger({}, { taskId })('任务已请求取消', 'warn', {
     operation: 'cancel',
   })
   return true
-}
-
-function beginGenerationTask(taskId: string) {
-  activeGenerationTasks.add(taskId)
-  cancelledGenerationTasks.delete(taskId)
-}
-
-function finishGenerationTask(taskId: string) {
-  activeGenerationTasks.delete(taskId)
-  cancelledGenerationTasks.delete(taskId)
-}
-
-function isGenerationCancelled(taskId: string) {
-  return cancelledGenerationTasks.has(taskId)
-}
-
-export function getActiveGenerationTaskCount() {
-  return activeGenerationTasks.size
-}
-
-export function requestAllGenerationCancels() {
-  for (const taskId of activeGenerationTasks) {
-    cancelledGenerationTasks.add(taskId)
-  }
-  return activeGenerationTasks.size
-}
-
-function markGenerationResultCancelled(result: GenerationRunResult) {
-  if (isGenerationCancelled(result.taskId)) {
-    result.cancelled = true
-  }
-  return result
 }
 
 function submitGenerationTask(taskId: string, run: () => Promise<GenerationRunResult>) {
@@ -4471,7 +4092,9 @@ export function registerGenerationIpc() {
     ),
   )
   ipcMain.handle('generation:parse-manual-prompts', (_event, text: unknown) =>
-    parseManualPrompts(parseGenerationIpcInput(z.string(), text, '手动提示词文本参数不正确')),
+    parseManualPrompts(
+      parseGenerationIpcInput(manualPromptsTextInputSchema, text, '手动提示词文本参数不正确'),
+    ),
   )
   ipcMain.handle('generation:run-txt2img', (_event, input: unknown) =>
     runTxt2img(parseGenerationIpcInput(txt2imgRunInputSchema, input, '文生图任务参数不正确')),
@@ -4500,7 +4123,7 @@ export function registerGenerationIpc() {
   )
   ipcMain.handle('generation:run-comfyui-matting', (_event, input: unknown) =>
     runComfyuiMatting(
-      parseGenerationIpcInput(comfyuiSourceInputSchema, input, 'ComfyUI 抠图任务参数不正确'),
+      parseGenerationIpcInput(comfyuiMattingRunInputSchema, input, 'ComfyUI 抠图任务参数不正确'),
     ),
   )
   ipcMain.handle('generation:run-mixed-matting', (_event, input: unknown) =>
@@ -4510,7 +4133,7 @@ export function registerGenerationIpc() {
   )
   ipcMain.handle('generation:run-comfyui-img2img', (_event, input: unknown) =>
     runComfyuiImg2img(
-      parseGenerationIpcInput(comfyuiSourceInputSchema, input, 'ComfyUI 图生图任务参数不正确'),
+      parseGenerationIpcInput(comfyuiImg2imgRunInputSchema, input, 'ComfyUI 图生图任务参数不正确'),
     ),
   )
   ipcMain.handle('generation:run-chenyu-workflow', (_event, input: unknown) =>
