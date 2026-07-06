@@ -15,6 +15,14 @@ declare global {
           | { ok: true; data: { path: string; deletedFiles: number; deletedBytes: number } }
           | { ok: false; error: { code: string; message: string } }
         >
+        openDir: () => Promise<
+          | { ok: true; data: { path: string } }
+          | { ok: false; error: { code: string; message: string } }
+        >
+        exportZip: (input?: { outputPath?: string }) => Promise<
+          | { ok: true; data: { path: string; files: number; bytes: number } }
+          | { ok: false; error: { code: string; message: string } }
+        >
       }
       onboarding: {
         getState: () => Promise<{

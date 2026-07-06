@@ -1,7 +1,10 @@
 import { existsSync } from 'node:fs'
+import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { BrowserWindow, app, dialog, ipcMain } from 'electron'
+import { AppErrorClass } from '@tengyu-aipod/shared'
+import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
+import { z } from 'zod'
 import {
   getActiveListingRunCount,
   markActiveListingRunsInterrupted,
@@ -23,6 +26,7 @@ import {
 import { withCustomerAuthorizedIpcHandlers } from './lib/customer-auth-ipc-guard'
 import { registerDetectionConfigIpc } from './lib/detection-config'
 import { detectionService, registerDetectionIpc } from './lib/detection-service'
+import { exportDiagnosticLogZip } from './lib/diagnostic-log-export-service'
 import {
   cleanupDiagnosticLogs,
   deleteAllWorkbenchLogFiles,
@@ -44,6 +48,7 @@ import { registerSkillCacheIpc, skillCacheManager } from './lib/skill-cache'
 import { registerTempFileIpc, tempFileManager } from './lib/temp-file-manager'
 import { registerTitleIpc } from './lib/title-service'
 import { registerVideoGenerationIpc } from './lib/video-generation-service'
+import { getConfiguredWorkbenchRoot } from './lib/workbench-config'
 import { registerOnboardingIpc } from './onboarding'
 import { registerPhotoshopIpc } from './photoshop/ipc'
 
@@ -51,6 +56,12 @@ const currentDir = dirname(fileURLToPath(import.meta.url))
 let diagnosticLogCleanupTimer: ReturnType<typeof setInterval> | null = null
 
 registerLocalImageProtocolScheme()
+
+const logsExportZipInputSchema = z
+  .object({
+    outputPath: z.string().min(1).optional(),
+  })
+  .optional()
 
 if (process.env.TENGYU_ELECTRON_USER_DATA_DIR) {
   app.setPath('userData', process.env.TENGYU_ELECTRON_USER_DATA_DIR)
@@ -136,6 +147,43 @@ function syncSkillCacheWithCustomerAuth(state: CustomerAuthState) {
   skillCacheManager.stop()
 }
 
+async function getWorkbenchLogsRoot() {
+  const workbenchRoot = await getConfiguredWorkbenchRoot()
+  if (!workbenchRoot) {
+    throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
+  }
+  const logsRoot = join(workbenchRoot, '.workbench', 'logs')
+  await mkdir(logsRoot, { recursive: true })
+  return { logsRoot, workbenchRoot }
+}
+
+async function chooseDiagnosticZipPath(requestedPath?: string | undefined) {
+  if (requestedPath) {
+    return requestedPath
+  }
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const options = {
+    title: '导出日志包',
+    defaultPath: join(app.getPath('downloads'), `腾域aipod-诊断日志-${timestamp}.zip`),
+    filters: [{ name: 'ZIP 压缩包', extensions: ['zip'] }],
+  }
+  const owner = BrowserWindow.getFocusedWindow()
+  const result = owner
+    ? await dialog.showSaveDialog(owner, options)
+    : await dialog.showSaveDialog(options)
+  return result.canceled ? null : (result.filePath ?? null)
+}
+
+function ipcError(error: unknown, fallbackCode: string) {
+  if (error instanceof AppErrorClass) {
+    return { code: error.code, message: error.message }
+  }
+  return {
+    code: fallbackCode,
+    message: error instanceof Error ? error.message : String(error),
+  }
+}
+
 if (hasSingleInstanceLock) {
   app.whenReady().then(() => {
     void pipelineService.markPersistedRunningRunsInterrupted().catch(() => null)
@@ -160,6 +208,48 @@ if (hasSingleInstanceLock) {
             code: 'DELETE_LOGS_FAILED',
             message: error instanceof Error ? error.message : String(error),
           },
+        }
+      }
+    })
+    ipcMain.handle('logs:open-dir', async () => {
+      try {
+        const { logsRoot } = await getWorkbenchLogsRoot()
+        const openError = await shell.openPath(logsRoot)
+        if (openError) {
+          throw new AppErrorClass('HTTP_5XX', `打开日志目录失败：${openError}`, false, {
+            path: logsRoot,
+          })
+        }
+        return { ok: true, data: { path: logsRoot } }
+      } catch (error) {
+        return {
+          ok: false,
+          error: ipcError(error, 'OPEN_LOG_DIR_FAILED'),
+        }
+      }
+    })
+    ipcMain.handle('logs:export:zip', async (_event, input: unknown) => {
+      const parsed = logsExportZipInputSchema.safeParse(input)
+      if (!parsed.success) {
+        return {
+          ok: false,
+          error: { code: 'INVALID_INPUT', message: '日志导出参数不正确' },
+        }
+      }
+      try {
+        const outputPath = await chooseDiagnosticZipPath(parsed.data?.outputPath)
+        if (!outputPath) {
+          return { ok: false, error: { code: 'CANCELLED', message: '已取消导出日志包' } }
+        }
+        const { workbenchRoot } = await getWorkbenchLogsRoot()
+        return {
+          ok: true,
+          data: await exportDiagnosticLogZip({ outputPath, workbenchRoot }),
+        }
+      } catch (error) {
+        return {
+          ok: false,
+          error: ipcError(error, 'EXPORT_LOGS_FAILED'),
         }
       }
     })

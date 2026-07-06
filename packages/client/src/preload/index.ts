@@ -135,6 +135,16 @@ const api = {
         | { ok: true; data: { path: string; deletedFiles: number; deletedBytes: number } }
         | { ok: false; error: { code: string; message: string } }
       >,
+    openDir: () =>
+      ipcRenderer.invoke('logs:open-dir') as Promise<
+        | { ok: true; data: { path: string } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
+    exportZip: (input?: { outputPath?: string }) =>
+      ipcRenderer.invoke('logs:export:zip', input) as Promise<
+        | { ok: true; data: { path: string; files: number; bytes: number } }
+        | { ok: false; error: { code: string; message: string } }
+      >,
   },
   onboarding: {
     getState: () =>

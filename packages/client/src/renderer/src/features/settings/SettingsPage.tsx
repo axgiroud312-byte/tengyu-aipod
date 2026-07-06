@@ -23,6 +23,7 @@ import { useGenerationStore } from '@/store/generation'
 import {
   CheckCircle2,
   Cloud,
+  FileArchive,
   FileJson,
   FolderOpen,
   Loader2,
@@ -175,6 +176,8 @@ export function SettingsPage({
   const [destroyConfirm, setDestroyConfirm] = useState('')
   const [deleteLogsOpen, setDeleteLogsOpen] = useState(false)
   const [deletingLogs, setDeletingLogs] = useState(false)
+  const [openingLogs, setOpeningLogs] = useState(false)
+  const [exportingLogs, setExportingLogs] = useState(false)
   const [instanceUrlDrafts, setInstanceUrlDrafts] = useState<Record<string, string>>({})
   const [activeSettingsTab, setActiveSettingsTab] = useState<'general' | 'chenyu'>('general')
 
@@ -465,6 +468,48 @@ export function SettingsPage({
       setError(errorMessage(nextError, '删除日志失败'))
     } finally {
       setDeletingLogs(false)
+    }
+  }
+
+  async function openLogsDirectory() {
+    setOpeningLogs(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await window.api.logs.openDir()
+      if (!result.ok) {
+        setError(result.error.message)
+        return
+      }
+      setMessage(`已打开日志目录：${result.data.path}`)
+    } catch (nextError) {
+      setError(errorMessage(nextError, '打开日志目录失败'))
+    } finally {
+      setOpeningLogs(false)
+    }
+  }
+
+  async function exportLogsZip() {
+    setExportingLogs(true)
+    setError(null)
+    setMessage(null)
+    try {
+      const result = await window.api.logs.exportZip()
+      if (!result.ok) {
+        if (result.error.code !== 'CANCELLED') {
+          setError(result.error.message)
+        }
+        return
+      }
+      setMessage(
+        `日志包已导出：${result.data.files} 个文件，${formatLogBytes(result.data.bytes)} · ${
+          result.data.path
+        }`,
+      )
+    } catch (nextError) {
+      setError(errorMessage(nextError, '导出日志包失败'))
+    } finally {
+      setExportingLogs(false)
     }
   }
 
@@ -791,7 +836,7 @@ export function SettingsPage({
             <CardHeader>
               <CardTitle>日志</CardTitle>
               <CardDescription>
-                清理当前工作区 `.workbench/logs/` 下的运行日志、诊断日志和崩溃日志。
+                打开或导出当前工作区 `.workbench/logs/` 下的运行日志、诊断日志和崩溃日志。
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -800,19 +845,47 @@ export function SettingsPage({
                   {workspace?.root ? `${workspace.root}/.workbench/logs` : '请先选择工作区'}
                 </p>
               </div>
-              <Button
-                disabled={deletingLogs || !workspace?.root}
-                onClick={() => setDeleteLogsOpen(true)}
-                type="button"
-                variant="destructive"
-              >
-                {deletingLogs ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <Trash2 className="mr-2 h-4 w-4" />
-                )}
-                删除所有日志
-              </Button>
+              <div className="flex flex-wrap gap-2 sm:justify-end">
+                <Button
+                  disabled={openingLogs || !workspace?.root}
+                  onClick={() => void openLogsDirectory()}
+                  type="button"
+                  variant="outline"
+                >
+                  {openingLogs ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                  )}
+                  打开日志目录
+                </Button>
+                <Button
+                  disabled={exportingLogs || !workspace?.root}
+                  onClick={() => void exportLogsZip()}
+                  type="button"
+                  variant="secondary"
+                >
+                  {exportingLogs ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <FileArchive className="mr-2 h-4 w-4" />
+                  )}
+                  导出日志包
+                </Button>
+                <Button
+                  disabled={deletingLogs || !workspace?.root}
+                  onClick={() => setDeleteLogsOpen(true)}
+                  type="button"
+                  variant="destructive"
+                >
+                  {deletingLogs ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="mr-2 h-4 w-4" />
+                  )}
+                  删除所有日志
+                </Button>
+              </div>
             </CardContent>
           </Card>
 
