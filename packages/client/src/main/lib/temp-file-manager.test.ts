@@ -115,6 +115,27 @@ describe('TempFileManager', () => {
     await expect(stat(freshDir)).resolves.toBeDefined()
   })
 
+  it('cleans orphan task directories every 6 hours after startup', async () => {
+    vi.useFakeTimers()
+    class CountingTempFileManager extends TempFileManager {
+      cleanupCalls = 0
+
+      override async cleanupOrphans(): Promise<void> {
+        this.cleanupCalls += 1
+      }
+    }
+    const manager = new CountingTempFileManager({ rootDir: tempDir })
+    manager.startPeriodicCleanup()
+
+    await vi.advanceTimersByTimeAsync(6 * 60 * 60 * 1000 - 1)
+    expect(manager.cleanupCalls).toBe(0)
+
+    await vi.advanceTimersByTimeAsync(1)
+    expect(manager.cleanupCalls).toBe(1)
+
+    manager.stopPeriodicCleanup()
+  })
+
   it('reports disk usage by module', async () => {
     const manager = new TempFileManager({ rootDir: tempDir })
     const titleDir = await manager.createTaskDir('title', 'usage-title')

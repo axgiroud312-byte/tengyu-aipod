@@ -1,4 +1,15 @@
 import { localImageUrl } from '@/components/detection-image-url'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -402,15 +413,26 @@ export function CollectionPage({
                 <X className="mr-2 h-4 w-4" />
                 取消选择
               </Button>
-              <Button
-                disabled={!imageItems.length}
-                onClick={onClearImagePool}
-                type="button"
-                variant="secondary"
-              >
-                <Trash2 className="mr-2 h-4 w-4" />
-                清空图池
-              </Button>
+              <AlertDialog>
+                <AlertDialogTrigger asChild>
+                  <Button disabled={!imageItems.length} type="button" variant="secondary">
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    清空图池
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>清空图池</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      将清空当前图池、选择状态和本次扫描结果。已下载到工作区的图片不会被删除。
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>取消</AlertDialogCancel>
+                    <AlertDialogAction onClick={onClearImagePool}>清空</AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
               <Button
                 disabled={!selectedItems.length || imageIndexDownloading}
                 onClick={() => onDownloadImageIndexItems(selectedItems)}

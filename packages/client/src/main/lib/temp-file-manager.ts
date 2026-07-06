@@ -30,6 +30,7 @@ interface CleanupTaskOptions {
 
 const DEFAULT_ORPHAN_TTL_MS = 24 * 60 * 60 * 1000
 const DEFAULT_FAILED_TTL_MS = 60 * 60 * 1000
+const DEFAULT_PERIODIC_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000
 const MAX_SAFE_SEGMENT_LENGTH = 120
 const RESERVED_PATH_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
@@ -88,6 +89,7 @@ export class TempFileManager {
   private readonly orphanTtlMs: number
   private readonly defaultFailedTtlMs: number
   private readonly delayedCleanup = new Map<string, NodeJS.Timeout>()
+  private periodicCleanupTimer: NodeJS.Timeout | null = null
   private readonly sessionDirs = new Set<string>()
 
   constructor(optionsOrFailedTtlMs: TempFileManagerOptions | number = {}) {
@@ -193,6 +195,22 @@ export class TempFileManager {
     )
   }
 
+  startPeriodicCleanup(intervalMs = DEFAULT_PERIODIC_CLEANUP_INTERVAL_MS) {
+    this.stopPeriodicCleanup()
+    const timer = setInterval(() => {
+      void this.cleanupOrphans().catch(() => null)
+    }, intervalMs)
+    timer.unref?.()
+    this.periodicCleanupTimer = timer
+  }
+
+  stopPeriodicCleanup() {
+    if (this.periodicCleanupTimer) {
+      clearInterval(this.periodicCleanupTimer)
+      this.periodicCleanupTimer = null
+    }
+  }
+
   async cleanupSession() {
     await Promise.all(
       Array.from(this.sessionDirs).map(async (key) => {
@@ -232,6 +250,7 @@ export class TempFileManager {
       clearTimeout(timer)
     }
     this.delayedCleanup.clear()
+    this.stopPeriodicCleanup()
   }
 
   private async markForDelayedCleanup(dir: string) {

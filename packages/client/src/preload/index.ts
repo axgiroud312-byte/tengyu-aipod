@@ -183,7 +183,7 @@ const api = {
       ipcRenderer.invoke('bit-browser:save-base-url', value) as Promise<string>,
   },
   customerAuth: {
-    getState: () => ipcRenderer.invoke('customerAuth:getState') as Promise<CustomerAuthState>,
+    getState: () => ipcRenderer.invoke('customer-auth:get-state') as Promise<CustomerAuthState>,
     getQrcode: () => ipcRenderer.invoke('customerAuth:getQrcode') as Promise<CustomerAuthQrcode>,
     startWechatLogin: () =>
       ipcRenderer.invoke('customerAuth:startWechatLogin') as Promise<CustomerAuthQrcode>,

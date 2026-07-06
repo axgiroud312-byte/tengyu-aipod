@@ -527,7 +527,7 @@ const verifyInputSchema = z
   .optional()
 
 export function registerCustomerAuthIpc(service = new CustomerAuthService()) {
-  ipcMain.handle('customerAuth:getState', () => service.getState())
+  ipcMain.handle('customer-auth:get-state', () => service.getState())
   ipcMain.handle('customerAuth:getQrcode', () => service.getQrcode())
   ipcMain.handle('customerAuth:startWechatLogin', () => service.startWechatLogin())
   ipcMain.handle('customerAuth:checkWechatLogin', (_event, input: unknown) =>

@@ -4,6 +4,17 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import type {
@@ -549,9 +560,6 @@ export function ListingWorkbench() {
   }
 
   async function deleteTask(task: ListingTaskRecord) {
-    if (!window.confirm('确认删除这个上架任务吗？')) {
-      return
-    }
     try {
       await window.api.listing.deleteTask({ taskId: task.id })
       await refreshListingPlanRecords()
@@ -920,15 +928,32 @@ export function ListingWorkbench() {
                       >
                         复制参数
                       </Button>
-                      <Button
-                        className="h-8 px-2"
-                        disabled={task.status === 'running'}
-                        onClick={() => void deleteTask(task)}
-                        type="button"
-                        variant="secondary"
-                      >
-                        删除
-                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            className="h-8 px-2"
+                            disabled={task.status === 'running'}
+                            type="button"
+                            variant="secondary"
+                          >
+                            删除
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>删除上架任务</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              将删除这条上架任务记录，已写入工作区的图片和标题文件不会被删除。
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>取消</AlertDialogCancel>
+                            <AlertDialogAction onClick={() => void deleteTask(task)}>
+                              删除
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
                     </div>
                   </div>
                 ))

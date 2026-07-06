@@ -190,6 +190,7 @@ if (hasSingleInstanceLock) {
       registerPhotoshopIpc()
     })
     void tempFileManager.cleanupOrphans().catch(() => null)
+    tempFileManager.startPeriodicCleanup()
     void cleanupDiagnosticLogs().catch(() => null)
     diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
     const appIconPath = applyAppIcon()
