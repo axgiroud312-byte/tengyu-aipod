@@ -3,7 +3,9 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/u
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ActiveGenerationTaskNotice } from '@/features/generation/components/ActiveGenerationTaskNotice'
+import { ComfyuiImg2imgPromptFields } from '@/features/generation/components/ComfyuiImg2imgPromptFields'
 import { ComfyuiInstanceSelectorCard } from '@/features/generation/components/ComfyuiInstanceSelectorCard'
+import { ComfyuiWorkflowSelect } from '@/features/generation/components/ComfyuiWorkflowSelect'
 import { CurrentTaskImagePreview } from '@/features/generation/components/CurrentTaskImagePreview'
 import { ExtractSkillPicker } from '@/features/generation/components/ExtractSkillPicker'
 import { GenerationCancelButton } from '@/features/generation/components/GenerationCancelButton'
@@ -19,6 +21,7 @@ import {
   generationDebugRawResponse,
 } from '@/features/generation/generation-debug-log'
 import { useComfyuiInstanceSelection } from '@/features/generation/hooks/use-comfyui-instance-selection'
+import { useComfyuiPanel } from '@/features/generation/hooks/use-comfyui-panel'
 import { useGenerationLocalSettings } from '@/features/generation/hooks/use-generation-local-settings'
 import { useGenerationTaskEvents } from '@/features/generation/hooks/use-generation-task-events'
 import {
@@ -1289,13 +1292,40 @@ function GrsaiExtractPanel() {
 
 function ComfyuiImg2imgPanel() {
   const { settings, error: settingsError } = useGenerationLocalSettings()
-  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const workflowScope = 'img2img'
-  const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
-  const [sourceFolder, setSourceFolder] = useState('')
-  const [sourceImages, setSourceImages] = useState<GenerationImageSource[]>([])
-  const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [workflowKey, setWorkflowKey] = useState('')
+  const workflowSlots = useMemo(
+    () => [
+      {
+        id: 'main',
+        load: () => window.api.generation.listComfyuiImg2imgWorkflows(),
+        scope: workflowScope,
+      },
+    ],
+    [],
+  )
+  const {
+    beginRun,
+    chooseSourceFolder,
+    comfyuiInstanceSelection,
+    error,
+    handleRunStartFailure,
+    loadingSources,
+    previewImages,
+    result,
+    running,
+    scanSourceFolder,
+    setError,
+    setProgress,
+    sourceFolder,
+    sources: sourceImages,
+    taskEvents,
+    workflowSlot,
+  } = useComfyuiPanel({
+    capability: 'img2img',
+    instanceScope: workflowScope,
+    workflowErrorMessage: '读取 ComfyUI 工作流失败',
+    workflowSlots,
+  })
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [batchSize, setBatchSize] = useState('1')
@@ -1308,20 +1338,6 @@ function ComfyuiImg2imgPanel() {
   const [taskName, setTaskName] = useState('')
   const [filenamePrefix, setFilenamePrefix] = useState('')
   const [filenameSeparator, setFilenameSeparator] = useState('-')
-  const [, setProgress] = useState<GenerationProgress | null>(null)
-  const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
-  const [result, setResult] = useState<GenerationRunResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loadingSources, setLoadingSources] = useState(false)
-  const [running, setRunning] = useState(false)
-  const taskEvents = useGenerationTaskEvents({
-    expectedCapability: 'img2img',
-    setProgress,
-    setPreviewImages,
-    setResult,
-    setError,
-    setRunning,
-  })
 
   const promptSkillCategory = promptSkillCategoryFor('img2img', printMode)
   const promptSkillSelection = usePromptSkillOptions(promptSkillCategory, setError)
@@ -1333,7 +1349,7 @@ function ComfyuiImg2imgPanel() {
     if (settingsError) {
       setError(settingsError)
     }
-  }, [settingsError])
+  }, [settingsError, setError])
 
   useEffect(() => {
     const preferred = settings?.config.bailian_vision_model
@@ -1344,58 +1360,10 @@ function ComfyuiImg2imgPanel() {
     }
   }, [promptModel, promptModelOptions, settings])
 
-  useEffect(() => {
-    void workflowsVersion
-    void loadWorkflows()
-  }, [workflowsVersion])
-
-  const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
+  const mainWorkflowSlot = workflowSlot('main')
+  const selectedWorkflow = mainWorkflowSlot.selectedWorkflow
   const outputCount = clampNumber(batchSize, 1, 8, 1)
   const expectedOutputCount = sourceImages.length * outputCount
-
-  async function chooseSourceFolder() {
-    setError(null)
-    const result = await window.api.generation.chooseImageFolder()
-    if (!result.ok) {
-      if (result.error.code !== 'CANCELLED') {
-        setError(result.error.message)
-      }
-      return
-    }
-    setSourceFolder(result.data.path)
-    setSourceImages([])
-  }
-
-  async function loadWorkflows() {
-    try {
-      const nextWorkflows = await window.api.generation.listComfyuiImg2imgWorkflows()
-      setWorkflows(nextWorkflows)
-      setWorkflowKey((current) =>
-        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(workflowScope, nextWorkflows),
-      )
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 工作流失败')
-    }
-  }
-
-  async function scanSourceFolder() {
-    if (!sourceFolder) {
-      setError('请先选择图片文件夹')
-      return
-    }
-    setLoadingSources(true)
-    setError(null)
-    try {
-      const images = await window.api.generation.scanImageFolder({ folder: sourceFolder })
-      setSourceImages(images)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
-    } finally {
-      setLoadingSources(false)
-    }
-  }
 
   async function startImg2img() {
     setError(null)
@@ -1425,10 +1393,7 @@ function ComfyuiImg2imgPanel() {
       return
     }
 
-    setResult(null)
-    setPreviewImages([])
-    setRunning(true)
-    taskEvents.beginTask()
+    beginRun()
     try {
       const taskId = await window.api.generation.runComfyuiImg2img({
         sourceImagePaths: sourceImages.map((image) => image.path),
@@ -1471,9 +1436,7 @@ function ComfyuiImg2imgPanel() {
         })
       }
     } catch (nextError) {
-      taskEvents.clearTaskStart()
-      setRunning(false)
-      setError(nextError instanceof Error ? nextError.message : '启动 ComfyUI 图生图失败')
+      handleRunStartFailure(nextError, '启动 ComfyUI 图生图失败')
     }
   }
 
@@ -1494,23 +1457,11 @@ function ComfyuiImg2imgPanel() {
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">ComfyUI 工作流</h4>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>工作流</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => {
-                    rememberWorkflowKey(workflowScope, event.target.value)
-                    setWorkflowKey(event.target.value)
-                  }}
-                  value={workflowKey}
-                >
-                  {workflows.map((workflow) => (
-                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
-                      {workflow.name} · {workflow.version}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ComfyuiWorkflowSelect
+                onChange={mainWorkflowSlot.setWorkflowKey}
+                workflowKey={mainWorkflowSlot.workflowKey}
+                workflows={mainWorkflowSlot.workflows}
+              />
               <label className="block space-y-2 text-sm font-medium">
                 <span>宽度</span>
                 <input
@@ -1544,109 +1495,24 @@ function ComfyuiImg2imgPanel() {
                   value={batchSize}
                 />
               </label>
-              <fieldset className="rounded-md border p-3 md:col-span-2">
-                <legend className="px-1 text-sm font-medium">提示词来源</legend>
-                <div className="mt-2 flex flex-wrap gap-4 text-sm">
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      checked={promptMode === 'ai'}
-                      onChange={() => setPromptMode('ai')}
-                      type="radio"
-                    />
-                    AI 看图写提示词（推荐）
-                  </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      checked={promptMode === 'workflow'}
-                      onChange={() => setPromptMode('workflow')}
-                      type="radio"
-                    />
-                    工作流默认
-                  </label>
-                  <label className="inline-flex items-center gap-2">
-                    <input
-                      checked={promptMode === 'manual'}
-                      onChange={() => setPromptMode('manual')}
-                      type="radio"
-                    />
-                    手动填写
-                  </label>
-                </div>
-                {promptMode === 'ai' ? (
-                  <div className="mt-3 grid gap-4 md:grid-cols-2">
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>印花模式</span>
-                      <select
-                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setPrintMode(event.target.value as 'local' | 'full')}
-                        value={printMode}
-                      >
-                        <option value="local">局部</option>
-                        <option value="full">满印</option>
-                      </select>
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>参考方式</span>
-                      <select
-                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) =>
-                          setReferenceMode(event.target.value as Exclude<Img2imgMode, 'manual'>)
-                        }
-                        value={referenceMode}
-                      >
-                        {img2imgModes
-                          .filter((item) => item.key !== 'manual')
-                          .map((item) => (
-                            <option key={item.key} value={item.key}>
-                              {item.label}
-                            </option>
-                          ))}
-                      </select>
-                    </label>
-                    <PromptSkillPicker
-                      category={promptSkillCategory}
-                      onChange={promptSkillSelection.selectPromptSkill}
-                      promptSkills={promptSkillSelection.promptSkills}
-                      selectedSkill={promptSkillSelection.selectedSkill}
-                      selectedSkillId={promptSkillSelection.selectedSkillId}
-                    />
-                    <label className="block space-y-2 text-sm font-medium">
-                      <span>提示词模型</span>
-                      <select
-                        className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setPromptModel(event.target.value)}
-                        value={promptModel}
-                      >
-                        {promptModelOptions.map((model) => (
-                          <option key={model.id} value={model.id}>
-                            {modelLabel(model)}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label className="block space-y-2 text-sm font-medium md:col-span-2">
-                      <span>其他要求</span>
-                      <textarea
-                        className="min-h-24 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        onChange={(event) => setRequirement(event.target.value)}
-                        placeholder="例如：改成复古花卉徽章，干净白底，适合印花"
-                        value={requirement}
-                      />
-                    </label>
-                  </div>
-                ) : null}
-                {promptMode === 'manual' ? (
-                  <label className="mt-3 block space-y-2 text-sm font-medium">
-                    <span>图生图提示词</span>
-                    <textarea
-                      className="min-h-28 w-full resize-none rounded-md border px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                      onChange={(event) => setPrompt(event.target.value)}
-                      placeholder="例如：保留主体轮廓，改成复古花卉徽章，干净白底，适合印花"
-                      value={prompt}
-                    />
-                  </label>
-                ) : null}
-              </fieldset>
+              <ComfyuiImg2imgPromptFields
+                img2imgModes={img2imgModes}
+                printMode={printMode}
+                prompt={prompt}
+                promptMode={promptMode}
+                promptModel={promptModel}
+                promptModelOptions={promptModelOptions}
+                promptSkillCategory={promptSkillCategory}
+                promptSkillSelection={promptSkillSelection}
+                referenceMode={referenceMode}
+                requirement={requirement}
+                setPrintMode={setPrintMode}
+                setPrompt={setPrompt}
+                setPromptMode={setPromptMode}
+                setPromptModel={setPromptModel}
+                setReferenceMode={setReferenceMode}
+                setRequirement={setRequirement}
+              />
             </div>
           </div>
         </div>
@@ -1722,85 +1588,50 @@ function ComfyuiImg2imgPanel() {
 }
 
 function ComfyuiExtractPanel() {
-  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const workflowScope = 'extract'
-  const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
-  const [sources, setSources] = useState<GenerationImageSource[]>([])
-  const [sourceFolder, setSourceFolder] = useState('')
-  const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [workflowKey, setWorkflowKey] = useState('')
+  const workflowSlots = useMemo(
+    () => [
+      {
+        id: 'main',
+        load: () => window.api.generation.listComfyuiExtractWorkflows(),
+        scope: workflowScope,
+      },
+    ],
+    [],
+  )
+  const {
+    beginRun,
+    chooseSourceFolder,
+    comfyuiInstanceSelection,
+    error,
+    handleRunStartFailure,
+    loadingSources,
+    previewImages,
+    result,
+    running,
+    scanSourceFolder,
+    setError,
+    setProgress,
+    sourceFolder,
+    sources,
+    taskEvents,
+    workflowSlot,
+  } = useComfyuiPanel({
+    capability: 'extract',
+    instanceScope: workflowScope,
+    workflowErrorMessage: '读取 ComfyUI 提取工作流失败',
+    workflowSlots,
+  })
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
   const [filenamePrefix, setFilenamePrefix] = useState('')
   const [filenameSeparator, setFilenameSeparator] = useState('-')
-  const [, setProgress] = useState<GenerationProgress | null>(null)
-  const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
-  const [result, setResult] = useState<GenerationRunResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loadingSources, setLoadingSources] = useState(false)
-  const [running, setRunning] = useState(false)
   const { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey } =
     useExtractSkillOptions(setError)
-  const taskEvents = useGenerationTaskEvents({
-    expectedCapability: 'extract',
-    setProgress,
-    setPreviewImages,
-    setResult,
-    setError,
-    setRunning,
-  })
 
-  useEffect(() => {
-    void workflowsVersion
-    void loadWorkflows()
-  }, [workflowsVersion])
-
-  const selectedWorkflow = workflows.find((workflow) => workflowOptionKey(workflow) === workflowKey)
-
-  async function chooseSourceFolder() {
-    setError(null)
-    const result = await window.api.generation.chooseImageFolder()
-    if (!result.ok) {
-      if (result.error.code !== 'CANCELLED') {
-        setError(result.error.message)
-      }
-      return
-    }
-    setSourceFolder(result.data.path)
-    setSources([])
-  }
-
-  async function loadWorkflows() {
-    try {
-      const nextWorkflows = await window.api.generation.listComfyuiExtractWorkflows()
-      setWorkflows(nextWorkflows)
-      setWorkflowKey((current) =>
-        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(workflowScope, nextWorkflows),
-      )
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 提取工作流失败')
-    }
-  }
-
-  async function scanSourceFolder() {
-    if (!sourceFolder) {
-      setError('请先选择图片文件夹')
-      return
-    }
-    setLoadingSources(true)
-    setError(null)
-    try {
-      const images = await window.api.generation.scanImageFolder({ folder: sourceFolder })
-      setSources(images)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
-    } finally {
-      setLoadingSources(false)
-    }
-  }
+  const mainWorkflowSlot = workflowSlot('main')
+  const selectedWorkflow = mainWorkflowSlot.selectedWorkflow
 
   async function startExtract() {
     setError(null)
@@ -1821,10 +1652,7 @@ function ComfyuiExtractPanel() {
       return
     }
 
-    setResult(null)
-    setPreviewImages([])
-    setRunning(true)
-    taskEvents.beginTask()
+    beginRun()
     try {
       const taskId = await window.api.generation.runComfyuiExtract({
         sourceImagePaths: sources.map((source) => source.path),
@@ -1852,9 +1680,7 @@ function ComfyuiExtractPanel() {
         })
       }
     } catch (nextError) {
-      taskEvents.clearTaskStart()
-      setRunning(false)
-      setError(nextError instanceof Error ? nextError.message : '启动 ComfyUI 提取失败')
+      handleRunStartFailure(nextError, '启动 ComfyUI 提取失败')
     }
   }
 
@@ -1875,23 +1701,11 @@ function ComfyuiExtractPanel() {
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">ComfyUI 提取工作流</h4>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>工作流</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => {
-                    rememberWorkflowKey(workflowScope, event.target.value)
-                    setWorkflowKey(event.target.value)
-                  }}
-                  value={workflowKey}
-                >
-                  {workflows.map((workflow) => (
-                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
-                      {workflow.name} · {workflow.version}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ComfyuiWorkflowSelect
+                onChange={mainWorkflowSlot.setWorkflowKey}
+                workflowKey={mainWorkflowSlot.workflowKey}
+                workflows={mainWorkflowSlot.workflows}
+              />
               <div className="md:col-span-2">
                 <ExtractSkillPicker
                   extractSkills={extractSkills}
@@ -1986,102 +1800,58 @@ function ComfyuiExtractPanel() {
 }
 
 function ComfyuiExtractMattingPanel() {
-  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const extractWorkflowScope = 'extract-matting:extract'
   const mattingWorkflowScope = 'extract-matting:matting'
-  const comfyuiInstanceSelection = useComfyuiInstanceSelection('extract-matting')
-  const [sources, setSources] = useState<GenerationImageSource[]>([])
-  const [sourceFolder, setSourceFolder] = useState('')
-  const [extractWorkflows, setExtractWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [extractWorkflowKey, setExtractWorkflowKey] = useState('')
-  const [mattingWorkflows, setMattingWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [mattingWorkflowKey, setMattingWorkflowKey] = useState('')
+  const workflowSlots = useMemo(
+    () => [
+      {
+        id: 'extract',
+        load: () => window.api.generation.listComfyuiExtractWorkflows(),
+        scope: extractWorkflowScope,
+      },
+      {
+        id: 'matting',
+        load: () => window.api.generation.listComfyuiMattingWorkflows(),
+        scope: mattingWorkflowScope,
+      },
+    ],
+    [],
+  )
+  const {
+    beginRun,
+    chooseSourceFolder,
+    comfyuiInstanceSelection,
+    error,
+    handleRunStartFailure,
+    loadingSources,
+    previewImages,
+    result,
+    running,
+    scanSourceFolder,
+    setError,
+    setProgress,
+    sourceFolder,
+    sources,
+    taskEvents,
+    workflowSlot,
+  } = useComfyuiPanel({
+    capability: 'matting',
+    instanceScope: 'extract-matting',
+    workflowErrorMessage: '读取 ComfyUI 工作流失败',
+    workflowSlots,
+  })
   const [width, setWidth] = useState('1024')
   const [height, setHeight] = useState('1024')
   const [taskName, setTaskName] = useState('')
   const [filenamePrefix, setFilenamePrefix] = useState('')
   const [filenameSeparator, setFilenameSeparator] = useState('-')
-  const [, setProgress] = useState<GenerationProgress | null>(null)
-  const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
-  const [result, setResult] = useState<GenerationRunResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loadingSources, setLoadingSources] = useState(false)
-  const [running, setRunning] = useState(false)
   const { extractSkills, selectedSkill, selectedSkillKey, setSelectedSkillKey } =
     useExtractSkillOptions(setError)
-  const taskEvents = useGenerationTaskEvents({
-    expectedCapability: 'matting',
-    setProgress,
-    setPreviewImages,
-    setResult,
-    setError,
-    setRunning,
-  })
 
-  useEffect(() => {
-    void workflowsVersion
-    void loadWorkflows()
-  }, [workflowsVersion])
-
-  const selectedExtractWorkflow = extractWorkflows.find(
-    (workflow) => workflowOptionKey(workflow) === extractWorkflowKey,
-  )
-  const selectedMattingWorkflow = mattingWorkflows.find(
-    (workflow) => workflowOptionKey(workflow) === mattingWorkflowKey,
-  )
-
-  async function chooseSourceFolder() {
-    setError(null)
-    const result = await window.api.generation.chooseImageFolder()
-    if (!result.ok) {
-      if (result.error.code !== 'CANCELLED') {
-        setError(result.error.message)
-      }
-      return
-    }
-    setSourceFolder(result.data.path)
-    setSources([])
-  }
-
-  async function loadWorkflows() {
-    try {
-      const [nextExtractWorkflows, nextMattingWorkflows] = await Promise.all([
-        window.api.generation.listComfyuiExtractWorkflows(),
-        window.api.generation.listComfyuiMattingWorkflows(),
-      ])
-      setExtractWorkflows(nextExtractWorkflows)
-      setMattingWorkflows(nextMattingWorkflows)
-      setExtractWorkflowKey((current) =>
-        current && nextExtractWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(extractWorkflowScope, nextExtractWorkflows),
-      )
-      setMattingWorkflowKey((current) =>
-        current && nextMattingWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(mattingWorkflowScope, nextMattingWorkflows),
-      )
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 工作流失败')
-    }
-  }
-
-  async function scanSourceFolder() {
-    if (!sourceFolder) {
-      setError('请先选择图片文件夹')
-      return
-    }
-    setLoadingSources(true)
-    setError(null)
-    try {
-      const images = await window.api.generation.scanImageFolder({ folder: sourceFolder })
-      setSources(images)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
-    } finally {
-      setLoadingSources(false)
-    }
-  }
+  const extractWorkflowSlot = workflowSlot('extract')
+  const mattingWorkflowSlot = workflowSlot('matting')
+  const selectedExtractWorkflow = extractWorkflowSlot.selectedWorkflow
+  const selectedMattingWorkflow = mattingWorkflowSlot.selectedWorkflow
 
   async function startExtractMatting() {
     setError(null)
@@ -2106,10 +1876,7 @@ function ComfyuiExtractMattingPanel() {
       return
     }
 
-    setResult(null)
-    setPreviewImages([])
-    setRunning(true)
-    taskEvents.beginTask()
+    beginRun()
     try {
       const taskId = await window.api.generation.runComfyuiExtractMatting({
         sourceImagePaths: sources.map((source) => source.path),
@@ -2140,9 +1907,7 @@ function ComfyuiExtractMattingPanel() {
         })
       }
     } catch (nextError) {
-      taskEvents.clearTaskStart()
-      setRunning(false)
-      setError(nextError instanceof Error ? nextError.message : '启动提取后抠图失败')
+      handleRunStartFailure(nextError, '启动提取后抠图失败')
     }
   }
 
@@ -2163,40 +1928,18 @@ function ComfyuiExtractMattingPanel() {
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">工作流设置</h4>
             <div className="mt-4 grid gap-4 md:grid-cols-2">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>提取工作流</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => {
-                    rememberWorkflowKey(extractWorkflowScope, event.target.value)
-                    setExtractWorkflowKey(event.target.value)
-                  }}
-                  value={extractWorkflowKey}
-                >
-                  {extractWorkflows.map((workflow) => (
-                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
-                      {workflow.name} · {workflow.version}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="block space-y-2 text-sm font-medium">
-                <span>抠图工作流</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => {
-                    rememberWorkflowKey(mattingWorkflowScope, event.target.value)
-                    setMattingWorkflowKey(event.target.value)
-                  }}
-                  value={mattingWorkflowKey}
-                >
-                  {mattingWorkflows.map((workflow) => (
-                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
-                      {workflow.name} · {workflow.version}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ComfyuiWorkflowSelect
+                label="提取工作流"
+                onChange={extractWorkflowSlot.setWorkflowKey}
+                workflowKey={extractWorkflowSlot.workflowKey}
+                workflows={extractWorkflowSlot.workflows}
+              />
+              <ComfyuiWorkflowSelect
+                label="抠图工作流"
+                onChange={mattingWorkflowSlot.setWorkflowKey}
+                workflowKey={mattingWorkflowSlot.workflowKey}
+                workflows={mattingWorkflowSlot.workflows}
+              />
               <label className="block space-y-2 text-sm font-medium">
                 <span>宽度</span>
                 <input
@@ -2303,98 +2046,54 @@ function ComfyuiExtractMattingPanel() {
 }
 
 function ComfyuiMattingPanel() {
-  const workflowsVersion = useGenerationStore((state) => state.workflowsVersion)
   const workflowScope = 'matting'
   const mixedWorkflowScope = 'matting-mixed'
-  const comfyuiInstanceSelection = useComfyuiInstanceSelection(workflowScope)
+  const workflowSlots = useMemo(
+    () => [
+      {
+        id: 'main',
+        load: () => window.api.generation.listComfyuiMattingWorkflows(),
+        scope: workflowScope,
+      },
+      {
+        id: 'mixed',
+        load: () => window.api.generation.listComfyuiMixedMattingWorkflows(),
+        scope: mixedWorkflowScope,
+      },
+    ],
+    [],
+  )
+  const {
+    beginRun,
+    chooseSourceFolder,
+    comfyuiInstanceSelection,
+    error,
+    handleRunStartFailure,
+    loadingSources,
+    previewImages,
+    result,
+    running,
+    scanSourceFolder,
+    setError,
+    setProgress,
+    sourceFolder,
+    sources,
+    taskEvents,
+    workflowSlot,
+  } = useComfyuiPanel({
+    capability: 'matting',
+    instanceScope: workflowScope,
+    workflowErrorMessage: '读取 ComfyUI 抠图工作流失败',
+    workflowSlots,
+  })
   const [mode, setMode] = useState<MattingMode>('comfyui')
-  const [sourceFolder, setSourceFolder] = useState('')
-  const [sources, setSources] = useState<GenerationImageSource[]>([])
-  const [workflows, setWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [workflowKey, setWorkflowKey] = useState('')
-  const [mixedWorkflows, setMixedWorkflows] = useState<ComfyuiWorkflowSummary[]>([])
-  const [mixedWorkflowKey, setMixedWorkflowKey] = useState('')
   const [taskName, setTaskName] = useState('')
   const [filenamePrefix, setFilenamePrefix] = useState('')
   const [filenameSeparator, setFilenameSeparator] = useState('-')
-  const [, setProgress] = useState<GenerationProgress | null>(null)
-  const [previewImages, setPreviewImages] = useState<GenerationRunImage[]>([])
-  const [result, setResult] = useState<GenerationRunResult | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [loadingSources, setLoadingSources] = useState(false)
-  const [running, setRunning] = useState(false)
-  const taskEvents = useGenerationTaskEvents({
-    expectedCapability: 'matting',
-    setProgress,
-    setPreviewImages,
-    setResult,
-    setError,
-    setRunning,
-  })
-
-  useEffect(() => {
-    void workflowsVersion
-    void loadWorkflows()
-  }, [workflowsVersion])
-
-  const activeWorkflows = mode === 'mixed' ? mixedWorkflows : workflows
-  const activeWorkflowKey = mode === 'mixed' ? mixedWorkflowKey : workflowKey
-  const selectedWorkflow = activeWorkflows.find(
-    (workflow) => workflowOptionKey(workflow) === activeWorkflowKey,
-  )
-
-  async function chooseSourceFolder() {
-    setError(null)
-    const result = await window.api.generation.chooseImageFolder()
-    if (!result.ok) {
-      if (result.error.code !== 'CANCELLED') {
-        setError(result.error.message)
-      }
-      return
-    }
-    setSourceFolder(result.data.path)
-    setSources([])
-  }
-
-  async function loadWorkflows() {
-    try {
-      const [nextWorkflows, nextMixedWorkflows] = await Promise.all([
-        window.api.generation.listComfyuiMattingWorkflows(),
-        window.api.generation.listComfyuiMixedMattingWorkflows(),
-      ])
-      setWorkflows(nextWorkflows)
-      setMixedWorkflows(nextMixedWorkflows)
-      setWorkflowKey((current) =>
-        current && nextWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(workflowScope, nextWorkflows),
-      )
-      setMixedWorkflowKey((current) =>
-        current && nextMixedWorkflows.some((workflow) => workflowOptionKey(workflow) === current)
-          ? current
-          : workflowKeyOrFallback(mixedWorkflowScope, nextMixedWorkflows),
-      )
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '读取 ComfyUI 抠图工作流失败')
-    }
-  }
-
-  async function scanSourceFolder() {
-    if (!sourceFolder) {
-      setError('请先选择图片文件夹')
-      return
-    }
-    setLoadingSources(true)
-    setError(null)
-    try {
-      const images = await window.api.generation.scanImageFolder({ folder: sourceFolder })
-      setSources(images)
-    } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '检索图片失败')
-    } finally {
-      setLoadingSources(false)
-    }
-  }
+  const mainWorkflowSlot = workflowSlot('main')
+  const mixedWorkflowSlot = workflowSlot('mixed')
+  const activeWorkflowSlot = mode === 'mixed' ? mixedWorkflowSlot : mainWorkflowSlot
+  const selectedWorkflow = activeWorkflowSlot.selectedWorkflow
 
   async function startMatting() {
     setError(null)
@@ -2410,10 +2109,7 @@ function ComfyuiMattingPanel() {
       setError('请选择运行中的云机')
       return
     }
-    setResult(null)
-    setPreviewImages([])
-    setRunning(true)
-    taskEvents.beginTask()
+    beginRun()
     const workflowVersion = selectedWorkflow.version
     let taskId: string
     const sourceImagePaths = sources.map((source) => source.path)
@@ -2442,9 +2138,7 @@ function ComfyuiMattingPanel() {
         })
       }
     } catch (nextError) {
-      taskEvents.clearTaskStart()
-      setRunning(false)
-      setError(nextError instanceof Error ? nextError.message : '启动 ComfyUI 抠图失败')
+      handleRunStartFailure(nextError, '启动 ComfyUI 抠图失败')
       return
     }
     if (!taskEvents.activateTask(taskId)) {
@@ -2503,28 +2197,17 @@ function ComfyuiMattingPanel() {
               ))}
             </div>
             <div className="mt-4 grid gap-4">
-              <label className="block space-y-2 text-sm font-medium">
-                <span>工作流</span>
-                <select
-                  className="h-10 w-full rounded-md border bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => {
-                    if (mode === 'mixed') {
-                      rememberWorkflowKey(mixedWorkflowScope, event.target.value)
-                      setMixedWorkflowKey(event.target.value)
-                    } else {
-                      rememberWorkflowKey(workflowScope, event.target.value)
-                      setWorkflowKey(event.target.value)
-                    }
-                  }}
-                  value={activeWorkflowKey}
-                >
-                  {activeWorkflows.map((workflow) => (
-                    <option key={workflowOptionKey(workflow)} value={workflowOptionKey(workflow)}>
-                      {workflow.name} · {workflow.version}
-                    </option>
-                  ))}
-                </select>
-              </label>
+              <ComfyuiWorkflowSelect
+                onChange={(key) => {
+                  if (mode === 'mixed') {
+                    mixedWorkflowSlot.setWorkflowKey(key)
+                  } else {
+                    mainWorkflowSlot.setWorkflowKey(key)
+                  }
+                }}
+                workflowKey={activeWorkflowSlot.workflowKey}
+                workflows={activeWorkflowSlot.workflows}
+              />
             </div>
           </div>
         </div>
