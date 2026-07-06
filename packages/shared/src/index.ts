@@ -1,4 +1,5 @@
 export * from './constants'
+export type { ClientApi, IpcFail, IpcOk, IpcResult } from './client-api'
 export * from './errors'
 export * from './listing-types'
 export * from './photoshop-grouping'
