@@ -129,6 +129,8 @@ type StreamingSourceProducerCallbacks = {
 }
 
 type PipelineResumeState = {
+  itemsByStep: Map<PipelineStepKey, PipelineItemRecord[]>
+  itemByStepAndKey: Map<string, PipelineItemRecord>
   completedItemsByStep: Map<PipelineStepKey, PipelineItemRecord[]>
   completedItemByStepAndKey: Map<string, PipelineItemRecord>
   completedSourceKeys: Set<string>
@@ -686,9 +688,11 @@ function resultImageFromDetection(
 function usableGenerationImages(result: GenerationRunResult, stepName: string): PipelineImage[] {
   const images = imagesFromGeneration(result)
   if (images.length === 0) {
-    throw new AppErrorClass('HTTP_4XX', `${stepName} 未产生可继续处理的印花`, false, {
+    const firstError = result.failures[0]?.error
+    throw new AppErrorClass('HTTP_4XX', firstError || `${stepName} 未产生可继续处理的印花`, false, {
       total: result.total,
       failed: result.failed,
+      ...(firstError ? { stepName } : {}),
     })
   }
   return images
@@ -1135,6 +1139,8 @@ function emitGenerationProgressAsPipeline(
 export class PipelineService {
   private readonly activeRuns = new Map<string, ActivePipelineRun>()
   private readonly activePrintSkuRuns = new Map<string, string>()
+  private readonly fireAndForgetStartKeys = new Map<string, string>()
+  private readonly fireAndForgetResumeRunIds = new Set<string>()
   private readonly photoshopMutex = new PromiseMutex({
     waitTimeoutMs: PHOTOSHOP_MUTEX_TIMEOUT_MS,
     timeoutError: () => new AppErrorClass('HTTP_5XX', 'Photoshop 无响应,请检查 PS 后重试', true),
@@ -1153,21 +1159,33 @@ export class PipelineService {
   }
 
   startRun(config: PipelineRunConfig) {
+    const parsedConfig = parsePipelineRunConfig(config)
     const runId = randomUUID()
-    void this.runPipeline(runId, config)
+    const startKey = this.acquireFireAndForgetStartKey(runId, parsedConfig)
+    void this.runPipeline(runId, parsedConfig)
       .then((detail) => emitPipelineCompleted({ ok: true, result: detail }))
       .catch((error) =>
         emitPipelineCompleted({ ok: false, run_id: runId, error: appErrorMessage(error) }),
       )
+      .finally(() => {
+        this.releaseFireAndForgetStartKey(startKey, runId)
+      })
     return runId
   }
 
   startResume(runId: string) {
+    if (this.activeRuns.has(runId) || this.fireAndForgetResumeRunIds.has(runId)) {
+      throw new AppErrorClass('HTTP_4XX', '完整任务正在运行,不能重复续跑', false, { runId })
+    }
+    this.fireAndForgetResumeRunIds.add(runId)
     void this.resumeRun(runId)
       .then((detail) => emitPipelineCompleted({ ok: true, result: detail }))
       .catch((error) =>
         emitPipelineCompleted({ ok: false, run_id: runId, error: appErrorMessage(error) }),
       )
+      .finally(() => {
+        this.fireAndForgetResumeRunIds.delete(runId)
+      })
     return runId
   }
 
@@ -1490,6 +1508,30 @@ export class PipelineService {
     return lockKey
   }
 
+  private acquireFireAndForgetStartKey(runId: string, config: PipelineRunConfig) {
+    const lockKey = printSkuLockKey(config)
+    if (!lockKey) {
+      return null
+    }
+    const activeRunId = this.fireAndForgetStartKeys.get(lockKey)
+    if (activeRunId) {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        `印花货号 ${config.printSkuCode} 已有进行中完整任务，请等待或取消后再启动`,
+        false,
+        { activeRunId, printSkuCode: config.printSkuCode },
+      )
+    }
+    this.fireAndForgetStartKeys.set(lockKey, runId)
+    return lockKey
+  }
+
+  private releaseFireAndForgetStartKey(lockKey: string | null, runId: string) {
+    if (lockKey && this.fireAndForgetStartKeys.get(lockKey) === runId) {
+      this.fireAndForgetStartKeys.delete(lockKey)
+    }
+  }
+
   private async writePipelineDiagnostic(input: {
     workbenchRoot: string
     runId: string
@@ -1661,9 +1703,15 @@ export class PipelineService {
   }
 
   private buildResumeState(detail: PipelineRunDetail): PipelineResumeState {
+    const itemsByStep = new Map<PipelineStepKey, PipelineItemRecord[]>()
+    const itemByStepAndKey = new Map<string, PipelineItemRecord>()
     const completedItemsByStep = new Map<PipelineStepKey, PipelineItemRecord[]>()
     const completedItemByStepAndKey = new Map<string, PipelineItemRecord>()
     for (const item of detail.items ?? []) {
+      const allItems = itemsByStep.get(item.step_key) ?? []
+      allItems.push(item)
+      itemsByStep.set(item.step_key, allItems)
+      itemByStepAndKey.set(resumeItemMapKey(item.step_key, item.item_key), item)
       if (item.status !== 'completed' && item.status !== 'skipped' && item.status !== 'filtered') {
         continue
       }
@@ -1673,6 +1721,8 @@ export class PipelineService {
       completedItemByStepAndKey.set(resumeItemMapKey(item.step_key, item.item_key), item)
     }
     return {
+      itemsByStep,
+      itemByStepAndKey,
       completedItemsByStep,
       completedItemByStepAndKey,
       completedSourceStep:
@@ -2275,6 +2325,16 @@ export class PipelineService {
           context.config,
           activeResumeState,
         )
+        if (stepKey === 'photoshop' && resumedItems?.length) {
+          for (const resumedItem of resumedItems) {
+            yield resumedItem
+          }
+          if (resumedItems.length === context.config.photoshop.templates.length) {
+            continue
+          }
+          pendingItems.push(item)
+          continue
+        }
         if (resumedItems) {
           for (const resumedItem of resumedItems) {
             yield resumedItem
@@ -2313,7 +2373,7 @@ export class PipelineService {
         const streamItem = record ? streamItemFromPipelineItem(record) : null
         return streamItem ? [streamItem] : []
       })
-      return completed.length === config.photoshop.templates.length ? completed : null
+      return completed.length > 0 ? completed : null
     }
 
     const record = resumeState.completedItemByStepAndKey.get(
@@ -2419,6 +2479,17 @@ export class PipelineService {
         config,
         stepKey,
         isCancelled: () => active.cancelRequested,
+        ...(resumeState
+          ? {
+              resume: {
+                getItem: (resumeStepKey: PipelineStepKey, itemKey: string) =>
+                  resumeState.itemByStepAndKey.get(resumeItemMapKey(resumeStepKey, itemKey)) ??
+                  null,
+                getItems: (resumeStepKey: PipelineStepKey) =>
+                  resumeState.itemsByStep.get(resumeStepKey) ?? [],
+              },
+            }
+          : {}),
       }),
       resumeState,
     )
@@ -2847,7 +2918,7 @@ export class PipelineService {
               emitMessage,
               emitPreviewImages,
             ),
-            ...(onImageComplete ? { onImageComplete } : {}),
+            ...(onImageComplete ? { onImageComplete, strictImageComplete: true } : {}),
           },
         ),
       )
@@ -2875,7 +2946,7 @@ export class PipelineService {
             emitMessage,
             emitPreviewImages,
           ),
-          ...(onImageComplete ? { onImageComplete } : {}),
+          ...(onImageComplete ? { onImageComplete, strictImageComplete: true } : {}),
         },
       ),
     )
@@ -3007,6 +3078,7 @@ export class PipelineService {
                   ...comfyuiOptionalFields(source.comfyui),
                 },
                 {
+                  strictImageComplete: true,
                   onImageComplete: async (payload) => {
                     if (this.stopAcceptingMoreWork(active)) {
                       return
@@ -3064,6 +3136,7 @@ export class PipelineService {
             ...grsaiOptionalFields(grsaiConfig),
           },
           {
+            strictImageComplete: true,
             onImageComplete: async (payload) => {
               if (this.stopAcceptingMoreWork(active)) {
                 return
@@ -3121,6 +3194,7 @@ export class PipelineService {
                 ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
               },
               {
+                strictImageComplete: true,
                 onImageComplete: async (payload) => {
                   if (this.stopAcceptingMoreWork(active)) {
                     return
@@ -3186,6 +3260,7 @@ export class PipelineService {
             ...grsaiOptionalFields(grsaiConfig),
           },
           {
+            strictImageComplete: true,
             onImageComplete: async (payload) => {
               if (this.stopAcceptingMoreWork(active)) {
                 return
@@ -3634,17 +3709,51 @@ export class PipelineService {
             refreshMattingSection()
           }
         }
+        const outputJson = {
+          total: sourceTotalRef.value,
+          succeeded: completed,
+          failed,
+          sourceFailed: sourceFailedRef.value,
+        }
+        if (queued > 0 && completed === 0 && failed > 0) {
+          const error = new AppErrorClass(
+            'HTTP_4XX',
+            '抠图全部失败，请检查抠图云机或工作流后重试',
+            false,
+            outputJson,
+          )
+          pipelineStore.updatePipelineStepCompletedWithInput(db, {
+            runId: context.runId,
+            stepKey: 'matting',
+            inputCount: queued,
+            outputCount: completed,
+            outputJson,
+          })
+          pipelineStore.updatePipelineStepFailed(db, {
+            runId: context.runId,
+            stepKey: 'matting',
+            status: 'failed',
+            errorJson: {
+              message: appErrorMessage(error),
+              ...outputJson,
+            },
+          })
+          service.emitRunProgress(
+            db,
+            context.runId,
+            'failed',
+            'matting',
+            stats,
+            appErrorMessage(error),
+          )
+          throw error
+        }
         pipelineStore.updatePipelineStepCompletedWithInput(db, {
           runId: context.runId,
           stepKey: 'matting',
           inputCount: queued,
           outputCount: completed,
-          outputJson: {
-            total: sourceTotalRef.value,
-            succeeded: completed,
-            failed,
-            sourceFailed: sourceFailedRef.value,
-          },
+          outputJson,
         })
         service.emitRunProgress(db, context.runId, 'running', 'matting', stats, '抠图完成')
       }
@@ -4073,11 +4182,11 @@ export function registerPipelineIpc() {
   ipcMain.handle('pipeline:resume', (_event, input: unknown) => {
     return pipelineService.startResume(parsePipelineRunIdInput(input).run_id)
   })
-  ipcMain.handle('pipeline:cancel', (_event, input: { run_id: string }) => ({
-    ok: pipelineService.cancelRun(input.run_id),
+  ipcMain.handle('pipeline:cancel', (_event, input: unknown) => ({
+    ok: pipelineService.cancelRun(parsePipelineRunIdInput(input).run_id),
   }))
   ipcMain.handle('pipeline:list-runs', () => pipelineService.listRuns())
-  ipcMain.handle('pipeline:get-run', (_event, input: { run_id: string }) =>
-    pipelineService.getRun(input.run_id),
+  ipcMain.handle('pipeline:get-run', (_event, input: unknown) =>
+    pipelineService.getRun(parsePipelineRunIdInput(input).run_id),
   )
 }

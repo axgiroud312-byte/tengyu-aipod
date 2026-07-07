@@ -94,6 +94,10 @@ function insertRunningStep(
   })
 }
 
+function safeTaskSegment(value: string) {
+  return value.replace(/[\\/:*?"<>|]/g, '_').trim() || 'item'
+}
+
 export function createDetectionStage(
   dependencies: DetectionStageDependencies,
 ): PipelinePrintStageFactory {
@@ -164,7 +168,7 @@ export function createDetectionStage(
           sourceArtifactIds: item.sourceArtifactIds,
         })
 
-        const taskId = context.taskName
+        const taskId = `${context.runId}-detection-${safeTaskSegment(item.itemKey)}`
         dependencies.setCurrentCancel(() => {
           detectionService.cancelTask(taskId)
         })

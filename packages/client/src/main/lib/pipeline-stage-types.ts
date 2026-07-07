@@ -1,4 +1,4 @@
-import type { PipelineRunConfig, PipelineStepKey } from '@tengyu-aipod/shared'
+import type { PipelineItemRecord, PipelineRunConfig, PipelineStepKey } from '@tengyu-aipod/shared'
 
 // 完整任务流式 stage 契约：
 // - 上游按实际完成顺序持续吐 item，下游逐张消费，不等整批。
@@ -20,6 +20,10 @@ export type PipelineStageRuntimeContext = {
   config: PipelineRunConfig
   stepKey: PipelineStepKey
   isCancelled: () => boolean
+  resume?: {
+    getItem: (stepKey: PipelineStepKey, itemKey: string) => PipelineItemRecord | null
+    getItems: (stepKey: PipelineStepKey) => readonly PipelineItemRecord[]
+  }
 }
 
 export type PipelinePrintStage<TInput = PipelineStreamItem, TOutput = PipelineStreamItem> = (

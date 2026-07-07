@@ -231,7 +231,11 @@ export function createPhotoshopStage(
       let queued = 0
       let completed = 0
       let failed = 0
-      let nextSequence = 0
+      let nextSequence = new Set(
+        (context.resume?.getItems('photoshop') ?? [])
+          .map((item) => item.source_path)
+          .filter((path): path is string => Boolean(path)),
+      ).size
       let waitingFolderPath: string | null = null
 
       insertRunningStep(dependencies.db, context.runId, 0, 0)
@@ -254,19 +258,40 @@ export function createPhotoshopStage(
         insertRunningStep(dependencies.db, context.runId, queued, completed)
         dependencies.emitRunningProgress(context.runId, 'PS 套版流处理中')
         try {
-          const prepared = await prepareWaitingPrint({
-            workbenchRoot: dependencies.workbenchRoot,
-            runId: context.runId,
-            sourcePath: item.path,
-            printSkuCode: context.config.printSkuCode,
-            filenameSeparator: context.config.filenameSeparator,
-            sequence: nextSequence,
-          })
-          nextSequence += 1
+          const resumeItemForTemplate = (templatePath: string) =>
+            context.resume?.getItem(
+              'photoshop',
+              `${item.itemKey}:${safePathSegment(templatePath)}`,
+            ) ?? null
+          const resumeWaitingPath =
+            config.templates
+              .map((templatePath) => resumeItemForTemplate(templatePath)?.source_path)
+              .find((path): path is string => Boolean(path)) ?? null
+          const prepared = resumeWaitingPath
+            ? {
+                waitingFolder: dirname(resumeWaitingPath),
+                path: resumeWaitingPath,
+                skuCode: basename(resumeWaitingPath, extname(resumeWaitingPath)),
+              }
+            : await prepareWaitingPrint({
+                workbenchRoot: dependencies.workbenchRoot,
+                runId: context.runId,
+                sourcePath: item.path,
+                printSkuCode: context.config.printSkuCode,
+                filenameSeparator: context.config.filenameSeparator,
+                sequence: nextSequence,
+              })
+          if (!resumeWaitingPath) {
+            nextSequence += 1
+          }
           waitingFolderPath = prepared.waitingFolder
 
           for (const templatePath of config.templates) {
             const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
+            const resumeItem = resumeItemForTemplate(templatePath)
+            if (resumeItem?.status === 'completed') {
+              continue
+            }
             const taskId = `${context.runId}-photoshop-${prepared.skuCode}-${safePathSegment(templatePath)}`
             const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
             const cancelFilePath = join(taskDir, 'cancel.flag')

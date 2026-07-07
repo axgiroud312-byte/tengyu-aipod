@@ -26,6 +26,7 @@ const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
 
 type GenerationBatchDependencies = {
   emitProgress?: (progress: GenerationProgress) => void
+  strictImageComplete?: boolean
   onImageComplete?: (payload: {
     taskId: string
     capability: 'txt2img' | 'img2img' | 'extract' | 'matting'
@@ -185,6 +186,7 @@ const mocks = vi.hoisted(() => ({
     })),
     close: vi.fn(async () => undefined),
   })),
+  writeTitlesXlsx: vi.fn(),
   cancelTitleTask: vi.fn(),
   createTaskDir: vi.fn(async (module: string, taskId: string) => {
     const taskDir = join(mocks.workbenchRoot, '.workbench', 'tmp', module, taskId)
@@ -377,6 +379,12 @@ vi.mock('./title-service', async () => {
   const actual = await vi.importActual<typeof import('./title-service')>('./title-service')
   return {
     ...actual,
+    writeTitlesXlsx: (...args: Parameters<typeof actual.writeTitlesXlsx>) => {
+      if (mocks.writeTitlesXlsx.getMockImplementation()) {
+        return mocks.writeTitlesXlsx(...args)
+      }
+      return actual.writeTitlesXlsx(...args)
+    },
     titleService: {
       runTitleBatch: mocks.runTitleBatch,
       createProcessingSession: mocks.createTitleProcessingSession,
@@ -478,6 +486,48 @@ function createPhotoshopBatchResult(
   }
 }
 
+function createPhotoshopBatchResultForTemplate(
+  prints: PhotoshopPrintAsset[],
+  templatePath: string,
+  config: {
+    taskId: string
+    outputRoot: string
+    outputLayout: PhotoshopOutputLayout
+  },
+) {
+  const printId = prints[0]?.id ?? 'print'
+  const templateName = basename(windowsBaseName(templatePath), extname(templatePath)) || 'template'
+  const outputPath = join(config.outputRoot, templateName, printId, '01.jpg')
+  return {
+    ok: true,
+    task_id: config.taskId,
+    output_layout: config.outputLayout,
+    templates_total: 1,
+    groups_total: 1,
+    groups_completed: 1,
+    outputs: [outputPath],
+    templates: [
+      {
+        template_id: `tpl-${templateName}`,
+        template_name: templateName,
+        groups_total: 1,
+        groups_completed: 1,
+        outputs: [outputPath],
+      },
+    ],
+    result_groups: [
+      {
+        template_id: `tpl-${templateName}`,
+        template_name: templateName,
+        group_index: 0,
+        sku_folder: printId,
+        print_ids: [printId],
+        outputs: [outputPath],
+      },
+    ],
+  }
+}
+
 function progressEvents() {
   return mocks.sentEvents
     .filter((event) => event.channel === 'pipeline:progress')
@@ -545,6 +595,20 @@ function windowsBaseName(value: string) {
   return value.split(/[/\\]/).pop() ?? value
 }
 
+function requireString(value: string | null | undefined, message: string) {
+  if (!value) {
+    throw new Error(message)
+  }
+  return value
+}
+
+function requireStringArray(value: unknown, message: string) {
+  if (!Array.isArray(value) || !value.every((item): item is string => typeof item === 'string')) {
+    throw new Error(message)
+  }
+  return value
+}
+
 function updateRunStatusForTest(runId: string, status: 'running' | 'interrupted' | 'failed') {
   const db = openWorkbenchDatabase(workbenchDatabasePath(mocks.workbenchRoot))
   try {
@@ -572,6 +636,7 @@ describe('PipelineService', () => {
     mocks.ipcHandlers.clear()
     mocks.runBatch.mockClear()
     mocks.runTitleBatch.mockClear()
+    mocks.writeTitlesXlsx.mockReset()
     mocks.createTitleProcessingSession.mockReset()
     mocks.createTitleProcessingSession.mockResolvedValue({
       taskId: 'title-session',
@@ -625,6 +690,30 @@ describe('PipelineService', () => {
     await rm(mocks.workbenchRoot, { recursive: true, force: true })
     collectionFolderLock.clearForTests()
     mocks.workbenchRoot = ''
+  })
+
+  it('rejects duplicate fire-and-forget starts for the same print sku', () => {
+    const service = new PipelineService()
+    const pendingRun = createDeferred<Awaited<ReturnType<PipelineService['getRun']>>>()
+    vi.spyOn(service, 'runPipeline').mockReturnValue(
+      pendingRun.promise as ReturnType<PipelineService['runPipeline']>,
+    )
+
+    const firstRunId = service.startRun(baseConfig('/unused'))
+
+    expect(firstRunId).toEqual(expect.any(String))
+    expect(() => service.startRun(baseConfig('/unused'))).toThrow('已有进行中完整任务')
+  })
+
+  it('rejects duplicate fire-and-forget resumes for the same run', () => {
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const pendingResume = createDeferred<Awaited<ReturnType<PipelineService['getRun']>>>()
+    vi.spyOn(service, 'resumeRun').mockReturnValue(
+      pendingResume.promise as ReturnType<ResumeCapablePipelineService['resumeRun']>,
+    )
+
+    expect(service.startResume('run-duplicate-resume')).toBe('run-duplicate-resume')
+    expect(() => service.startResume('run-duplicate-resume')).toThrow('正在运行')
   })
 
   it('writes default Photoshop output to the listing workspace so template batches stay first-level', async () => {
@@ -1165,6 +1254,41 @@ describe('PipelineService', () => {
     })
   })
 
+  it('fails the title step without completing title items when the xlsx file stays locked', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    mocks.runBatch.mockImplementationOnce(async (prints, _templates, config) => {
+      const result = createPhotoshopBatchResult(prints, config)
+      const outputPath = result.result_groups[0]?.outputs[0]
+      if (outputPath) {
+        await createTitleProductImage(outputPath)
+      }
+      return result
+    })
+    mocks.writeTitlesXlsx.mockRejectedValue(
+      Object.assign(new Error('EPERM: locked'), { code: 'EPERM' }),
+    )
+
+    const service = new PipelineService()
+
+    await expect(
+      service.runPipeline('run-title-xlsx-locked', baseConfig(printFolder)),
+    ).rejects.toThrow('标题文件被 Excel 占用，请关闭后重试')
+    const detail = await service.getRun('run-title-xlsx-locked')
+    if (!detail) {
+      throw new Error('missing run detail')
+    }
+
+    expect(detail.run.status).toBe('failed')
+    expect(detail.steps.find((step) => step.step_key === 'title')).toMatchObject({
+      status: 'failed',
+    })
+    expect((detail.items ?? []).find((item) => item.step_key === 'title')).toMatchObject({
+      status: 'failed',
+      error_message: '标题文件被 Excel 占用，请关闭后重试',
+    })
+  })
+
   it('can complete before Photoshop and title when those stages are disabled', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing.png'))
@@ -1220,6 +1344,67 @@ describe('PipelineService', () => {
       ['photoshop', 'skipped'],
       ['title', 'skipped'],
     ])
+  })
+
+  it('fails the run instead of completing when every streaming matting item fails', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'needs-matting')
+    await createPrint(join(printFolder, 'first.png'))
+    await createPrint(join(printFolder, 'second.png'))
+    mocks.runComfyuiMattingBatch
+      .mockResolvedValueOnce({
+        taskId: 'run-all-matting-failed-matting-existing-print-1',
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+        images: [],
+        failures: [{ prompt: '', error: 'ComfyUI 工作流等待超时' }],
+      })
+      .mockResolvedValueOnce({
+        taskId: 'run-all-matting-failed-matting-existing-print-2',
+        total: 1,
+        succeeded: 0,
+        failed: 1,
+        images: [],
+        failures: [{ prompt: '', error: 'ComfyUI 工作流等待超时' }],
+      })
+
+    const service = new PipelineService()
+
+    await expect(
+      service.runPipeline('run-all-matting-failed', {
+        ...baseConfig(printFolder),
+        source: existingPrintSource(printFolder, 'matting'),
+        matting: {
+          enabled: true,
+          mode: 'comfyui',
+          workflowId: 'matting-workflow',
+        },
+        detection: {
+          enabled: true,
+          model: 'qwen3.6-flash',
+          skillId: 'infringement-detection',
+          skillVersion: '1.0.0',
+          allowReview: true,
+        },
+      }),
+    ).rejects.toThrow('抠图全部失败')
+
+    const detail = await service.getRun('run-all-matting-failed')
+    expect(detail?.run.status).toBe('failed')
+    expect(detail?.steps.find((step) => step.step_key === 'matting')).toMatchObject({
+      status: 'failed',
+      input_count: 2,
+      output_count: 0,
+    })
+    expect(
+      detail?.items?.filter((item) => item.step_key === 'matting' && item.status === 'failed'),
+    ).toHaveLength(2)
+    expect(
+      detail?.items?.find((item) => item.step_key === 'matting' && item.status === 'failed')
+        ?.error_message,
+    ).toBe('ComfyUI 工作流等待超时')
+    expect(mocks.runDetectionBatch).not.toHaveBeenCalled()
+    expect(mocks.runBatch).not.toHaveBeenCalled()
   })
 
   it('rejects collection source folders outside the collection workspace', async () => {
@@ -1912,6 +2097,110 @@ describe('PipelineService', () => {
     ).toHaveLength(1)
   })
 
+  it('resumes missing Photoshop templates with the existing waiting print copy', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    const templates = ['C:\\templates\\shirt.psd', 'C:\\templates\\mug.psd']
+    let firstRunCalls = 0
+    mocks.runBatch.mockImplementation(
+      async (
+        prints: PhotoshopPrintAsset[],
+        templatePathsInput: unknown,
+        config: {
+          taskId: string
+          outputRoot: string
+          outputLayout: PhotoshopOutputLayout
+        },
+      ) => {
+        firstRunCalls += 1
+        const templatePaths = requireStringArray(templatePathsInput, 'missing Photoshop templates')
+        const templatePath =
+          templatePaths[0] ?? requireString(templates[0], 'missing first template')
+        if (firstRunCalls === 2) {
+          throw new Error('mug failed before resume')
+        }
+        const result = createPhotoshopBatchResultForTemplate(prints, templatePath, config)
+        const outputPath = result.result_groups[0]?.outputs[0]
+        if (outputPath) {
+          await createTitleProductImage(outputPath)
+        }
+        return result
+      },
+    )
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const firstRun = await service.runPipeline('run-resume-ps-partial', {
+      ...baseConfig(printFolder),
+      photoshop: {
+        ...baseConfig(printFolder).photoshop,
+        templates,
+      },
+      title: {
+        ...baseConfig(printFolder).title,
+        existingStrategy: 'regenerate',
+      },
+    })
+    const completedPhotoshopItem = (firstRun.items ?? []).find(
+      (item) => item.step_key === 'photoshop' && item.status === 'completed',
+    )
+    expect(completedPhotoshopItem?.source_path).toContain('TY-BASE-0001.png')
+    expect(
+      (firstRun.items ?? []).filter(
+        (item) => item.step_key === 'photoshop' && item.status === 'completed',
+      ),
+    ).toHaveLength(1)
+    expect(
+      (firstRun.items ?? []).filter(
+        (item) => item.step_key === 'photoshop' && item.status === 'failed',
+      ),
+    ).toHaveLength(1)
+
+    updateRunStatusForTest('run-resume-ps-partial', 'interrupted')
+    mocks.runBatch.mockClear()
+    mocks.createTitleProcessingSession.mockClear()
+    mocks.runBatch.mockImplementationOnce(
+      async (
+        prints: PhotoshopPrintAsset[],
+        templatePathsInput: unknown,
+        config: {
+          taskId: string
+          outputRoot: string
+          outputLayout: PhotoshopOutputLayout
+        },
+      ) => {
+        const templatePaths = requireStringArray(templatePathsInput, 'missing resumed templates')
+        const resumedSourcePath = requireString(
+          completedPhotoshopItem?.source_path,
+          'missing completed Photoshop source path',
+        )
+        const resumedTemplate = requireString(templates[1], 'missing resumed template')
+        expect(prints[0]?.file_path).toBe(resumedSourcePath)
+        expect(templatePaths).toEqual([resumedTemplate])
+        const result = createPhotoshopBatchResultForTemplate(prints, resumedTemplate, config)
+        const outputPath = result.result_groups[0]?.outputs[0]
+        if (outputPath) {
+          await createTitleProductImage(outputPath)
+        }
+        return result
+      },
+    )
+
+    const resumed = await service.resumeRun('run-resume-ps-partial')
+
+    expect(resumed?.run.status).toBe('completed')
+    expect(mocks.runBatch).toHaveBeenCalledTimes(1)
+    expect(
+      (resumed?.items ?? []).filter(
+        (item) => item.step_key === 'photoshop' && item.status === 'completed',
+      ),
+    ).toHaveLength(2)
+    expect(
+      (resumed?.items ?? []).filter(
+        (item) => item.step_key === 'photoshop' && item.status === 'failed',
+      ),
+    ).toHaveLength(0)
+  })
+
   it('completes a detection-only run when every print is blocked', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     const printPath = join(printFolder, 'existing.png')
@@ -2092,6 +2381,70 @@ describe('PipelineService', () => {
       capability: 'img2img',
       prompts: ['make a new geometric print'],
     })
+  })
+
+  it('uses strict image completion callbacks for streaming Grsai source runs', async () => {
+    const outputPath = join(mocks.workbenchRoot, 'strict-source.png')
+    await createPrint(outputPath)
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        expect(dependencies?.strictImageComplete).toBe(true)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-strict-source-txt2img',
+          capability: 'txt2img',
+          path: outputPath,
+          printId: 'pri-strict-source',
+          artifactId: 'art-strict-source',
+          sourceArtifactIds: [],
+        })
+        return {
+          taskId: input.taskId ?? 'run-strict-source-txt2img',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [
+            {
+              prompt: 'strict source',
+              url: 'file://strict-source.png',
+              localPath: outputPath,
+              artifactId: 'art-strict-source',
+              printId: 'pri-strict-source',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+
+    const service = new PipelineService()
+    const result = await service.runPipeline('run-strict-source', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['strict source'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+
+    expect(result.run.status).toBe('completed')
+    expect(
+      result.items?.find(
+        (item) => item.step_key === 'source' && item.item_key === 'pri-strict-source',
+      ),
+    ).toMatchObject({ status: 'completed' })
   })
 
   it('routes txt2img comfyui sources to the ComfyUI batch runner', async () => {
@@ -2939,8 +3292,8 @@ describe('PipelineService', () => {
       join(mocks.workbenchRoot, 'stream-detect-matted-2.png'),
     ])
     expect(mocks.runDetectionBatch.mock.calls.map((call) => call[0]?.taskId)).toEqual([
-      '完整任务测试',
-      '完整任务测试',
+      'run-stream-matting-detection-detection-pri-stream-detect-source-1',
+      'run-stream-matting-detection-detection-pri-stream-detect-source-2',
     ])
     expect(
       detail.result_sections?.find((section) => section.key === 'detection_blocked'),
@@ -3864,6 +4217,26 @@ describe('PipelineService', () => {
     const handler = mocks.ipcHandlers.get('pipeline:resume')
     if (!handler) {
       throw new Error('pipeline:resume handler was not registered')
+    }
+
+    expect(() => handler({}, { run_id: '' })).toThrow('完整任务 ID 无效')
+  })
+
+  it('rejects empty cancel run ids at the IPC schema boundary', () => {
+    registerPipelineIpc()
+    const handler = mocks.ipcHandlers.get('pipeline:cancel')
+    if (!handler) {
+      throw new Error('pipeline:cancel handler was not registered')
+    }
+
+    expect(() => handler({}, { run_id: '' })).toThrow('完整任务 ID 无效')
+  })
+
+  it('rejects empty get-run ids at the IPC schema boundary', () => {
+    registerPipelineIpc()
+    const handler = mocks.ipcHandlers.get('pipeline:get-run')
+    if (!handler) {
+      throw new Error('pipeline:get-run handler was not registered')
     }
 
     expect(() => handler({}, { run_id: '' })).toThrow('完整任务 ID 无效')
