@@ -18,6 +18,7 @@ import { PipelineRunHistoryPanel } from '@/features/pipeline/components/Pipeline
 import { PipelineRunControls } from '@/features/pipeline/components/PipelineRunControls'
 import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineStatusAlerts'
 import { RunTheater } from '@/features/pipeline/components/RunTheater'
+import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-completion-events'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { validatePipelineConfig } from '@/features/pipeline/pipeline-validation'
 import {
@@ -1203,6 +1204,9 @@ export function FullTaskPage() {
 
   useEffect(() => {
     return window.api.pipeline.onCompleted((event) => {
+      if (!shouldApplyPipelineCompletedEvent(currentRunId, event)) {
+        return
+      }
       if (event.ok) {
         setCurrentRunId(event.result.run.id)
         setProgress(progressFromRunDetail(event.result))
@@ -1216,7 +1220,7 @@ export function FullTaskPage() {
       void refreshOptions()
       void refreshRunHistory()
     })
-  }, [refreshOptions, refreshRunHistory, setCurrentRunId])
+  }, [currentRunId, refreshOptions, refreshRunHistory, setCurrentRunId])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
