@@ -92,8 +92,9 @@ describe('TempFileManager', () => {
     await manager.cleanupTask('title', 'failed', { keepIfFailed: true })
     await expect(stat(dir)).resolves.toBeTruthy()
 
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    await expect(stat(dir)).rejects.toThrow()
+    await vi.waitFor(async () => {
+      await expect(stat(dir)).rejects.toThrow()
+    })
   })
 
   it('cleans orphan task directories older than 24 hours', async () => {
