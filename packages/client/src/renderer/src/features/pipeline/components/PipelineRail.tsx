@@ -1,6 +1,42 @@
 import { Badge } from '@/components/ui/badge'
+import { cn } from '@/lib/utils'
 import type { PipelineRailViewModel } from '../pipeline-progress-view-model'
 import type { PipelineConfigStage } from '../types'
+
+function railModeLabel(mode: PipelineRailViewModel['mode']) {
+  if (mode === 'config') {
+    return '配置'
+  }
+  if (mode === 'running') {
+    return '运行中'
+  }
+  return '战报'
+}
+
+function stageStatusLabel(status: PipelineRailViewModel['stages'][number]['status']) {
+  const labels: Record<PipelineRailViewModel['stages'][number]['status'], string> = {
+    active: '运行',
+    cancelled: '已取消',
+    completed: '完成',
+    config: '待配置',
+    failed: '失败',
+    interrupted: '已中断',
+    locked: '锁定',
+    pending: '待运行',
+    skipped: '跳过',
+  }
+  return labels[status]
+}
+
+function formatDuration(durationMs: number) {
+  const totalSeconds = Math.max(0, Math.round(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  if (minutes === 0) {
+    return `${seconds}秒`
+  }
+  return `${minutes}分${String(seconds).padStart(2, '0')}秒`
+}
 
 export function PipelineRail({
   view,
@@ -20,27 +56,53 @@ export function PipelineRail({
             <p className="mt-1 text-xs text-amber-700">{view.summary.warning}</p>
           ) : null}
         </div>
-        <Badge variant="outline">{view.mode === 'running' ? '运行中' : '进度'}</Badge>
+        <Badge variant="outline">{railModeLabel(view.mode)}</Badge>
       </div>
       <div className="grid gap-3 md:grid-cols-5">
         {view.stages.map((stage) => (
           <button
-            className={`rounded-md border bg-background px-3 py-3 text-left transition ${
-              stage.enabled ? 'hover:border-primary/50' : 'opacity-60'
-            } ${stage.active ? 'border-primary shadow-sm' : ''}`}
+            className={cn(
+              'min-h-[116px] rounded-md border bg-background px-3 py-3 text-left transition',
+              stage.enabled ? 'hover:border-primary/50' : 'opacity-60',
+              stage.active ? 'border-primary bg-primary/5 shadow-sm' : null,
+              stage.status === 'failed' ? 'border-destructive/60 bg-destructive/5' : null,
+              selectedStage === stage.key ? 'ring-2 ring-ring/30' : null,
+            )}
             key={stage.key}
             onClick={() => onSelectStage(stage.key)}
             type="button"
           >
             <div className="flex items-center justify-between gap-2">
               <span className="text-sm font-medium">{stage.label}</span>
-              {stage.issues > 0 ? <Badge variant="destructive">{stage.issues}</Badge> : null}
+              <Badge variant={stage.active ? 'default' : 'outline'}>
+                {stage.issues > 0 ? `待配置 ${stage.issues}` : stageStatusLabel(stage.status)}
+              </Badge>
             </div>
-            <p className="mt-2 text-xs text-muted-foreground">
-              {stage.counts.done}/{stage.counts.total}
-              {stage.counts.failed ? ` · 失败 ${stage.counts.failed}` : ''}
-              {stage.counts.blocked ? ` · 拦截 ${stage.counts.blocked}` : ''}
-            </p>
+            {stage.locked ? (
+              <p className="mt-2 line-clamp-2 text-xs text-muted-foreground">
+                {stage.locked.reason}
+              </p>
+            ) : null}
+            <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+              <span className="rounded-sm bg-muted px-2 py-0.5 text-muted-foreground">
+                完成 {stage.counts.done}/{stage.counts.total}
+              </span>
+              {stage.counts.failed ? (
+                <span className="rounded-sm bg-destructive/10 px-2 py-0.5 text-destructive">
+                  失败 {stage.counts.failed}
+                </span>
+              ) : null}
+              {stage.counts.blocked ? (
+                <span className="rounded-sm bg-amber-100 px-2 py-0.5 text-amber-800">
+                  拦截 {stage.counts.blocked}
+                </span>
+              ) : null}
+              {stage.durationMs !== null ? (
+                <span className="rounded-sm bg-muted px-2 py-0.5 text-muted-foreground">
+                  耗时 {formatDuration(stage.durationMs)}
+                </span>
+              ) : null}
+            </div>
             {selectedStage === stage.key ? (
               <div className="mt-2 h-1 rounded-full bg-primary" />
             ) : null}

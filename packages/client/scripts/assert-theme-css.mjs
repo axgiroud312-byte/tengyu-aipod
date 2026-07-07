@@ -8,6 +8,7 @@ const requiredSelectors = [
   ['bg-primary', /\.bg-primary([,{]|$)/],
   ['text-primary-foreground', /\.text-primary-foreground([,{]|$)/],
   ['bg-card', /\.bg-card([,{]|$)/],
+  ['bg-input', /\.bg-input([,{]|$)/],
   ['bg-muted', /\.bg-muted([,{]|$)/],
   ['text-muted-foreground', /\.text-muted-foreground([,{]|$)/],
   ['border-border', /\.border-border([,{]|$)/],

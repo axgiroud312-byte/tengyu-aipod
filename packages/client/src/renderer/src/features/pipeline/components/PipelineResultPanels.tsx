@@ -28,7 +28,6 @@ import {
   Loader2,
   Play,
   RefreshCw,
-  Sparkles,
 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
@@ -248,11 +247,11 @@ export function PipelineResultsPanel({
 
   return (
     <Card className="overflow-hidden">
-      <CardHeader className="border-b bg-gradient-to-r from-blue-50 via-slate-50 to-emerald-50 pb-4">
+      <CardHeader className="border-b bg-muted/30 pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle className="flex items-center gap-2 text-lg text-balance">
-              <Sparkles className="size-5" />
+              <ImageIcon className="size-5" />
               结果预览
             </CardTitle>
             <CardDescription>{message}</CardDescription>
@@ -302,7 +301,7 @@ export function PipelineResultsPanel({
                 </Button>
               </div>
             ) : null}
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-slate-950/90 to-transparent p-4 text-white">
+            <div className="absolute inset-x-0 bottom-0 bg-slate-950/85 p-4 text-white">
               <div className="truncate text-xl font-semibold">{heroTitle}</div>
               <div className="mt-1 truncate text-sm text-white/70">{heroSubtitle}</div>
             </div>

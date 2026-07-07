@@ -3,13 +3,13 @@ import { cn } from '@/lib/utils'
 import {
   Download,
   HelpCircle,
+  ImagePlus,
   Layers,
   PanelLeftClose,
   PanelLeftOpen,
   Rocket,
   Settings2,
   ShieldCheck,
-  Sparkles,
   Type,
   Video,
   Workflow,
@@ -22,7 +22,7 @@ const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>
   collection: Download,
   pipeline: Workflow,
   title: Type,
-  generation: Sparkles,
+  generation: ImagePlus,
   detection: ShieldCheck,
   listing: Rocket,
   video: Video,
@@ -31,7 +31,7 @@ const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>
   tutorial: HelpCircle,
 }
 
-const activeClassName = 'bg-primary text-primary-foreground'
+const activeClassName = 'border border-primary/20 bg-primary/10 text-primary'
 const inactiveClassName = 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
 
 interface SidebarProps {
@@ -43,7 +43,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'relative z-20 flex h-screen shrink-0 flex-col border-r bg-card shadow-sm transition-[width] duration-150',
+        'relative z-20 flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-150',
         collapsed ? 'w-[60px]' : 'w-[180px]',
       )}
     >
@@ -66,7 +66,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
           src="brand/brand-logo.svg"
         />
         {collapsed ? null : (
-          <p className="brand-wordmark mt-2 bg-clip-text text-center text-xl font-black leading-none tracking-normal">
+          <p className="brand-wordmark mt-2 text-center text-xl font-semibold leading-none tracking-normal">
             腾域Ai
           </p>
         )}

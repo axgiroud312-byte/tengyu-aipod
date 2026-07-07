@@ -10,6 +10,16 @@ import type {
 import type { PipelineConfigStage, PipelineValidationIssue } from './types'
 
 export type RailMode = 'config' | 'running' | 'done'
+export type RailStageStatus =
+  | 'config'
+  | 'locked'
+  | 'pending'
+  | 'active'
+  | 'completed'
+  | 'skipped'
+  | 'failed'
+  | 'cancelled'
+  | 'interrupted'
 
 export type RailStage = {
   key: PipelineConfigStage
@@ -20,6 +30,7 @@ export type RailStage = {
   counts: { done: number; total: number; failed: number; blocked: number }
   active: boolean
   durationMs: number | null
+  status: RailStageStatus
 }
 
 export type PipelineRailViewModel = {
@@ -30,11 +41,13 @@ export type PipelineRailViewModel = {
 }
 
 type StageEnabledMap = Record<PipelineConfigStage, boolean>
+type StageLockMap = Partial<Record<PipelineConfigStage, { on: boolean; reason: string }>>
 
 type BuildPipelineRailViewModelInput = {
   progress: PipelineProgress | PipelineRunDetail | null
   issues: PipelineValidationIssue[]
   enabled: StageEnabledMap
+  locked?: StageLockMap
 }
 
 type ProgressSnapshot = {
@@ -121,7 +134,7 @@ function toSnapshot(
   }
   return {
     status: progress.status,
-    message: progress.message,
+    message: statusMessage(progress.status, progress.message || null),
     stats: progress.stats,
     steps: progress.steps,
     items: progress.items ?? [],
@@ -169,6 +182,26 @@ function sectionOutputCount(sections: PipelineResultSection[], key: PipelineResu
   return section.completed + section.items.length + (section.groups?.length ?? 0)
 }
 
+function statsDoneForStage(stage: PipelineConfigStage, stats: PipelineRunStats | null) {
+  if (!stats) {
+    return 0
+  }
+  if (stage === 'detection') {
+    return stats.detectionPass + stats.detectionReview
+  }
+  if (stage === 'photoshop') {
+    return stats.photoshopGroups
+  }
+  if (stage === 'title') {
+    return stats.titleSucceeded
+  }
+  return 0
+}
+
+function statsFailedForStage(stage: PipelineConfigStage, stats: PipelineRunStats | null) {
+  return stage === 'title' ? (stats?.titleFailed ?? 0) : 0
+}
+
 function countStage(input: {
   stage: PipelineConfigStage
   steps: PipelineStepRecord[]
@@ -190,18 +223,60 @@ function countStage(input: {
   const blocked =
     input.stage === 'detection'
       ? Math.max(
-          stageItems.filter((item) => itemRiskLevel(item) === 'block').length,
+          stageItems.filter((item) => item.status === 'filtered' || itemRiskLevel(item) === 'block')
+            .length,
           sectionCompleted(input.sections, 'detection_blocked'),
           input.stats?.detectionBlock ?? 0,
         )
       : 0
+  const stepDone = Math.max(
+    stepOutputDone,
+    stepTotal === 0 && stepOutputDone === 0 ? completedStepDone : 0,
+  )
+  const done = Math.max(
+    stageItems.length > 0 ? itemDone : stepDone,
+    statsDoneForStage(input.stage, input.stats),
+  )
+  const failed = Math.max(
+    stageItems.length > 0 ? itemFailed : failedStepCount,
+    statsFailedForStage(input.stage, input.stats),
+  )
 
   return {
-    done: stageItems.length > 0 ? itemDone : Math.max(stepOutputDone, completedStepDone),
-    total: Math.max(stageItems.length, stepTotal, blocked),
-    failed: stageItems.length > 0 ? itemFailed : failedStepCount,
+    done,
+    total: Math.max(stageItems.length, stepTotal, blocked, done + failed + blocked),
+    failed,
     blocked,
   }
+}
+
+function stageStatus(input: {
+  steps: PipelineStepRecord[]
+  snapshot: ProgressSnapshot | null
+  locked?: { on: boolean; reason: string }
+}): RailStageStatus {
+  if (!input.snapshot) {
+    return input.locked ? 'locked' : 'config'
+  }
+  if (input.steps.some((step) => step.status === 'running')) {
+    return 'active'
+  }
+  if (input.steps.some((step) => step.status === 'failed')) {
+    return 'failed'
+  }
+  if (input.steps.some((step) => step.status === 'interrupted')) {
+    return 'interrupted'
+  }
+  if (input.steps.some((step) => step.status === 'cancelled')) {
+    return 'cancelled'
+  }
+  if (input.steps.length > 0 && input.steps.every((step) => step.status === 'skipped')) {
+    return 'skipped'
+  }
+  if (input.steps.length > 0 && input.steps.every((step) => step.status === 'completed')) {
+    return 'completed'
+  }
+  return 'pending'
 }
 
 function buildStage(input: {
@@ -209,13 +284,21 @@ function buildStage(input: {
   snapshot: ProgressSnapshot | null
   enabled: boolean
   issues: PipelineValidationIssue[]
+  locked?: { on: boolean; reason: string }
 }): RailStage {
   const stageSteps =
     input.snapshot?.steps.filter((step) => stepStage(step.step_key) === input.stage) ?? []
+  const status = stageStatus({
+    steps: stageSteps,
+    snapshot: input.snapshot,
+    ...(input.locked ? { locked: input.locked } : {}),
+  })
+  const enabled = input.locked ? input.locked.on : input.enabled
   return {
     key: input.stage,
     label: STAGE_LABELS[input.stage],
-    enabled: input.enabled,
+    enabled: status === 'skipped' ? false : enabled,
+    ...(input.locked ? { locked: input.locked } : {}),
     issues: issueCountForStage(input.issues, input.stage),
     counts: input.snapshot
       ? countStage({
@@ -226,8 +309,9 @@ function buildStage(input: {
           stats: input.snapshot.stats,
         })
       : { done: 0, total: 0, failed: 0, blocked: 0 },
-    active: stageSteps.some((step) => step.status === 'running'),
+    active: status === 'active',
     durationMs: durationMsForSteps(stageSteps),
+    status,
   }
 }
 
@@ -274,6 +358,7 @@ export function buildPipelineRailViewModel(
       snapshot,
       enabled: input.enabled[stage],
       issues: input.issues,
+      ...(input.locked?.[stage] ? { locked: input.locked[stage] } : {}),
     }),
   )
   const status = snapshot?.message ?? '等待配置完整任务'

@@ -11,9 +11,12 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { PipelineRunHistoryPanel } from '@/features/pipeline/components/PipelineResultPanels'
+import { PipelineRunControls } from '@/features/pipeline/components/PipelineRunControls'
+import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineStatusAlerts'
 import { RunTheater } from '@/features/pipeline/components/RunTheater'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { validatePipelineConfig } from '@/features/pipeline/pipeline-validation'
@@ -47,7 +50,6 @@ import {
   Square,
   Trash2,
   Upload,
-  WandSparkles,
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -931,6 +933,33 @@ export function FullTaskPage() {
     detectionLockedOn || (!detectionLockedSkipped && detectionEnabled)
   const effectivePhotoshopEnabled = photoshopLockedOn || photoshopEnabled
   const effectiveTitleEnabled = titleEnabled && effectivePhotoshopEnabled
+  const pipelineStageLocks = useMemo(() => {
+    const locks: Partial<Record<PipelineConfigStage, { on: boolean; reason: string }>> = {}
+    if (mattingLockedOn) {
+      locks.matting = { on: true, reason: '已有印花来源从抠图开始，抠图必须启用。' }
+    } else if (mattingLockedSkipped) {
+      locks.matting = { on: false, reason: '当前起始步骤在抠图之后，抠图会跳过。' }
+    }
+    if (detectionLockedOn) {
+      locks.detection = { on: true, reason: '已有印花来源从侵权检测开始，检测必须启用。' }
+    } else if (detectionLockedSkipped) {
+      locks.detection = { on: false, reason: '当前起始步骤在侵权检测之后，检测会跳过。' }
+    }
+    if (photoshopLockedOn) {
+      locks.photoshop = { on: true, reason: '已有印花来源从 PS 套版开始，PS 套版必须启用。' }
+    }
+    if (!effectivePhotoshopEnabled) {
+      locks.title = { on: false, reason: '标题生成依赖 PS 套版。' }
+    }
+    return locks
+  }, [
+    detectionLockedOn,
+    detectionLockedSkipped,
+    effectivePhotoshopEnabled,
+    mattingLockedOn,
+    mattingLockedSkipped,
+    photoshopLockedOn,
+  ])
   const validationIssues = useMemo(
     () =>
       validatePipelineConfig({
@@ -1025,12 +1054,14 @@ export function FullTaskPage() {
           photoshop: effectivePhotoshopEnabled,
           title: effectiveTitleEnabled,
         },
+        locked: pipelineStageLocks,
       }),
     [
       effectiveDetectionEnabled,
       effectiveMattingEnabled,
       effectivePhotoshopEnabled,
       effectiveTitleEnabled,
+      pipelineStageLocks,
       progress,
       validationIssues,
     ],
@@ -1776,23 +1807,16 @@ export function FullTaskPage() {
   return (
     <div className="space-y-5">
       <div className="space-y-5">
-        {isMac && effectivePhotoshopEnabled ? (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800">
-            PS 套版 v1 仅支持 Windows，当前电脑不能启动完整任务。
-          </div>
-        ) : null}
-        {error ? (
-          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
-            {error}
-          </div>
-        ) : null}
+        <PipelineStatusAlerts
+          error={error}
+          showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
+        />
 
         <Card>
           <CardHeader className="pb-4">
             <div className="flex items-start justify-between gap-3">
               <div>
                 <CardTitle className="flex items-center gap-2 text-lg text-balance">
-                  <WandSparkles className="size-5" />
                   完整任务
                 </CardTitle>
                 <CardDescription>上方配置，下方按模块查看预览和日志。</CardDescription>
@@ -2389,7 +2413,7 @@ export function FullTaskPage() {
                     className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
                     htmlFor="matting-enabled"
                   >
-                    <Checkbox
+                    <Switch
                       aria-label="启用抠图"
                       id="matting-enabled"
                       checked={effectiveMattingEnabled}
@@ -2479,7 +2503,7 @@ export function FullTaskPage() {
                     className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
                     htmlFor="detection-enabled"
                   >
-                    <Checkbox
+                    <Switch
                       aria-label="启用侵权检测"
                       id="detection-enabled"
                       checked={effectiveDetectionEnabled}
@@ -2562,7 +2586,7 @@ export function FullTaskPage() {
                     className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
                     htmlFor="photoshop-enabled"
                   >
-                    <Checkbox
+                    <Switch
                       aria-label="启用 PS 套版"
                       checked={effectivePhotoshopEnabled}
                       disabled={photoshopLockedOn}
@@ -2705,7 +2729,7 @@ export function FullTaskPage() {
                     className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
                     htmlFor="title-enabled"
                   >
-                    <Checkbox
+                    <Switch
                       aria-label="启用标题生成"
                       checked={effectiveTitleEnabled}
                       disabled={!effectivePhotoshopEnabled}
@@ -2903,44 +2927,19 @@ export function FullTaskPage() {
               </CardContent>
             </Card>
 
-            {!running && validationMessages.length ? (
-              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-3 text-sm text-amber-800">
-                <p className="font-medium">暂不能启动</p>
-                <ul className="mt-2 list-disc space-y-1 pl-5">
-                  {validationMessages.map((message) => (
-                    <li key={message}>{message}</li>
-                  ))}
-                </ul>
-              </div>
-            ) : null}
-
-            <div className="flex flex-wrap items-center gap-3">
-              <Button
-                disabled={!canStart}
-                onClick={() => void runPipeline()}
-                title={validationMessages[0] ?? undefined}
-              >
-                <Play className="mr-2 h-4 w-4" />
-                启动完整任务
-              </Button>
-              <Button
-                disabled={!running || !currentRunId || cancelPipelineMutation.loading}
-                onClick={() => void cancelPipeline()}
-                variant="outline"
-              >
-                <Square className="mr-2 h-4 w-4" />
-                取消
-              </Button>
-              <Button onClick={() => void refreshOptions()} variant="ghost">
-                <RefreshCw className="mr-2 h-4 w-4" />
-                刷新选项
-              </Button>
-              <Button onClick={() => setIsLogOpen(true)} variant="secondary">
-                <Settings2 className="mr-2 h-4 w-4" />
-                日志 {progress?.logs?.length ?? 0}
-              </Button>
-              <span className="text-sm text-muted-foreground">{message}</span>
-            </div>
+            <PipelineRunControls
+              canStart={canStart}
+              cancelLoading={cancelPipelineMutation.loading}
+              currentRunId={currentRunId}
+              logCount={progress?.logs?.length ?? 0}
+              message={message}
+              onCancel={() => void cancelPipeline()}
+              onOpenLog={() => setIsLogOpen(true)}
+              onRefresh={() => void refreshOptions()}
+              onStart={() => void runPipeline()}
+              running={running}
+              {...(validationMessages[0] ? { launchDisabledReason: validationMessages[0] } : {})}
+            />
           </CardContent>
         </Card>
       </div>
@@ -2954,6 +2953,7 @@ export function FullTaskPage() {
         progress={progress}
         railView={railView}
         selectedStage={selectedPipelineStage}
+        validationIssues={running ? [] : validationIssues}
       />
       <PipelineRunHistoryPanel
         currentRunId={currentRunId}
