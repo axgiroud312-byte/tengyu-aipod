@@ -118,6 +118,12 @@ export class ComfyHttpClient {
       if (entry?.status?.completed === true) {
         return entry
       }
+      if (entry) {
+        const executionError = executionErrorFromHistory(promptId, entry)
+        if (executionError) {
+          throw executionError
+        }
+      }
 
       await sleep(this.pollIntervalMs)
     }
@@ -262,6 +268,79 @@ function protocolError(message: string, cause?: unknown) {
   )
 }
 
+function executionErrorFromHistory(promptId: string, entry: ComfyHistoryEntry) {
+  const executionError = findExecutionError(entry.status?.messages)
+  if (!executionError && entry.status?.status_str !== 'error') {
+    return null
+  }
+  const details: Record<string, unknown> = {
+    kind: 'failed',
+    provider: 'comfyui-chenyu',
+    promptId,
+  }
+  if (executionError?.nodeId) {
+    details.nodeId = executionError.nodeId
+  }
+  if (executionError?.nodeType) {
+    details.nodeType = executionError.nodeType
+  }
+  if (executionError?.exceptionType) {
+    details.exceptionType = executionError.exceptionType
+  }
+  if (executionError?.exceptionMessage) {
+    details.exceptionMessage = executionError.exceptionMessage
+  }
+  if (executionError?.traceback) {
+    details.traceback = executionError.traceback
+  }
+
+  return new AppErrorClass('HTTP_5XX', formatExecutionErrorMessage(executionError), false, details)
+}
+
+function findExecutionError(messages: unknown[] | undefined) {
+  if (!Array.isArray(messages)) {
+    return null
+  }
+  for (const message of messages) {
+    if (!Array.isArray(message) || message[0] !== 'execution_error' || !isRecord(message[1])) {
+      continue
+    }
+    const payload = message[1]
+    return {
+      nodeId: stringFrom(payload.node_id),
+      nodeType: stringFrom(payload.node_type),
+      exceptionType: stringFrom(payload.exception_type),
+      exceptionMessage: stringFrom(payload.exception_message)?.trim(),
+      traceback: Array.isArray(payload.traceback)
+        ? payload.traceback.filter((item): item is string => typeof item === 'string')
+        : undefined,
+    }
+  }
+  return null
+}
+
+function formatExecutionErrorMessage(executionError: ReturnType<typeof findExecutionError>) {
+  if (!executionError) {
+    return 'ComfyUI 工作流执行失败'
+  }
+
+  const label = [executionError.nodeType, executionError.exceptionType].filter(Boolean).join(' ')
+  if (label && executionError.exceptionMessage) {
+    return `ComfyUI 工作流执行失败：${label}: ${executionError.exceptionMessage}`
+  }
+  if (label) {
+    return `ComfyUI 工作流执行失败：${label}`
+  }
+  if (executionError.exceptionMessage) {
+    return `ComfyUI 工作流执行失败：${executionError.exceptionMessage}`
+  }
+  return 'ComfyUI 工作流执行失败'
+}
+
+function stringFrom(value: unknown) {
+  return typeof value === 'string' ? value : undefined
+}
+
 function isQueueFullMessage(message: string) {
   const normalized = message.toLowerCase()
   return (
@@ -271,6 +350,10 @@ function isQueueFullMessage(message: string) {
 
 function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
 }
 
 function sleep(ms: number) {

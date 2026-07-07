@@ -109,14 +109,11 @@ describe('ComfyuiChenyuAdapter', () => {
 
     expect(response.status).toBe('succeeded')
     expect(uploadImage).toHaveBeenCalledWith(Buffer.from('source'), 'reference-1.png')
-    expect(queuePrompt).toHaveBeenCalledWith(
-      {
-        '1': { inputs: { image: 'uploaded.png' } },
-        '2': { inputs: { text: 'extract the floral print' } },
-        '9': { inputs: {} },
-      },
-      { extraPngInfo: { workflow: workflow.workflowJson } },
-    )
+    expect(queuePrompt).toHaveBeenCalledWith({
+      '1': { inputs: { image: 'uploaded.png' } },
+      '2': { inputs: { text: 'extract the floral print' } },
+      '9': { inputs: {} },
+    })
     expect(getHistory).toHaveBeenCalledWith('prompt-1')
     expect(viewImage).toHaveBeenCalledWith({ filename: 'result.png' })
     expect(normalizedPath(response.images[0]?.local_path)).toContain(
@@ -507,14 +504,11 @@ describe('ComfyuiChenyuAdapter', () => {
     })
 
     expect(uploadImage).not.toHaveBeenCalled()
-    expect(queuePrompt).toHaveBeenCalledWith(
-      {
-        '2': { inputs: { text: 'centered floral print' } },
-        '3': { inputs: { width: 1024, height: 1024 } },
-        '9': { inputs: {} },
-      },
-      { extraPngInfo: { workflow: txt2imgWorkflow.workflowJson } },
-    )
+    expect(queuePrompt).toHaveBeenCalledWith({
+      '2': { inputs: { text: 'centered floral print' } },
+      '3': { inputs: { width: 1024, height: 1024 } },
+      '9': { inputs: {} },
+    })
     expect(normalizedPath(response.images[0]?.local_path)).toContain(
       '/workbench/02-印花工作区/文生图/txt2img-task/',
     )
