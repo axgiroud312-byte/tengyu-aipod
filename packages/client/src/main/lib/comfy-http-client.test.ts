@@ -163,6 +163,49 @@ describe('ComfyHttpClient', () => {
     } satisfies Partial<AppErrorClass>)
   })
 
+  it('surfaces ComfyUI execution errors even when history is marked completed', async () => {
+    server.use(
+      http.get(`${baseUrl}/history/prompt-1`, () =>
+        HttpResponse.json({
+          'prompt-1': {
+            status: {
+              completed: true,
+              status_str: 'error',
+              messages: [
+                [
+                  'execution_error',
+                  {
+                    node_id: '48',
+                    node_type: 'easy showAnything',
+                    exception_type: 'KeyError',
+                    exception_message: "'nodes'\n",
+                  },
+                ],
+              ],
+            },
+            outputs: {},
+          },
+        }),
+      ),
+    )
+    const client = new ComfyHttpClient(baseUrl, { pollIntervalMs: 1, pollTimeoutMs: 50 })
+
+    await expect(client.getHistory('prompt-1')).rejects.toMatchObject({
+      code: 'HTTP_5XX',
+      message: "ComfyUI 工作流执行失败：easy showAnything KeyError: 'nodes'",
+      retryable: false,
+      details: {
+        kind: 'failed',
+        provider: 'comfyui-chenyu',
+        promptId: 'prompt-1',
+        nodeId: '48',
+        nodeType: 'easy showAnything',
+        exceptionType: 'KeyError',
+        exceptionMessage: "'nodes'",
+      },
+    } satisfies Partial<AppErrorClass>)
+  })
+
   it('downloads view images as Buffer', async () => {
     let filename: string | null = null
     server.use(

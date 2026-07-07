@@ -115,14 +115,14 @@ export class ComfyHttpClient {
       const raw = await parseJsonBody<ComfyHistoryResponse>(response)
       const entry = raw[promptId]
 
-      if (entry?.status?.completed === true) {
-        return entry
-      }
       if (entry) {
         const executionError = executionErrorFromHistory(promptId, entry)
         if (executionError) {
           throw executionError
         }
+      }
+      if (entry?.status?.completed === true) {
+        return entry
       }
 
       await sleep(this.pollIntervalMs)

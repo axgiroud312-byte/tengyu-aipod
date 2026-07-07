@@ -28,6 +28,7 @@ import {
   runTxt2imgBatch,
   scanGenerationImageFolder,
 } from './generation-service'
+import { emitImageComplete } from './generation/runtime'
 import { promptGeneratorService } from './prompt-generator-service'
 import type { SqliteDatabase } from './sqlite'
 
@@ -414,6 +415,30 @@ describe('generation prompt service entrypoint', () => {
 })
 
 describe('generation Grsai paid image service', () => {
+  it('rethrows onImageComplete failures when strict image completion is enabled', async () => {
+    const payload: GenerationImageCompletePayload = {
+      taskId: 'strict-callback-task',
+      capability: 'txt2img',
+      path: join(workbenchRoot, 'strict.png'),
+      printId: 'pri-strict',
+      artifactId: 'art-strict',
+      sourceArtifactIds: [],
+    }
+    const callbackError = new Error('pipeline item persistence failed')
+
+    await expect(
+      emitImageComplete(
+        {
+          strictImageComplete: true,
+          onImageComplete: async () => {
+            throw callbackError
+          },
+        },
+        payload,
+      ),
+    ).rejects.toThrow('pipeline item persistence failed')
+  })
+
   it('calls onImageComplete in completion order before the Grsai batch resolves', async () => {
     const fakeDb = createFakeDb()
     const first = createDeferred<{

@@ -99,6 +99,7 @@ export type GenerationServiceDependencies = {
   emitProgress?: (progress: GenerationProgress) => void
   emitDebugLog?: (entry: GenerationDebugLogEntry) => void
   onImageComplete?: (image: GenerationImageCompletePayload) => void | Promise<void>
+  strictImageComplete?: boolean | undefined
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
 
@@ -961,7 +962,10 @@ export function createGenerationProgressEmitter(
 }
 
 export async function emitImageComplete(
-  dependencies: Pick<GenerationServiceDependencies, 'onImageComplete' | 'emitDebugLog'>,
+  dependencies: Pick<
+    GenerationServiceDependencies,
+    'onImageComplete' | 'emitDebugLog' | 'strictImageComplete'
+  >,
   payload: GenerationImageCompletePayload,
 ) {
   if (!dependencies.onImageComplete) {
@@ -980,6 +984,9 @@ export async function emitImageComplete(
       artifactId: payload.artifactId ?? null,
       path: payload.path,
     })
+    if (dependencies.strictImageComplete) {
+      throw error
+    }
   }
 }
 
