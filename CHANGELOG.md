@@ -13,7 +13,7 @@
 - P2-3 完整任务持久层：抽出 pipeline 行类型、`main/lib/pipeline/store.ts` SQL store，并把 pipeline service 迁入 `main/lib/pipeline/service.ts`，原路径保留 re-export 壳。
 - P2-4 长列表与图片性能：列表图片补 `loading="lazy"`，采集图池优先使用本地缓存缩略图，并用 `@tanstack/react-virtual` 虚拟化采集图池与生图历史/结果长列表。
 - P2-6 诊断日志：设置页新增“打开日志目录”和“导出日志包”；导出 zip 覆盖 `.workbench/logs/`、上架 evidence、pipeline/photoshop SQLite JSONL，并补充 collection/listing/photoshop/pipeline 关键失败诊断写入。
-- P2 收官清理：合并 renderer 侧 `localImageUrl`、`progressPercent`、debug log `levelCounts/formatTimestamp` 重复工具；设置中心后续 PRD 已落在 `design/PRD-settings-center.md`。
+- P2 收官清理：合并 renderer 侧 `localImageUrl`、`progressPercent`、debug log `levelCounts/formatTimestamp` 重复工具；前端视觉收敛与完整任务导轨 PRD 已落在 `docs/issues/frontend-refactor-p1p2-pipeline-rail-prd.md`。
 
 ### Added
 
