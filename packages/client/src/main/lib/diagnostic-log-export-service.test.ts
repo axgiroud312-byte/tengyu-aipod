@@ -105,6 +105,92 @@ describe('diagnostic log export service', () => {
     expect(entries.get('sqlite/photoshop/workflow-steps.jsonl')).toContain('JSX_EXEC_FAILED')
     expect(entries.get('manifest.json')).toContain('"version"')
   })
+
+  it('redacts local paths and prompt or skill content from exported diagnostic data', async () => {
+    const logsRoot = join(workbenchRoot, '.workbench', 'logs')
+    const diagnosticLogPath = join(logsRoot, 'diagnostics', 'title', 'task.jsonl')
+    const localImagePath = join(workbenchRoot, '04-上架工作区', 'SKU-1', '01.jpg')
+    const outputPath = join(workbenchRoot, '04-上架工作区', 'SKU-1', '标题.xlsx')
+    const fullPrompt = 'Generate a private prompt with buyer-specific wording.'
+    const skillPrompt = 'Private skill system prompt for internal title generation.'
+
+    await mkdir(join(logsRoot, 'diagnostics', 'title'), { recursive: true })
+    await writeFile(
+      diagnosticLogPath,
+      `${JSON.stringify({
+        type: 'request',
+        data: {
+          diagnosticsLogPath: diagnosticLogPath,
+          sourcePath: localImagePath,
+          outputPath,
+          prompt: fullPrompt,
+          skill: {
+            id: 'skill-title',
+            version: 'v1',
+            systemPrompt: skillPrompt,
+          },
+        },
+      })}\n`,
+    )
+
+    const db = openWorkbenchDatabase(workbenchDatabasePath(workbenchRoot))
+    db.prepare(
+      `INSERT INTO pipeline_runs (
+        id, name, source_mode, status, config_json, stats_json, logs_json, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'run-1',
+      '完整任务 1',
+      'txt2img',
+      'failed',
+      '{}',
+      '{}',
+      JSON.stringify([
+        {
+          level: 'error',
+          message: '标题失败',
+          details: {
+            xlsxPath: outputPath,
+            prompt: fullPrompt,
+            skill: { id: 'skill-title', systemPrompt: skillPrompt },
+          },
+        },
+      ]),
+      123,
+    )
+    db.prepare(
+      `INSERT INTO workflow_steps (
+        id, task_id, module, step, status, attempt, params_snapshot, error_json, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).run(
+      'ps-step-1',
+      'ps-task-1',
+      'photoshop',
+      'mockup',
+      'failed',
+      1,
+      JSON.stringify({ mockup_path: localImagePath, prompt_snapshot: fullPrompt }),
+      JSON.stringify({ outputPath, skill: { systemPrompt: skillPrompt } }),
+      123,
+    )
+    db.close()
+
+    const zipPath = join(workbenchRoot, 'diagnostic.zip')
+    await exportDiagnosticLogZip({ outputPath: zipPath, workbenchRoot })
+
+    const entries = readZip(await readFile(zipPath))
+    const exportedText = Array.from(entries.values()).join('\n')
+
+    expect(exportedText).not.toContain(workbenchRoot)
+    expect(exportedText).not.toContain(localImagePath)
+    expect(exportedText).not.toContain(outputPath)
+    expect(exportedText).not.toContain(diagnosticLogPath)
+    expect(exportedText).not.toContain(fullPrompt)
+    expect(exportedText).not.toContain(skillPrompt)
+    expect(exportedText).toContain('"redacted":"local-path"')
+    expect(exportedText).toContain('"redacted":"prompt"')
+    expect(exportedText).toContain('"redacted":"skill"')
+  })
 })
 
 function readZip(buffer: Buffer) {

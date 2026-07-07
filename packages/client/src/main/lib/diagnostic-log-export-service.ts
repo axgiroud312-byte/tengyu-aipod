@@ -108,7 +108,7 @@ export async function exportDiagnosticLogZip(
       ),
     })
 
-    const zipEntries = await materializeEntries(entries)
+    const zipEntries = await materializeEntries(entries, input.workbenchRoot)
     const zip = await createZipBuffer(zipEntries, input.now ?? new Date())
     await mkdir(dirname(input.outputPath), { recursive: true })
     await writeFile(input.outputPath, zip)
@@ -320,13 +320,161 @@ function addDataEntry(
   entries.push({ archivePath: normalized, data: entry.data })
 }
 
-async function materializeEntries(entries: ExportEntry[]): Promise<ZipEntry[]> {
+async function materializeEntries(
+  entries: ExportEntry[],
+  workbenchRoot: string,
+): Promise<ZipEntry[]> {
   const result: ZipEntry[] = []
   for (const entry of entries) {
     const data = entry.data ?? (entry.filePath ? await readFile(entry.filePath) : Buffer.alloc(0))
-    result.push({ archivePath: entry.archivePath, data })
+    result.push({
+      archivePath: entry.archivePath,
+      data: sanitizeDiagnosticExportEntry(entry.archivePath, data, workbenchRoot),
+    })
   }
   return result.sort((left, right) => left.archivePath.localeCompare(right.archivePath))
+}
+
+function sanitizeDiagnosticExportEntry(archivePath: string, data: Buffer, workbenchRoot: string) {
+  if (!isTextDiagnosticEntry(archivePath)) {
+    return data
+  }
+
+  const text = data.toString('utf8')
+  const sanitized =
+    archivePath.endsWith('.jsonl') || archivePath.endsWith('.log')
+      ? sanitizeDiagnosticJsonlText(text, workbenchRoot)
+      : archivePath.endsWith('.json')
+        ? sanitizeDiagnosticJsonText(text, workbenchRoot)
+        : redactEmbeddedLocalPaths(text, workbenchRoot)
+  return Buffer.from(sanitized, 'utf8')
+}
+
+function sanitizeDiagnosticJsonlText(text: string, workbenchRoot: string) {
+  return text
+    .split(/(\r?\n)/)
+    .map((part) => {
+      if (part === '\n' || part === '\r\n' || !part.trim()) {
+        return part
+      }
+      try {
+        return JSON.stringify(
+          sanitizeDiagnosticExportValue(JSON.parse(part) as unknown, workbenchRoot),
+        )
+      } catch {
+        return redactEmbeddedLocalPaths(part, workbenchRoot)
+      }
+    })
+    .join('')
+}
+
+function sanitizeDiagnosticJsonText(text: string, workbenchRoot: string) {
+  try {
+    return JSON.stringify(sanitizeDiagnosticExportValue(JSON.parse(text) as unknown, workbenchRoot))
+  } catch {
+    return redactEmbeddedLocalPaths(text, workbenchRoot)
+  }
+}
+
+function sanitizeDiagnosticExportValue(value: unknown, workbenchRoot: string, key = ''): unknown {
+  if (isPromptContentKey(key) && typeof value === 'string') {
+    return redactedText('prompt', value)
+  }
+  if (isSkillContentKey(key) && value && typeof value === 'object') {
+    return redactSkillValue(value)
+  }
+  if (typeof value === 'string') {
+    if (isLocalPathValue(value, workbenchRoot) || (isLocalPathKey(key) && looksLikePath(value))) {
+      return redactedLocalPath(value)
+    }
+    return redactEmbeddedLocalPaths(value, workbenchRoot)
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => sanitizeDiagnosticExportValue(item, workbenchRoot, key))
+  }
+  if (value && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([entryKey, entryValue]) => [
+        entryKey,
+        sanitizeDiagnosticExportValue(entryValue, workbenchRoot, entryKey),
+      ]),
+    )
+  }
+  return value
+}
+
+function redactSkillValue(value: object) {
+  const input = value as Record<string, unknown>
+  return {
+    redacted: 'skill',
+    ...(typeof input.id === 'string' ? { id: input.id } : {}),
+    ...(typeof input.skill_id === 'string' ? { skill_id: input.skill_id } : {}),
+    ...(typeof input.name === 'string' ? { name: input.name } : {}),
+    ...(typeof input.version === 'string' ? { version: input.version } : {}),
+    ...(typeof input.skill_version === 'string' ? { skill_version: input.skill_version } : {}),
+    sha256: hashText(JSON.stringify(value)),
+  }
+}
+
+function redactedLocalPath(value: string) {
+  return {
+    redacted: 'local-path',
+    name: basename(value),
+    sha256: hashText(value),
+  }
+}
+
+function redactedText(kind: 'prompt', value: string) {
+  return {
+    redacted: kind,
+    chars: value.length,
+    sha256: hashText(value),
+  }
+}
+
+function isTextDiagnosticEntry(archivePath: string) {
+  return /\.(jsonl|json|log|txt)$/i.test(archivePath)
+}
+
+function isPromptContentKey(key: string) {
+  return /(^|_)(prompt|current_prompt|prompt_snapshot)$/i.test(key) || /systemPrompt/i.test(key)
+}
+
+function isSkillContentKey(key: string) {
+  return /^skill$/i.test(key) || /skill[-_]?content|skillPrompt|skill_prompt/i.test(key)
+}
+
+function isLocalPathKey(key: string) {
+  return /(^|_)(path|dir|folder|file|outputPath|sourcePath|xlsxPath|diagnosticsLogPath)(_|$)/i.test(
+    key,
+  )
+}
+
+function isLocalPathValue(value: string, workbenchRoot: string) {
+  return (
+    isAbsolute(value) ||
+    value.startsWith('\\\\') ||
+    Boolean(workbenchRoot && value.includes(workbenchRoot))
+  )
+}
+
+function looksLikePath(value: string) {
+  return /[\\/]/.test(value)
+}
+
+function redactEmbeddedLocalPaths(value: string, workbenchRoot: string) {
+  let result = value
+  if (workbenchRoot) {
+    result = result.replace(
+      new RegExp(`${escapeRegExp(workbenchRoot)}[^"'\r\n\t]*`, 'g'),
+      '[LOCAL_PATH_REDACTED]',
+    )
+  }
+  return result.replace(/[A-Za-z]:[\\/][^"'\r\n\t]*/g, '[LOCAL_PATH_REDACTED]')
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
 async function createZipBuffer(entries: ZipEntry[], now: Date) {
