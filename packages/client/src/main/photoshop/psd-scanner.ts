@@ -471,7 +471,18 @@ export class PsdScanner {
   }
 
   async listCachedTemplates(): Promise<PsdTemplate[]> {
-    return this.cache.list()
+    const templates = await this.cache.list()
+    const available = await Promise.all(
+      templates.map(async (template) => {
+        try {
+          await access(template.file_path)
+          return true
+        } catch {
+          return false
+        }
+      }),
+    )
+    return templates.filter((_template, index) => available[index])
   }
 
   private assertWindows(): void {

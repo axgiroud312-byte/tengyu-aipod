@@ -135,10 +135,13 @@ export type PipelineExecutionPlanCaptureInput = PipelineExecutionPlanConfig & {
 export type PipelineExecutionPlanReferenceOptions = {
   providers: readonly ('grsai' | 'comfyui-chenyu')[]
   grsaiModels: readonly string[]
-  promptModels: readonly string[]
+  textPromptModels: readonly string[]
+  visionPromptModels: readonly string[]
   titleModels: readonly string[]
   detectionModels: readonly string[]
-  generationSkills: readonly string[]
+  extractSkills: readonly string[]
+  txt2imgPromptSkills: readonly string[]
+  img2imgPromptSkills: readonly string[]
   detectionSkills: readonly string[]
   txt2imgWorkflows: readonly string[]
   img2imgWorkflows: readonly string[]
@@ -498,7 +501,7 @@ export function validateExecutionPlanReferences(
       'source.extractSkillId',
       '提取 Skill',
       config.source.extractSkillId,
-      options.generationSkills,
+      options.extractSkills,
     )
     if (config.source.extractProvider === 'grsai') {
       requireReference(
@@ -586,19 +589,23 @@ export function validateExecutionPlanReferences(
       (config.source.img2imgProvider === 'grsai' ||
         config.source.img2imgComfyuiPromptMode === 'ai'))
   if (needsPrompt) {
+    const promptModels =
+      config.sourceMode === 'img2img' ? options.visionPromptModels : options.textPromptModels
+    const promptSkills =
+      config.sourceMode === 'img2img' ? options.img2imgPromptSkills : options.txt2imgPromptSkills
     requireReference(
       'source',
       'generation.promptSkillId',
       '提示词 Skill',
       config.generation.promptSkillId,
-      options.generationSkills,
+      promptSkills,
     )
     requireReference(
       'source',
       'generation.promptModel',
       '提示词模型',
       config.generation.promptModel,
-      options.promptModels,
+      promptModels,
     )
   }
 

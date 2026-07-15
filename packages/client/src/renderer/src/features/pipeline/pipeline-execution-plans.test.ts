@@ -299,10 +299,13 @@ describe('execution plan persistence', () => {
     const available = {
       providers: ['comfyui-chenyu'] as const,
       grsaiModels: ['gpt-image-2'],
-      promptModels: ['qwen3-vl-plus'],
+      textPromptModels: ['qwen3-vl-plus'],
+      visionPromptModels: ['qwen3-vl-plus'],
       titleModels: ['qwen3.6-flash'],
       detectionModels: ['qwen3-vl-flash'],
-      generationSkills: ['extract@@1.0.0', 'prompt@@2.0.0'],
+      extractSkills: ['extract@@1.0.0'],
+      txt2imgPromptSkills: ['prompt@@2.0.0'],
+      img2imgPromptSkills: ['prompt@@2.0.0'],
       detectionSkills: ['detect@@1.0.0'],
       txt2imgWorkflows: ['wf-txt2img'],
       img2imgWorkflows: ['wf-img2img'],
@@ -323,7 +326,7 @@ describe('execution plan persistence', () => {
           ...config,
           source: { ...config.source, img2imgComfyuiPromptMode: 'ai' as const },
         },
-        available: { promptModels: [] },
+        available: { visionPromptModels: [] },
         expected: { stage: 'source', field: 'generation.promptModel', value: 'qwen3-vl-plus' },
       },
       {
@@ -332,7 +335,7 @@ describe('execution plan persistence', () => {
           ...config,
           source: { ...config.source, img2imgComfyuiPromptMode: 'ai' as const },
         },
-        available: { generationSkills: ['extract@@1.0.0'] },
+        available: { img2imgPromptSkills: [] },
         expected: { stage: 'source', field: 'generation.promptSkillId', value: 'prompt@@2.0.0' },
       },
       {
@@ -397,6 +400,49 @@ describe('execution plan persistence', () => {
       })
       expect(testConfig, testCase.label).toEqual(beforeValidation)
     }
+  })
+
+  it('rejects prompt references that exist only for a different source', () => {
+    const config = captureExecutionPlanConfig(planInput())
+    const testConfig = {
+      ...config,
+      sourceMode: 'txt2img' as const,
+      source: { ...config.source, txt2imgProvider: 'grsai' as const },
+      generation: {
+        ...config.generation,
+        promptModel: 'vision-only',
+        promptSkillId: 'img2img-only@@1.0.0',
+      },
+    }
+
+    const issues = validateExecutionPlanReferences(testConfig, {
+      providers: ['grsai', 'comfyui-chenyu'],
+      grsaiModels: ['gpt-image-2'],
+      textPromptModels: ['text-only'],
+      visionPromptModels: ['vision-only'],
+      titleModels: ['qwen3.6-flash'],
+      detectionModels: ['qwen3-vl-flash'],
+      extractSkills: ['extract@@1.0.0'],
+      txt2imgPromptSkills: ['txt2img-only@@1.0.0'],
+      img2imgPromptSkills: ['img2img-only@@1.0.0'],
+      detectionSkills: ['detect@@1.0.0'],
+      txt2imgWorkflows: ['wf-txt2img'],
+      img2imgWorkflows: ['wf-img2img'],
+      extractWorkflows: ['wf-extract'],
+      mattingWorkflows: ['wf-matting'],
+      runningMachineIds: ['machine-img2img', 'machine-matting'],
+      psdTemplatePaths: ['C:\\mockups\\shirt.psd'],
+    })
+
+    expect(issues).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ field: 'generation.promptModel', value: 'vision-only' }),
+        expect.objectContaining({
+          field: 'generation.promptSkillId',
+          value: 'img2img-only@@1.0.0',
+        }),
+      ]),
+    )
   })
 
   it('captures only stable allowlisted settings and validates schema version 1 on read', () => {

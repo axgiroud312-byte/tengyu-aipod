@@ -218,6 +218,32 @@ describe('PsdScanner', () => {
     expect(second.clip_areas).toEqual([{ x: 0, y: 0, w: 100, h: 100, is_full: true }])
   })
 
+  it('omits cached templates whose PSD file no longer exists', async () => {
+    const psdPath = await writeFakePsd()
+    const scanner = createScanner({
+      runJsxFile: async (jsxPath) => {
+        await writeFile(
+          join(jsxPath, '..', 'scan-result.json'),
+          JSON.stringify({
+            ok: true,
+            doc_size: { w: 100, h: 100 },
+            smart_objects: [],
+            guides: { horizontal: [], vertical: [] },
+            clip_areas: [],
+            layers: [],
+            text_layers: [],
+          }),
+          'utf8',
+        )
+      },
+    })
+
+    await scanner.scanPsd(psdPath)
+    await rm(psdPath)
+
+    await expect(scanner.listCachedTemplates()).resolves.toEqual([])
+  })
+
   it('rejects non-Windows scans before running JSX', async () => {
     const psdPath = await writeFakePsd()
     const scanner = createScanner({

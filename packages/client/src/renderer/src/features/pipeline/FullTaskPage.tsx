@@ -670,6 +670,11 @@ function skillInCategories(skill: SkillSummary, categories: readonly string[]) {
   return categories.includes(skill.category ?? '')
 }
 
+function skillsForCategories(skills: SkillSummary[], categories: readonly string[]) {
+  const filtered = skills.filter((skill) => skillInCategories(skill, categories))
+  return filtered.length > 0 ? filtered : skills
+}
+
 function AdvancedDisclosure({
   children,
   hidden = false,
@@ -950,19 +955,11 @@ export function FullTaskPage({
     if (!promptSkillCategory) {
       return []
     }
-    const filtered = generationSkills.filter((skill) =>
-      skillInCategories(skill, [promptSkillCategory]),
-    )
-    const pool = filtered.length > 0 ? filtered : generationSkills
-    return pool.map(optionFromPromptSkill)
+    return skillsForCategories(generationSkills, [promptSkillCategory]).map(optionFromPromptSkill)
   }, [generationSkills, promptSkillCategory])
   const selectedExtractSkill = useMemo(() => parseSkillVersionKey(extractSkillId), [extractSkillId])
   const extractSkillOptions = useMemo(() => {
-    const filtered = generationSkills.filter((skill) =>
-      skillInCategories(skill, extractSkillCategories),
-    )
-    const pool = filtered.length > 0 ? filtered : generationSkills
-    return pool.map(optionFromSkill)
+    return skillsForCategories(generationSkills, extractSkillCategories).map(optionFromSkill)
   }, [generationSkills])
   const runningInstances = useMemo(
     () => chenyuInstances.filter(isRunningChenyuInstance),
@@ -1137,15 +1134,19 @@ export function FullTaskPage({
       runningMachineIds: chenyuInstances.map((instance) => instance.instanceUuid),
     }),
     grsaiModels: generationSettings?.grsaiModels.map((model) => model.id) ?? [],
-    promptModels: [
-      ...new Set([
-        ...textModelsFor(generationSettings).map((model) => model.id),
-        ...visionModelsFor(generationSettings).map((model) => model.id),
-      ]),
-    ],
+    textPromptModels: textModelsFor(generationSettings).map((model) => model.id),
+    visionPromptModels: visionModelsFor(generationSettings).map((model) => model.id),
     titleModels: titleModels.map((option) => option.key),
     detectionModels: detectionModelOptions,
-    generationSkills: generationSkills.map(skillVersionOptionKey),
+    extractSkills: skillsForCategories(generationSkills, extractSkillCategories).map(
+      skillVersionOptionKey,
+    ),
+    txt2imgPromptSkills: skillsForCategories(generationSkills, [
+      promptSkillCategories.txt2img[printMode],
+    ]).map(skillVersionOptionKey),
+    img2imgPromptSkills: skillsForCategories(generationSkills, [
+      promptSkillCategories.img2img[printMode],
+    ]).map(skillVersionOptionKey),
     detectionSkills: detectionSkillOptions.map((option) => option.key),
     txt2imgWorkflows: txt2imgWorkflows.map((option) => option.key),
     img2imgWorkflows: img2imgWorkflows.map((option) => option.key),
