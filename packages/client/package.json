@@ -7,9 +7,9 @@
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build && node scripts/assert-theme-css.mjs",
-    "pack": "pnpm run build && electron-builder --dir",
-    "dist": "pnpm run build && electron-builder",
-    "dist:mac": "pnpm run build && electron-builder --mac",
+    "pack": "pnpm run build && electron-builder --dir && pnpm run check:packaged-runtime",
+    "dist": "pnpm run build && electron-builder && pnpm run check:packaged-runtime",
+    "dist:mac": "pnpm run build && electron-builder --mac && pnpm run check:packaged-runtime",
     "dist:win": "pnpm run build && electron-builder --win && pnpm run check:packaged-runtime",
     "check:theme": "node scripts/assert-theme-css.mjs",
     "check:packaged-runtime": "node scripts/assert-packaged-runtime-deps.mjs",

@@ -9,16 +9,35 @@ const scriptDir = dirname(fileURLToPath(import.meta.url))
 const clientRoot = resolve(scriptDir, '..')
 const repoRoot = resolve(clientRoot, '..', '..')
 const packageJson = JSON.parse(await readFile(join(clientRoot, 'package.json'), 'utf8'))
-const defaultAsarPath = join(
-  clientRoot,
-  'release',
-  packageJson.version,
-  'win-unpacked',
-  'resources',
-  'app.asar',
-)
+const defaultAsarPaths =
+  process.platform === 'darwin'
+    ? [
+        join(
+          clientRoot,
+          'release',
+          packageJson.version,
+          'mac',
+          '腾域 aipod.app',
+          'Contents',
+          'Resources',
+          'app.asar',
+        ),
+        join(
+          clientRoot,
+          'release',
+          packageJson.version,
+          'mac-arm64',
+          '腾域 aipod.app',
+          'Contents',
+          'Resources',
+          'app.asar',
+        ),
+      ]
+    : [join(clientRoot, 'release', packageJson.version, 'win-unpacked', 'resources', 'app.asar')]
 
-const asarPath = process.argv[2] ? resolve(process.argv[2]) : defaultAsarPath
+const asarPath = process.argv[2]
+  ? resolve(process.argv[2])
+  : await firstExistingPath(defaultAsarPaths)
 const entries = new Set(asar.listPackage(asarPath).map((entry) => entry.replaceAll('\\', '/')))
 
 const requiredModulePaths = [
