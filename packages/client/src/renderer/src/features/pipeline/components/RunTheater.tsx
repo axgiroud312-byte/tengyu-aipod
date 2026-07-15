@@ -85,6 +85,7 @@ export function RunTheater({
   progress,
   railView,
   selectedStage,
+  showRail = true,
   validationIssues,
 }: {
   config: PipelineRunConfig
@@ -95,12 +96,21 @@ export function RunTheater({
   progress: PipelineProgress | null
   railView: PipelineRailViewModel
   selectedStage: PipelineConfigStage | null
+  showRail?: boolean
   validationIssues: PipelineValidationIssue[]
 }) {
   return (
     <div className="space-y-5">
-      <PipelineRail onSelectStage={onSelectStage} selectedStage={selectedStage} view={railView} />
-      <PipelineSelectedStageIssues issues={validationIssues} selectedStage={selectedStage} />
+      {showRail ? (
+        <>
+          <PipelineRail
+            onSelectStage={onSelectStage}
+            selectedStage={selectedStage}
+            view={railView}
+          />
+          <PipelineSelectedStageIssues issues={validationIssues} selectedStage={selectedStage} />
+        </>
+      ) : null}
       <PipelineRunLogTail logs={railView.logTail} />
       <PipelineResultsPanel config={config} message={message} progress={progress} />
       <PipelineItemsPanel progress={progress} />

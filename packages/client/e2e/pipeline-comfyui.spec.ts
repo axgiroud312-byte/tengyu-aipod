@@ -750,6 +750,38 @@ test.describe('pipeline comfyui real probe', () => {
 
     await page.getByRole('link', { name: '完整任务' }).click()
 
+    for (const stage of ['任务起点', '抠图', '侵权检测', 'PS 套版', '标题生成']) {
+      await expect(page.getByRole('group', { name: `${stage}阶段` })).toBeVisible()
+    }
+    await expect(page.getByRole('group', { name: '任务起点阶段' }).getByRole('switch')).toHaveCount(
+      0,
+    )
+    await expect(page.getByRole('switch', { name: '启用抠图' })).toBeVisible()
+    await page.getByRole('button', { name: '编辑侵权检测' }).focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('heading', { name: '侵权检测设置' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '采集 + 提取' })).toHaveCount(0)
+    await fieldCombobox(page, '通过要求').click()
+    await page.getByRole('option', { name: '仅无风险通过' }).click()
+    await page.getByRole('switch', { name: '启用侵权检测' }).click()
+    await page.getByRole('switch', { name: '启用侵权检测' }).click()
+    await expect(fieldCombobox(page, '通过要求')).toContainText('仅无风险通过')
+
+    const photoshopSwitch = page.getByRole('switch', { name: '启用 PS 套版' })
+    const titleSwitch = page.getByRole('switch', { name: '启用标题生成' })
+    await photoshopSwitch.click()
+    await titleSwitch.click()
+    await photoshopSwitch.click()
+    await expect(titleSwitch).toBeDisabled()
+    await expect(titleSwitch).not.toBeChecked()
+    await photoshopSwitch.click()
+    await expect(titleSwitch).toBeEnabled()
+    await expect(titleSwitch).toBeChecked()
+
+    await page.getByRole('button', { name: '编辑任务起点' }).click()
+    await expect(page.getByRole('tab', { name: '采集 + 提取' })).toBeVisible()
+    await expect(page.getByText(/任务起点缺少 \d+ 项配置/)).toBeVisible()
+
     await page.getByRole('tab', { name: '采集 + 提取' }).click()
     await fieldTextbox(page, '任务名').fill('采集任务')
     await fieldTextbox(page, '印花货号').fill('COL')
@@ -818,15 +850,21 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('已有印花文件夹', { exact: true })).toBeVisible()
     await fieldTextbox(page, '已有印花文件夹').fill('C:\\source\\prints')
     await expect(page.getByText('起始步骤', { exact: true })).toBeVisible()
-    await expect(page.getByText('当前起始步骤会跳过抠图。')).toBeVisible()
-    await expect(page.getByText('当前起始步骤会跳过侵权检测。')).toBeVisible()
+    await expect(page.getByText('当前起始步骤在抠图之后，抠图会跳过。')).toBeVisible()
+    await expect(page.getByText('当前起始步骤在侵权检测之后，检测会跳过。')).toBeVisible()
+    await expect(page.getByRole('switch', { name: '启用抠图' })).toBeDisabled()
+    await expect(page.getByRole('switch', { name: '启用侵权检测' })).toBeDisabled()
+    await expect(page.getByRole('switch', { name: '启用 PS 套版' })).toBeDisabled()
     await page
       .getByText('起始步骤', { exact: true })
       .locator('xpath=..')
       .getByRole('combobox')
       .click()
     await page.getByRole('option', { name: '从抠图开始' }).click()
-    await page.getByText('抠图设置', { exact: true }).click()
+    await expect(page.getByRole('switch', { name: '启用抠图' })).toBeDisabled()
+    await expect(page.getByRole('switch', { name: '启用侵权检测' })).toBeEnabled()
+    await page.getByRole('button', { name: '编辑抠图' }).click()
+    await page.locator('summary').filter({ hasText: '抠图设置' }).click()
     await expect(page.getByText('抠图工作流', { exact: true }).last()).toBeVisible()
     await expect(page.getByText('需要先配置运行云机和抠图工作流。')).toBeVisible()
 

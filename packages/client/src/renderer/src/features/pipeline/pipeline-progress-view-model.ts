@@ -67,7 +67,7 @@ const STAGE_LABELS: Record<PipelineConfigStage, string> = {
   matting: '抠图',
   detection: '侵权检测',
   photoshop: 'PS 套版',
-  title: '标题',
+  title: '标题生成',
 }
 
 const EMPTY_STATS: PipelineRunStats = {

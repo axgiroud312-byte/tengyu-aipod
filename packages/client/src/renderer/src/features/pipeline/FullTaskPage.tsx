@@ -10,14 +10,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { PipelineRail } from '@/features/pipeline/components/PipelineRail'
 import { PipelineRunHistoryPanel } from '@/features/pipeline/components/PipelineResultPanels'
 import { PipelineRunControls } from '@/features/pipeline/components/PipelineRunControls'
 import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineStatusAlerts'
-import { RunTheater } from '@/features/pipeline/components/RunTheater'
+import { PipelineSelectedStageIssues, RunTheater } from '@/features/pipeline/components/RunTheater'
 import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-completion-events'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
@@ -29,6 +28,7 @@ import type {
   PipelineReferenceImageDraft,
   PipelineSourceDraftMap,
 } from '@/features/pipeline/pipeline-source-drafts'
+import { resolvePipelineStagePolicy } from '@/features/pipeline/pipeline-stage-policy'
 import { validatePipelineConfig } from '@/features/pipeline/pipeline-validation'
 import {
   type TitleExistingStrategy,
@@ -36,6 +36,7 @@ import {
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
 import { useIpcMutation } from '@/lib/use-ipc'
+import { cn } from '@/lib/utils'
 import { usePipelineDraftStore } from '@/store/pipeline'
 import { isPipelineRunConfig } from '@tengyu-aipod/shared'
 import type {
@@ -630,13 +631,15 @@ function skillInCategories(skill: SkillSummary, categories: readonly string[]) {
 
 function AdvancedDisclosure({
   children,
+  hidden = false,
   summary,
 }: {
   children: ReactNode
+  hidden?: boolean
   summary: string
 }) {
   return (
-    <details className="rounded-md border bg-background px-3 py-2 text-sm">
+    <details className="rounded-md border bg-background px-3 py-2 text-sm" hidden={hidden}>
       <summary className="flex cursor-pointer list-none items-center gap-2 font-medium">
         <Settings2 className="size-4" />
         {summary}
@@ -802,9 +805,7 @@ export function FullTaskPage({
   const [running, setRunning] = useState(false)
   const [optionsLoading, setOptionsLoading] = useState(false)
   const [isLogOpen, setIsLogOpen] = useState(false)
-  const [selectedPipelineStage, setSelectedPipelineStage] = useState<PipelineConfigStage | null>(
-    null,
-  )
+  const [selectedPipelineStage, setSelectedPipelineStage] = useState<PipelineConfigStage>('source')
   const [generationSettings, setGenerationSettings] = useState<GenerationSettingsSnapshot | null>(
     null,
   )
@@ -944,44 +945,46 @@ export function FullTaskPage({
             ? '图生图 / Grsai'
             : '图生图 / 晨羽'
           : '已有印花来源'
-  const isExistingPrintSource = sourceMode === 'existing_prints'
-  const mattingLockedOn = isExistingPrintSource && existingPrintStartStep === 'matting'
-  const mattingLockedSkipped = isExistingPrintSource && existingPrintStartStep !== 'matting'
-  const detectionLockedOn = isExistingPrintSource && existingPrintStartStep === 'detection'
-  const detectionLockedSkipped = isExistingPrintSource && existingPrintStartStep === 'photoshop'
-  const photoshopLockedOn = isExistingPrintSource && existingPrintStartStep === 'photoshop'
-  const effectiveMattingEnabled = mattingLockedOn || (!mattingLockedSkipped && mattingEnabled)
-  const effectiveDetectionEnabled =
-    detectionLockedOn || (!detectionLockedSkipped && detectionEnabled)
-  const effectivePhotoshopEnabled = photoshopLockedOn || photoshopEnabled
-  const effectiveTitleEnabled = titleEnabled && effectivePhotoshopEnabled
-  const pipelineStageLocks = useMemo(() => {
-    const locks: Partial<Record<PipelineConfigStage, { on: boolean; reason: string }>> = {}
-    if (mattingLockedOn) {
-      locks.matting = { on: true, reason: '已有印花来源从抠图开始，抠图必须启用。' }
-    } else if (mattingLockedSkipped) {
-      locks.matting = { on: false, reason: '当前起始步骤在抠图之后，抠图会跳过。' }
-    }
-    if (detectionLockedOn) {
-      locks.detection = { on: true, reason: '已有印花来源从侵权检测开始，检测必须启用。' }
-    } else if (detectionLockedSkipped) {
-      locks.detection = { on: false, reason: '当前起始步骤在侵权检测之后，检测会跳过。' }
-    }
-    if (photoshopLockedOn) {
-      locks.photoshop = { on: true, reason: '已有印花来源从 PS 套版开始，PS 套版必须启用。' }
-    }
-    if (!effectivePhotoshopEnabled) {
-      locks.title = { on: false, reason: '标题生成依赖 PS 套版。' }
-    }
-    return locks
-  }, [
-    detectionLockedOn,
-    detectionLockedSkipped,
-    effectivePhotoshopEnabled,
-    mattingLockedOn,
-    mattingLockedSkipped,
-    photoshopLockedOn,
-  ])
+  const stagePolicy = useMemo(
+    () =>
+      resolvePipelineStagePolicy({
+        sourceMode,
+        existingPrintStartStep,
+        enabled: {
+          matting: mattingEnabled,
+          detection: detectionEnabled,
+          photoshop: photoshopEnabled,
+          title: titleEnabled,
+        },
+      }),
+    [
+      detectionEnabled,
+      existingPrintStartStep,
+      mattingEnabled,
+      photoshopEnabled,
+      sourceMode,
+      titleEnabled,
+    ],
+  )
+  const effectiveMattingEnabled = stagePolicy.stages.matting.enabled
+  const effectiveDetectionEnabled = stagePolicy.stages.detection.enabled
+  const effectivePhotoshopEnabled = stagePolicy.stages.photoshop.enabled
+  const effectiveTitleEnabled = stagePolicy.stages.title.enabled
+  const mattingLockedSkipped = stagePolicy.stages.matting.locked?.on === false
+  const detectionLockedSkipped = stagePolicy.stages.detection.locked?.on === false
+  const pipelineStageLocks = useMemo(
+    () => ({
+      ...(stagePolicy.stages.matting.locked ? { matting: stagePolicy.stages.matting.locked } : {}),
+      ...(stagePolicy.stages.detection.locked
+        ? { detection: stagePolicy.stages.detection.locked }
+        : {}),
+      ...(stagePolicy.stages.photoshop.locked
+        ? { photoshop: stagePolicy.stages.photoshop.locked }
+        : {}),
+      ...(stagePolicy.stages.title.locked ? { title: stagePolicy.stages.title.locked } : {}),
+    }),
+    [stagePolicy],
+  )
   const validationIssues = useMemo(
     () =>
       validatePipelineConfig({
@@ -1493,12 +1496,6 @@ export function FullTaskPage({
     }
   }, [detectionConfig, detectionSkillKey, detectionSkillOptions, setDetectionSkillKey])
 
-  useEffect(() => {
-    if (!photoshopEnabled && titleEnabled) {
-      setTitleEnabled(false)
-    }
-  }, [photoshopEnabled, setTitleEnabled, titleEnabled])
-
   function setName(value: string) {
     updateSourceDraft(sourceMode, { ...activeSourceDraft, name: value })
   }
@@ -1532,6 +1529,21 @@ export function FullTaskPage({
 
   function setExistingPrintStartStep(value: PipelineStartStep) {
     updateSourceDraft('existing_prints', { ...sourceDrafts.existing_prints, startStep: value })
+  }
+
+  function setOptionalStageEnabled(
+    stage: Exclude<PipelineConfigStage, 'source'>,
+    enabled: boolean,
+  ) {
+    if (stage === 'matting') {
+      setMattingEnabled(enabled)
+    } else if (stage === 'detection') {
+      setDetectionEnabled(enabled)
+    } else if (stage === 'photoshop') {
+      setPhotoshopEnabled(enabled)
+    } else {
+      setTitleEnabled(enabled)
+    }
   }
 
   function setReferenceImages(
@@ -1824,7 +1836,27 @@ export function FullTaskPage({
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
-            <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_120px_220px]">
+            {!progress ? (
+              <PipelineRail
+                onSelectStage={setSelectedPipelineStage}
+                onToggleStage={setOptionalStageEnabled}
+                selectedStage={selectedPipelineStage}
+                view={railView}
+              />
+            ) : null}
+            {!progress ? (
+              <PipelineSelectedStageIssues
+                issues={validationIssues}
+                selectedStage={selectedPipelineStage}
+              />
+            ) : null}
+
+            <div
+              className={cn(
+                'grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_120px_220px]',
+                selectedPipelineStage !== 'source' && 'hidden',
+              )}
+            >
               <Field label="任务名">
                 <Input
                   onChange={(event) => setName(event.target.value)}
@@ -1857,7 +1889,12 @@ export function FullTaskPage({
               />
             </div>
 
-            <div className="rounded-md border bg-muted/20 p-4">
+            <div
+              className={cn(
+                'rounded-md border bg-muted/20 p-4',
+                selectedPipelineStage !== 'source' && 'hidden',
+              )}
+            >
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium text-muted-foreground">任务起点</p>
@@ -2401,26 +2438,18 @@ export function FullTaskPage({
               </div>
             </div>
 
-            <Card>
+            <Card className={selectedPipelineStage === 'matting' ? undefined : 'hidden'}>
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <CardTitle className="text-lg">是否抠图</CardTitle>
+                    <CardTitle className="text-lg">
+                      <h2>抠图设置</h2>
+                    </CardTitle>
                     <CardDescription>抠图固定走 ComfyUI 晨羽工作流。</CardDescription>
                   </div>
-                  <label
-                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                    htmlFor="matting-enabled"
-                  >
-                    <Switch
-                      aria-label="启用抠图"
-                      id="matting-enabled"
-                      checked={effectiveMattingEnabled}
-                      disabled={mattingLockedOn || mattingLockedSkipped}
-                      onCheckedChange={(checked) => setMattingEnabled(Boolean(checked))}
-                    />
-                    {mattingLockedSkipped ? '跳过抠图' : '启用抠图'}
-                  </label>
+                  <Badge variant={effectiveMattingEnabled ? 'secondary' : 'outline'}>
+                    {effectiveMattingEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -2480,41 +2509,52 @@ export function FullTaskPage({
               </CardContent>
             </Card>
 
-            <Card>
+            <Card
+              className={
+                selectedPipelineStage === 'detection' ||
+                selectedPipelineStage === 'photoshop' ||
+                selectedPipelineStage === 'title'
+                  ? undefined
+                  : 'hidden'
+              }
+            >
               <CardHeader className="pb-4">
                 <div className="flex items-start justify-between gap-3">
                   <div>
-                    <CardTitle className="text-lg">侵权检测 / 套版 / 标题</CardTitle>
-                    <CardDescription>后续步骤按开关顺序执行，未开启不参与校验。</CardDescription>
+                    <CardTitle className="text-lg">
+                      <h2>
+                        {selectedPipelineStage === 'detection'
+                          ? '侵权检测设置'
+                          : selectedPipelineStage === 'photoshop'
+                            ? 'PS 套版设置'
+                            : '标题生成设置'}
+                      </h2>
+                    </CardTitle>
+                    <CardDescription>关闭的阶段保留当前配置，本次执行会跳过。</CardDescription>
                   </div>
                   <Badge variant="secondary">后续流程</Badge>
                 </div>
               </CardHeader>
               <CardContent className="space-y-5">
-                <div className="flex flex-wrap items-start justify-between gap-3">
+                <div
+                  className={cn(
+                    'flex flex-wrap items-start justify-between gap-3',
+                    selectedPipelineStage !== 'detection' && 'hidden',
+                  )}
+                >
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">侵权检测</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       勾选后会复用单独的检测设置面板。
                     </p>
                   </div>
-                  <label
-                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                    htmlFor="detection-enabled"
-                  >
-                    <Switch
-                      aria-label="启用侵权检测"
-                      id="detection-enabled"
-                      checked={effectiveDetectionEnabled}
-                      disabled={detectionLockedOn || detectionLockedSkipped}
-                      onCheckedChange={(checked) => setDetectionEnabled(Boolean(checked))}
-                    />
-                    {detectionLockedSkipped ? '跳过检测' : '启用检测'}
-                  </label>
+                  <Badge variant={effectiveDetectionEnabled ? 'secondary' : 'outline'}>
+                    {effectiveDetectionEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
 
                 {effectiveDetectionEnabled ? (
-                  <div className="space-y-4">
+                  <div className="space-y-4" hidden={selectedPipelineStage !== 'detection'}>
                     <div className="grid gap-4 lg:grid-cols-3">
                       <SelectField
                         label="检测模型"
@@ -2565,39 +2605,38 @@ export function FullTaskPage({
                     </div>
                   </div>
                 ) : (
-                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  <div
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                    hidden={selectedPipelineStage !== 'detection'}
+                  >
                     {detectionLockedSkipped
                       ? '当前起始步骤会跳过侵权检测。'
                       : '已关闭侵权检测，后续会直接进入已开启的下一步。'}
                   </div>
                 )}
 
-                <Separator />
-
-                <div className="flex flex-wrap items-start justify-between gap-3">
+                <div
+                  className={cn(
+                    'flex flex-wrap items-start justify-between gap-3',
+                    selectedPipelineStage !== 'photoshop' && 'hidden',
+                  )}
+                >
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       开启后才要求印花货号、PSD 模板和 Windows 环境。
                     </p>
                   </div>
-                  <label
-                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                    htmlFor="photoshop-enabled"
-                  >
-                    <Switch
-                      aria-label="启用 PS 套版"
-                      checked={effectivePhotoshopEnabled}
-                      disabled={photoshopLockedOn}
-                      id="photoshop-enabled"
-                      onCheckedChange={(checked) => setPhotoshopEnabled(Boolean(checked))}
-                    />
-                    启用套版
-                  </label>
+                  <Badge variant={effectivePhotoshopEnabled ? 'secondary' : 'outline'}>
+                    {effectivePhotoshopEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
 
                 {effectivePhotoshopEnabled ? (
-                  <AdvancedDisclosure summary="PS 套版设置">
+                  <AdvancedDisclosure
+                    hidden={selectedPipelineStage !== 'photoshop'}
+                    summary="PS 套版设置"
+                  >
                     <div className="flex items-center justify-between gap-3">
                       <div>
                         <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
@@ -2732,37 +2771,36 @@ export function FullTaskPage({
                     </div>
                   </AdvancedDisclosure>
                 ) : (
-                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  <div
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                    hidden={selectedPipelineStage !== 'photoshop'}
+                  >
                     已关闭 PS 套版，任务会在当前印花产物处结束。
                   </div>
                 )}
 
-                <Separator />
-
-                <div className="flex flex-wrap items-start justify-between gap-3">
+                <div
+                  className={cn(
+                    'flex flex-wrap items-start justify-between gap-3',
+                    selectedPipelineStage !== 'title' && 'hidden',
+                  )}
+                >
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">标题生成</p>
                     <p className="mt-1 text-sm text-muted-foreground">
                       需要 PS 套版产出的货号文件夹；关闭套版时不可开启。
                     </p>
                   </div>
-                  <label
-                    className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                    htmlFor="title-enabled"
-                  >
-                    <Switch
-                      aria-label="启用标题生成"
-                      checked={effectiveTitleEnabled}
-                      disabled={!effectivePhotoshopEnabled}
-                      id="title-enabled"
-                      onCheckedChange={(checked) => setTitleEnabled(Boolean(checked))}
-                    />
-                    启用标题
-                  </label>
+                  <Badge variant={effectiveTitleEnabled ? 'secondary' : 'outline'}>
+                    {effectiveTitleEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
 
                 {effectiveTitleEnabled ? (
-                  <AdvancedDisclosure summary="标题生成设置">
+                  <AdvancedDisclosure
+                    hidden={selectedPipelineStage !== 'title'}
+                    summary="标题生成设置"
+                  >
                     <div>
                       <p className="text-sm font-medium text-muted-foreground">标题生成</p>
                       <p className="mt-1 text-sm text-muted-foreground">
@@ -2939,7 +2977,10 @@ export function FullTaskPage({
                     </div>
                   </AdvancedDisclosure>
                 ) : (
-                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                  <div
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                    hidden={selectedPipelineStage !== 'title'}
+                  >
                     {effectivePhotoshopEnabled
                       ? '已关闭标题生成，任务会在 PS 套版后结束。'
                       : '标题生成需要先启用 PS 套版。'}
@@ -2974,6 +3015,7 @@ export function FullTaskPage({
         progress={progress}
         railView={railView}
         selectedStage={selectedPipelineStage}
+        showRail={Boolean(progress)}
         validationIssues={running ? [] : validationIssues}
       />
       <PipelineRunHistoryPanel
