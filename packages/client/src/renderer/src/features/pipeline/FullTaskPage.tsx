@@ -655,28 +655,26 @@ export function FullTaskPage({
   onRunSelectionChange?: (selected: boolean) => void
   recordsOnly?: boolean
 }) {
-  const [name, setName] = useFullTaskSessionState('name', '')
-  const [printSkuCode, setPrintSkuCode] = useFullTaskSessionState('printSkuCode', '')
-  const [filenameSeparator, setFilenameSeparator] = useFullTaskSessionState(
-    'filenameSeparator',
-    '-',
-  )
   const sourceMode = usePipelineDraftStore((state) => state.sourceMode)
   const sourceDrafts = usePipelineDraftStore((state) => state.sourceDrafts)
-  const setSourceMode = usePipelineDraftStore((state) => state.setSourceMode)
-  const setSourceDrafts = usePipelineDraftStore((state) => state.setSourceDrafts)
-  const [printMode, setPrintMode] = useFullTaskSessionState<PipelinePrintMode>('printMode', 'local')
-  const [sourceFolder, setSourceFolder] = useFullTaskSessionState('sourceFolder', '')
-  const [existingPrintFolder, setExistingPrintFolder] = useFullTaskSessionState(
-    'existingPrintFolder',
-    '',
-  )
-  const [existingPrintStartStep, setExistingPrintStartStep] =
-    useFullTaskSessionState<PipelineStartStep>('existingPrintStartStep', 'photoshop')
-  const [referenceImages, setReferenceImages] = useFullTaskSessionState<ReferenceImageDraft[]>(
-    'referenceImages',
-    [],
-  )
+  const switchSourceMode = usePipelineDraftStore((state) => state.switchSourceMode)
+  const updateSourceDraft = usePipelineDraftStore((state) => state.updateSourceDraft)
+  const activeSourceDraft = sourceDrafts[sourceMode]
+  const name = activeSourceDraft.name
+  const printSkuCode = activeSourceDraft.printSkuCode
+  const filenameSeparator = activeSourceDraft.filenameSeparator
+  const printMode = activeSourceDraft.printMode
+  const sourceFolder = sourceDrafts.collection.sourceFolder
+  const existingPrintFolder = sourceDrafts.existing_prints.sourceFolder
+  const existingPrintStartStep = sourceDrafts.existing_prints.startStep
+  const referenceImages = sourceDrafts.img2img.referenceImages
+  const img2imgSourceFolder = sourceDrafts.img2img.sourceFolder
+  const promptRequirement =
+    sourceMode === 'txt2img'
+      ? sourceDrafts.txt2img.promptRequirement
+      : sourceMode === 'img2img'
+        ? sourceDrafts.img2img.promptRequirement
+        : ''
   const [sendReferenceToImageModel, setSendReferenceToImageModel] = useFullTaskSessionState(
     'sendReferenceToImageModel',
     false,
@@ -696,10 +694,6 @@ export function FullTaskPage({
   const [img2imgProvider, setImg2imgProvider] = useFullTaskSessionState<Img2imgProvider>(
     'img2imgProvider',
     'grsai',
-  )
-  const [img2imgSourceFolder, setImg2imgSourceFolder] = useFullTaskSessionState(
-    'img2imgSourceFolder',
-    '',
   )
   const [img2imgComfyuiWorkflowId, setImg2imgComfyuiWorkflowId] = useFullTaskSessionState(
     'img2imgComfyuiWorkflowId',
@@ -721,7 +715,6 @@ export function FullTaskPage({
   )
   const [img2imgReferenceMode, setImg2imgReferenceMode] =
     useFullTaskSessionState<Img2imgReferenceMode>('img2imgReferenceMode', 'layout-style')
-  const [promptRequirement, setPromptRequirement] = useFullTaskSessionState('promptRequirement', '')
   const [promptRequirementOpen, setPromptRequirementOpen] = useState(false)
   const [promptCount, setPromptCount] = useFullTaskSessionState('promptCount', '5')
   const [promptSkillId, setPromptSkillId] = useFullTaskSessionState('promptSkillId', '')
@@ -1506,6 +1499,59 @@ export function FullTaskPage({
     }
   }, [photoshopEnabled, setTitleEnabled, titleEnabled])
 
+  function setName(value: string) {
+    updateSourceDraft(sourceMode, { ...activeSourceDraft, name: value })
+  }
+
+  function setPrintSkuCode(value: string) {
+    updateSourceDraft(sourceMode, { ...activeSourceDraft, printSkuCode: value })
+  }
+
+  function setFilenameSeparator(value: string) {
+    updateSourceDraft(sourceMode, { ...activeSourceDraft, filenameSeparator: value })
+  }
+
+  function setPrintMode(value: PipelinePrintMode) {
+    updateSourceDraft(sourceMode, { ...activeSourceDraft, printMode: value })
+  }
+
+  function setSourceFolder(value: string) {
+    updateSourceDraft('collection', { ...sourceDrafts.collection, sourceFolder: value })
+  }
+
+  function setImg2imgSourceFolder(value: string) {
+    updateSourceDraft('img2img', { ...sourceDrafts.img2img, sourceFolder: value })
+  }
+
+  function setExistingPrintFolder(value: string) {
+    updateSourceDraft('existing_prints', {
+      ...sourceDrafts.existing_prints,
+      sourceFolder: value,
+    })
+  }
+
+  function setExistingPrintStartStep(value: PipelineStartStep) {
+    updateSourceDraft('existing_prints', { ...sourceDrafts.existing_prints, startStep: value })
+  }
+
+  function setReferenceImages(
+    value: ReferenceImageDraft[] | ((current: ReferenceImageDraft[]) => ReferenceImageDraft[]),
+  ) {
+    updateSourceDraft('img2img', {
+      ...sourceDrafts.img2img,
+      referenceImages:
+        typeof value === 'function' ? value(sourceDrafts.img2img.referenceImages) : value,
+    })
+  }
+
+  function setPromptRequirement(value: string) {
+    if (sourceMode === 'txt2img') {
+      updateSourceDraft('txt2img', { ...sourceDrafts.txt2img, promptRequirement: value })
+    } else if (sourceMode === 'img2img') {
+      updateSourceDraft('img2img', { ...sourceDrafts.img2img, promptRequirement: value })
+    }
+  }
+
   function updatePrintMode(nextMode: PipelinePrintMode) {
     setPrintMode(nextMode)
     if (sourceMode !== 'existing_prints') {
@@ -1513,56 +1559,9 @@ export function FullTaskPage({
     }
   }
 
-  function currentSourceDraft(): PipelineSourceDraftMap[TaskSourceMode] {
-    const common = { name, printSkuCode, filenameSeparator, printMode }
-    if (sourceMode === 'collection') {
-      return { ...common, sourceFolder }
-    }
-    if (sourceMode === 'txt2img') {
-      return { ...common, promptRequirement }
-    }
-    if (sourceMode === 'img2img') {
-      return {
-        ...common,
-        sourceFolder: img2imgSourceFolder,
-        promptRequirement,
-        referenceImages,
-      }
-    }
-    return {
-      ...common,
-      sourceFolder: existingPrintFolder,
-      startStep: existingPrintStartStep,
-    }
-  }
-
   function updateSourceMode(nextMode: TaskSourceMode) {
     setPromptRequirementOpen(false)
-    const transition = transitionPipelineSourceDraft(
-      sourceDrafts,
-      sourceMode,
-      currentSourceDraft(),
-      nextMode,
-    )
-    const nextDraft = transition.activeDraft
-    setSourceDrafts(transition.drafts)
-    setName(nextDraft.name)
-    setPrintSkuCode(nextDraft.printSkuCode)
-    setFilenameSeparator(nextDraft.filenameSeparator)
-    setPrintMode(nextDraft.printMode)
-    if (nextMode === 'collection') {
-      setSourceFolder(transition.drafts.collection.sourceFolder)
-    } else if (nextMode === 'txt2img') {
-      setPromptRequirement(transition.drafts.txt2img.promptRequirement)
-    } else if (nextMode === 'img2img') {
-      setImg2imgSourceFolder(transition.drafts.img2img.sourceFolder)
-      setPromptRequirement(transition.drafts.img2img.promptRequirement)
-      setReferenceImages(transition.drafts.img2img.referenceImages)
-    } else {
-      setExistingPrintFolder(transition.drafts.existing_prints.sourceFolder)
-      setExistingPrintStartStep(transition.drafts.existing_prints.startStep)
-    }
-    setSourceMode(nextMode)
+    switchSourceMode(nextMode)
     if (nextMode === 'existing_prints') {
       existingPrintToggleSnapshotRef.current = {
         mattingEnabled,
@@ -1682,15 +1681,9 @@ export function FullTaskPage({
   }
 
   function buildConfig(): PipelineRunConfig {
-    const activeSourceDrafts = transitionPipelineSourceDraft(
-      sourceDrafts,
-      sourceMode,
-      currentSourceDraft(),
-      sourceMode,
-    ).drafts
     return buildPipelineRunConfig({
       sourceMode,
-      sourceDrafts: activeSourceDrafts,
+      sourceDrafts,
       extractProvider,
       extractSkillKey: extractSkillId,
       extractWorkflowId,

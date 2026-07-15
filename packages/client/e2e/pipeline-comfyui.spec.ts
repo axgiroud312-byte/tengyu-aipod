@@ -327,6 +327,14 @@ async function launchApp(input: { serverUrl: string; userDataDir: string }) {
   })
 }
 
+function fieldTextbox(page: Page, label: string) {
+  return page.getByText(label, { exact: true }).locator('xpath=..').getByRole('textbox')
+}
+
+function fieldCombobox(page: Page, label: string) {
+  return page.getByText(label, { exact: true }).locator('xpath=..').getByRole('combobox')
+}
+
 async function prepareApp(page: Page, workbenchRoot: string) {
   await page.evaluate(async (root) => {
     await window.api.customerAuth.loginByPhone({ phone: '13800000000', code: '123456' })
@@ -743,31 +751,13 @@ test.describe('pipeline comfyui real probe', () => {
     await page.getByRole('link', { name: '完整任务' }).click()
 
     await page.getByRole('tab', { name: '采集 + 提取' }).click()
-    await page
-      .getByText('任务名', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('采集任务')
-    await page
-      .getByText('印花货号', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('COL')
-    await page
-      .getByText('分隔符', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('_')
-    await page
-      .getByText('采集文件夹', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('C:\\source\\collection')
-    await page
-      .getByText('提取方式', { exact: true })
-      .locator('xpath=..')
-      .getByRole('combobox')
-      .click()
+    await fieldTextbox(page, '任务名').fill('采集任务')
+    await fieldTextbox(page, '印花货号').fill('COL')
+    await fieldTextbox(page, '分隔符').fill('_')
+    await fieldTextbox(page, '采集文件夹').fill('C:\\source\\collection')
+    await fieldCombobox(page, '印花类型').click()
+    await page.getByRole('option', { name: '满印' }).click()
+    await fieldCombobox(page, '提取方式').click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('晨羽工作流', { exact: true })).toBeVisible()
     await expect(
@@ -777,30 +767,12 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('晨羽路径要先配好运行云机和工作流。')).toBeVisible()
 
     await page.getByRole('tab', { name: '文生图' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('')
     await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
-    await page
-      .getByText('任务名', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('文生图任务')
-    await page
-      .getByText('印花货号', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('TXT')
-    await page
-      .getByText('分隔符', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('+')
-    await page
-      .getByText('生图方式', { exact: true })
-      .locator('xpath=..')
-      .getByRole('combobox')
-      .click()
+    await fieldTextbox(page, '任务名').fill('文生图任务')
+    await fieldTextbox(page, '印花货号').fill('TXT')
+    await fieldTextbox(page, '分隔符').fill('+')
+    await fieldCombobox(page, '生图方式').click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('提示词先走百炼，再送入晨羽文生图工作流。')).toBeVisible()
     await expect(page.getByText('文生图工作流', { exact: true })).toBeVisible()
@@ -810,58 +782,41 @@ test.describe('pipeline comfyui real probe', () => {
     await page.getByRole('button', { name: '收起' }).click()
 
     await page.getByRole('tab', { name: '图生图' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('')
     await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    await fieldTextbox(page, '任务名').fill('图生图任务')
+    await fieldTextbox(page, '印花货号').fill('IMG')
+    await fieldTextbox(page, '分隔符').fill('~')
+    await fieldCombobox(page, '印花类型').click()
+    await page.getByRole('option', { name: '满印' }).click()
     await page
-      .getByText('任务名', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('图生图任务')
-    await page
-      .getByText('印花货号', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('IMG')
-    await page
-      .getByText('生图方式', { exact: true })
-      .locator('xpath=..')
-      .getByRole('combobox')
-      .click()
+      .locator('input[type="file"][accept="image/*"]')
+      .last()
+      .setInputFiles({
+        name: 'reference.png',
+        mimeType: 'image/png',
+        buffer: Buffer.from('reference-image'),
+      })
+    await page.getByRole('button', { name: '点击填写印花要求' }).click()
+    await page.getByPlaceholder('例如：圣诞元素、不要文字、适合儿童 T 恤').fill('图生图印花要求')
+    await page.getByRole('button', { name: '收起' }).click()
+    await fieldCombobox(page, '生图方式').click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('选择图片文件夹、工作流、晨羽实例和每张生成数量。')).toBeVisible()
     await expect(page.getByText('图片文件夹', { exact: true })).toBeVisible()
-    await page
-      .getByText('图片文件夹', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('C:\\source\\img2img')
+    await fieldTextbox(page, '图片文件夹').fill('C:\\source\\img2img')
     await expect(page.locator('input[type="number"][min="1"][max="8"]').last()).toBeVisible()
     await expect(
       page.getByText('提示词方式', { exact: true }).locator('xpath=..').getByRole('combobox'),
     ).toBeVisible()
 
     await page.getByRole('tab', { name: '已有印花' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('')
-    await page
-      .getByText('任务名', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('已有印花任务')
-    await page
-      .getByText('印花货号', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('OLD')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('')
+    await fieldTextbox(page, '任务名').fill('已有印花任务')
+    await fieldTextbox(page, '印花货号').fill('OLD')
+    await fieldTextbox(page, '分隔符').fill('.')
     await expect(page.getByText('已有印花文件夹', { exact: true })).toBeVisible()
-    await page
-      .getByText('已有印花文件夹', { exact: true })
-      .locator('xpath=..')
-      .getByRole('textbox')
-      .fill('C:\\source\\prints')
+    await fieldTextbox(page, '已有印花文件夹').fill('C:\\source\\prints')
     await expect(page.getByText('起始步骤', { exact: true })).toBeVisible()
     await expect(page.getByText('当前起始步骤会跳过抠图。')).toBeVisible()
     await expect(page.getByText('当前起始步骤会跳过侵权检测。')).toBeVisible()
@@ -875,41 +830,44 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('抠图工作流', { exact: true }).last()).toBeVisible()
     await expect(page.getByText('需要先配置运行云机和抠图工作流。')).toBeVisible()
 
+    await page.reload()
+    await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('已有印花任务')
+    await expect(fieldTextbox(page, '已有印花文件夹')).toHaveValue('C:\\source\\prints')
+    await expect(fieldTextbox(page, '分隔符')).toHaveValue('.')
+    await expect(fieldCombobox(page, '起始步骤')).toContainText('从抠图开始')
+
     await page.getByRole('tab', { name: '采集 + 提取' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('采集任务')
-    await expect(
-      page.getByText('印花货号', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('COL')
-    await expect(
-      page.getByText('分隔符', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('_')
-    await expect(
-      page.getByText('采集文件夹', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('C:\\source\\collection')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('采集任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('COL')
+    await expect(fieldTextbox(page, '分隔符')).toHaveValue('_')
+    await expect(fieldTextbox(page, '采集文件夹')).toHaveValue('C:\\source\\collection')
+    await expect(fieldCombobox(page, '印花类型')).toContainText('满印')
 
     await page.getByRole('tab', { name: '文生图' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('文生图任务')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('文生图任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('TXT')
+    await expect(fieldTextbox(page, '分隔符')).toHaveValue('+')
+    await expect(fieldCombobox(page, '印花类型')).toContainText('局部印花')
     await expect(page.getByRole('button', { name: '文生图印花要求' })).toBeVisible()
 
     await page.getByRole('tab', { name: '图生图' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('图生图任务')
-    await expect(
-      page.getByText('图片文件夹', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('C:\\source\\img2img')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('图生图任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('IMG')
+    await expect(fieldTextbox(page, '分隔符')).toHaveValue('~')
+    await expect(fieldCombobox(page, '印花类型')).toContainText('满印')
+    await expect(fieldTextbox(page, '图片文件夹')).toHaveValue('C:\\source\\img2img')
+    await fieldCombobox(page, '生图方式').click()
+    await page.getByRole('option', { name: 'Grsai' }).click()
+    await expect(page.getByAltText('reference.png')).toBeVisible()
+    await expect(page.getByRole('button', { name: '图生图印花要求' })).toBeVisible()
 
     await page.getByRole('tab', { name: '已有印花' }).click()
-    await expect(
-      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('已有印花任务')
-    await expect(
-      page.getByText('已有印花文件夹', { exact: true }).locator('xpath=..').getByRole('textbox'),
-    ).toHaveValue('C:\\source\\prints')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('已有印花任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('OLD')
+    await expect(fieldTextbox(page, '分隔符')).toHaveValue('.')
+    await expect(fieldCombobox(page, '印花类型')).toContainText('局部印花')
+    await expect(fieldTextbox(page, '已有印花文件夹')).toHaveValue('C:\\source\\prints')
   })
 
   test('runs txt2img and img2img comfyui complete tasks through electron IPC', async () => {
