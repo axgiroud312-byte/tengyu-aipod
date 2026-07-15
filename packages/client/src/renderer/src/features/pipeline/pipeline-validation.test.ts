@@ -36,7 +36,6 @@ const baseInput: PipelineValidationInput = {
   mattingInstanceUuid: 'instance',
   detectionModel: 'qwen',
   hasSelectedDetectionSkill: true,
-  titleEnabled: false,
   titlePlatform: 'temu',
   titleLanguage: 'en',
   titleModel: 'qwen',
@@ -57,12 +56,15 @@ describe('validatePipelineConfig', () => {
     })
   })
 
-  it('marks title without photoshop as a title issue', () => {
-    expect(validatePipelineConfig({ ...baseInput, titleEnabled: true })).toContainEqual({
-      stage: 'title',
-      field: 'titleEnabled',
-      message: '标题生成需要先启用 PS 套版',
-    })
+  it('does not require title resources while the effective stage is locked off', () => {
+    expect(
+      validatePipelineConfig({
+        ...baseInput,
+        titlePlatform: '',
+        titleLanguage: '',
+        titleModel: '',
+      }),
+    ).toEqual([])
   })
 
   it('marks collection source fields as source issues', () => {

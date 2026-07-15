@@ -40,7 +40,6 @@ export type PipelineValidationInput = {
   mattingInstanceUuid: string
   detectionModel: string
   hasSelectedDetectionSkill: boolean
-  titleEnabled: boolean
   titlePlatform: string
   titleLanguage: string
   titleModel: string

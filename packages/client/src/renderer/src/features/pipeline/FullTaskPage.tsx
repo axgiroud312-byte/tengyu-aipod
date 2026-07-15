@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea'
 import { PipelineRail } from '@/features/pipeline/components/PipelineRail'
 import { PipelineRunHistoryPanel } from '@/features/pipeline/components/PipelineResultPanels'
 import { PipelineRunControls } from '@/features/pipeline/components/PipelineRunControls'
+import { PipelineRunSummary } from '@/features/pipeline/components/PipelineRunSummary'
 import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineStatusAlerts'
 import { PipelineSelectedStageIssues, RunTheater } from '@/features/pipeline/components/RunTheater'
 import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-completion-events'
@@ -37,6 +38,7 @@ import {
 } from '@/features/pipeline/pipeline-execution-plans'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
+import { buildPipelineRunSummary } from '@/features/pipeline/pipeline-run-summary'
 import {
   createPipelineSourceDrafts,
   transitionPipelineSourceDraft,
@@ -1077,7 +1079,6 @@ export function FullTaskPage({
         mattingInstanceUuid,
         detectionModel,
         hasSelectedDetectionSkill: Boolean(selectedDetectionSkill),
-        titleEnabled,
         titlePlatform,
         titleLanguage,
         titleModel,
@@ -1116,7 +1117,6 @@ export function FullTaskPage({
       txt2imgComfyuiInstanceUuid,
       txt2imgComfyuiWorkflowId,
       txt2imgProvider,
-      titleEnabled,
       titleLanguage,
       titleModel,
       titlePlatform,
@@ -1173,6 +1173,13 @@ export function FullTaskPage({
     locked: pipelineStageLocks,
   })
   const canStart = optionsLoaded && !running && validationIssues.length === 0
+  const currentRunConfig = buildConfig()
+  const summaryConfig = running && activeRunConfig ? activeRunConfig : currentRunConfig
+  const runSummary = buildPipelineRunSummary(summaryConfig)
+  const firstValidationIssue = validationIssues[0] ?? null
+  const firstValidationStageLabel = firstValidationIssue
+    ? railView.stages.find((stage) => stage.key === firstValidationIssue.stage)?.label
+    : undefined
   const selectedExecutionPlan =
     executionPlans.find((plan) => plan.id === selectedExecutionPlanId) ?? null
   const activeExecutionPlan =
@@ -3330,6 +3337,7 @@ export function FullTaskPage({
               </CardContent>
             </Card>
 
+            {!progress ? <PipelineRunSummary summary={runSummary} /> : null}
             <PipelineRunControls
               canStart={canStart}
               cancelLoading={cancelPipelineMutation.loading}
@@ -3339,8 +3347,16 @@ export function FullTaskPage({
               onCancel={() => void cancelPipeline()}
               onOpenLog={() => setIsLogOpen(true)}
               onRefresh={() => void refreshOptions()}
+              onResolveLaunchBlock={() => {
+                if (firstValidationIssue) {
+                  setSelectedPipelineStage(firstValidationIssue.stage)
+                }
+              }}
               onStart={() => void runPipeline()}
               running={running}
+              {...(firstValidationStageLabel
+                ? { launchDisabledStageLabel: firstValidationStageLabel }
+                : {})}
               {...(validationMessages[0] ? { launchDisabledReason: validationMessages[0] } : {})}
             />
           </CardContent>
@@ -3348,7 +3364,7 @@ export function FullTaskPage({
       </div>
 
       <RunTheater
-        config={activeRunConfig ?? buildConfig()}
+        config={activeRunConfig ?? currentRunConfig}
         isLogOpen={isLogOpen}
         message={message}
         onLogOpenChange={setIsLogOpen}

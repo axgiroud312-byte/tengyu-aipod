@@ -41,17 +41,20 @@ describe('PipelineRunControls', () => {
   })
 
   it('keeps launch disabled reason on the start button', () => {
+    const onResolveLaunchBlock = vi.fn()
     render(
       createElement(PipelineRunControls, {
         canStart: false,
         cancelLoading: false,
         currentRunId: null,
         launchDisabledReason: '请选择 PSD 模板',
+        launchDisabledStageLabel: 'PS 套版',
         logCount: 0,
         message: '等待配置',
         onCancel: vi.fn(),
         onOpenLog: vi.fn(),
         onRefresh: vi.fn(),
+        onResolveLaunchBlock,
         onStart: vi.fn(),
         running: false,
       }),
@@ -60,5 +63,8 @@ describe('PipelineRunControls', () => {
     const startButton = screen.getByRole('button', { name: '启动完整任务' })
     expect((startButton as HTMLButtonElement).disabled).toBe(true)
     expect(startButton.getAttribute('title')).toBe('请选择 PSD 模板')
+    expect(screen.getByText('请选择 PSD 模板')).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: '前往 PS 套版配置' }))
+    expect(onResolveLaunchBlock).toHaveBeenCalledTimes(1)
   })
 })

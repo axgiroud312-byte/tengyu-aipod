@@ -9,6 +9,7 @@ import {
   expect,
   test,
 } from '@playwright/test'
+import type { PipelineRunConfig } from '@tengyu-aipod/shared'
 import { openSqliteDatabase } from '../src/main/lib/sqlite'
 import type { PipelineExecutionPlanDocument } from '../src/renderer/src/features/pipeline/pipeline-execution-plans'
 
@@ -373,7 +374,47 @@ async function installChenyuInstanceIpcMock(app: ElectronApplication) {
         raw: { instance_uuid: 'inst-ui', status: 2 },
       },
     ])
+    ipcMain.removeHandler('generation:list-comfyui-matting-workflows')
+    ipcMain.handle('generation:list-comfyui-matting-workflows', async () => [
+      {
+        id: 'wf-ui-matting',
+        version: '1.0.0',
+        name: 'UI 抠图工作流',
+        capability: 'matting',
+        requiredModels: [],
+        detection: {
+          imageInputs: 1,
+          promptInputs: 0,
+          sizeInputs: 2,
+          batchInputs: 1,
+          outputImages: 1,
+          status: 'ready',
+          warnings: [],
+        },
+      },
+    ])
   })
+}
+
+async function installPipelineLaunchIpcMock(app: ElectronApplication) {
+  await app.evaluate(({ ipcMain }) => {
+    const state = globalThis as typeof globalThis & { __pipelineLaunchConfigs?: unknown[] }
+    state.__pipelineLaunchConfigs = []
+    ipcMain.removeHandler('pipeline:run')
+    ipcMain.handle('pipeline:run', async (_event, config: unknown) => {
+      const configs = state.__pipelineLaunchConfigs ?? []
+      configs.push(structuredClone(config))
+      state.__pipelineLaunchConfigs = configs
+      return `run-ui-${configs.length}`
+    })
+  })
+}
+
+async function readPipelineLaunchConfig(app: ElectronApplication, index: number) {
+  return app.evaluate((_electron, configIndex) => {
+    const state = globalThis as typeof globalThis & { __pipelineLaunchConfigs?: unknown[] }
+    return state.__pipelineLaunchConfigs?.[configIndex]
+  }, index) as Promise<PipelineRunConfig | undefined>
 }
 
 async function importWorkflow(
@@ -641,7 +682,7 @@ test.describe('pipeline comfyui real probe', () => {
     await rm(tempRoot, { recursive: true, force: true })
   })
 
-  test('keeps four source drafts while showing their provider-specific controls', async () => {
+  test('keeps four source drafts and launches each source through its provider controls', async () => {
     const state: MockState = { bailianCalls: 0, queuedPrompts: [] }
     const mockServer = await startMockServer(state)
     closeMockServer = mockServer.close
@@ -653,6 +694,7 @@ test.describe('pipeline comfyui real probe', () => {
     })
     const page = await app.firstWindow()
     await installChenyuInstanceIpcMock(app)
+    await installPipelineLaunchIpcMock(app)
     await page.addInitScript(() => {
       const patch = () => {
         if (!window.api) {
@@ -870,7 +912,7 @@ test.describe('pipeline comfyui real probe', () => {
     await fieldCombobox(page, '生图方式').click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('选择图片文件夹、工作流、晨羽实例和每张生成数量。')).toBeVisible()
-    await expect(page.getByText('图片文件夹', { exact: true })).toBeVisible()
+    await expect(page.getByText('图片文件夹', { exact: true }).first()).toBeVisible()
     await fieldTextbox(page, '图片文件夹').fill('C:\\source\\img2img')
     await expect(page.locator('input[type="number"][min="1"][max="8"]').last()).toBeVisible()
     await expect(
@@ -882,7 +924,7 @@ test.describe('pipeline comfyui real probe', () => {
     await fieldTextbox(page, '任务名').fill('已有印花任务')
     await fieldTextbox(page, '印花货号').fill('OLD')
     await fieldTextbox(page, '分隔符').fill('.')
-    await expect(page.getByText('已有印花文件夹', { exact: true })).toBeVisible()
+    await expect(page.getByText('已有印花文件夹', { exact: true }).first()).toBeVisible()
     await fieldTextbox(page, '已有印花文件夹').fill('C:\\source\\prints')
     await expect(page.getByText('起始步骤', { exact: true })).toBeVisible()
     await expect(page.getByText('当前起始步骤在抠图之后，抠图会跳过。')).toBeVisible()
@@ -964,6 +1006,85 @@ test.describe('pipeline comfyui real probe', () => {
         await stageSwitch.click()
       }
     }
+
+    const launchCurrentSource = async (
+      expectedMode: 'collection' | 'txt2img' | 'img2img' | 'existing_prints',
+      expectedName: string,
+    ) => {
+      const summary = page.getByRole('region', { name: '本次执行摘要' })
+      await expect(summary).toBeVisible()
+      const startButton = page.getByRole('button', { name: '启动完整任务' })
+      await expect(startButton).toBeEnabled()
+      await startButton.click()
+      if (!app) {
+        throw new Error('Electron application closed before pipeline launch assertion')
+      }
+      const launchIndex = ['collection', 'txt2img', 'img2img', 'existing_prints'].indexOf(
+        expectedMode,
+      )
+      const launchedConfig = await readPipelineLaunchConfig(app, launchIndex)
+      expect(launchedConfig?.source.mode).toBe(expectedMode)
+      expect(launchedConfig?.name).toBe(expectedName)
+
+      await page.getByRole('button', { name: '编辑任务起点' }).click()
+      await fieldTextbox(page, '任务名').fill(`${expectedName}-草稿已修改`)
+      await expect(summary.getByText(expectedName, { exact: true })).toBeVisible()
+      await expect(summary.getByText(`${expectedName}-草稿已修改`, { exact: true })).toHaveCount(0)
+
+      await reloadPipelinePageWithOptionMocks(page)
+    }
+
+    await launchCurrentSource('collection', '采集任务')
+    await page.getByRole('tab', { name: '文生图' }).click()
+    await fieldCombobox(page, '生图方式').click()
+    await page.getByRole('option', { name: 'Grsai' }).click()
+    await launchCurrentSource('txt2img', '文生图任务')
+    await page.getByRole('tab', { name: '图生图' }).click()
+    await fieldCombobox(page, '生图方式').click()
+    await page.getByRole('option', { name: 'Grsai' }).click()
+    await launchCurrentSource('img2img', '图生图任务')
+    await page.getByRole('tab', { name: '已有印花' }).click()
+    const existingTitleSwitch = page.getByRole('switch', { name: '启用标题生成' })
+    if ((await existingTitleSwitch.isEnabled()) && (await existingTitleSwitch.isChecked())) {
+      await existingTitleSwitch.click()
+    }
+    for (const switchName of ['启用侵权检测', '启用 PS 套版'] as const) {
+      const stageSwitch = page.getByRole('switch', { name: switchName })
+      if ((await stageSwitch.isEnabled()) && (await stageSwitch.isChecked())) {
+        await stageSwitch.click()
+      }
+    }
+    await page.getByRole('button', { name: '编辑抠图' }).click()
+    await page.locator('summary').filter({ hasText: '抠图设置' }).click()
+    await fieldCombobox(page, '抠图工作流').click()
+    await page.getByRole('option', { name: /UI 抠图工作流/ }).click()
+    await page
+      .getByText('晨羽实例', { exact: true })
+      .filter({ visible: true })
+      .locator('xpath=../..')
+      .getByRole('combobox')
+      .click()
+    await page.getByRole('option', { name: /UI 晨羽实例/ }).click()
+    await launchCurrentSource('existing_prints', '已有印花任务')
+
+    const blockedTitleSwitch = page.getByRole('switch', { name: '启用标题生成' })
+    if ((await blockedTitleSwitch.isEnabled()) && (await blockedTitleSwitch.isChecked())) {
+      await blockedTitleSwitch.click()
+    }
+    const blockedPhotoshopSwitch = page.getByRole('switch', { name: '启用 PS 套版' })
+    if (await blockedPhotoshopSwitch.isChecked()) {
+      await blockedPhotoshopSwitch.click()
+    }
+    await fieldTextbox(page, '已有印花文件夹').fill('')
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeDisabled()
+    await expect(page.getByText('请先选择已有印花文件夹').last()).toBeVisible()
+    await page.getByRole('button', { name: '前往 任务起点配置' }).click()
+    await expect(page.getByRole('button', { name: '编辑任务起点' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+
+    await page.getByRole('tab', { name: '采集 + 提取' }).click()
     await fieldTextbox(page, '方案名称').fill('标准生产')
     await page.getByRole('button', { name: '保存执行方案' }).click()
     await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产')
@@ -1101,7 +1222,9 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(fieldCombobox(page, '执行方案')).toContainText('失效引用方案')
     await page.getByRole('button', { name: '应用执行方案' }).click()
     await expect(page.getByText(/发现 8 个失效资源/).first()).toBeVisible()
-    await expect(page.getByText('图生图工作流 wf-removed 已不可用，请重新选择。')).toBeVisible()
+    await expect(
+      page.getByText('图生图工作流 wf-removed 已不可用，请重新选择。').first(),
+    ).toBeVisible()
     await expect(
       page.getByText('图生图运行云机 machine-removed 已不可用，请重新选择。'),
     ).toBeVisible()
@@ -1112,7 +1235,7 @@ test.describe('pipeline comfyui real probe', () => {
 
     await page.getByRole('button', { name: '编辑抠图' }).click()
     await expect(
-      page.getByText('抠图工作流 wf-matting-removed 已不可用，请重新选择。'),
+      page.getByText('抠图工作流 wf-matting-removed 已不可用，请重新选择。').first(),
     ).toBeVisible()
     await expect(
       page.getByText('抠图运行云机 machine-removed 已不可用，请重新选择。'),

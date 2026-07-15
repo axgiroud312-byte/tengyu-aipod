@@ -269,13 +269,6 @@ export function validatePipelineConfig(input: PipelineValidationInput): Pipeline
     }
   }
 
-  if (input.titleEnabled && !input.effectivePhotoshopEnabled) {
-    issues.push({
-      stage: 'title',
-      field: 'titleEnabled',
-      message: '标题生成需要先启用 PS 套版',
-    })
-  }
   if (
     input.effectiveTitleEnabled &&
     (!input.titlePlatform.trim() || !input.titleLanguage.trim() || !input.titleModel.trim())
