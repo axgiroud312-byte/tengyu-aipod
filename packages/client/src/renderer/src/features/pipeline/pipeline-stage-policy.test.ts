@@ -31,6 +31,21 @@ describe('resolvePipelineStagePolicy', () => {
     expect(restored.stages.title).toEqual({ enabled: true })
   })
 
+  it('keeps Title disabled when that was the previous preference', () => {
+    const disabled = resolvePipelineStagePolicy({
+      sourceMode: 'txt2img',
+      existingPrintStartStep: 'photoshop',
+      enabled: { ...enabled, photoshop: false, title: false },
+    })
+    const restored = resolvePipelineStagePolicy({
+      sourceMode: 'txt2img',
+      existingPrintStartStep: 'photoshop',
+      enabled: { ...disabled.preferences, photoshop: true },
+    })
+
+    expect(restored.stages.title).toEqual({ enabled: false })
+  })
+
   it.each([
     ['matting', true, false, false],
     ['detection', false, true, false],

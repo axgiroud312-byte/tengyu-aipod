@@ -1424,24 +1424,7 @@ export function FullTaskPage({
       setPhotoshopEnabled(true)
       setTitleEnabled(true)
     }
-    if (existingPrintStartStep === 'matting') {
-      setMattingEnabled(true)
-    } else if (existingPrintStartStep === 'detection') {
-      setMattingEnabled(false)
-      setDetectionEnabled(true)
-    } else {
-      setMattingEnabled(false)
-      setDetectionEnabled(false)
-      setPhotoshopEnabled(true)
-    }
-  }, [
-    existingPrintStartStep,
-    setDetectionEnabled,
-    setMattingEnabled,
-    setPhotoshopEnabled,
-    setTitleEnabled,
-    sourceMode,
-  ])
+  }, [setDetectionEnabled, setMattingEnabled, setPhotoshopEnabled, setTitleEnabled, sourceMode])
 
   useEffect(() => {
     const firstPlatform = platforms[0]
