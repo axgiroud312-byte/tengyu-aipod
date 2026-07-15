@@ -397,7 +397,7 @@ async function installChenyuInstanceIpcMock(app: ElectronApplication) {
 }
 
 async function installPipelineLaunchIpcMock(app: ElectronApplication) {
-  await app.evaluate(({ ipcMain }) => {
+  await app.evaluate(({ BrowserWindow, ipcMain }) => {
     const state = globalThis as typeof globalThis & { __pipelineLaunchConfigs?: unknown[] }
     state.__pipelineLaunchConfigs = []
     ipcMain.removeHandler('pipeline:run')
@@ -405,6 +405,30 @@ async function installPipelineLaunchIpcMock(app: ElectronApplication) {
       const configs = state.__pipelineLaunchConfigs ?? []
       configs.push(structuredClone(config))
       state.__pipelineLaunchConfigs = configs
+      setTimeout(() => {
+        for (const window of BrowserWindow.getAllWindows()) {
+          window.webContents.send('pipeline:progress', {
+            run_id: `run-ui-${configs.length}`,
+            status: 'running',
+            current_step: 'source',
+            message: '完整任务运行中',
+            stats: {
+              sourceImages: 0,
+              prints: 0,
+              detectionPass: 0,
+              detectionReview: 0,
+              detectionBlock: 0,
+              photoshopGroups: 0,
+              titleSucceeded: 0,
+              titleFailed: 0,
+            },
+            steps: [],
+            items: [],
+            result_sections: [],
+            logs: [],
+          })
+        }
+      }, 0)
       return `run-ui-${configs.length}`
     })
   })
@@ -1025,6 +1049,7 @@ test.describe('pipeline comfyui real probe', () => {
       const launchedConfig = await readPipelineLaunchConfig(app, launchIndex)
       expect(launchedConfig?.source.mode).toBe(expectedMode)
       expect(launchedConfig?.name).toBe(expectedName)
+      await expect(page.getByText('完整任务运行中').first()).toBeVisible()
 
       await page.getByRole('button', { name: '编辑任务起点' }).click()
       await fieldTextbox(page, '任务名').fill(`${expectedName}-草稿已修改`)

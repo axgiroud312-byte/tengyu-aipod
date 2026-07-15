@@ -171,6 +171,25 @@ describe('buildPipelineRunSummary', () => {
         { label: '标题设置', value: 'temu · en · qwen3.6-flash' },
       ]),
     )
-    expect(summary.expectedOutput).toBe('预计输出 2 套 PS 成品，并逐货号写入标题.xlsx。')
+    expect(summary.expectedOutput).toBe(
+      '预计每张进入 PS 的印花按 2 个 PSD 模板生成货号，并逐货号写入标题.xlsx。',
+    )
+  })
+
+  it('calculates known txt2img and PSD fan-out without treating templates as products', () => {
+    const config = baseConfig({
+      mode: 'txt2img',
+      provider: 'grsai',
+      prompt: { mode: 'ai', requirement: '花卉', count: 4 },
+      grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
+    })
+    config.photoshop = {
+      enabled: true,
+      templates: ['C:/PSD/正面.psd', 'C:/PSD/背面.psd'],
+    }
+
+    expect(buildPipelineRunSummary(config).expectedOutput).toBe(
+      '预计生成 8 个货号（4 张印花 × 2 个 PSD 模板），任务在 PS 套版后结束。',
+    )
   })
 })

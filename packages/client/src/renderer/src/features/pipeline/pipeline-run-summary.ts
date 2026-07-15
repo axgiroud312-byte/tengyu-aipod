@@ -246,12 +246,34 @@ function taskVariableSummary(config: PipelineRunConfig) {
   return variables
 }
 
-function expectedOutput(config: PipelineRunConfig) {
-  if (config.title.enabled) {
-    return `预计输出 ${config.photoshop.templates.length} 套 PS 成品，并逐货号写入${config.title.titleFileName ?? '标题'}.xlsx。`
+function knownSourcePrintCount(config: PipelineRunConfig): number | null {
+  if (config.source.mode !== 'txt2img') {
+    return null
   }
+  return config.source.prompt.mode === 'ai'
+    ? (config.source.prompt.count ?? 0)
+    : (config.source.prompt.prompts?.length ?? 0)
+}
+
+function titleFileLabel(config: PipelineRunConfig) {
+  const fileName = config.title.titleFileName?.trim() || '标题'
+  return fileName.toLowerCase().endsWith('.xlsx') ? fileName : `${fileName}.xlsx`
+}
+
+function expectedOutput(config: PipelineRunConfig) {
   if (config.photoshop.enabled) {
-    return `预计输出 ${config.photoshop.templates.length} 套 PS 成品，任务在 PS 套版后结束。`
+    const templateCount = config.photoshop.templates.length
+    const sourcePrintCount = knownSourcePrintCount(config)
+    const titleSuffix = config.title.enabled
+      ? `，并逐货号写入${titleFileLabel(config)}。`
+      : '，任务在 PS 套版后结束。'
+    if (sourcePrintCount !== null && !config.detection.enabled) {
+      return `预计生成 ${sourcePrintCount * templateCount} 个货号（${sourcePrintCount} 张印花 × ${templateCount} 个 PSD 模板）${titleSuffix}`
+    }
+    if (sourcePrintCount !== null) {
+      return `预计最多生成 ${sourcePrintCount * templateCount} 个货号（${sourcePrintCount} 张印花 × ${templateCount} 个 PSD 模板），侵权检测未通过的印花不会进入 PS 套版${titleSuffix}`
+    }
+    return `预计每张进入 PS 的印花按 ${templateCount} 个 PSD 模板生成货号${titleSuffix}`
   }
   if (config.detection.enabled) {
     return '预计输出侵权检测通过的印花，任务在侵权检测后结束。'

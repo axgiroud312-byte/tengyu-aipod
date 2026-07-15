@@ -3337,7 +3337,7 @@ export function FullTaskPage({
               </CardContent>
             </Card>
 
-            {!progress ? <PipelineRunSummary summary={runSummary} /> : null}
+            <PipelineRunSummary summary={runSummary} />
             <PipelineRunControls
               canStart={canStart}
               cancelLoading={cancelPipelineMutation.loading}
