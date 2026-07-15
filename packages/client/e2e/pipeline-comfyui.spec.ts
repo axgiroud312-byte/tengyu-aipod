@@ -601,7 +601,7 @@ test.describe('pipeline comfyui real probe', () => {
     await rm(tempRoot, { recursive: true, force: true })
   })
 
-  test('shows comfyui-specific controls on the complete task page', async () => {
+  test('keeps four source drafts while showing their provider-specific controls', async () => {
     const state: MockState = { bailianCalls: 0, queuedPrompts: [] }
     const mockServer = await startMockServer(state)
     closeMockServer = mockServer.close
@@ -744,6 +744,26 @@ test.describe('pipeline comfyui real probe', () => {
 
     await page.getByRole('tab', { name: '采集 + 提取' }).click()
     await page
+      .getByText('任务名', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('采集任务')
+    await page
+      .getByText('印花货号', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('COL')
+    await page
+      .getByText('分隔符', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('_')
+    await page
+      .getByText('采集文件夹', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('C:\\source\\collection')
+    await page
       .getByText('提取方式', { exact: true })
       .locator('xpath=..')
       .getByRole('combobox')
@@ -757,6 +777,25 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('晨羽路径要先配好运行云机和工作流。')).toBeVisible()
 
     await page.getByRole('tab', { name: '文生图' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('')
+    await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    await page
+      .getByText('任务名', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('文生图任务')
+    await page
+      .getByText('印花货号', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('TXT')
+    await page
+      .getByText('分隔符', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('+')
     await page
       .getByText('生图方式', { exact: true })
       .locator('xpath=..')
@@ -766,8 +805,25 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('提示词先走百炼，再送入晨羽文生图工作流。')).toBeVisible()
     await expect(page.getByText('文生图工作流', { exact: true })).toBeVisible()
     await expect(page.getByText('晨羽实例', { exact: true }).first()).toBeVisible()
+    await page.getByRole('button', { name: '点击填写印花要求' }).click()
+    await page.getByPlaceholder('例如：圣诞元素、不要文字、适合儿童 T 恤').fill('文生图印花要求')
+    await page.getByRole('button', { name: '收起' }).click()
 
     await page.getByRole('tab', { name: '图生图' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('')
+    await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    await page
+      .getByText('任务名', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('图生图任务')
+    await page
+      .getByText('印花货号', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('IMG')
     await page
       .getByText('生图方式', { exact: true })
       .locator('xpath=..')
@@ -776,13 +832,36 @@ test.describe('pipeline comfyui real probe', () => {
     await page.getByRole('option', { name: '晨羽智云' }).click()
     await expect(page.getByText('选择图片文件夹、工作流、晨羽实例和每张生成数量。')).toBeVisible()
     await expect(page.getByText('图片文件夹', { exact: true })).toBeVisible()
+    await page
+      .getByText('图片文件夹', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('C:\\source\\img2img')
     await expect(page.locator('input[type="number"][min="1"][max="8"]').last()).toBeVisible()
     await expect(
       page.getByText('提示词方式', { exact: true }).locator('xpath=..').getByRole('combobox'),
     ).toBeVisible()
 
     await page.getByRole('tab', { name: '已有印花' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('')
+    await page
+      .getByText('任务名', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('已有印花任务')
+    await page
+      .getByText('印花货号', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('OLD')
     await expect(page.getByText('已有印花文件夹', { exact: true })).toBeVisible()
+    await page
+      .getByText('已有印花文件夹', { exact: true })
+      .locator('xpath=..')
+      .getByRole('textbox')
+      .fill('C:\\source\\prints')
     await expect(page.getByText('起始步骤', { exact: true })).toBeVisible()
     await expect(page.getByText('当前起始步骤会跳过抠图。')).toBeVisible()
     await expect(page.getByText('当前起始步骤会跳过侵权检测。')).toBeVisible()
@@ -795,6 +874,42 @@ test.describe('pipeline comfyui real probe', () => {
     await page.getByText('抠图设置', { exact: true }).click()
     await expect(page.getByText('抠图工作流', { exact: true }).last()).toBeVisible()
     await expect(page.getByText('需要先配置运行云机和抠图工作流。')).toBeVisible()
+
+    await page.getByRole('tab', { name: '采集 + 提取' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('采集任务')
+    await expect(
+      page.getByText('印花货号', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('COL')
+    await expect(
+      page.getByText('分隔符', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('_')
+    await expect(
+      page.getByText('采集文件夹', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('C:\\source\\collection')
+
+    await page.getByRole('tab', { name: '文生图' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('文生图任务')
+    await expect(page.getByRole('button', { name: '文生图印花要求' })).toBeVisible()
+
+    await page.getByRole('tab', { name: '图生图' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('图生图任务')
+    await expect(
+      page.getByText('图片文件夹', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('C:\\source\\img2img')
+
+    await page.getByRole('tab', { name: '已有印花' }).click()
+    await expect(
+      page.getByText('任务名', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('已有印花任务')
+    await expect(
+      page.getByText('已有印花文件夹', { exact: true }).locator('xpath=..').getByRole('textbox'),
+    ).toHaveValue('C:\\source\\prints')
   })
 
   test('runs txt2img and img2img comfyui complete tasks through electron IPC', async () => {

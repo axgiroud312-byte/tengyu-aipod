@@ -20,6 +20,15 @@ import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineSta
 import { RunTheater } from '@/features/pipeline/components/RunTheater'
 import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-completion-events'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
+import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
+import {
+  createPipelineSourceDrafts,
+  transitionPipelineSourceDraft,
+} from '@/features/pipeline/pipeline-source-drafts'
+import type {
+  PipelineReferenceImageDraft,
+  PipelineSourceDraftMap,
+} from '@/features/pipeline/pipeline-source-drafts'
 import { validatePipelineConfig } from '@/features/pipeline/pipeline-validation'
 import {
   type TitleExistingStrategy,
@@ -27,11 +36,11 @@ import {
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
 import { useIpcMutation } from '@/lib/use-ipc'
+import { usePipelineDraftStore } from '@/store/pipeline'
 import { isPipelineRunConfig } from '@tengyu-aipod/shared'
 import type {
   PipelinePrintMode,
   PipelineProgress,
-  PipelinePromptConfig,
   PipelineRunConfig,
   PipelineRunDetail,
   PipelineRunRecord,
@@ -73,13 +82,7 @@ type ComfyuiImg2imgPromptMode = 'ai' | 'workflow'
 type DetectionPassRule = 'allow-review' | 'pass-only'
 type GenerationSettingsSnapshot = Awaited<ReturnType<typeof window.api.generationSettings.get>>
 type ChenyuManagedInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
-type ReferenceImageDraft = {
-  id: string
-  name: string
-  dataUrl: string
-  base64: string
-  mime_type: string
-}
+type ReferenceImageDraft = PipelineReferenceImageDraft
 type FullTaskToggleSnapshot = {
   mattingEnabled: boolean
   detectionEnabled: boolean
@@ -581,16 +584,6 @@ function optionFromWorkflow(workflow: { id: string; name: string; version?: stri
   }
 }
 
-function nonEmpty(value: string) {
-  const trimmed = value.trim()
-  return trimmed.length > 0 ? trimmed : null
-}
-
-function numberFromText(value: string, fallback: number) {
-  const parsed = Number(value)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
-}
-
 function modelLabel(model: { id: string; label?: string }) {
   return model.label ?? model.id
 }
@@ -668,10 +661,10 @@ export function FullTaskPage({
     'filenameSeparator',
     '-',
   )
-  const [sourceMode, setSourceMode] = useFullTaskSessionState<TaskSourceMode>(
-    'sourceMode',
-    'collection',
-  )
+  const sourceMode = usePipelineDraftStore((state) => state.sourceMode)
+  const sourceDrafts = usePipelineDraftStore((state) => state.sourceDrafts)
+  const setSourceMode = usePipelineDraftStore((state) => state.setSourceMode)
+  const setSourceDrafts = usePipelineDraftStore((state) => state.setSourceDrafts)
   const [printMode, setPrintMode] = useFullTaskSessionState<PipelinePrintMode>('printMode', 'local')
   const [sourceFolder, setSourceFolder] = useFullTaskSessionState('sourceFolder', '')
   const [existingPrintFolder, setExistingPrintFolder] = useFullTaskSessionState(
@@ -1520,8 +1513,55 @@ export function FullTaskPage({
     }
   }
 
+  function currentSourceDraft(): PipelineSourceDraftMap[TaskSourceMode] {
+    const common = { name, printSkuCode, filenameSeparator, printMode }
+    if (sourceMode === 'collection') {
+      return { ...common, sourceFolder }
+    }
+    if (sourceMode === 'txt2img') {
+      return { ...common, promptRequirement }
+    }
+    if (sourceMode === 'img2img') {
+      return {
+        ...common,
+        sourceFolder: img2imgSourceFolder,
+        promptRequirement,
+        referenceImages,
+      }
+    }
+    return {
+      ...common,
+      sourceFolder: existingPrintFolder,
+      startStep: existingPrintStartStep,
+    }
+  }
+
   function updateSourceMode(nextMode: TaskSourceMode) {
     setPromptRequirementOpen(false)
+    const transition = transitionPipelineSourceDraft(
+      sourceDrafts,
+      sourceMode,
+      currentSourceDraft(),
+      nextMode,
+    )
+    const nextDraft = transition.activeDraft
+    setSourceDrafts(transition.drafts)
+    setName(nextDraft.name)
+    setPrintSkuCode(nextDraft.printSkuCode)
+    setFilenameSeparator(nextDraft.filenameSeparator)
+    setPrintMode(nextDraft.printMode)
+    if (nextMode === 'collection') {
+      setSourceFolder(transition.drafts.collection.sourceFolder)
+    } else if (nextMode === 'txt2img') {
+      setPromptRequirement(transition.drafts.txt2img.promptRequirement)
+    } else if (nextMode === 'img2img') {
+      setImg2imgSourceFolder(transition.drafts.img2img.sourceFolder)
+      setPromptRequirement(transition.drafts.img2img.promptRequirement)
+      setReferenceImages(transition.drafts.img2img.referenceImages)
+    } else {
+      setExistingPrintFolder(transition.drafts.existing_prints.sourceFolder)
+      setExistingPrintStartStep(transition.drafts.existing_prints.startStep)
+    }
     setSourceMode(nextMode)
     if (nextMode === 'existing_prints') {
       existingPrintToggleSnapshotRef.current = {
@@ -1596,129 +1636,6 @@ export function FullTaskPage({
     }
   }
 
-  function buildPromptConfig(): PipelinePromptConfig {
-    const skill = selectedPromptSkill
-    return {
-      mode: 'ai',
-      requirement: promptRequirement,
-      count: numberFromText(promptCount, 5),
-      model: promptModel,
-      ...(sourceMode === 'img2img' && selectedImg2imgReferenceMode?.instruction
-        ? { modeInstruction: selectedImg2imgReferenceMode.instruction }
-        : {}),
-      ...(skill
-        ? { skillId: skill.id, ...(skill.version ? { skillVersion: skill.version } : {}) }
-        : {}),
-    }
-  }
-
-  function buildSourceConfig(): PipelineRunConfig['source'] {
-    const grsai = {
-      model: grsaiModel,
-      aspectRatio,
-      concurrency: numberFromText(grsaiConcurrency, 20),
-    }
-    if (sourceMode === 'collection') {
-      return {
-        mode: 'collection',
-        sourceFolder,
-        extract:
-          extractProvider === 'grsai'
-            ? {
-                provider: 'grsai',
-                ...(selectedExtractSkill
-                  ? {
-                      skillId: selectedExtractSkill.id,
-                      ...(selectedExtractSkill.version
-                        ? { skillVersion: selectedExtractSkill.version }
-                        : {}),
-                    }
-                  : {}),
-                grsai,
-              }
-            : {
-                provider: 'comfyui-chenyu',
-                ...(selectedExtractSkill
-                  ? {
-                      skillId: selectedExtractSkill.id,
-                      ...(selectedExtractSkill.version
-                        ? { skillVersion: selectedExtractSkill.version }
-                        : {}),
-                    }
-                  : {}),
-                comfyui: {
-                  workflowId: extractWorkflowId,
-                  instanceUuid: extractInstanceUuid,
-                  width: numberFromText(width, 1024),
-                  height: numberFromText(height, 1024),
-                  concurrency: 1,
-                },
-              },
-      }
-    }
-    if (sourceMode === 'existing_prints') {
-      return {
-        mode: 'existing_prints',
-        printFolder: existingPrintFolder,
-        startStep: existingPrintStartStep,
-      }
-    }
-    if (sourceMode === 'txt2img') {
-      if (txt2imgProvider === 'comfyui-chenyu') {
-        return {
-          mode: 'txt2img',
-          provider: 'comfyui-chenyu',
-          prompt: buildPromptConfig(),
-          comfyui: {
-            workflowId: txt2imgComfyuiWorkflowId,
-            instanceUuid: txt2imgComfyuiInstanceUuid,
-            width: numberFromText(width, 1024),
-            height: numberFromText(height, 1024),
-            concurrency: 1,
-          },
-        }
-      }
-      return {
-        mode: 'txt2img',
-        provider: 'grsai',
-        prompt: buildPromptConfig(),
-        grsai,
-      }
-    }
-    if (img2imgProvider === 'comfyui-chenyu') {
-      return {
-        mode: 'img2img',
-        provider: 'comfyui-chenyu',
-        sourceFolder: img2imgSourceFolder,
-        prompt:
-          img2imgComfyuiPromptMode === 'ai'
-            ? buildPromptConfig()
-            : {
-                mode: 'workflow',
-              },
-        comfyui: {
-          workflowId: img2imgComfyuiWorkflowId,
-          instanceUuid: img2imgComfyuiInstanceUuid,
-          width: numberFromText(width, 1024),
-          height: numberFromText(height, 1024),
-          batchSize: numberFromText(img2imgComfyuiBatchSize, 1),
-        },
-      }
-    }
-    return {
-      mode: 'img2img',
-      provider: 'grsai',
-      referenceImages: referenceImages.map((image) => ({
-        name: image.name,
-        base64: image.base64,
-        mime_type: image.mime_type,
-      })),
-      prompt: buildPromptConfig(),
-      sendReferenceImages: sendReferenceToImageModel,
-      grsai,
-    }
-  }
-
   function buildDetectionConfig(): NonNullable<PipelineRunConfig['detection']> {
     const base = detectionConfig ?? {
       threshold: { passMax: 39, reviewMax: 69 },
@@ -1765,32 +1682,54 @@ export function FullTaskPage({
   }
 
   function buildConfig(): PipelineRunConfig {
-    return {
-      ...(nonEmpty(name) ? { name: name.trim() } : {}),
-      ...(nonEmpty(printSkuCode) ? { printSkuCode: printSkuCode.trim() } : {}),
-      ...(filenameSeparator !== '-' ? { filenameSeparator } : {}),
-      printMode,
-      source: buildSourceConfig(),
+    const activeSourceDrafts = transitionPipelineSourceDraft(
+      sourceDrafts,
+      sourceMode,
+      currentSourceDraft(),
+      sourceMode,
+    ).drafts
+    return buildPipelineRunConfig({
+      sourceMode,
+      sourceDrafts: activeSourceDrafts,
+      extractProvider,
+      extractSkillKey: extractSkillId,
+      extractWorkflowId,
+      extractInstanceUuid,
+      txt2imgProvider,
+      txt2imgComfyuiWorkflowId,
+      txt2imgComfyuiInstanceUuid,
+      img2imgProvider,
+      img2imgComfyuiWorkflowId,
+      img2imgComfyuiInstanceUuid,
+      img2imgComfyuiBatchSize,
+      img2imgComfyuiPromptMode,
+      img2imgModeInstruction: selectedImg2imgReferenceMode?.instruction,
+      promptCount,
+      promptSkillKey: promptSkillId,
+      promptModel,
+      grsaiModel,
+      aspectRatio,
+      grsaiConcurrency,
+      width,
+      height,
+      sendReferenceToImageModel,
       matting: {
         enabled: effectiveMattingEnabled,
-        mode: 'comfyui',
-        ...(nonEmpty(mattingWorkflowId) ? { workflowId: mattingWorkflowId.trim() } : {}),
-        ...(nonEmpty(mattingInstanceUuid) ? { instanceUuid: mattingInstanceUuid.trim() } : {}),
-        width: numberFromText(width, 1024),
-        height: numberFromText(height, 1024),
+        workflowId: mattingWorkflowId,
+        instanceUuid: mattingInstanceUuid,
       },
       detection: buildDetectionConfig(),
       photoshop: {
         enabled: effectivePhotoshopEnabled,
         templates: templatePaths,
-        ...(nonEmpty(outputRoot) ? { outputRoot: outputRoot.trim() } : {}),
+        outputRoot,
         replaceRange,
         smartObjectReplaceMode,
         smartObjectInnerFitMode,
         format,
         clipMode,
         skipCompleted,
-        maxRetries: numberFromText(photoshopMaxRetries, 1),
+        maxRetries: photoshopMaxRetries,
       },
       title: {
         enabled: effectiveTitleEnabled,
@@ -1798,20 +1737,16 @@ export function FullTaskPage({
         language: titleLanguage,
         model: titleModel,
         titleFileName,
-        imageIndex: numberFromText(titleImageIndex, 1),
+        imageIndex: titleImageIndex,
         existingStrategy: titleExistingStrategy,
-        maxRetries: numberFromText(titleMaxRetries, 2),
-        ...(nonEmpty(extraRequirement) ? { extraRequirement: extraRequirement.trim() } : {}),
+        maxRetries: titleMaxRetries,
+        extraRequirement,
         keywordGroups: titleKeywordGroups,
         keywordGroupSeparator: titleKeywordGroupSeparator,
-        preprocess: {
-          compression: titleCompression,
-          maxSize: numberFromText(titleMaxSize, 1024),
-          format: 'jpg',
-          quality: 85,
-        },
+        compression: titleCompression,
+        maxSize: titleMaxSize,
       },
-    }
+    })
   }
 
   async function runPipeline() {
