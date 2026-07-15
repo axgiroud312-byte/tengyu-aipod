@@ -18,6 +18,10 @@ import { PipelineRunControls } from '@/features/pipeline/components/PipelineRunC
 import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineStatusAlerts'
 import { PipelineSelectedStageIssues, RunTheater } from '@/features/pipeline/components/RunTheater'
 import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-completion-events'
+import {
+  MAX_EXECUTION_PLANS,
+  captureExecutionPlanConfig,
+} from '@/features/pipeline/pipeline-execution-plans'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
 import {
@@ -37,6 +41,7 @@ import {
 } from '@/features/title/TitlePage'
 import { useIpcMutation } from '@/lib/use-ipc'
 import { cn } from '@/lib/utils'
+import { useExecutionPlanStore } from '@/store/execution-plans'
 import { usePipelineDraftStore } from '@/store/pipeline'
 import { isPipelineRunConfig } from '@tengyu-aipod/shared'
 import type {
@@ -58,6 +63,7 @@ import {
   Play,
   Plus,
   RefreshCw,
+  Save,
   Settings2,
   Square,
   Trash2,
@@ -283,12 +289,14 @@ function Field({
 }
 
 function SelectField({
+  ariaLabel,
   label,
   onValueChange,
   options,
   placeholder = '请选择',
   value,
 }: {
+  ariaLabel?: string
   label: string
   onValueChange: (value: string) => void
   options: Option[]
@@ -298,7 +306,10 @@ function SelectField({
   return (
     <Field label={label}>
       <Select onValueChange={onValueChange} value={value}>
-        <SelectTrigger className="min-w-0 [&>span]:min-w-0 [&>span]:truncate">
+        <SelectTrigger
+          aria-label={ariaLabel}
+          className="min-w-0 [&>span]:min-w-0 [&>span]:truncate"
+        >
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent className="max-w-[min(28rem,var(--radix-select-trigger-width))]">
@@ -662,6 +673,10 @@ export function FullTaskPage({
   const sourceDrafts = usePipelineDraftStore((state) => state.sourceDrafts)
   const switchSourceMode = usePipelineDraftStore((state) => state.switchSourceMode)
   const updateSourceDraft = usePipelineDraftStore((state) => state.updateSourceDraft)
+  const executionPlans = useExecutionPlanStore((state) => state.plans)
+  const selectedExecutionPlanId = useExecutionPlanStore((state) => state.selectedPlanId)
+  const saveExecutionPlan = useExecutionPlanStore((state) => state.savePlan)
+  const selectExecutionPlan = useExecutionPlanStore((state) => state.selectPlan)
   const activeSourceDraft = sourceDrafts[sourceMode]
   const name = activeSourceDraft.name
   const printSkuCode = activeSourceDraft.printSkuCode
@@ -792,6 +807,7 @@ export function FullTaskPage({
   const [titleMaxSize, setTitleMaxSize] = useFullTaskSessionState('titleMaxSize', '1024')
   const [titleEnabled, setTitleEnabled] = useFullTaskSessionState('titleEnabled', false)
   const [extraRequirement, setExtraRequirement] = useFullTaskSessionState('extraRequirement', '')
+  const [executionPlanName, setExecutionPlanName] = useState('')
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
   const [activeRunConfig, setActiveRunConfig] = useState<PipelineRunConfig | null>(null)
   const [currentRunId, setCurrentRunId] = useFullTaskSessionState<string | null>(
@@ -1092,6 +1108,8 @@ export function FullTaskPage({
     ],
   )
   const canStart = !running && validationIssues.length === 0
+  const selectedExecutionPlan =
+    executionPlans.find((plan) => plan.id === selectedExecutionPlanId) ?? null
 
   const refreshOptions = useCallback(async () => {
     setOptionsLoading(true)
@@ -1675,6 +1693,169 @@ export function FullTaskPage({
     })
   }
 
+  function currentExecutionPlanConfig() {
+    return captureExecutionPlanConfig({
+      sourceMode,
+      existingPrintStartStep,
+      stages: {
+        matting: mattingEnabled,
+        detection: detectionEnabled,
+        photoshop: photoshopEnabled,
+        title: titleEnabled,
+      },
+      source: {
+        extractProvider,
+        extractSkillId,
+        extractWorkflowId,
+        extractInstanceUuid,
+        txt2imgProvider,
+        txt2imgComfyuiWorkflowId,
+        txt2imgComfyuiInstanceUuid,
+        img2imgProvider,
+        img2imgComfyuiWorkflowId,
+        img2imgComfyuiInstanceUuid,
+        img2imgComfyuiBatchSize,
+        img2imgComfyuiPromptMode,
+        img2imgReferenceMode,
+        sendReferenceToImageModel,
+      },
+      generation: {
+        promptCount,
+        promptSkillId,
+        promptModel,
+        grsaiModel,
+        aspectRatio,
+        grsaiConcurrency,
+        width,
+        height,
+      },
+      matting: {
+        workflowId: mattingWorkflowId,
+        instanceUuid: mattingInstanceUuid,
+      },
+      detection: {
+        passRule: detectionPassRule,
+        compression: detectionCompression,
+        model: detectionModel,
+        skillKey: detectionSkillKey,
+        threshold: detectionConfig?.threshold ?? { passMax: 39, reviewMax: 69 },
+        variables: detectionConfig?.variables ?? {},
+      },
+      photoshop: {
+        templatePaths,
+        outputRoot,
+        skipCompleted,
+        replaceRange,
+        smartObjectReplaceMode,
+        smartObjectInnerFitMode,
+        clipMode,
+        format,
+        maxRetries: photoshopMaxRetries,
+      },
+      title: {
+        platform: titlePlatform,
+        language: titleLanguage,
+        model: titleModel,
+        fileName: titleFileName,
+        imageIndex: titleImageIndex,
+        existingStrategy: titleExistingStrategy,
+        maxRetries: titleMaxRetries,
+        keywordGroupSeparator: titleKeywordGroupSeparator,
+        compression: titleCompression,
+        maxSize: titleMaxSize,
+      },
+      sourceDrafts,
+    })
+  }
+
+  function saveCurrentExecutionPlan() {
+    const trimmedName = executionPlanName.trim()
+    if (!trimmedName) {
+      return
+    }
+    const result = saveExecutionPlan(trimmedName, currentExecutionPlanConfig())
+    if (result.ok) {
+      setExecutionPlanName('')
+      setMessage(`已保存执行方案：${result.plan.name}`)
+    }
+  }
+
+  function applySelectedExecutionPlan() {
+    if (!selectedExecutionPlan) {
+      return
+    }
+    const config = selectedExecutionPlan.config
+    updateSourceDraft('existing_prints', {
+      ...sourceDrafts.existing_prints,
+      startStep: config.existingPrintStartStep,
+    })
+    previousSourceModeRef.current = config.sourceMode
+    existingPrintToggleSnapshotRef.current = null
+    switchSourceMode(config.sourceMode)
+    setMattingEnabled(config.stages.matting)
+    setDetectionEnabled(config.stages.detection)
+    setPhotoshopEnabled(config.stages.photoshop)
+    setTitleEnabled(config.stages.title)
+    setExtractProvider(config.source.extractProvider)
+    setExtractSkillId(config.source.extractSkillId)
+    setExtractWorkflowId(config.source.extractWorkflowId)
+    setExtractInstanceUuid(config.source.extractInstanceUuid)
+    setTxt2imgProvider(config.source.txt2imgProvider)
+    setTxt2imgComfyuiWorkflowId(config.source.txt2imgComfyuiWorkflowId)
+    setTxt2imgComfyuiInstanceUuid(config.source.txt2imgComfyuiInstanceUuid)
+    setImg2imgProvider(config.source.img2imgProvider)
+    setImg2imgComfyuiWorkflowId(config.source.img2imgComfyuiWorkflowId)
+    setImg2imgComfyuiInstanceUuid(config.source.img2imgComfyuiInstanceUuid)
+    setImg2imgComfyuiBatchSize(config.source.img2imgComfyuiBatchSize)
+    setImg2imgComfyuiPromptMode(config.source.img2imgComfyuiPromptMode)
+    setImg2imgReferenceMode(config.source.img2imgReferenceMode)
+    setSendReferenceToImageModel(config.source.sendReferenceToImageModel)
+    setPromptCount(config.generation.promptCount)
+    setPromptSkillId(config.generation.promptSkillId)
+    setPromptModel(config.generation.promptModel)
+    setGrsaiModel(config.generation.grsaiModel)
+    setAspectRatio(config.generation.aspectRatio)
+    setGrsaiConcurrency(config.generation.grsaiConcurrency)
+    setWidth(config.generation.width)
+    setHeight(config.generation.height)
+    setMattingWorkflowId(config.matting.workflowId)
+    setMattingInstanceUuid(config.matting.instanceUuid)
+    setDetectionPassRule(config.detection.passRule)
+    setDetectionCompression(config.detection.compression)
+    setDetectionModel(config.detection.model)
+    setDetectionSkillKey(config.detection.skillKey)
+    const [detectionSkillId, detectionSkillVersion] = config.detection.skillKey.split('@@')
+    setDetectionConfig({
+      threshold: config.detection.threshold,
+      skillId: detectionSkillId ?? '',
+      skillVersion: detectionSkillVersion ?? '',
+      model: config.detection.model,
+      variables: config.detection.variables,
+    })
+    setTemplatePaths(config.photoshop.templatePaths)
+    setOutputRoot(config.photoshop.outputRoot)
+    setSkipCompleted(config.photoshop.skipCompleted)
+    setReplaceRange(config.photoshop.replaceRange)
+    setSmartObjectReplaceMode(config.photoshop.smartObjectReplaceMode)
+    setSmartObjectInnerFitMode(config.photoshop.smartObjectInnerFitMode)
+    setClipMode(config.photoshop.clipMode)
+    setFormat(config.photoshop.format)
+    setPhotoshopMaxRetries(config.photoshop.maxRetries)
+    setTitlePlatform(config.title.platform)
+    setTitleLanguage(config.title.language)
+    setTitleModel(config.title.model)
+    setTitleFileName(config.title.fileName)
+    setTitleImageIndex(config.title.imageIndex)
+    setTitleExistingStrategy(config.title.existingStrategy)
+    setTitleMaxRetries(config.title.maxRetries)
+    setTitleKeywordGroupSeparator(config.title.keywordGroupSeparator)
+    setTitleCompression(config.title.compression)
+    setTitleMaxSize(config.title.maxSize)
+    selectExecutionPlan(selectedExecutionPlan.id)
+    setSelectedPipelineStage('source')
+    setMessage(`已应用执行方案：${selectedExecutionPlan.name}`)
+  }
+
   function buildConfig(): PipelineRunConfig {
     return buildPipelineRunConfig({
       sourceMode,
@@ -1819,6 +2000,56 @@ export function FullTaskPage({
             </div>
           </CardHeader>
           <CardContent className="space-y-5">
+            {!progress ? (
+              <section aria-label="执行方案" className="rounded-md border bg-muted/20 p-3">
+                <div className="grid gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto_auto] lg:items-end">
+                  <SelectField
+                    ariaLabel="执行方案"
+                    label="执行方案"
+                    onValueChange={selectExecutionPlan}
+                    options={executionPlans.map((plan) => ({ key: plan.id, label: plan.name }))}
+                    placeholder="尚未保存"
+                    value={selectedExecutionPlanId ?? ''}
+                  />
+                  <Field label="方案名称">
+                    <Input
+                      aria-label="方案名称"
+                      maxLength={60}
+                      onChange={(event) => setExecutionPlanName(event.target.value)}
+                      placeholder="例如：晨羽标准生产"
+                      value={executionPlanName}
+                    />
+                  </Field>
+                  <Button
+                    disabled={
+                      optionsLoading ||
+                      !executionPlanName.trim() ||
+                      executionPlans.length >= MAX_EXECUTION_PLANS
+                    }
+                    onClick={saveCurrentExecutionPlan}
+                    type="button"
+                    variant="outline"
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    保存执行方案
+                  </Button>
+                  <Button
+                    disabled={optionsLoading || !selectedExecutionPlan}
+                    onClick={applySelectedExecutionPlan}
+                    type="button"
+                  >
+                    <Check className="mr-2 h-4 w-4" />
+                    应用执行方案
+                  </Button>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  已保存 {executionPlans.length}/{MAX_EXECUTION_PLANS} 套执行方案
+                  {executionPlans.length >= MAX_EXECUTION_PLANS
+                    ? '，已达到上限，请先维护现有方案。'
+                    : '，最多保存 5 套。'}
+                </p>
+              </section>
+            ) : null}
             {!progress ? (
               <PipelineRail
                 onSelectStage={setSelectedPipelineStage}

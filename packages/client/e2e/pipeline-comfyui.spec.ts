@@ -918,6 +918,48 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(fieldTextbox(page, '分隔符')).toHaveValue('.')
     await expect(fieldCombobox(page, '印花类型')).toContainText('局部印花')
     await expect(fieldTextbox(page, '已有印花文件夹')).toHaveValue('C:\\source\\prints')
+
+    await page.getByRole('tab', { name: '采集 + 提取' }).click()
+    await fieldTextbox(page, '方案名称').fill('标准生产')
+    await page.getByRole('button', { name: '保存执行方案' }).click()
+    await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产')
+    await expect(page.getByText('已保存 1/5 套执行方案')).toBeVisible()
+
+    await fieldTextbox(page, '任务名').fill('保存后的采集任务')
+    await fieldTextbox(page, '印花货号').fill('AFTER-COL')
+    await fieldTextbox(page, '采集文件夹').fill('C:\\source\\after-collection')
+    await fieldCombobox(page, '提取方式').click()
+    await page.getByRole('option', { name: '付费模型' }).click()
+    await page.getByRole('tab', { name: '文生图' }).click()
+    await fieldTextbox(page, '任务名').fill('保存后的文生图任务')
+    await fieldTextbox(page, '印花货号').fill('AFTER-TXT')
+
+    await page.reload()
+    await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产')
+    await page.getByRole('button', { name: '应用执行方案' }).click()
+
+    await expect(page.getByRole('tab', { name: '采集 + 提取' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(fieldCombobox(page, '提取方式')).toContainText('晨羽智云')
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('保存后的采集任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('AFTER-COL')
+    await expect(fieldTextbox(page, '采集文件夹')).toHaveValue('C:\\source\\after-collection')
+
+    await page.getByRole('tab', { name: '文生图' }).click()
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('保存后的文生图任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('AFTER-TXT')
+
+    for (let index = 2; index <= 5; index += 1) {
+      await fieldTextbox(page, '方案名称').fill(`标准生产 ${index}`)
+      await page.getByRole('button', { name: '保存执行方案' }).click()
+    }
+    await expect(
+      page.getByText('已保存 5/5 套执行方案，已达到上限，请先维护现有方案。'),
+    ).toBeVisible()
+    await fieldTextbox(page, '方案名称').fill('第六套方案')
+    await expect(page.getByRole('button', { name: '保存执行方案' })).toBeDisabled()
   })
 
   test('runs txt2img and img2img comfyui complete tasks through electron IPC', async () => {
