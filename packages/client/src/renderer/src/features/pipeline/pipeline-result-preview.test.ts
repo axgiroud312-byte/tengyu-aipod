@@ -261,14 +261,44 @@ describe('pipeline result preview helpers', () => {
       ],
     })
 
-    const defaultPreview = selectedPipelineResultPreview(printProducts, null, 0)
+    const defaultPreview = selectedPipelineResultPreview(printProducts, null, null)
     const selectedPreview = selectedPipelineResultPreview(printProducts, 'back/GZKJ-0001', 1)
 
     expect(defaultPreview.groups).toHaveLength(2)
-    expect(defaultPreview.selectedGroup?.id).toBe('front/GZKJ-0001')
-    expect(defaultPreview.images.map((item) => item.id)).toEqual(['front-1', 'front-2'])
+    expect(defaultPreview.selectedGroup?.id).toBe('back/GZKJ-0001')
+    expect(defaultPreview.activeImage?.id).toBe('back-2')
+    expect(defaultPreview.images.map((item) => item.id)).toEqual(['back-1', 'back-2'])
     expect(selectedPreview.selectedGroup?.id).toBe('back/GZKJ-0001')
     expect(selectedPreview.activeImage?.id).toBe('back-2')
     expect(selectedPreview.images.map((item) => item.id)).toEqual(['back-1', 'back-2'])
+  })
+
+  it('selects the newest image when no result was chosen explicitly', () => {
+    const preview = selectedPipelineResultPreview(
+      section({
+        key: 'image_processing',
+        items: [
+          {
+            id: 'print-1',
+            status: 'success',
+            step_key: 'source',
+            label: '印花 1',
+            local_path: 'C:/print-1.png',
+          },
+          {
+            id: 'print-2',
+            status: 'success',
+            step_key: 'source',
+            label: '印花 2',
+            local_path: 'C:/print-2.png',
+          },
+        ],
+      }),
+      null,
+      null,
+    )
+
+    expect(preview.activeImage?.id).toBe('print-2')
+    expect(preview.activeImageIndex).toBe(1)
   })
 })

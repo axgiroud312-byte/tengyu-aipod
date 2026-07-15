@@ -3,6 +3,8 @@ import { type IncomingMessage, type ServerResponse, createServer } from 'node:ht
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { type ElectronApplication, _electron as electron, expect, test } from '@playwright/test'
+import type { PipelineProgress, PipelineTaskEvent } from '@tengyu-aipod/shared'
+import sharp from 'sharp'
 import { openCollectionDatabase as openWorkbenchDatabase } from '../src/main/lib/collection-record-store'
 
 function sendJson(response: ServerResponse, body: unknown, status = 200) {
@@ -11,6 +13,18 @@ function sendJson(response: ServerResponse, body: unknown, status = 200) {
 }
 
 async function startMockServer() {
+  const previewImages = await Promise.all([
+    sharp({
+      create: { width: 480, height: 360, channels: 3, background: '#2563eb' },
+    })
+      .png()
+      .toBuffer(),
+    sharp({
+      create: { width: 480, height: 360, channels: 3, background: '#e85d3f' },
+    })
+      .png()
+      .toBuffer(),
+  ])
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/user/public/send_login_sms') {
@@ -41,6 +55,12 @@ async function startMockServer() {
     }
     if (url.pathname === '/api/skills') {
       sendJson(response, { ok: true, data: [] })
+      return
+    }
+    if (url.pathname.startsWith('/image/')) {
+      const imageIndex = Number.parseInt(url.pathname.split('/').at(-1) ?? '1', 10) - 1
+      response.writeHead(200, { 'content-type': 'image/png' })
+      response.end(previewImages[Math.max(0, imageIndex) % previewImages.length] ?? Buffer.alloc(0))
       return
     }
     sendJson(response, { ok: false, error: { code: 'NOT_FOUND' } }, 404)
@@ -95,22 +115,173 @@ async function enterPreparedWorkbench(
   await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
 }
 
+async function installPipelineEventHarness(app: ElectronApplication) {
+  await app.evaluate(({ ipcMain }) => {
+    const state = globalThis as typeof globalThis & {
+      __pipelineCancelCalls?: number
+      __pipelineResumeCalls?: number
+    }
+    ipcMain.removeHandler('pipeline:cancel')
+    ipcMain.handle('pipeline:cancel', () => {
+      state.__pipelineCancelCalls = (state.__pipelineCancelCalls ?? 0) + 1
+      return { ok: true }
+    })
+    ipcMain.removeHandler('pipeline:resume')
+    ipcMain.handle('pipeline:resume', (_event, input: { run_id: string }) => {
+      state.__pipelineResumeCalls = (state.__pipelineResumeCalls ?? 0) + 1
+      return input.run_id
+    })
+  })
+}
+
+async function emitPipelineProgress(app: ElectronApplication, progress: PipelineProgress) {
+  await app.evaluate(({ BrowserWindow }, value) => {
+    const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    target?.webContents.send('pipeline:progress', value)
+  }, progress)
+}
+
+async function emitPipelineCompleted(app: ElectronApplication, event: PipelineTaskEvent) {
+  await app.evaluate(({ BrowserWindow }, value) => {
+    const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+    target?.webContents.send('pipeline:completed', value)
+  }, event)
+}
+
+function theaterProgress(input: {
+  baseUrl: string
+  imageCount: number
+  status?: PipelineProgress['status']
+}): PipelineProgress {
+  const now = Date.now()
+  return {
+    run_id: 'run-most-recently-updated',
+    status: input.status ?? 'running',
+    current_step: 'matting',
+    message: input.status === 'completed' ? '完整任务已完成' : '完整任务流式处理中',
+    stats: {
+      sourceImages: 0,
+      prints: input.imageCount,
+      detectionPass: 0,
+      detectionReview: 0,
+      detectionBlock: 0,
+      photoshopGroups: 0,
+      titleSucceeded: 0,
+      titleFailed: 0,
+    },
+    steps: [
+      {
+        id: 'source-running',
+        run_id: 'run-most-recently-updated',
+        step_key: 'source',
+        module: 'pipeline',
+        label: '任务起点',
+        status: input.status === 'completed' ? 'completed' : 'running',
+        input_count: input.imageCount,
+        output_count: input.imageCount,
+        output_json: null,
+        error_json: null,
+        started_at: now - 2_000,
+        completed_at: input.status === 'completed' ? now : null,
+        updated_at: now,
+      },
+      {
+        id: 'matting-running',
+        run_id: 'run-most-recently-updated',
+        step_key: 'matting',
+        module: 'pipeline',
+        label: '抠图',
+        status: input.status === 'completed' ? 'completed' : 'running',
+        input_count: input.imageCount,
+        output_count: input.imageCount,
+        output_json: null,
+        error_json: null,
+        started_at: now - 1_000,
+        completed_at: input.status === 'completed' ? now : null,
+        updated_at: now,
+      },
+    ],
+    items: [
+      ...Array.from({ length: input.imageCount }, (_, index) => ({
+        id: `print-${index + 1}`,
+        run_id: 'run-most-recently-updated',
+        item_key: `print-${index + 1}`,
+        step_key: 'matting' as const,
+        status: 'completed' as const,
+        source_path: null,
+        output_path: `C:/prints/print-${index + 1}.png`,
+        artifact_id: null,
+        print_id: `pri_${index + 1}`,
+        source_artifact_ids_json: null,
+        error_message: null,
+        created_at: now - 1_000,
+        updated_at: now,
+        completed_at: now,
+      })),
+      {
+        id: 'print-failed',
+        run_id: 'run-most-recently-updated',
+        item_key: 'print-failed',
+        step_key: 'matting' as const,
+        status: 'failed' as const,
+        source_path: 'C:/prints/broken.png',
+        output_path: null,
+        artifact_id: null,
+        print_id: 'pri_failed',
+        source_artifact_ids_json: null,
+        error_message: '抠图云机拒绝了这一张，请检查工作流输入',
+        created_at: now - 1_000,
+        updated_at: now,
+        completed_at: now,
+      },
+    ],
+    result_sections: [
+      {
+        key: 'image_processing',
+        title: '印花产物',
+        total: input.imageCount,
+        completed: input.imageCount,
+        collapsible: true,
+        default_collapsed: false,
+        paginated: false,
+        items: Array.from({ length: input.imageCount }, (_, index) => ({
+          id: `result-${index + 1}`,
+          status: 'success' as const,
+          step_key: 'matting' as const,
+          label: `印花 ${index + 1}`,
+          url: `${input.baseUrl}/image/${index + 1}.png`,
+        })),
+      },
+    ],
+    logs: Array.from({ length: 4 }, (_, index) => ({
+      id: `log-${index + 1}`,
+      created_at: now + index,
+      level: 'info' as const,
+      message: `关键记录 ${index + 1}`,
+    })),
+  }
+}
+
+function completeTaskFixtureConfig() {
+  return {
+    printMode: 'local',
+    source: {
+      mode: 'txt2img',
+      provider: 'grsai',
+      prompt: { mode: 'ai', requirement: 'fixture prompt', count: 1 },
+      grsai: { model: 'gpt-image-2', aspectRatio: '1:1', concurrency: 7 },
+    },
+    matting: { enabled: true, mode: 'comfyui' },
+    detection: { enabled: false },
+    photoshop: { enabled: false, templates: [] },
+    title: { enabled: false, platform: 'temu', language: 'en', model: 'qwen3.6-flash' },
+  } as const
+}
+
 function seedRunningCompleteTasks(workbenchRoot: string) {
   const db = openWorkbenchDatabase(workbenchRoot)
   try {
-    const configJson = JSON.stringify({
-      printMode: 'local',
-      source: {
-        mode: 'txt2img',
-        provider: 'grsai',
-        prompt: { mode: 'ai', requirement: 'fixture prompt', count: 1 },
-        grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
-      },
-      matting: { enabled: false, mode: 'comfyui' },
-      detection: { enabled: false },
-      photoshop: { enabled: false, templates: [] },
-      title: { enabled: false, platform: 'temu', language: 'en', model: 'qwen3.6-flash' },
-    })
+    const configJson = JSON.stringify(completeTaskFixtureConfig())
     const insertRun = db.prepare(`
       INSERT INTO pipeline_runs (
         id, name, source_mode, status, config_json, stats_json,
@@ -119,6 +290,20 @@ function seedRunningCompleteTasks(workbenchRoot: string) {
     `)
     insertRun.run('run-newer-created', 'Later created task', configJson, 200, 200)
     insertRun.run('run-most-recently-updated', 'Most recently updated task', configJson, 100, 100)
+    db.prepare(`
+      INSERT INTO pipeline_runs (
+        id, name, source_mode, status, config_json, stats_json,
+        result_sections_json, logs_json, error_summary, created_at, started_at, completed_at
+      ) VALUES (?, ?, 'txt2img', 'interrupted', ?, '{}', '[]', '[]', ?, ?, ?, ?)
+    `).run(
+      'run-interrupted',
+      'Interrupted task',
+      configJson,
+      'Workbench 退出，已完成产物已保留',
+      50,
+      50,
+      80,
+    )
     const insertStep = db.prepare(`
       INSERT INTO pipeline_steps (
         id, run_id, step_key, module, label, status,
@@ -221,6 +406,10 @@ test.describe('production-first Workbench shell', () => {
         .getByText('当前', { exact: true }),
     ).toBeVisible()
     await expect(page.getByText('文生图产出', { exact: true })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '成果剧场' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '停止任务' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '保存执行方案' })).toHaveCount(0)
     await expect(page.locator('[data-content-width="wide"]')).toBeVisible()
     await expect
       .poll(() =>
@@ -231,6 +420,146 @@ test.describe('production-first Workbench shell', () => {
         ),
       )
       .toBe(0)
+  })
+
+  test('streams the newest result into the theater while isolating item failures', async () => {
+    const testInfo = test.info()
+    const attachScreenshot = async (name: string) => {
+      const path = testInfo.outputPath(`${name}.png`)
+      await page.screenshot({ path })
+      await testInfo.attach(name, { path, contentType: 'image/png' })
+    }
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-streaming-theater'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-streaming-theater')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
+    await installPipelineEventHarness(app)
+
+    const canvas = page.getByRole('region', { name: '最终成果主画布' })
+    const firstProgress = theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 1 })
+    await expect
+      .poll(async () => {
+        await emitPipelineProgress(app, firstProgress)
+        return canvas.getByRole('img', { name: '印花 1' }).count()
+      })
+      .toBe(1)
+    await expect(page.getByText('关键记录 1', { exact: true })).toHaveCount(0)
+    for (const record of ['关键记录 2', '关键记录 3', '关键记录 4']) {
+      await expect(page.getByText(record, { exact: true })).toBeVisible()
+    }
+    await expect(page.getByText('抠图云机拒绝了这一张，请检查工作流输入')).toBeVisible()
+    await expect(page.getByRole('heading', { name: '异常项' })).toBeVisible()
+    await expect(page.getByText('运行中', { exact: true }).first()).toBeVisible()
+    await expect(
+      page.getByRole('group', { name: '任务起点阶段' }).getByText('运行', { exact: true }),
+    ).toBeVisible()
+    await expect(
+      page.getByRole('group', { name: '抠图阶段' }).getByText('运行', { exact: true }),
+    ).toBeVisible()
+
+    const secondProgress = theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 2 })
+    await expect
+      .poll(async () => {
+        await emitPipelineProgress(app, secondProgress)
+        return canvas.getByRole('img', { name: '印花 2' }).count()
+      })
+      .toBe(1)
+    await page.getByRole('button', { name: '查看 印花 1', exact: true }).click()
+    await expect(canvas.getByRole('img', { name: '印花 1' })).toBeVisible()
+    await page.getByRole('button', { name: '查看 印花 1', exact: true }).focus()
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await attachScreenshot(`run-theater-${viewport.width}x${viewport.height}`)
+    }
+
+    await page.getByRole('button', { name: '停止任务' }).click()
+    await expect(page.getByText('已请求取消，当前步骤结束后停止', { exact: true })).toBeVisible()
+    await expect
+      .poll(() =>
+        app.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __pipelineCancelCalls?: number
+              }
+            ).__pipelineCancelCalls ?? 0,
+        ),
+      )
+      .toBe(1)
+
+    const completedProgress = theaterProgress({
+      baseUrl: mockServer.baseUrl,
+      imageCount: 2,
+      status: 'completed',
+    })
+    const now = Date.now()
+    const completedEvent: PipelineTaskEvent = {
+      ok: true,
+      result: {
+        run: {
+          id: completedProgress.run_id,
+          name: 'Most recently updated task',
+          source_mode: 'txt2img',
+          status: 'completed',
+          config_json: JSON.stringify(completeTaskFixtureConfig()),
+          stats_json: JSON.stringify(completedProgress.stats),
+          result_sections_json: null,
+          logs_json: null,
+          error_summary: null,
+          created_at: now - 3_000,
+          started_at: now - 2_000,
+          completed_at: now,
+        },
+        steps: completedProgress.steps,
+        items: completedProgress.items,
+        result_sections: completedProgress.result_sections,
+        logs: completedProgress.logs,
+      },
+    }
+    await emitPipelineCompleted(app, completedEvent)
+
+    await expect(page.getByText('完成战报', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText(/部分配置加载失败/)).toHaveCount(0)
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await attachScreenshot('run-theater-completed-1440x900')
+    await page.getByRole('button', { name: '按此方案再建任务' }).click()
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '文生图' })).toHaveAttribute('data-state', 'active')
+    await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    await expect(page.getByRole('switch', { name: '启用抠图' })).toBeChecked()
+    await expect(
+      page.getByText('并发', { exact: true }).locator('xpath=..').getByRole('spinbutton'),
+    ).toHaveValue('7')
+    await expect
+      .poll(() =>
+        page.evaluate(() => sessionStorage.getItem('tengyu-aipod:full-task:currentRunId')),
+      )
+      .toBe('null')
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await attachScreenshot('run-theater-create-another-1280x720')
+
+    await page.getByRole('button', { name: '从中断处继续' }).click()
+    await expect
+      .poll(() =>
+        app.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __pipelineResumeCalls?: number
+              }
+            ).__pipelineResumeCalls ?? 0,
+        ),
+      )
+      .toBe(1)
   })
 
   test('groups production, single-step, and support navigation while preserving module routes', async () => {

@@ -112,15 +112,17 @@ export function sectionItemsForLightbox(section: PipelineResultSection): Pipelin
 export function selectedPipelineResultPreview(
   section: PipelineResultSection | null,
   selectedGroupId: string | null,
-  imageIndex: number,
+  imageIndex: number | null,
 ): PipelineSelectedResultPreview {
   const groups = section?.groups ?? []
-  const selectedGroup = groups.find((group) => group.id === selectedGroupId) ?? groups[0] ?? null
+  const selectedGroup =
+    groups.find((group) => group.id === selectedGroupId) ?? groups.at(-1) ?? null
   const images = selectedGroup
     ? selectedGroup.items.filter(imageCanPreview)
     : (section?.items ?? []).filter(imageCanPreview)
   const maxIndex = Math.max(0, images.length - 1)
-  const activeImageIndex = Math.max(0, Math.min(maxIndex, imageIndex))
+  const activeImageIndex =
+    imageIndex === null ? maxIndex : Math.max(0, Math.min(maxIndex, imageIndex))
 
   return {
     groups,

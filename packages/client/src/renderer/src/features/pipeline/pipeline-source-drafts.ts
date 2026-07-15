@@ -66,6 +66,19 @@ export function createPipelineSourceDrafts(): PipelineSourceDraftMap {
   }
 }
 
+export function resetPipelineSourceDraftsForAnotherRun(
+  current: PipelineSourceDraftMap,
+): PipelineSourceDraftMap {
+  const drafts = createPipelineSourceDrafts()
+  return {
+    ...drafts,
+    existing_prints: {
+      ...drafts.existing_prints,
+      startStep: current.existing_prints.startStep,
+    },
+  }
+}
+
 export function transitionPipelineSourceDraft<
   CurrentMode extends PipelineSourceMode,
   NextMode extends PipelineSourceMode,

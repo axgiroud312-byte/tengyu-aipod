@@ -26,10 +26,11 @@ import {
   FolderOpen,
   ImageIcon,
   Loader2,
+  Maximize2,
   Play,
   RefreshCw,
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 function pipelineResultImageSrc(image: PipelineResultImage) {
   const localPath = image.local_path ?? image.source_path ?? fileUrlLocalPath(image.url ?? '')
@@ -114,6 +115,17 @@ function formatPipelineLogDetails(details?: Record<string, unknown>) {
   return entries.map(([key, value]) => `${key}=${String(value)}`).join(' ')
 }
 
+function pipelineProgressStatusLabel(status: PipelineProgress['status'] | undefined) {
+  const labels: Record<PipelineProgress['status'], string> = {
+    cancelled: '已取消',
+    completed: '已完成',
+    failed: '失败',
+    interrupted: '已中断',
+    running: '运行中',
+  }
+  return status ? labels[status] : '未启动'
+}
+
 export function PipelineLogDialog({
   logs,
   open,
@@ -177,7 +189,7 @@ export function PipelineResultsPanel({
     index: number
   } | null>(null)
   const [selectedGroupId, setSelectedGroupId] = useState<string | null>(null)
-  const [heroImageIndex, setHeroImageIndex] = useState(0)
+  const [heroImageIndex, setHeroImageIndex] = useState<number | null>(null)
   const finalResult = finalPipelineResult(config, progress)
   const stats = pipelineResultStats(config, progress)
   const selectedSection = finalResult?.section ?? null
@@ -199,19 +211,6 @@ export function PipelineResultsPanel({
       ? [heroImageCountLabel, selectedGroup.subtitle].filter(Boolean).join(' · ')
       : heroImageCountLabel) ??
     (selectedSection ? `${selectedSection.completed}/${selectedSection.total}` : message)
-  const selectedSectionKey = selectedSection?.key ?? ''
-  const selectedGroupIds = selectedSection?.groups?.map((group) => group.id).join('\u0000') ?? ''
-
-  useEffect(() => {
-    const availableGroupIds = selectedGroupIds ? selectedGroupIds.split('\u0000') : []
-    setSelectedGroupId((current) => {
-      if (!selectedSectionKey) {
-        return null
-      }
-      return current && availableGroupIds.includes(current) ? current : null
-    })
-    setHeroImageIndex(0)
-  }, [selectedSectionKey, selectedGroupIds])
 
   function toggleSection(key: string) {
     setCollapsed((current) => ({ ...current, [key]: !current[key] }))
@@ -236,12 +235,18 @@ export function PipelineResultsPanel({
 
   function selectGroup(groupId: string) {
     setSelectedGroupId(groupId)
-    setHeroImageIndex(0)
+    setHeroImageIndex(null)
   }
 
   function updateHeroImage(delta: number) {
     setHeroImageIndex((current) =>
-      Math.max(0, Math.min(resultPreview.images.length - 1, current + delta)),
+      Math.max(
+        0,
+        Math.min(
+          resultPreview.images.length - 1,
+          (current ?? resultPreview.activeImageIndex) + delta,
+        ),
+      ),
     )
   }
 
@@ -252,23 +257,40 @@ export function PipelineResultsPanel({
           <div>
             <CardTitle className="flex items-center gap-2 text-lg text-balance">
               <ImageIcon className="size-5" />
-              结果预览
+              最终成果
             </CardTitle>
             <CardDescription>{message}</CardDescription>
           </div>
-          <Badge variant="secondary">{progress?.status ?? '未启动'}</Badge>
+          <Badge variant="secondary">{pipelineProgressStatusLabel(progress?.status)}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-4 p-5">
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
-          <div className="relative min-h-[360px] overflow-hidden rounded-md border bg-slate-950">
+        <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
+          <section
+            aria-label="最终成果主画布"
+            className="relative min-h-[360px] max-h-[560px] aspect-video overflow-hidden rounded-md border border-zinc-800 bg-zinc-950"
+          >
             {heroImagePath ? (
-              <img
-                alt={heroTitle}
-                className="h-full min-h-[360px] w-full object-cover"
-                loading="lazy"
-                src={pipelineRawImageSrc(heroImagePath)}
-              />
+              <button
+                aria-label={`放大查看 ${heroTitle}`}
+                className="group block h-full min-h-[360px] w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+                onClick={() => {
+                  if (selectedSection && selectedImage) {
+                    openLightbox(selectedSection, selectedImage)
+                  }
+                }}
+                type="button"
+              >
+                <img
+                  alt={heroTitle}
+                  className="h-full min-h-[360px] w-full object-contain"
+                  loading="lazy"
+                  src={pipelineRawImageSrc(heroImagePath)}
+                />
+                <span className="absolute right-3 top-3 inline-flex size-9 items-center justify-center rounded-md border border-white/20 bg-black/60 text-white opacity-80 backdrop-blur transition-opacity group-hover:opacity-100">
+                  <Maximize2 className="size-4" />
+                </span>
+              </button>
             ) : (
               <div className="flex min-h-[360px] items-center justify-center bg-muted text-sm text-muted-foreground">
                 <div className="flex flex-col items-center gap-2 px-4 text-center">
@@ -305,7 +327,7 @@ export function PipelineResultsPanel({
               <div className="truncate text-xl font-semibold">{heroTitle}</div>
               <div className="mt-1 truncate text-sm text-white/70">{heroSubtitle}</div>
             </div>
-          </div>
+          </section>
 
           <div className="rounded-md border bg-background p-3">
             <div className="mb-3 flex items-center justify-between gap-3">
@@ -317,7 +339,7 @@ export function PipelineResultsPanel({
                 )}
                 <div className="min-w-0">
                   <div className="font-semibold">
-                    {finalResult?.mode === 'groups' ? '套版后文件夹' : '最终产物'}
+                    {finalResult?.mode === 'groups' ? '套版成果墙' : '成果墙'}
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {finalResult?.mode === 'groups'
@@ -368,11 +390,17 @@ export function PipelineResultsPanel({
               <div className="grid max-h-[430px] grid-cols-2 gap-3 overflow-y-auto pr-1">
                 {selectedSection.items
                   .filter((item) => item.status === 'success' && pipelineResultImageSrc(item))
-                  .map((image) => (
+                  .map((image, index) => (
                     <button
-                      className="min-w-0 rounded-md border bg-muted/20 p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      aria-label={`查看 ${image.label}`}
+                      aria-pressed={image.id === selectedImage?.id}
+                      className={`min-w-0 rounded-md border p-2 text-left transition hover:shadow-sm focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 ${
+                        image.id === selectedImage?.id
+                          ? 'border-primary bg-primary/10 shadow-sm'
+                          : 'bg-muted/20'
+                      }`}
                       key={image.id}
-                      onClick={() => openLightbox(selectedSection, image)}
+                      onClick={() => setHeroImageIndex(index)}
                       type="button"
                     >
                       <img
@@ -681,6 +709,7 @@ export function PipelineRunHistoryPanel({
 
 export function PipelineItemsPanel({ progress }: { progress: PipelineProgress | null }) {
   const items = (progress?.items ?? [])
+    .filter((item) => item.status === 'failed' || item.status === 'interrupted')
     .slice()
     .sort((left, right) => right.updated_at - left.updated_at)
 
@@ -689,8 +718,10 @@ export function PipelineItemsPanel({ progress }: { progress: PipelineProgress | 
       <CardHeader className="pb-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <CardTitle className="text-base">逐项状态</CardTitle>
-            <CardDescription>每张印花在各节的当前状态。</CardDescription>
+            <h2 className="text-base font-semibold">异常项</h2>
+            <CardDescription>
+              单项失败不会阻断其他印花，处理后可从合适阶段重新运行。
+            </CardDescription>
           </div>
           <Badge variant="secondary">{items.length}</Badge>
         </div>
@@ -715,7 +746,12 @@ export function PipelineItemsPanel({ progress }: { progress: PipelineProgress | 
                     {item.output_path ?? item.source_path ?? '-'}
                   </div>
                   {item.error_message ? (
-                    <div className="text-xs text-red-600">{item.error_message}</div>
+                    <div className="space-y-1 text-xs">
+                      <div className="text-red-600">{item.error_message}</div>
+                      <div className="text-muted-foreground">
+                        处理建议：检查该阶段配置与外部资源，再从已有印花或中断处继续。
+                      </div>
+                    </div>
                   ) : null}
                 </div>
                 <div className="shrink-0 text-xs text-muted-foreground">
@@ -726,7 +762,7 @@ export function PipelineItemsPanel({ progress }: { progress: PipelineProgress | 
           </div>
         ) : (
           <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-            启动完整任务后，这里会显示逐项状态。
+            当前没有异常项。
           </div>
         )}
       </CardContent>

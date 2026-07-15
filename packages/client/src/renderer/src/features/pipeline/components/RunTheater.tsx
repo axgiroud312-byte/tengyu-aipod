@@ -1,4 +1,7 @@
+import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import type { PipelineProgress, PipelineRunConfig } from '@tengyu-aipod/shared'
+import { CopyPlus, ScrollText, Square } from 'lucide-react'
 import type { PipelineRailViewModel } from '../pipeline-progress-view-model'
 import type { PipelineConfigStage, PipelineValidationIssue } from '../types'
 import { PipelineRail } from './PipelineRail'
@@ -77,10 +80,13 @@ export function PipelineSelectedStageIssues({
 }
 
 export function RunTheater({
+  cancelLoading,
   config,
   isLogOpen,
   message,
   onLogOpenChange,
+  onCancel,
+  onCreateAnother,
   onSelectStage,
   progress,
   railView,
@@ -88,10 +94,13 @@ export function RunTheater({
   showRail = true,
   validationIssues,
 }: {
+  cancelLoading: boolean
   config: PipelineRunConfig
   isLogOpen: boolean
   message: string
   onLogOpenChange: (open: boolean) => void
+  onCancel: () => void
+  onCreateAnother: () => void
   onSelectStage: (stage: PipelineConfigStage) => void
   progress: PipelineProgress | null
   railView: PipelineRailViewModel
@@ -101,6 +110,38 @@ export function RunTheater({
 }) {
   return (
     <div className="space-y-5">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-xl font-semibold">成果剧场</h1>
+            <Badge variant={railView.mode === 'running' ? 'default' : 'secondary'}>
+              {railView.mode === 'running' ? '运行中' : '完成战报'}
+            </Badge>
+          </div>
+          <p className="mt-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
+            <span className="truncate text-foreground">{config.name?.trim() || '未命名任务'}</span>
+            <span aria-hidden="true">·</span>
+            <span className="truncate">{railView.summary.status}</span>
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button onClick={() => onLogOpenChange(true)} type="button" variant="outline">
+            <ScrollText className="mr-2 h-4 w-4" />
+            全部日志
+          </Button>
+          {railView.mode === 'running' ? (
+            <Button disabled={cancelLoading} onClick={onCancel} type="button" variant="outline">
+              <Square className="mr-2 h-4 w-4" />
+              停止任务
+            </Button>
+          ) : (
+            <Button onClick={onCreateAnother} type="button">
+              <CopyPlus className="mr-2 h-4 w-4" />
+              按此方案再建任务
+            </Button>
+          )}
+        </div>
+      </header>
       {showRail ? (
         <>
           <PipelineRail
@@ -111,8 +152,8 @@ export function RunTheater({
           <PipelineSelectedStageIssues issues={validationIssues} selectedStage={selectedStage} />
         </>
       ) : null}
-      <PipelineRunLogTail logs={railView.logTail} />
       <PipelineResultsPanel config={config} message={message} progress={progress} />
+      <PipelineRunLogTail logs={railView.logTail} />
       <PipelineItemsPanel progress={progress} />
       <PipelineLogDialog
         logs={progress?.logs ?? []}

@@ -1050,11 +1050,9 @@ test.describe('pipeline comfyui real probe', () => {
       expect(launchedConfig?.source.mode).toBe(expectedMode)
       expect(launchedConfig?.name).toBe(expectedName)
       await expect(page.getByText('完整任务运行中').first()).toBeVisible()
-
-      await page.getByRole('button', { name: '编辑任务起点' }).click()
-      await fieldTextbox(page, '任务名').fill(`${expectedName}-草稿已修改`)
-      await expect(summary.getByText(expectedName, { exact: true })).toBeVisible()
-      await expect(summary.getByText(`${expectedName}-草稿已修改`, { exact: true })).toHaveCount(0)
+      await expect(page.getByText(expectedName, { exact: true })).toBeVisible()
+      await expect(fieldTextbox(page, '任务名')).toHaveCount(0)
+      await expect(page.getByRole('button', { name: '启动完整任务' })).toHaveCount(0)
 
       await reloadPipelinePageWithOptionMocks(page)
     }

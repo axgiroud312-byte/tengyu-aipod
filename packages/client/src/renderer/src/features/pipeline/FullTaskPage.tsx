@@ -41,6 +41,7 @@ import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
 import { buildPipelineRunSummary } from '@/features/pipeline/pipeline-run-summary'
 import {
   createPipelineSourceDrafts,
+  resetPipelineSourceDraftsForAnotherRun,
   transitionPipelineSourceDraft,
 } from '@/features/pipeline/pipeline-source-drafts'
 import type {
@@ -587,6 +588,10 @@ function parseDetectionSkillKey(value: string) {
   return { id, version }
 }
 
+function versionedSkillKey(id?: string, version?: string) {
+  return id ? `${id}@@${version ?? ''}` : ''
+}
+
 function optionFromDetectionSkill(skill: SkillSummary): Option {
   return {
     key: detectionSkillOptionKey(skill),
@@ -865,6 +870,7 @@ export function FullTaskPage({
   const [runHistory, setRunHistory] = useState<PipelineRunRecord[]>([])
   const [runHistoryLoading, setRunHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [optionsError, setOptionsError] = useState<string | null>(null)
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
   const [optionsLoading, setOptionsLoading] = useState(false)
@@ -1160,21 +1166,22 @@ export function FullTaskPage({
     : []
   const validationIssues = [...pipelineValidationIssues, ...referenceIssues]
   const validationMessages = validationIssues.map((issue) => issue.message)
+  const currentRunConfig = buildConfig()
+  const displayedRunConfig = progress && activeRunConfig ? activeRunConfig : currentRunConfig
   const railView = buildPipelineRailViewModel({
     progress,
-    issues: validationIssues,
+    issues: progress ? [] : validationIssues,
     enabled: {
       source: true,
-      matting: effectiveMattingEnabled,
-      detection: effectiveDetectionEnabled,
-      photoshop: effectivePhotoshopEnabled,
-      title: effectiveTitleEnabled,
+      matting: displayedRunConfig.matting.enabled,
+      detection: displayedRunConfig.detection.enabled,
+      photoshop: Boolean(displayedRunConfig.photoshop.enabled),
+      title: Boolean(displayedRunConfig.title.enabled),
     },
-    locked: pipelineStageLocks,
+    locked: progress ? {} : pipelineStageLocks,
   })
   const canStart = optionsLoaded && !running && validationIssues.length === 0
-  const currentRunConfig = buildConfig()
-  const summaryConfig = running && activeRunConfig ? activeRunConfig : currentRunConfig
+  const summaryConfig = displayedRunConfig
   const runSummary = buildPipelineRunSummary(summaryConfig)
   const firstValidationIssue = validationIssues[0] ?? null
   const firstValidationStageLabel = firstValidationIssue
@@ -1188,6 +1195,7 @@ export function FullTaskPage({
   const refreshOptions = useCallback(async () => {
     setOptionsLoading(true)
     setOptionsLoaded(false)
+    setOptionsError(null)
     let allOptionsLoaded = false
     try {
       const results = await Promise.allSettled([
@@ -1230,7 +1238,9 @@ export function FullTaskPage({
       ]
 
       if (failed.length) {
-        setError(`部分配置加载失败：${failed.map((item) => errorLabels[item.index]).join('、')}`)
+        setOptionsError(
+          `部分配置加载失败：${failed.map((item) => errorLabels[item.index]).join('、')}`,
+        )
       }
       allOptionsLoaded = failed.length === 0
 
@@ -1285,7 +1295,7 @@ export function FullTaskPage({
       return
     }
     void refreshOptions().catch((nextError) =>
-      setError(nextError instanceof Error ? nextError.message : '读取完整任务配置失败'),
+      setOptionsError(nextError instanceof Error ? nextError.message : '读取完整任务配置失败'),
     )
   }, [recordsOnly, refreshOptions])
 
@@ -1356,10 +1366,9 @@ export function FullTaskPage({
         setMessage('完整任务失败')
       }
       setRunning(false)
-      void refreshOptions()
       void refreshRunHistory()
     })
-  }, [currentRunId, refreshOptions, refreshRunHistory, setCurrentRunId])
+  }, [currentRunId, refreshRunHistory, setCurrentRunId])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
@@ -2018,6 +2027,141 @@ export function FullTaskPage({
     void refreshRunHistory()
   }
 
+  function createAnotherRun() {
+    const config = activeRunConfig
+    if (!config) {
+      return
+    }
+
+    const nextDrafts = resetPipelineSourceDraftsForAnotherRun(sourceDrafts)
+    if (config.source.mode === 'existing_prints') {
+      nextDrafts.existing_prints.startStep = config.source.startStep ?? 'photoshop'
+    }
+    applyPipelineSourceState(config.source.mode, nextDrafts)
+    previousSourceModeRef.current = config.source.mode
+    existingPrintToggleSnapshotRef.current = null
+
+    setMattingEnabled(config.matting.enabled)
+    setDetectionEnabled(config.detection.enabled)
+    setPhotoshopEnabled(Boolean(config.photoshop.enabled))
+    setTitleEnabled(Boolean(config.title.enabled))
+
+    if (config.source.mode === 'collection') {
+      setExtractProvider(config.source.extract.provider)
+      setExtractSkillId(
+        versionedSkillKey(config.source.extract.skillId, config.source.extract.skillVersion),
+      )
+      setExtractWorkflowId(config.source.extract.comfyui?.workflowId ?? '')
+      setExtractInstanceUuid(config.source.extract.comfyui?.instanceUuid ?? '')
+      setGrsaiModel(config.source.extract.grsai?.model ?? grsaiModel)
+      setAspectRatio(config.source.extract.grsai?.aspectRatio ?? aspectRatio)
+      setGrsaiConcurrency(String(config.source.extract.grsai?.concurrency ?? grsaiConcurrency))
+      setWidth(String(config.source.extract.comfyui?.width ?? width))
+      setHeight(String(config.source.extract.comfyui?.height ?? height))
+    }
+    if (config.source.mode === 'txt2img') {
+      setTxt2imgProvider(config.source.provider)
+      setPromptCount(String(config.source.prompt.count ?? 1))
+      setPromptSkillId(
+        versionedSkillKey(config.source.prompt.skillId, config.source.prompt.skillVersion),
+      )
+      setPromptModel(config.source.prompt.model ?? '')
+      if (config.source.provider === 'grsai') {
+        setGrsaiModel(config.source.grsai?.model ?? grsaiModel)
+        setAspectRatio(config.source.grsai?.aspectRatio ?? aspectRatio)
+        setGrsaiConcurrency(String(config.source.grsai?.concurrency ?? grsaiConcurrency))
+      } else {
+        setTxt2imgComfyuiWorkflowId(config.source.comfyui.workflowId)
+        setTxt2imgComfyuiInstanceUuid(config.source.comfyui.instanceUuid ?? '')
+        setWidth(String(config.source.comfyui.width ?? width))
+        setHeight(String(config.source.comfyui.height ?? height))
+      }
+    }
+    if (config.source.mode === 'img2img') {
+      setImg2imgProvider(config.source.provider)
+      const prompt = config.source.prompt
+      if (prompt) {
+        setPromptCount(String(prompt.count ?? 1))
+        setPromptSkillId(versionedSkillKey(prompt.skillId, prompt.skillVersion))
+        setPromptModel(prompt.model ?? '')
+        const referenceMode = img2imgReferenceModes.find(
+          (item) => item.instruction === prompt.modeInstruction,
+        )
+        if (referenceMode) {
+          setImg2imgReferenceMode(referenceMode.key)
+        }
+      }
+      if (config.source.provider === 'grsai') {
+        setSendReferenceToImageModel(Boolean(config.source.sendReferenceImages))
+        setGrsaiModel(config.source.grsai?.model ?? grsaiModel)
+        setAspectRatio(config.source.grsai?.aspectRatio ?? aspectRatio)
+        setGrsaiConcurrency(String(config.source.grsai?.concurrency ?? grsaiConcurrency))
+      } else {
+        setImg2imgComfyuiWorkflowId(config.source.comfyui.workflowId)
+        setImg2imgComfyuiInstanceUuid(config.source.comfyui.instanceUuid ?? '')
+        setImg2imgComfyuiBatchSize(String(config.source.comfyui.batchSize ?? 1))
+        setImg2imgComfyuiPromptMode(config.source.prompt?.mode === 'workflow' ? 'workflow' : 'ai')
+        setWidth(String(config.source.comfyui.width ?? width))
+        setHeight(String(config.source.comfyui.height ?? height))
+      }
+    }
+
+    setMattingWorkflowId(config.matting.workflowId ?? '')
+    setMattingInstanceUuid(config.matting.instanceUuid ?? '')
+    if (config.matting.width !== undefined) {
+      setWidth(String(config.matting.width))
+    }
+    if (config.matting.height !== undefined) {
+      setHeight(String(config.matting.height))
+    }
+    setDetectionPassRule(config.detection.allowReview === false ? 'pass-only' : 'allow-review')
+    setDetectionCompression(config.detection.preprocess?.compress ?? true)
+    setDetectionModel(config.detection.model ?? '')
+    setDetectionSkillKey(versionedSkillKey(config.detection.skillId, config.detection.skillVersion))
+    setDetectionConfig({
+      threshold: {
+        passMax: config.detection.threshold?.passMax ?? 39,
+        reviewMax: config.detection.threshold?.reviewMax ?? 69,
+      },
+      skillId: config.detection.skillId ?? '',
+      skillVersion: config.detection.skillVersion ?? '',
+      model: config.detection.model ?? 'qwen3.6-flash',
+      variables: config.detection.variables ?? {},
+    })
+
+    setTemplatePaths([...config.photoshop.templates])
+    setOutputRoot(config.photoshop.outputRoot ?? '')
+    setReplaceRange(config.photoshop.replaceRange ?? 'topmost')
+    setSmartObjectReplaceMode(config.photoshop.smartObjectReplaceMode ?? 'replaceContents')
+    setSmartObjectInnerFitMode(config.photoshop.smartObjectInnerFitMode ?? 'fill')
+    setClipMode(config.photoshop.clipMode ?? 'auto')
+    setFormat(config.photoshop.format ?? 'jpg')
+    setSkipCompleted(config.photoshop.skipCompleted ?? true)
+    setPhotoshopMaxRetries(String(config.photoshop.maxRetries ?? 1))
+
+    setTitlePlatform(config.title.platform)
+    setTitleLanguage(config.title.language)
+    setTitleModel(config.title.model)
+    setTitleFileName(config.title.titleFileName ?? '标题')
+    setTitleImageIndex(String(config.title.imageIndex ?? 1))
+    setTitleExistingStrategy(config.title.existingStrategy ?? 'skip')
+    setTitleMaxRetries(String(config.title.maxRetries ?? 2))
+    setTitleKeywordGroupSeparator(config.title.keywordGroupSeparator ?? ' ')
+    setTitleCompression(config.title.preprocess?.compression ?? true)
+    setTitleMaxSize(String(config.title.preprocess?.maxSize ?? 1024))
+    setExtraRequirement('')
+    setTitleKeywordGroups([createTitleKeywordGroupDraft()])
+
+    setProgress(null)
+    setActiveRunConfig(null)
+    setCurrentRunId(null)
+    setRunning(false)
+    setSelectedPipelineStage('source')
+    setError(null)
+    setMessage('已沿用稳定设置，请填写本次任务内容')
+    void refreshOptions()
+  }
+
   async function cancelPipeline() {
     if (!currentRunId) {
       return
@@ -2046,11 +2190,41 @@ export function FullTaskPage({
     )
   }
 
+  if (progress) {
+    return (
+      <div className="space-y-5">
+        <PipelineStatusAlerts error={error} showMacPhotoshopNotice={false} />
+        <RunTheater
+          cancelLoading={cancelPipelineMutation.loading}
+          config={activeRunConfig ?? currentRunConfig}
+          isLogOpen={isLogOpen}
+          message={message}
+          onLogOpenChange={setIsLogOpen}
+          onCancel={() => void cancelPipeline()}
+          onCreateAnother={createAnotherRun}
+          onSelectStage={setSelectedPipelineStage}
+          progress={progress}
+          railView={railView}
+          selectedStage={selectedPipelineStage}
+          validationIssues={[]}
+        />
+        <PipelineRunHistoryPanel
+          currentRunId={currentRunId}
+          loading={runHistoryLoading}
+          onRefresh={() => void refreshRunHistory()}
+          onResume={(runId) => void resumePipeline(runId)}
+          resumeLoading={resumePipelineMutation.loading}
+          runs={runHistory}
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-5">
       <div className="space-y-5">
         <PipelineStatusAlerts
-          error={executionPlanStorageError?.message ?? error}
+          error={executionPlanStorageError?.message ?? optionsError ?? error}
           showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
         />
 
@@ -3342,7 +3516,7 @@ export function FullTaskPage({
               canStart={canStart}
               cancelLoading={cancelPipelineMutation.loading}
               currentRunId={currentRunId}
-              logCount={progress?.logs?.length ?? 0}
+              logCount={0}
               message={message}
               onCancel={() => void cancelPipeline()}
               onOpenLog={() => setIsLogOpen(true)}
@@ -3363,18 +3537,6 @@ export function FullTaskPage({
         </Card>
       </div>
 
-      <RunTheater
-        config={activeRunConfig ?? currentRunConfig}
-        isLogOpen={isLogOpen}
-        message={message}
-        onLogOpenChange={setIsLogOpen}
-        onSelectStage={setSelectedPipelineStage}
-        progress={progress}
-        railView={railView}
-        selectedStage={selectedPipelineStage}
-        showRail={Boolean(progress)}
-        validationIssues={running ? [] : validationIssues}
-      />
       <PipelineRunHistoryPanel
         currentRunId={currentRunId}
         loading={runHistoryLoading}

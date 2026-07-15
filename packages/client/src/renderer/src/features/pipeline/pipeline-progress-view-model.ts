@@ -366,7 +366,7 @@ export function buildPipelineRailViewModel(
   return {
     mode: railMode(snapshot),
     stages,
-    logTail: snapshot?.logs.slice(-5) ?? [],
+    logTail: snapshot?.logs.slice(-3) ?? [],
     summary: {
       status,
       warning: summaryWarning(stages, input.enabled, snapshot),

@@ -322,7 +322,7 @@ describe('buildPipelineRailViewModel', () => {
     })
   })
 
-  it('returns the last five log messages', () => {
+  it('returns only the last three key log messages for the theater', () => {
     const view = buildPipelineRailViewModel({
       progress: progress({
         logs: Array.from({ length: 7 }, (_, index) => ({
@@ -336,7 +336,7 @@ describe('buildPipelineRailViewModel', () => {
       enabled,
     })
 
-    expect(view.logTail).toEqual(['message-2', 'message-3', 'message-4', 'message-5', 'message-6'])
+    expect(view.logTail).toEqual(['message-4', 'message-5', 'message-6'])
   })
 
   it('warns when every detected print is blocked with no downstream output', () => {
