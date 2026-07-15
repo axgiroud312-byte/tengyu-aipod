@@ -19,7 +19,6 @@ export interface WorkbenchModuleMeta {
 }
 
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = 'tengyu.ui.sidebar.collapsed'
-export const LAST_ROUTE_STORAGE_KEY = 'tengyu.ui.lastRoute'
 
 export const workbenchModules: WorkbenchModuleMeta[] = [
   {
@@ -96,16 +95,45 @@ export const tutorialModule: WorkbenchModuleMeta = {
   description: '采集、生图和 PS 套版操作手册',
 }
 
-const defaultWorkbenchRoute = '/collection'
+export const pipelineRunsModule: WorkbenchModuleMeta = {
+  key: 'pipeline',
+  path: '/pipeline/runs',
+  label: '运行记录',
+  title: '完整任务运行记录',
+  description: '查看固定完整任务的运行状态与已保留成果',
+}
+
+export const navigationGroups = [
+  {
+    label: '生产',
+    modules: [
+      ...workbenchModules.filter((module) => module.key === 'pipeline'),
+      pipelineRunsModule,
+    ],
+  },
+  {
+    label: '单步工具',
+    modules: workbenchModules.filter((module) => module.key !== 'pipeline'),
+  },
+  {
+    label: '支持',
+    modules: [settingsModule, tutorialModule],
+  },
+] satisfies Array<{ label: string; modules: WorkbenchModuleMeta[] }>
+
+const defaultWorkbenchRoute = '/pipeline'
 const defaultWorkbenchModule: WorkbenchModuleMeta = {
-  key: 'collection',
+  key: 'pipeline',
   path: defaultWorkbenchRoute,
-  label: '采集',
-  title: '采集模块',
-  description: '扫描当前页面图池并选择下载图片',
+  label: '完整任务',
+  title: '完整任务',
+  description: '按来源、抠图、检测、套版和标题顺序执行',
 }
 
 export function moduleFromPath(pathname: string) {
+  if (pathname === pipelineRunsModule.path) {
+    return pipelineRunsModule.key
+  }
   if (pathname === settingsModule.path) {
     return settingsModule.key
   }
@@ -116,6 +144,9 @@ export function moduleFromPath(pathname: string) {
 }
 
 export function moduleMetaFromPath(pathname: string) {
+  if (pathname === pipelineRunsModule.path) {
+    return pipelineRunsModule
+  }
   if (pathname === settingsModule.path) {
     return settingsModule
   }
@@ -129,11 +160,11 @@ export function isWorkbenchRoute(pathname: string) {
   return (
     pathname === settingsModule.path ||
     pathname === tutorialModule.path ||
+    pathname === pipelineRunsModule.path ||
     workbenchModules.some((module) => module.path === pathname)
   )
 }
 
 export function getStoredWorkbenchRoute() {
-  const storedRoute = window.localStorage.getItem(LAST_ROUTE_STORAGE_KEY)
-  return storedRoute && isWorkbenchRoute(storedRoute) ? storedRoute : defaultWorkbenchRoute
+  return defaultWorkbenchRoute
 }

@@ -126,7 +126,7 @@ export function OnboardingRoute() {
   }
 
   if (ready) {
-    return <MainWorkbench />
+    return <MainWorkbench initialPipelineRunId={null} />
   }
 
   if (!isStateLoaded) {

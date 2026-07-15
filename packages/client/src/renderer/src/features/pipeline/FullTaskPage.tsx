@@ -643,7 +643,13 @@ function AdvancedDisclosure({
   )
 }
 
-export function FullTaskPage() {
+export function FullTaskPage({
+  initialRunId = null,
+  recordsOnly = false,
+}: {
+  initialRunId?: string | null
+  recordsOnly?: boolean
+}) {
   const [name, setName] = useFullTaskSessionState('name', '')
   const [printSkuCode, setPrintSkuCode] = useFullTaskSessionState('printSkuCode', '')
   const [filenameSeparator, setFilenameSeparator] = useFullTaskSessionState(
@@ -788,7 +794,7 @@ export function FullTaskPage() {
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
   const [currentRunId, setCurrentRunId] = useFullTaskSessionState<string | null>(
     'currentRunId',
-    null,
+    initialRunId,
   )
   const [runHistory, setRunHistory] = useState<PipelineRunRecord[]>([])
   const [runHistoryLoading, setRunHistoryLoading] = useState(false)
@@ -832,6 +838,12 @@ export function FullTaskPage() {
     (runId: string) => window.api.pipeline.resume({ run_id: runId }),
     { successMessage: '已从中断处继续' },
   )
+
+  useEffect(() => {
+    if (initialRunId) {
+      setCurrentRunId(initialRunId)
+    }
+  }, [initialRunId, setCurrentRunId])
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const requiresPromptGeneration =
@@ -1163,10 +1175,13 @@ export function FullTaskPage() {
   }, [])
 
   useEffect(() => {
+    if (recordsOnly) {
+      return
+    }
     void refreshOptions().catch((nextError) =>
       setError(nextError instanceof Error ? nextError.message : '读取完整任务配置失败'),
     )
-  }, [refreshOptions])
+  }, [recordsOnly, refreshOptions])
 
   useEffect(() => {
     void refreshRunHistory()
@@ -1814,6 +1829,19 @@ export function FullTaskPage() {
       return
     }
     setMessage('已请求取消，当前步骤结束后停止')
+  }
+
+  if (recordsOnly) {
+    return (
+      <PipelineRunHistoryPanel
+        currentRunId={currentRunId}
+        loading={runHistoryLoading}
+        onRefresh={() => void refreshRunHistory()}
+        onResume={(runId) => void resumePipeline(runId)}
+        resumeLoading={resumePipelineMutation.loading}
+        runs={runHistory}
+      />
+    )
   }
 
   return (

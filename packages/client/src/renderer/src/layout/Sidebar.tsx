@@ -3,6 +3,7 @@ import { cn } from '@/lib/utils'
 import {
   Download,
   HelpCircle,
+  History,
   ImagePlus,
   Layers,
   PanelLeftClose,
@@ -16,7 +17,7 @@ import {
 } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 import { NavLink } from 'react-router-dom'
-import { type WorkbenchModule, tutorialModule, workbenchModules } from './navigation'
+import { type WorkbenchModule, navigationGroups } from './navigation'
 
 const moduleIcons: Record<WorkbenchModule, ComponentType<SVGProps<SVGSVGElement>>> = {
   collection: Download,
@@ -44,7 +45,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
     <aside
       className={cn(
         'relative z-20 flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-150',
-        collapsed ? 'w-[60px]' : 'w-[180px]',
+        collapsed ? 'w-14' : 'w-[188px]',
       )}
     >
       <div
@@ -72,58 +73,38 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
         )}
       </div>
 
-      <nav className="flex-1 space-y-1 px-2 py-3">
-        {workbenchModules.map((module) => {
-          const Icon = moduleIcons[module.key]
-          return (
-            <NavLink
-              className={({ isActive }) =>
-                cn(
-                  'flex h-10 items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
-                  collapsed ? 'justify-center px-0' : null,
-                  isActive ? activeClassName : inactiveClassName,
-                )
-              }
-              key={module.key}
-              title={collapsed ? module.label : undefined}
-              to={module.path}
-            >
-              <Icon className="h-4 w-4 shrink-0" />
-              {collapsed ? null : <span className="truncate">{module.label}</span>}
-            </NavLink>
-          )
-        })}
+      <nav aria-label="Workbench 主导航" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+        {navigationGroups.map((group) => (
+          <div className="mb-4 space-y-1 last:mb-0" key={group.label}>
+            {collapsed ? null : (
+              <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{group.label}</p>
+            )}
+            {group.modules.map((module) => {
+              const Icon = module.path === '/pipeline/runs' ? History : moduleIcons[module.key]
+              return (
+                <NavLink
+                  className={({ isActive }) =>
+                    cn(
+                      'flex h-10 items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
+                      collapsed ? 'justify-center px-0' : null,
+                      isActive ? activeClassName : inactiveClassName,
+                    )
+                  }
+                  end
+                  key={module.path}
+                  title={collapsed ? module.label : undefined}
+                  to={module.path}
+                >
+                  <Icon className="h-4 w-4 shrink-0" />
+                  {collapsed ? null : <span className="truncate">{module.label}</span>}
+                </NavLink>
+              )
+            })}
+          </div>
+        ))}
       </nav>
 
       <div className="space-y-1 border-t px-2 py-3">
-        <NavLink
-          className={({ isActive }) =>
-            cn(
-              'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
-              collapsed ? 'justify-center px-0' : null,
-              isActive ? activeClassName : inactiveClassName,
-            )
-          }
-          title={collapsed ? '设置' : undefined}
-          to="/settings"
-        >
-          <Settings2 className="h-4 w-4 shrink-0" />
-          {collapsed ? null : <span>设置</span>}
-        </NavLink>
-        <NavLink
-          className={({ isActive }) =>
-            cn(
-              'flex h-10 w-full items-center gap-3 rounded-sm px-3 text-sm font-medium transition-colors duration-100',
-              collapsed ? 'justify-center px-0' : null,
-              isActive ? activeClassName : inactiveClassName,
-            )
-          }
-          title={collapsed ? '教程' : undefined}
-          to={tutorialModule.path}
-        >
-          <HelpCircle className="h-4 w-4 shrink-0" />
-          {collapsed ? null : <span>教程</span>}
-        </NavLink>
         <Button
           className={cn(
             'h-10 w-full justify-start gap-3 px-3',

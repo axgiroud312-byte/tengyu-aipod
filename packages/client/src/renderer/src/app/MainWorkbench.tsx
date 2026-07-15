@@ -199,7 +199,7 @@ function WorkspaceRequired({ onOpenSettings }: { onOpenSettings: () => void }) {
   )
 }
 
-export function MainWorkbench() {
+export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: string | null }) {
   const location = useLocation()
   const navigate = useNavigate()
   const activeModule = moduleFromPath(location.pathname) ?? 'collection'
@@ -1285,7 +1285,10 @@ export function MainWorkbench() {
                   <GenerationPage />
                 </div>
                 <div hidden={activeModule !== 'pipeline'}>
-                  <FullTaskPage />
+                  <FullTaskPage
+                    initialRunId={initialPipelineRunId}
+                    recordsOnly={location.pathname === '/pipeline/runs'}
+                  />
                 </div>
                 <div hidden={activeModule !== 'listing'}>
                   <ListingPage />

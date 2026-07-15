@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { getStoredWorkbenchRoute, isWorkbenchRoute } from '@/layout/navigation'
 import { formatIpcError } from '@tengyu-aipod/shared'
+import type { PipelineRunDetail } from '@tengyu-aipod/shared'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
@@ -8,6 +9,30 @@ import { MainWorkbench } from './MainWorkbench'
 
 function onboardingPath(step: 1 | 2) {
   return `/onboarding/${step}`
+}
+
+function runUpdatedAt(detail: PipelineRunDetail) {
+  return Math.max(
+    detail.run.completed_at ?? detail.run.started_at ?? detail.run.created_at,
+    ...detail.steps.map((step) => step.updated_at),
+    ...(detail.items ?? []).map((item) => item.updated_at),
+  )
+}
+
+async function mostRecentlyUpdatedRunningRunId() {
+  const runningRuns = (await window.api.pipeline.listRuns()).filter(
+    (run) => run.status === 'running',
+  )
+  const details = await Promise.all(
+    runningRuns.map((run) => window.api.pipeline.getRun({ run_id: run.id })),
+  )
+  let selected: PipelineRunDetail | null = null
+  for (const detail of details) {
+    if (detail && (!selected || runUpdatedAt(detail) > runUpdatedAt(selected))) {
+      selected = detail
+    }
+  }
+  return selected?.run.id ?? null
 }
 
 function EnteringWorkbench() {
@@ -25,6 +50,7 @@ export function WorkbenchRoute() {
   const navigate = useNavigate()
   const location = useLocation()
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean | null>(null)
+  const [initialPipelineRunId, setInitialPipelineRunId] = useState<string | null | undefined>()
   const [loadError, setLoadError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
 
@@ -36,6 +62,13 @@ export function WorkbenchRoute() {
       setNeedsOnboarding(state.needs_onboarding)
       if (state.needs_onboarding) {
         navigate(onboardingPath(1), { replace: true })
+        setInitialPipelineRunId(null)
+      } else {
+        try {
+          setInitialPipelineRunId(await mostRecentlyUpdatedRunningRunId())
+        } catch {
+          setInitialPipelineRunId(null)
+        }
       }
     } catch (error) {
       setNeedsOnboarding(null)
@@ -75,7 +108,7 @@ export function WorkbenchRoute() {
     )
   }
 
-  if (needsOnboarding === null) {
+  if (needsOnboarding === null || initialPipelineRunId === undefined) {
     return <EnteringWorkbench />
   }
 
@@ -91,5 +124,5 @@ export function WorkbenchRoute() {
     return <Navigate replace to={activePath} />
   }
 
-  return <MainWorkbench />
+  return <MainWorkbench initialPipelineRunId={initialPipelineRunId} />
 }
