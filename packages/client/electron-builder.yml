@@ -19,8 +19,26 @@ files:
     to: node_modules/isarray
   - from: ../../node_modules/process-nextick-args
     to: node_modules/process-nextick-args
+  - from: ../../node_modules/util-deprecate
+    to: node_modules/util-deprecate
+  - from: ../../node_modules/string_decoder
+    to: node_modules/string_decoder
+  - from: ../../node_modules/fs.realpath
+    to: node_modules/fs.realpath
+  - from: ../../node_modules/inflight
+    to: node_modules/inflight
+  - from: ../../node_modules/minimatch
+    to: node_modules/minimatch
+  - from: ../../node_modules/once
+    to: node_modules/once
+  - from: ../../node_modules/path-is-absolute
+    to: node_modules/path-is-absolute
+  - from: ../../node_modules/wrappy
+    to: node_modules/wrappy
   - from: ../../node_modules/zip-stream/node_modules/archiver-utils
     to: node_modules/zip-stream/node_modules/archiver-utils
+  - from: ../../node_modules/readdir-glob/node_modules/minimatch
+    to: node_modules/readdir-glob/node_modules/minimatch
 asar: true
 asarUnpack:
   - "**/*.node"
