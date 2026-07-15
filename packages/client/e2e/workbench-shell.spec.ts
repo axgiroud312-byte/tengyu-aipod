@@ -496,6 +496,15 @@ test.describe('production-first Workbench shell', () => {
       )
       .toBe(1)
 
+    await emitPipelineCompleted(app, {
+      ok: false,
+      run_id: secondProgress.run_id,
+      error: '启动资源已失效，请检查后续跑',
+    })
+    await expect(page.getByText('运行失败', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '按此方案再建任务' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '停止任务' })).toHaveCount(0)
+
     const completedProgress = theaterProgress({
       baseUrl: mockServer.baseUrl,
       imageCount: 2,

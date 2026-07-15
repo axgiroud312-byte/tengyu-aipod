@@ -115,8 +115,8 @@ function formatPipelineLogDetails(details?: Record<string, unknown>) {
   return entries.map(([key, value]) => `${key}=${String(value)}`).join(' ')
 }
 
-function pipelineProgressStatusLabel(status: PipelineProgress['status'] | undefined) {
-  const labels: Record<PipelineProgress['status'], string> = {
+function pipelineRunStatusLabel(status: PipelineRunRecord['status'] | undefined) {
+  const labels: Record<PipelineRunRecord['status'], string> = {
     cancelled: '已取消',
     completed: '已完成',
     failed: '失败',
@@ -261,7 +261,7 @@ export function PipelineResultsPanel({
             </CardTitle>
             <CardDescription>{message}</CardDescription>
           </div>
-          <Badge variant="secondary">{pipelineProgressStatusLabel(progress?.status)}</Badge>
+          <Badge variant="secondary">{pipelineRunStatusLabel(progress?.status)}</Badge>
         </div>
       </CardHeader>
       <CardContent className="space-y-4 p-5">
@@ -287,7 +287,7 @@ export function PipelineResultsPanel({
                   loading="lazy"
                   src={pipelineRawImageSrc(heroImagePath)}
                 />
-                <span className="absolute right-3 top-3 inline-flex size-9 items-center justify-center rounded-md border border-white/20 bg-black/60 text-white opacity-80 backdrop-blur transition-opacity group-hover:opacity-100">
+                <span className="absolute right-3 top-3 inline-flex size-9 items-center justify-center rounded-md border border-white/20 bg-black/60 text-white opacity-80 backdrop-blur transition-opacity group-hover:opacity-100 motion-reduce:transition-none">
                   <Maximize2 className="size-4" />
                 </span>
               </button>
@@ -608,25 +608,6 @@ function runStatusVariant(
   return 'outline'
 }
 
-function runStatusLabel(status: PipelineRunRecord['status']) {
-  if (status === 'running') {
-    return '进行中'
-  }
-  if (status === 'completed') {
-    return '已完成'
-  }
-  if (status === 'failed') {
-    return '失败'
-  }
-  if (status === 'cancelled') {
-    return '已取消'
-  }
-  if (status === 'interrupted') {
-    return '已中断'
-  }
-  return status
-}
-
 function runTimeLabel(value: number) {
   return new Date(value).toLocaleString()
 }
@@ -674,7 +655,7 @@ export function PipelineRunHistoryPanel({
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate font-medium">{run.name}</span>
                       <Badge variant={runStatusVariant(run.status)}>
-                        {runStatusLabel(run.status)}
+                        {pipelineRunStatusLabel(run.status)}
                       </Badge>
                       {run.id === currentRunId ? <Badge variant="outline">当前</Badge> : null}
                     </div>

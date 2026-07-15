@@ -15,6 +15,22 @@ const STAGE_LABELS: Record<PipelineConfigStage, string> = {
   title: '标题生成',
 }
 
+function theaterStatusLabel(status: PipelineProgress['status'] | undefined) {
+  if (status === 'completed') {
+    return '完成战报'
+  }
+  if (status === 'failed') {
+    return '运行失败'
+  }
+  if (status === 'cancelled') {
+    return '已取消'
+  }
+  if (status === 'interrupted') {
+    return '已中断'
+  }
+  return '运行中'
+}
+
 export function PipelineRunLogTail({ logs }: { logs: string[] }) {
   if (logs.length === 0) {
     return null
@@ -108,14 +124,20 @@ export function RunTheater({
   showRail?: boolean
   validationIssues: PipelineValidationIssue[]
 }) {
+  const status = progress?.status
+  const statusLabel = theaterStatusLabel(status)
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <h1 className="text-xl font-semibold">成果剧场</h1>
-            <Badge variant={railView.mode === 'running' ? 'default' : 'secondary'}>
-              {railView.mode === 'running' ? '运行中' : '完成战报'}
+            <Badge
+              variant={
+                status === 'failed' ? 'destructive' : status === 'running' ? 'default' : 'secondary'
+              }
+            >
+              {statusLabel}
             </Badge>
           </div>
           <p className="mt-1 flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
@@ -129,17 +151,17 @@ export function RunTheater({
             <ScrollText className="mr-2 h-4 w-4" />
             全部日志
           </Button>
-          {railView.mode === 'running' ? (
+          {status === 'running' ? (
             <Button disabled={cancelLoading} onClick={onCancel} type="button" variant="outline">
               <Square className="mr-2 h-4 w-4" />
               停止任务
             </Button>
-          ) : (
+          ) : status === 'completed' ? (
             <Button onClick={onCreateAnother} type="button">
               <CopyPlus className="mr-2 h-4 w-4" />
               按此方案再建任务
             </Button>
-          )}
+          ) : null}
         </div>
       </header>
       {showRail ? (

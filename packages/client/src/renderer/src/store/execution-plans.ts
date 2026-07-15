@@ -16,7 +16,9 @@ import {
   saveExecutionPlan,
   writeLastUsedExecutionPlanId,
 } from '@/features/pipeline/pipeline-execution-plans'
+import { createPipelineRunApplication } from '@/features/pipeline/pipeline-run-reuse'
 import type { PipelineSourceDraftMap } from '@/features/pipeline/pipeline-source-drafts'
+import type { PipelineRunConfig } from '@tengyu-aipod/shared'
 import { create } from 'zustand'
 
 type ExecutionPlanState = {
@@ -56,6 +58,10 @@ type ExecutionPlanState = {
   selectPlan: (planId: string) => void
   applyPlan: (
     plan: PipelineExecutionPlan,
+    sourceDrafts: PipelineSourceDraftMap,
+  ) => PipelineExecutionPlanApplication
+  applyRunConfig: (
+    config: PipelineRunConfig,
     sourceDrafts: PipelineSourceDraftMap,
   ) => PipelineExecutionPlanApplication
 }
@@ -160,6 +166,16 @@ export const useExecutionPlanStore = create<ExecutionPlanState>((set) => ({
     set((state) => ({
       activePlanId: plan.id,
       selectedPlanId: plan.id,
+      application: {
+        revision: (state.application?.revision ?? 0) + 1,
+        sessionValues: application.sessionValues,
+      },
+    }))
+    return application
+  },
+  applyRunConfig: (config, sourceDrafts) => {
+    const application = createPipelineRunApplication(config, sourceDrafts)
+    set((state) => ({
       application: {
         revision: (state.application?.revision ?? 0) + 1,
         sessionValues: application.sessionValues,
