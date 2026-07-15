@@ -345,6 +345,37 @@ async function prepareApp(page: Page, workbenchRoot: string) {
   }, workbenchRoot)
 }
 
+async function reloadPipelinePageWithOptionMocks(page: Page) {
+  await page.reload()
+  await page.getByRole('link', { name: '完整任务', exact: true }).click()
+  await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
+  await expect(page.getByText(/部分配置加载失败：/)).toHaveCount(0)
+}
+
+async function installChenyuInstanceIpcMock(app: ElectronApplication) {
+  await app.evaluate(({ ipcMain }) => {
+    ipcMain.removeHandler('chenyu:list-instances')
+    ipcMain.handle('chenyu:list-instances', async () => [
+      {
+        instanceUuid: 'inst-ui',
+        title: 'UI 晨羽实例',
+        status: 2,
+        statusName: 'running',
+        imageName: null,
+        podUuid: null,
+        podTag: null,
+        gpuUuid: null,
+        gpuName: null,
+        comfyuiUrl: 'http://127.0.0.1:39999/comfy',
+        serverUrls: ['http://127.0.0.1:39999/comfy'],
+        isCurrent: true,
+        isFixedPod: false,
+        raw: { instance_uuid: 'inst-ui', status: 2 },
+      },
+    ])
+  })
+}
+
 async function importWorkflow(
   page: Page,
   input: {
@@ -621,6 +652,7 @@ test.describe('pipeline comfyui real probe', () => {
       userDataDir: join(tempRoot, 'user-data-ui'),
     })
     const page = await app.firstWindow()
+    await installChenyuInstanceIpcMock(app)
     await page.addInitScript(() => {
       const patch = () => {
         if (!window.api) {
@@ -747,9 +779,7 @@ test.describe('pipeline comfyui real probe', () => {
       patch()
     })
     await prepareApp(page, workbenchRoot)
-    await page.reload()
-
-    await page.getByRole('link', { name: '完整任务' }).click()
+    await reloadPipelinePageWithOptionMocks(page)
 
     for (const stage of ['任务起点', '抠图', '侵权检测', 'PS 套版', '标题生成']) {
       await expect(page.getByRole('group', { name: `${stage}阶段` })).toBeVisible()
@@ -881,7 +911,7 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('抠图工作流', { exact: true }).last()).toBeVisible()
     await expect(page.getByText('需要先配置运行云机和抠图工作流。')).toBeVisible()
 
-    await page.reload()
+    await reloadPipelinePageWithOptionMocks(page)
     await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
     await expect(fieldTextbox(page, '任务名')).toHaveValue('已有印花任务')
     await expect(fieldTextbox(page, '已有印花文件夹')).toHaveValue('C:\\source\\prints')
@@ -955,7 +985,7 @@ test.describe('pipeline comfyui real probe', () => {
     await fieldCombobox(page, '提取方式').click()
     await page.getByRole('option', { name: '晨羽智云' }).click()
 
-    await page.reload()
+    await reloadPipelinePageWithOptionMocks(page)
     await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产')
     await page.getByRole('button', { name: '应用执行方案' }).click()
 
@@ -1044,18 +1074,6 @@ test.describe('pipeline comfyui real probe', () => {
         message: '执行方案数据结构无效，请删除损坏数据后重新保存方案。',
       },
     ]
-    for (const invalidStorage of invalidStorageCases) {
-      await page.evaluate((value) => {
-        window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans', value)
-      }, invalidStorage.raw)
-      await page.reload()
-      await expect(page.getByText(invalidStorage.message)).toBeVisible()
-      await expect(page.getByRole('button', { name: '保存执行方案' })).toBeDisabled()
-    }
-    await page.getByRole('button', { name: '清除损坏方案数据' }).click()
-    await expect(page.getByText(invalidStorageCases[2]?.message ?? '')).toHaveCount(0)
-    await expect(page.getByText('已保存 0/5 套执行方案')).toBeVisible()
-
     await page.evaluate((rawDocument) => {
       const document = JSON.parse(rawDocument ?? '') as PipelineExecutionPlanDocument
       const plan = document.plans[0]
@@ -1079,7 +1097,7 @@ test.describe('pipeline comfyui real probe', () => {
       window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans', JSON.stringify(document))
       window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans:last-used', 'stale-plan')
     }, recoverableDocument)
-    await page.reload()
+    await reloadPipelinePageWithOptionMocks(page)
     await expect(fieldCombobox(page, '执行方案')).toContainText('失效引用方案')
     await page.getByRole('button', { name: '应用执行方案' }).click()
     await expect(page.getByText(/发现 8 个失效资源/).first()).toBeVisible()
@@ -1102,6 +1120,18 @@ test.describe('pipeline comfyui real probe', () => {
     await page.getByRole('switch', { name: '启用抠图' }).click()
     await expect(page.getByText(/抠图工作流 wf-matting-removed 已不可用/)).toHaveCount(0)
     await expect(page.getByText(/抠图运行云机 machine-removed 已不可用/)).toHaveCount(0)
+
+    for (const invalidStorage of invalidStorageCases) {
+      await page.evaluate((value) => {
+        window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans', value)
+      }, invalidStorage.raw)
+      await reloadPipelinePageWithOptionMocks(page)
+      await expect(page.getByText(invalidStorage.message)).toBeVisible()
+      await expect(page.getByRole('button', { name: '保存执行方案' })).toBeDisabled()
+    }
+    await page.getByRole('button', { name: '清除损坏方案数据' }).click()
+    await expect(page.getByText(invalidStorageCases[2]?.message ?? '')).toHaveCount(0)
+    await expect(page.getByText('已保存 0/5 套执行方案')).toBeVisible()
   })
 
   test('runs txt2img and img2img comfyui complete tasks through electron IPC', async () => {

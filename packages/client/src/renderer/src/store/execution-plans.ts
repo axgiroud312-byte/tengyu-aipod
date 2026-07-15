@@ -5,6 +5,7 @@ import {
   type PipelineExecutionPlanApplication,
   type PipelineExecutionPlanConfig,
   type PipelineExecutionPlanSessionValues,
+  type PipelineExecutionPlanStorageError,
   applyExecutionPlanConfig,
   createExecutionPlan,
   deleteExecutionPlan,
@@ -22,25 +23,35 @@ type ExecutionPlanState = {
   plans: PipelineExecutionPlan[]
   selectedPlanId: string | null
   activePlanId: string | null
-  storageError: string | null
+  storageError: PipelineExecutionPlanStorageError | null
   application: { revision: number; sessionValues: PipelineExecutionPlanSessionValues } | null
   savePlan: (
     name: string,
     config: PipelineExecutionPlanConfig,
   ) =>
     | { ok: true; plan: PipelineExecutionPlan }
-    | { ok: false; reason: 'limit' | 'invalid-storage'; message?: string }
+    | { ok: false; reason: 'limit' }
+    | { ok: false; reason: 'invalid-storage'; error: PipelineExecutionPlanStorageError }
   overwritePlan: (
     planId: string,
     config: PipelineExecutionPlanConfig,
-  ) => { ok: true } | { ok: false; reason: 'not-found' | 'invalid-storage'; message?: string }
+  ) =>
+    | { ok: true }
+    | { ok: false; reason: 'not-found' }
+    | { ok: false; reason: 'invalid-storage'; error: PipelineExecutionPlanStorageError }
   renamePlan: (
     planId: string,
     name: string,
-  ) => { ok: true } | { ok: false; reason: 'not-found' | 'invalid-storage'; message?: string }
+  ) =>
+    | { ok: true }
+    | { ok: false; reason: 'not-found' }
+    | { ok: false; reason: 'invalid-storage'; error: PipelineExecutionPlanStorageError }
   deletePlan: (
     planId: string,
-  ) => { ok: true } | { ok: false; reason: 'not-found' | 'invalid-storage'; message?: string }
+  ) =>
+    | { ok: true }
+    | { ok: false; reason: 'not-found' }
+    | { ok: false; reason: 'invalid-storage'; error: PipelineExecutionPlanStorageError }
   clearInvalidStorage: () => void
   selectPlan: (planId: string) => void
   applyPlan: (
@@ -57,7 +68,7 @@ function initialState() {
     plans,
     selectedPlanId: activePlanId,
     activePlanId,
-    storageError: result.ok ? null : result.error.message,
+    storageError: result.ok ? null : result.error,
     application: null,
   }
 }
@@ -69,7 +80,7 @@ export const useExecutionPlanStore = create<ExecutionPlanState>((set) => ({
     const saved = saveExecutionPlan(window.localStorage, plan)
     if (!saved.ok) {
       if (saved.reason === 'invalid-storage') {
-        set({ storageError: saved.message ?? '执行方案数据无效' })
+        set({ storageError: saved.error })
       }
       return saved
     }
@@ -80,7 +91,7 @@ export const useExecutionPlanStore = create<ExecutionPlanState>((set) => ({
     const result = overwriteExecutionPlan(window.localStorage, planId, config)
     if (!result.ok) {
       if (result.reason === 'invalid-storage') {
-        set({ storageError: result.message ?? '执行方案数据无效' })
+        set({ storageError: result.error })
       }
       return result
     }
@@ -91,7 +102,7 @@ export const useExecutionPlanStore = create<ExecutionPlanState>((set) => ({
     const result = renameExecutionPlan(window.localStorage, planId, name)
     if (!result.ok) {
       if (result.reason === 'invalid-storage') {
-        set({ storageError: result.message ?? '执行方案数据无效' })
+        set({ storageError: result.error })
       }
       return result
     }
@@ -102,7 +113,7 @@ export const useExecutionPlanStore = create<ExecutionPlanState>((set) => ({
     const result = deleteExecutionPlan(window.localStorage, planId)
     if (!result.ok) {
       if (result.reason === 'invalid-storage') {
-        set({ storageError: result.message ?? '执行方案数据无效' })
+        set({ storageError: result.error })
       }
       return result
     }

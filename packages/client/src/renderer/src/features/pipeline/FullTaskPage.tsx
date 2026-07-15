@@ -31,6 +31,7 @@ import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-
 import {
   MAX_EXECUTION_PLANS,
   captureExecutionPlanConfig,
+  resolveExecutionPlanProviders,
   validateExecutionPlanConfig,
   validateExecutionPlanReferences,
 } from '@/features/pipeline/pipeline-execution-plans'
@@ -1125,7 +1126,16 @@ export function FullTaskPage({
     ],
   )
   const executionPlanReferenceOptions = {
-    providers: ['grsai', 'comfyui-chenyu'] as const,
+    providers: resolveExecutionPlanProviders({
+      grsaiModels: generationSettings?.grsaiModels.map((model) => model.id) ?? [],
+      comfyuiWorkflows: [
+        ...txt2imgWorkflows,
+        ...img2imgWorkflows,
+        ...extractWorkflows,
+        ...mattingWorkflows,
+      ].map((workflow) => workflow.key),
+      runningMachineIds: chenyuInstances.map((instance) => instance.instanceUuid),
+    }),
     grsaiModels: generationSettings?.grsaiModels.map((model) => model.id) ?? [],
     promptModels: [
       ...new Set([
@@ -1161,7 +1171,7 @@ export function FullTaskPage({
     },
     locked: pipelineStageLocks,
   })
-  const canStart = !running && validationIssues.length === 0
+  const canStart = optionsLoaded && !running && validationIssues.length === 0
   const selectedExecutionPlan =
     executionPlans.find((plan) => plan.id === selectedExecutionPlanId) ?? null
   const activeExecutionPlan =
@@ -1169,6 +1179,8 @@ export function FullTaskPage({
 
   const refreshOptions = useCallback(async () => {
     setOptionsLoading(true)
+    setOptionsLoaded(false)
+    let allOptionsLoaded = false
     try {
       const results = await Promise.allSettled([
         window.api.skill.list({ module: 'generation' }),
@@ -1212,6 +1224,7 @@ export function FullTaskPage({
       if (failed.length) {
         setError(`部分配置加载失败：${failed.map((item) => errorLabels[item.index]).join('、')}`)
       }
+      allOptionsLoaded = failed.length === 0
 
       const skills = results[0].status === 'fulfilled' ? results[0].value : []
       const nextTxt2imgWorkflows = results[1].status === 'fulfilled' ? results[1].value : []
@@ -1244,7 +1257,7 @@ export function FullTaskPage({
       setAvailablePsdTemplatePaths(nextCachedTemplates.map((template) => template.file_path))
     } finally {
       setOptionsLoading(false)
-      setOptionsLoaded(true)
+      setOptionsLoaded(allOptionsLoaded)
     }
   }, [])
 
@@ -1812,7 +1825,7 @@ export function FullTaskPage({
       setExecutionPlanName('')
       setMessage(`已保存执行方案：${result.plan.name}`)
     } else if (result.reason === 'invalid-storage') {
-      setError(result.message ?? '执行方案数据无效，无法保存。')
+      setError(result.error.message)
     }
   }
 
@@ -1831,7 +1844,9 @@ export function FullTaskPage({
       setError(null)
       setMessage(`已覆盖执行方案：${selectedExecutionPlan.name}`)
     } else {
-      setError(result.message ?? '执行方案不存在，请重新选择。')
+      setError(
+        result.reason === 'invalid-storage' ? result.error.message : '执行方案不存在，请重新选择。',
+      )
     }
   }
 
@@ -1845,7 +1860,9 @@ export function FullTaskPage({
       setExecutionPlanName('')
       setMessage(`已重命名执行方案：${executionPlanName.trim()}`)
     } else {
-      setError(result.message ?? '执行方案不存在，请重新选择。')
+      setError(
+        result.reason === 'invalid-storage' ? result.error.message : '执行方案不存在，请重新选择。',
+      )
     }
   }
 
@@ -1860,7 +1877,9 @@ export function FullTaskPage({
       setError(null)
       setMessage(`已删除执行方案：${deletedName}；当前页面草稿已保留。`)
     } else {
-      setError(result.message ?? '执行方案不存在，请重新选择。')
+      setError(
+        result.reason === 'invalid-storage' ? result.error.message : '执行方案不存在，请重新选择。',
+      )
     }
   }
 
@@ -2023,7 +2042,7 @@ export function FullTaskPage({
     <div className="space-y-5">
       <div className="space-y-5">
         <PipelineStatusAlerts
-          error={executionPlanStorageError ?? error}
+          error={executionPlanStorageError?.message ?? error}
           showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
         />
 
@@ -2062,6 +2081,7 @@ export function FullTaskPage({
                   </Field>
                   <Button
                     disabled={
+                      !optionsLoaded ||
                       optionsLoading ||
                       !executionPlanName.trim() ||
                       executionPlans.length >= MAX_EXECUTION_PLANS
@@ -2074,7 +2094,7 @@ export function FullTaskPage({
                     保存执行方案
                   </Button>
                   <Button
-                    disabled={optionsLoading || !selectedExecutionPlan}
+                    disabled={!optionsLoaded || optionsLoading || !selectedExecutionPlan}
                     onClick={applySelectedExecutionPlan}
                     type="button"
                   >
@@ -2083,7 +2103,7 @@ export function FullTaskPage({
                   </Button>
                   <div className="flex flex-wrap gap-2 lg:col-span-4">
                     <Button
-                      disabled={optionsLoading || !selectedExecutionPlan}
+                      disabled={!optionsLoaded || optionsLoading || !selectedExecutionPlan}
                       onClick={overwriteSelectedExecutionPlan}
                       type="button"
                       variant="outline"

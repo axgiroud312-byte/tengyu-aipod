@@ -1,3 +1,4 @@
+import type { AppError } from '@tengyu-aipod/shared'
 import { z } from 'zod'
 import type { PipelineSourceDraftMap } from './pipeline-source-drafts'
 import { resolvePipelineStagePolicy } from './pipeline-stage-policy'
@@ -147,14 +148,38 @@ export type PipelineExecutionPlanReferenceOptions = {
   psdTemplatePaths: readonly string[]
 }
 
+type ExecutionPlanProvider = 'grsai' | 'comfyui-chenyu'
+
+export function resolveExecutionPlanProviders(input: {
+  grsaiModels: readonly string[]
+  comfyuiWorkflows: readonly string[]
+  runningMachineIds: readonly string[]
+}): ExecutionPlanProvider[] {
+  const providers: ExecutionPlanProvider[] = []
+  if (input.grsaiModels.length > 0) {
+    providers.push('grsai')
+  }
+  if (input.comfyuiWorkflows.length > 0 || input.runningMachineIds.length > 0) {
+    providers.push('comfyui-chenyu')
+  }
+  return providers
+}
+
 export type PipelineExecutionPlanReferenceIssue = PipelineValidationIssue & { value: string }
 
 type StorageReader = Pick<Storage, 'getItem'>
 type StorageWriter = Pick<Storage, 'getItem' | 'setItem'>
 
-export type PipelineExecutionPlanStorageError = {
-  code: 'corrupt-json' | 'unsupported-version' | 'invalid-structure'
-  message: string
+type PipelineExecutionPlanStorageErrorKind =
+  | 'corrupt-json'
+  | 'unsupported-version'
+  | 'invalid-structure'
+
+export type PipelineExecutionPlanStorageError = AppError & {
+  details: {
+    kind: PipelineExecutionPlanStorageErrorKind
+    storage_key: typeof EXECUTION_PLAN_STORAGE_KEY
+  }
 }
 
 export type PipelineExecutionPlanReadResult =
@@ -163,11 +188,25 @@ export type PipelineExecutionPlanReadResult =
 
 type PipelineExecutionPlanSaveResult =
   | { ok: true; document: PipelineExecutionPlanDocument }
-  | { ok: false; reason: 'limit' | 'invalid-storage'; message?: string }
+  | { ok: false; reason: 'limit' }
+  | { ok: false; reason: 'invalid-storage'; error: PipelineExecutionPlanStorageError }
 
 type PipelineExecutionPlanUpdateResult =
   | { ok: true; document: PipelineExecutionPlanDocument }
-  | { ok: false; reason: 'not-found' | 'invalid-storage'; message?: string }
+  | { ok: false; reason: 'not-found' }
+  | { ok: false; reason: 'invalid-storage'; error: PipelineExecutionPlanStorageError }
+
+function executionPlanStorageError(
+  kind: PipelineExecutionPlanStorageErrorKind,
+  message: string,
+): PipelineExecutionPlanStorageError {
+  return {
+    code: 'INVALID_INPUT',
+    message,
+    retryable: false,
+    details: { kind, storage_key: EXECUTION_PLAN_STORAGE_KEY },
+  }
+}
 
 export function captureExecutionPlanConfig(
   input: PipelineExecutionPlanCaptureInput,
@@ -631,10 +670,10 @@ export function readExecutionPlanDocument(storage: StorageReader): PipelineExecu
   } catch {
     return {
       ok: false,
-      error: {
-        code: 'corrupt-json',
-        message: '执行方案数据已损坏，无法解析。请删除损坏数据后重新保存方案。',
-      },
+      error: executionPlanStorageError(
+        'corrupt-json',
+        '执行方案数据已损坏，无法解析。请删除损坏数据后重新保存方案。',
+      ),
     }
   }
   if (
@@ -645,10 +684,10 @@ export function readExecutionPlanDocument(storage: StorageReader): PipelineExecu
   ) {
     return {
       ok: false,
-      error: {
-        code: 'unsupported-version',
-        message: `执行方案数据版本 ${String(value.schema_version)} 不受支持，请升级 Workbench 或删除后重新保存。`,
-      },
+      error: executionPlanStorageError(
+        'unsupported-version',
+        `执行方案数据版本 ${String(value.schema_version)} 不受支持，请升级 Workbench 或删除后重新保存。`,
+      ),
     }
   }
   const parsed = executionPlanDocumentSchema.safeParse(value)
@@ -656,10 +695,10 @@ export function readExecutionPlanDocument(storage: StorageReader): PipelineExecu
     ? { ok: true, document: parsed.data }
     : {
         ok: false,
-        error: {
-          code: 'invalid-structure',
-          message: '执行方案数据结构无效，请删除损坏数据后重新保存方案。',
-        },
+        error: executionPlanStorageError(
+          'invalid-structure',
+          '执行方案数据结构无效，请删除损坏数据后重新保存方案。',
+        ),
       }
 }
 
@@ -669,7 +708,7 @@ export function saveExecutionPlan(
 ): PipelineExecutionPlanSaveResult {
   const current = readExecutionPlanDocument(storage)
   if (!current.ok) {
-    return { ok: false, reason: 'invalid-storage', message: current.error.message }
+    return { ok: false, reason: 'invalid-storage', error: current.error }
   }
   if (current.document.plans.length >= MAX_EXECUTION_PLANS) {
     return { ok: false, reason: 'limit' }
@@ -689,7 +728,7 @@ function updateExecutionPlan(
 ): PipelineExecutionPlanUpdateResult {
   const current = readExecutionPlanDocument(storage)
   if (!current.ok) {
-    return { ok: false, reason: 'invalid-storage', message: current.error.message }
+    return { ok: false, reason: 'invalid-storage', error: current.error }
   }
   const planIndex = current.document.plans.findIndex((plan) => plan.id === planId)
   if (planIndex < 0) {

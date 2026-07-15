@@ -10,6 +10,7 @@ import {
   readExecutionPlanDocument,
   readLastUsedExecutionPlanId,
   renameExecutionPlan,
+  resolveExecutionPlanProviders,
   saveExecutionPlan,
   validateExecutionPlanConfig,
   validateExecutionPlanReferences,
@@ -145,6 +146,23 @@ function planInput() {
 }
 
 describe('execution plan persistence', () => {
+  it('derives available Providers from current local model, workflow, and machine options', () => {
+    expect(
+      resolveExecutionPlanProviders({
+        grsaiModels: ['gpt-image-2'],
+        comfyuiWorkflows: ['wf-img2img'],
+        runningMachineIds: [],
+      }),
+    ).toEqual(['grsai', 'comfyui-chenyu'])
+    expect(
+      resolveExecutionPlanProviders({
+        grsaiModels: [],
+        comfyuiWorkflows: [],
+        runningMachineIds: [],
+      }),
+    ).toEqual([])
+  })
+
   it('maps every stable setting while preserving all per-source task variables', () => {
     const input = planInput()
     const currentDrafts = {
@@ -451,7 +469,15 @@ describe('execution plan persistence', () => {
       storage.setItem(EXECUTION_PLAN_STORAGE_KEY, invalidDocument.raw)
       expect(readExecutionPlanDocument(storage)).toEqual({
         ok: false,
-        error: { code: invalidDocument.code, message: invalidDocument.message },
+        error: {
+          code: 'INVALID_INPUT',
+          message: invalidDocument.message,
+          retryable: false,
+          details: {
+            kind: invalidDocument.code,
+            storage_key: EXECUTION_PLAN_STORAGE_KEY,
+          },
+        },
       })
     }
   })
