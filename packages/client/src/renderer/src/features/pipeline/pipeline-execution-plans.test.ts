@@ -2,11 +2,13 @@ import { describe, expect, it } from 'vitest'
 import {
   EXECUTION_PLAN_STORAGE_KEY,
   LAST_USED_EXECUTION_PLAN_STORAGE_KEY,
+  applyExecutionPlanConfig,
   captureExecutionPlanConfig,
   createExecutionPlan,
   readExecutionPlanDocument,
   readLastUsedExecutionPlanId,
   saveExecutionPlan,
+  validateExecutionPlanConfig,
   writeLastUsedExecutionPlanId,
 } from './pipeline-execution-plans'
 
@@ -138,6 +140,137 @@ function planInput() {
 }
 
 describe('execution plan persistence', () => {
+  it('maps every stable setting while preserving all per-source task variables', () => {
+    const input = planInput()
+    const currentDrafts = {
+      ...input.sourceDrafts,
+      existing_prints: { ...input.sourceDrafts.existing_prints, startStep: 'photoshop' as const },
+    }
+
+    const application = applyExecutionPlanConfig(captureExecutionPlanConfig(input), currentDrafts)
+
+    expect(application.sourceMode).toBe('img2img')
+    expect(application.sourceDrafts).toEqual({
+      ...currentDrafts,
+      existing_prints: { ...currentDrafts.existing_prints, startStep: 'detection' },
+    })
+    expect(application.sessionValues).toEqual({
+      sendReferenceToImageModel: true,
+      txt2imgProvider: 'grsai',
+      txt2imgComfyuiWorkflowId: 'wf-txt2img',
+      txt2imgComfyuiInstanceUuid: 'machine-txt2img',
+      img2imgProvider: 'comfyui-chenyu',
+      img2imgComfyuiWorkflowId: 'wf-img2img',
+      img2imgComfyuiInstanceUuid: 'machine-img2img',
+      img2imgComfyuiBatchSize: '3',
+      img2imgComfyuiPromptMode: 'workflow',
+      extractProvider: 'comfyui-chenyu',
+      img2imgReferenceMode: 'style',
+      promptCount: '6',
+      promptSkillId: 'prompt@@2.0.0',
+      promptModel: 'qwen3-vl-plus',
+      grsaiModel: 'gpt-image-2',
+      aspectRatio: '1024x1024',
+      grsaiConcurrency: '4',
+      extractSkillId: 'extract@@1.0.0',
+      extractWorkflowId: 'wf-extract',
+      extractInstanceUuid: 'machine-extract',
+      width: '1200',
+      height: '1400',
+      mattingEnabled: true,
+      mattingWorkflowId: 'wf-matting',
+      mattingInstanceUuid: 'machine-matting',
+      skipCompleted: false,
+      replaceRange: 'topmost',
+      smartObjectReplaceMode: 'replaceContents',
+      smartObjectInnerFitMode: 'fill',
+      clipMode: 'auto',
+      format: 'jpg',
+      photoshopMaxRetries: '2',
+      templatePaths: ['C:\\mockups\\shirt.psd'],
+      outputRoot: 'C:\\output',
+      photoshopEnabled: true,
+      detectionEnabled: true,
+      detectionPassRule: 'pass-only',
+      detectionCompression: false,
+      detectionModel: 'qwen3-vl-flash',
+      detectionSkillKey: 'detect@@1.0.0',
+      titlePlatform: 'temu',
+      titleLanguage: 'en',
+      titleModel: 'qwen3.6-flash',
+      titleFileName: '标题',
+      titleImageIndex: '1',
+      titleKeywordGroupSeparator: ' ',
+      titleExistingStrategy: 'skip',
+      titleMaxRetries: '2',
+      titleCompression: true,
+      titleMaxSize: '1024',
+      titleEnabled: true,
+    })
+    expect(application.detectionConfig).toEqual({
+      threshold: { passMax: 25, reviewMax: 60 },
+      skillId: 'detect',
+      skillVersion: '1.0.0',
+      model: 'qwen3-vl-flash',
+      variables: { marketplace: 'global' },
+    })
+  })
+
+  it('validates stable settings without requiring excluded per-run variables', () => {
+    const input = planInput()
+    input.sourceDrafts = {
+      collection: {
+        ...input.sourceDrafts.collection,
+        name: '',
+        printSkuCode: '',
+        sourceFolder: '',
+      },
+      txt2img: { ...input.sourceDrafts.txt2img, name: '', printSkuCode: '', promptRequirement: '' },
+      img2img: {
+        ...input.sourceDrafts.img2img,
+        name: '',
+        printSkuCode: '',
+        sourceFolder: '',
+        promptRequirement: '',
+        referenceImages: [],
+      },
+      existing_prints: {
+        ...input.sourceDrafts.existing_prints,
+        name: '',
+        printSkuCode: '',
+        sourceFolder: '',
+      },
+    }
+    expect(validateExecutionPlanConfig(captureExecutionPlanConfig(input))).toEqual([])
+  })
+
+  it('rejects missing stable settings required by the selected source and enabled stages', () => {
+    const config = captureExecutionPlanConfig(planInput())
+    const invalid = {
+      ...config,
+      sourceMode: 'collection' as const,
+      source: {
+        ...config.source,
+        extractSkillId: '',
+        extractWorkflowId: '',
+        extractInstanceUuid: '',
+      },
+      detection: { ...config.detection, skillKey: '', model: '' },
+      photoshop: { ...config.photoshop, templatePaths: [] },
+      title: { ...config.title, model: '' },
+    }
+
+    expect(validateExecutionPlanConfig(invalid).map((issue) => issue.field)).toEqual([
+      'source.extractSkillId',
+      'source.extractWorkflowId',
+      'source.extractInstanceUuid',
+      'detection.model',
+      'detection.skillKey',
+      'photoshop.templatePaths',
+      'title.model',
+    ])
+  })
+
   it('captures only stable allowlisted settings and validates schema version 1 on read', () => {
     const storage = memoryStorage()
     const plan = createExecutionPlan(

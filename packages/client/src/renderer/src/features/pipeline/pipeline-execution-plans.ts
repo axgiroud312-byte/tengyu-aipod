@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { PipelineSourceDraftMap } from './pipeline-source-drafts'
+import { resolvePipelineStagePolicy } from './pipeline-stage-policy'
 
 export const EXECUTION_PLAN_STORAGE_KEY = 'tengyu-aipod:pipeline-execution-plans'
 export const LAST_USED_EXECUTION_PLAN_STORAGE_KEY =
@@ -120,6 +121,10 @@ const executionPlanDocumentSchema = z
 export type PipelineExecutionPlanConfig = z.infer<typeof executionPlanConfigSchema>
 export type PipelineExecutionPlan = z.infer<typeof executionPlanSchema>
 export type PipelineExecutionPlanDocument = z.infer<typeof executionPlanDocumentSchema>
+export type PipelineExecutionPlanValidationIssue = {
+  field: string
+  message: string
+}
 
 export type PipelineExecutionPlanCaptureInput = PipelineExecutionPlanConfig & {
   sourceDrafts: PipelineSourceDraftMap
@@ -202,6 +207,176 @@ export function captureExecutionPlanConfig(
       maxSize: input.title.maxSize,
     },
   }
+}
+
+export function applyExecutionPlanConfig(
+  config: PipelineExecutionPlanConfig,
+  currentSourceDrafts: PipelineSourceDraftMap,
+) {
+  const [detectionSkillId = '', detectionSkillVersion = ''] = config.detection.skillKey.split('@@')
+  return {
+    sourceMode: config.sourceMode,
+    sourceDrafts: {
+      collection: { ...currentSourceDrafts.collection },
+      txt2img: { ...currentSourceDrafts.txt2img },
+      img2img: {
+        ...currentSourceDrafts.img2img,
+        referenceImages: [...currentSourceDrafts.img2img.referenceImages],
+      },
+      existing_prints: {
+        ...currentSourceDrafts.existing_prints,
+        startStep: config.existingPrintStartStep,
+      },
+    },
+    sessionValues: {
+      sendReferenceToImageModel: config.source.sendReferenceToImageModel,
+      txt2imgProvider: config.source.txt2imgProvider,
+      txt2imgComfyuiWorkflowId: config.source.txt2imgComfyuiWorkflowId,
+      txt2imgComfyuiInstanceUuid: config.source.txt2imgComfyuiInstanceUuid,
+      img2imgProvider: config.source.img2imgProvider,
+      img2imgComfyuiWorkflowId: config.source.img2imgComfyuiWorkflowId,
+      img2imgComfyuiInstanceUuid: config.source.img2imgComfyuiInstanceUuid,
+      img2imgComfyuiBatchSize: config.source.img2imgComfyuiBatchSize,
+      img2imgComfyuiPromptMode: config.source.img2imgComfyuiPromptMode,
+      extractProvider: config.source.extractProvider,
+      img2imgReferenceMode: config.source.img2imgReferenceMode,
+      promptCount: config.generation.promptCount,
+      promptSkillId: config.generation.promptSkillId,
+      promptModel: config.generation.promptModel,
+      grsaiModel: config.generation.grsaiModel,
+      aspectRatio: config.generation.aspectRatio,
+      grsaiConcurrency: config.generation.grsaiConcurrency,
+      extractSkillId: config.source.extractSkillId,
+      extractWorkflowId: config.source.extractWorkflowId,
+      extractInstanceUuid: config.source.extractInstanceUuid,
+      width: config.generation.width,
+      height: config.generation.height,
+      mattingEnabled: config.stages.matting,
+      mattingWorkflowId: config.matting.workflowId,
+      mattingInstanceUuid: config.matting.instanceUuid,
+      skipCompleted: config.photoshop.skipCompleted,
+      replaceRange: config.photoshop.replaceRange,
+      smartObjectReplaceMode: config.photoshop.smartObjectReplaceMode,
+      smartObjectInnerFitMode: config.photoshop.smartObjectInnerFitMode,
+      clipMode: config.photoshop.clipMode,
+      format: config.photoshop.format,
+      photoshopMaxRetries: config.photoshop.maxRetries,
+      templatePaths: [...config.photoshop.templatePaths],
+      outputRoot: config.photoshop.outputRoot,
+      photoshopEnabled: config.stages.photoshop,
+      detectionEnabled: config.stages.detection,
+      detectionPassRule: config.detection.passRule,
+      detectionCompression: config.detection.compression,
+      detectionModel: config.detection.model,
+      detectionSkillKey: config.detection.skillKey,
+      titlePlatform: config.title.platform,
+      titleLanguage: config.title.language,
+      titleModel: config.title.model,
+      titleFileName: config.title.fileName,
+      titleImageIndex: config.title.imageIndex,
+      titleKeywordGroupSeparator: config.title.keywordGroupSeparator,
+      titleExistingStrategy: config.title.existingStrategy,
+      titleMaxRetries: config.title.maxRetries,
+      titleCompression: config.title.compression,
+      titleMaxSize: config.title.maxSize,
+      titleEnabled: config.stages.title,
+    },
+    detectionConfig: {
+      threshold: { ...config.detection.threshold },
+      skillId: detectionSkillId,
+      skillVersion: detectionSkillVersion,
+      model: config.detection.model,
+      variables: { ...config.detection.variables },
+    },
+  }
+}
+
+export type PipelineExecutionPlanApplication = ReturnType<typeof applyExecutionPlanConfig>
+export type PipelineExecutionPlanSessionValues = PipelineExecutionPlanApplication['sessionValues']
+
+export function validateExecutionPlanConfig(config: PipelineExecutionPlanConfig) {
+  const issues: PipelineExecutionPlanValidationIssue[] = []
+  const requireValue = (field: string, value: string, message: string) => {
+    if (!value.trim()) {
+      issues.push({ field, message })
+    }
+  }
+  const stagePolicy = resolvePipelineStagePolicy({
+    sourceMode: config.sourceMode,
+    existingPrintStartStep: config.existingPrintStartStep,
+    enabled: config.stages,
+  })
+
+  if (config.sourceMode === 'collection') {
+    requireValue('source.extractSkillId', config.source.extractSkillId, '请选择提取 Skill')
+    if (config.source.extractProvider === 'comfyui-chenyu') {
+      requireValue(
+        'source.extractWorkflowId',
+        config.source.extractWorkflowId,
+        '请选择晨羽提取工作流',
+      )
+      requireValue(
+        'source.extractInstanceUuid',
+        config.source.extractInstanceUuid,
+        '请选择晨羽提取实例',
+      )
+    }
+  }
+
+  const needsPrompt =
+    config.sourceMode === 'txt2img' ||
+    (config.sourceMode === 'img2img' &&
+      (config.source.img2imgProvider === 'grsai' ||
+        config.source.img2imgComfyuiPromptMode === 'ai'))
+  if (needsPrompt) {
+    requireValue('generation.promptSkillId', config.generation.promptSkillId, '请选择提示词 Skill')
+    requireValue('generation.promptModel', config.generation.promptModel, '请选择提示词模型')
+  }
+
+  if (config.sourceMode === 'txt2img' && config.source.txt2imgProvider === 'comfyui-chenyu') {
+    requireValue(
+      'source.txt2imgComfyuiWorkflowId',
+      config.source.txt2imgComfyuiWorkflowId,
+      '请选择晨羽文生图工作流',
+    )
+    requireValue(
+      'source.txt2imgComfyuiInstanceUuid',
+      config.source.txt2imgComfyuiInstanceUuid,
+      '请选择晨羽文生图实例',
+    )
+  }
+
+  if (config.sourceMode === 'img2img' && config.source.img2imgProvider === 'comfyui-chenyu') {
+    requireValue(
+      'source.img2imgComfyuiWorkflowId',
+      config.source.img2imgComfyuiWorkflowId,
+      '请选择晨羽图生图工作流',
+    )
+    requireValue(
+      'source.img2imgComfyuiInstanceUuid',
+      config.source.img2imgComfyuiInstanceUuid,
+      '请选择晨羽图生图实例',
+    )
+  }
+
+  if (stagePolicy.stages.matting.enabled) {
+    requireValue('matting.workflowId', config.matting.workflowId, '请选择抠图工作流')
+    requireValue('matting.instanceUuid', config.matting.instanceUuid, '请选择抠图运行云机')
+  }
+  if (stagePolicy.stages.detection.enabled) {
+    requireValue('detection.model', config.detection.model, '请选择检测模型')
+    requireValue('detection.skillKey', config.detection.skillKey, '请选择检测 Skill')
+  }
+  if (stagePolicy.stages.photoshop.enabled && config.photoshop.templatePaths.length === 0) {
+    issues.push({ field: 'photoshop.templatePaths', message: '请选择 PSD 模板' })
+  }
+  if (stagePolicy.stages.title.enabled) {
+    requireValue('title.platform', config.title.platform, '请选择标题平台')
+    requireValue('title.language', config.title.language, '请选择标题语言')
+    requireValue('title.model', config.title.model, '请选择标题模型')
+  }
+
+  return issues
 }
 
 export function createExecutionPlan(

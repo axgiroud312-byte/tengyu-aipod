@@ -15,6 +15,7 @@ type PipelineDraftState = {
     sourceMode: Mode,
     draft: PipelineSourceDraftMap[Mode],
   ) => void
+  applySourceState: (sourceMode: PipelineSourceMode, sourceDrafts: PipelineSourceDraftMap) => void
 }
 
 export const usePipelineDraftStore = create<PipelineDraftState>()(
@@ -39,6 +40,7 @@ export const usePipelineDraftStore = create<PipelineDraftState>()(
             [sourceMode]: draft,
           },
         })),
+      applySourceState: (sourceMode, sourceDrafts) => set({ sourceMode, sourceDrafts }),
     }),
     {
       name: 'tengyu-aipod:pipeline-drafts',

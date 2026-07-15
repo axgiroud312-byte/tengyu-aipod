@@ -920,19 +920,39 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(fieldTextbox(page, '已有印花文件夹')).toHaveValue('C:\\source\\prints')
 
     await page.getByRole('tab', { name: '采集 + 提取' }).click()
+    await fieldTextbox(page, '方案名称').fill('不完整方案')
+    await page.getByRole('button', { name: '保存执行方案' }).click()
+    await expect(page.getByText(/执行方案只能保存完整的稳定配置：/)).toBeVisible()
+    await expect(page.getByText('已保存 0/5 套执行方案')).toBeVisible()
+
+    await fieldCombobox(page, '提取方式').click()
+    await page.getByRole('option', { name: '付费模型' }).click()
+    for (const switchName of ['启用抠图', '启用侵权检测', '启用 PS 套版'] as const) {
+      const stageSwitch = page.getByRole('switch', { name: switchName })
+      if (await stageSwitch.isChecked()) {
+        await stageSwitch.click()
+      }
+    }
     await fieldTextbox(page, '方案名称').fill('标准生产')
     await page.getByRole('button', { name: '保存执行方案' }).click()
     await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产')
     await expect(page.getByText('已保存 1/5 套执行方案')).toBeVisible()
+    await page.getByRole('button', { name: '应用执行方案' }).click()
+    await expect(page.getByText('当前已应用：标准生产')).toBeVisible()
 
     await fieldTextbox(page, '任务名').fill('保存后的采集任务')
     await fieldTextbox(page, '印花货号').fill('AFTER-COL')
     await fieldTextbox(page, '采集文件夹').fill('C:\\source\\after-collection')
-    await fieldCombobox(page, '提取方式').click()
-    await page.getByRole('option', { name: '付费模型' }).click()
     await page.getByRole('tab', { name: '文生图' }).click()
     await fieldTextbox(page, '任务名').fill('保存后的文生图任务')
     await fieldTextbox(page, '印花货号').fill('AFTER-TXT')
+    await page.getByRole('tab', { name: '采集 + 提取' }).click()
+    await fieldTextbox(page, '方案名称').fill('待选方案')
+    await page.getByRole('button', { name: '保存执行方案' }).click()
+    await expect(fieldCombobox(page, '执行方案')).toContainText('待选方案')
+    await expect(page.getByText('当前已应用：标准生产')).toBeVisible()
+    await fieldCombobox(page, '提取方式').click()
+    await page.getByRole('option', { name: '晨羽智云' }).click()
 
     await page.reload()
     await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产')
@@ -942,7 +962,7 @@ test.describe('pipeline comfyui real probe', () => {
       'data-state',
       'active',
     )
-    await expect(fieldCombobox(page, '提取方式')).toContainText('晨羽智云')
+    await expect(fieldCombobox(page, '提取方式')).toContainText('付费模型')
     await expect(fieldTextbox(page, '任务名')).toHaveValue('保存后的采集任务')
     await expect(fieldTextbox(page, '印花货号')).toHaveValue('AFTER-COL')
     await expect(fieldTextbox(page, '采集文件夹')).toHaveValue('C:\\source\\after-collection')
@@ -951,7 +971,8 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(fieldTextbox(page, '任务名')).toHaveValue('保存后的文生图任务')
     await expect(fieldTextbox(page, '印花货号')).toHaveValue('AFTER-TXT')
 
-    for (let index = 2; index <= 5; index += 1) {
+    await page.getByRole('tab', { name: '采集 + 提取' }).click()
+    for (let index = 3; index <= 5; index += 1) {
       await fieldTextbox(page, '方案名称').fill(`标准生产 ${index}`)
       await page.getByRole('button', { name: '保存执行方案' }).click()
     }

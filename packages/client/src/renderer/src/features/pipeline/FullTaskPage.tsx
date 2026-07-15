@@ -21,6 +21,7 @@ import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-
 import {
   MAX_EXECUTION_PLANS,
   captureExecutionPlanConfig,
+  validateExecutionPlanConfig,
 } from '@/features/pipeline/pipeline-execution-plans'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
@@ -156,6 +157,8 @@ function readSessionState<T>(key: string, fallback: T): T {
 
 function useFullTaskSessionState<T>(key: string, fallback: T) {
   const [value, setValue] = useState<T>(() => readSessionState(key, fallback))
+  const executionPlanApplication = useExecutionPlanStore((state) => state.application)
+  const appliedRevisionRef = useRef(executionPlanApplication?.revision ?? 0)
 
   useEffect(() => {
     try {
@@ -164,6 +167,20 @@ function useFullTaskSessionState<T>(key: string, fallback: T) {
       // 会话草稿只是便利功能，写入失败时不阻断完整任务。
     }
   }, [key, value])
+
+  useEffect(() => {
+    if (
+      !executionPlanApplication ||
+      executionPlanApplication.revision === appliedRevisionRef.current
+    ) {
+      return
+    }
+    appliedRevisionRef.current = executionPlanApplication.revision
+    const sessionValues = executionPlanApplication.sessionValues as Record<string, unknown>
+    if (Object.hasOwn(sessionValues, key)) {
+      setValue(sessionValues[key] as T)
+    }
+  }, [executionPlanApplication, key])
 
   return [value, setValue] as const
 }
@@ -673,10 +690,13 @@ export function FullTaskPage({
   const sourceDrafts = usePipelineDraftStore((state) => state.sourceDrafts)
   const switchSourceMode = usePipelineDraftStore((state) => state.switchSourceMode)
   const updateSourceDraft = usePipelineDraftStore((state) => state.updateSourceDraft)
+  const applyPipelineSourceState = usePipelineDraftStore((state) => state.applySourceState)
   const executionPlans = useExecutionPlanStore((state) => state.plans)
   const selectedExecutionPlanId = useExecutionPlanStore((state) => state.selectedPlanId)
+  const activeExecutionPlanId = useExecutionPlanStore((state) => state.activePlanId)
   const saveExecutionPlan = useExecutionPlanStore((state) => state.savePlan)
   const selectExecutionPlan = useExecutionPlanStore((state) => state.selectPlan)
+  const applyExecutionPlan = useExecutionPlanStore((state) => state.applyPlan)
   const activeSourceDraft = sourceDrafts[sourceMode]
   const name = activeSourceDraft.name
   const printSkuCode = activeSourceDraft.printSkuCode
@@ -1110,6 +1130,8 @@ export function FullTaskPage({
   const canStart = !running && validationIssues.length === 0
   const selectedExecutionPlan =
     executionPlans.find((plan) => plan.id === selectedExecutionPlanId) ?? null
+  const activeExecutionPlan =
+    executionPlans.find((plan) => plan.id === activeExecutionPlanId) ?? null
 
   const refreshOptions = useCallback(async () => {
     setOptionsLoading(true)
@@ -1773,8 +1795,15 @@ export function FullTaskPage({
     if (!trimmedName) {
       return
     }
-    const result = saveExecutionPlan(trimmedName, currentExecutionPlanConfig())
+    const config = currentExecutionPlanConfig()
+    const stableIssues = validateExecutionPlanConfig(config)
+    if (stableIssues.length > 0) {
+      setError(`执行方案只能保存完整的稳定配置：${stableIssues[0]?.message ?? '请补齐配置'}`)
+      return
+    }
+    const result = saveExecutionPlan(trimmedName, config)
     if (result.ok) {
+      setError(null)
       setExecutionPlanName('')
       setMessage(`已保存执行方案：${result.plan.name}`)
     }
@@ -1784,74 +1813,11 @@ export function FullTaskPage({
     if (!selectedExecutionPlan) {
       return
     }
-    const config = selectedExecutionPlan.config
-    updateSourceDraft('existing_prints', {
-      ...sourceDrafts.existing_prints,
-      startStep: config.existingPrintStartStep,
-    })
-    previousSourceModeRef.current = config.sourceMode
+    const application = applyExecutionPlan(selectedExecutionPlan, sourceDrafts)
+    previousSourceModeRef.current = application.sourceMode
     existingPrintToggleSnapshotRef.current = null
-    switchSourceMode(config.sourceMode)
-    setMattingEnabled(config.stages.matting)
-    setDetectionEnabled(config.stages.detection)
-    setPhotoshopEnabled(config.stages.photoshop)
-    setTitleEnabled(config.stages.title)
-    setExtractProvider(config.source.extractProvider)
-    setExtractSkillId(config.source.extractSkillId)
-    setExtractWorkflowId(config.source.extractWorkflowId)
-    setExtractInstanceUuid(config.source.extractInstanceUuid)
-    setTxt2imgProvider(config.source.txt2imgProvider)
-    setTxt2imgComfyuiWorkflowId(config.source.txt2imgComfyuiWorkflowId)
-    setTxt2imgComfyuiInstanceUuid(config.source.txt2imgComfyuiInstanceUuid)
-    setImg2imgProvider(config.source.img2imgProvider)
-    setImg2imgComfyuiWorkflowId(config.source.img2imgComfyuiWorkflowId)
-    setImg2imgComfyuiInstanceUuid(config.source.img2imgComfyuiInstanceUuid)
-    setImg2imgComfyuiBatchSize(config.source.img2imgComfyuiBatchSize)
-    setImg2imgComfyuiPromptMode(config.source.img2imgComfyuiPromptMode)
-    setImg2imgReferenceMode(config.source.img2imgReferenceMode)
-    setSendReferenceToImageModel(config.source.sendReferenceToImageModel)
-    setPromptCount(config.generation.promptCount)
-    setPromptSkillId(config.generation.promptSkillId)
-    setPromptModel(config.generation.promptModel)
-    setGrsaiModel(config.generation.grsaiModel)
-    setAspectRatio(config.generation.aspectRatio)
-    setGrsaiConcurrency(config.generation.grsaiConcurrency)
-    setWidth(config.generation.width)
-    setHeight(config.generation.height)
-    setMattingWorkflowId(config.matting.workflowId)
-    setMattingInstanceUuid(config.matting.instanceUuid)
-    setDetectionPassRule(config.detection.passRule)
-    setDetectionCompression(config.detection.compression)
-    setDetectionModel(config.detection.model)
-    setDetectionSkillKey(config.detection.skillKey)
-    const [detectionSkillId, detectionSkillVersion] = config.detection.skillKey.split('@@')
-    setDetectionConfig({
-      threshold: config.detection.threshold,
-      skillId: detectionSkillId ?? '',
-      skillVersion: detectionSkillVersion ?? '',
-      model: config.detection.model,
-      variables: config.detection.variables,
-    })
-    setTemplatePaths(config.photoshop.templatePaths)
-    setOutputRoot(config.photoshop.outputRoot)
-    setSkipCompleted(config.photoshop.skipCompleted)
-    setReplaceRange(config.photoshop.replaceRange)
-    setSmartObjectReplaceMode(config.photoshop.smartObjectReplaceMode)
-    setSmartObjectInnerFitMode(config.photoshop.smartObjectInnerFitMode)
-    setClipMode(config.photoshop.clipMode)
-    setFormat(config.photoshop.format)
-    setPhotoshopMaxRetries(config.photoshop.maxRetries)
-    setTitlePlatform(config.title.platform)
-    setTitleLanguage(config.title.language)
-    setTitleModel(config.title.model)
-    setTitleFileName(config.title.fileName)
-    setTitleImageIndex(config.title.imageIndex)
-    setTitleExistingStrategy(config.title.existingStrategy)
-    setTitleMaxRetries(config.title.maxRetries)
-    setTitleKeywordGroupSeparator(config.title.keywordGroupSeparator)
-    setTitleCompression(config.title.compression)
-    setTitleMaxSize(config.title.maxSize)
-    selectExecutionPlan(selectedExecutionPlan.id)
+    applyPipelineSourceState(application.sourceMode, application.sourceDrafts)
+    setDetectionConfig(application.detectionConfig)
     setSelectedPipelineStage('source')
     setMessage(`已应用执行方案：${selectedExecutionPlan.name}`)
   }
@@ -2047,6 +2013,11 @@ export function FullTaskPage({
                   {executionPlans.length >= MAX_EXECUTION_PLANS
                     ? '，已达到上限，请先维护现有方案。'
                     : '，最多保存 5 套。'}
+                </p>
+                <p className="mt-1 text-xs font-medium text-foreground">
+                  {activeExecutionPlan
+                    ? `当前已应用：${activeExecutionPlan.name}`
+                    : '当前尚未应用执行方案'}
                 </p>
               </section>
             ) : null}
