@@ -5,7 +5,7 @@ import {
   OnboardingPage,
   type OnboardingStep,
 } from '@/features/onboarding/OnboardingPage'
-import { getStoredWorkbenchRoute } from '@/layout/navigation'
+import { getDefaultWorkbenchRoute } from '@/layout/navigation'
 import { formatIpcError } from '@tengyu-aipod/shared'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -46,7 +46,7 @@ export function OnboardingRoute() {
       const state = await window.api.onboarding.getState()
       if (!state.needs_onboarding) {
         setReady(true)
-        navigate(getStoredWorkbenchRoute(), { replace: true })
+        navigate(getDefaultWorkbenchRoute(), { replace: true })
       }
     } catch (error) {
       setOnboardingLoadError(formatIpcError(error))
@@ -100,7 +100,7 @@ export function OnboardingRoute() {
     try {
       await window.api.onboarding.complete()
       setReady(true)
-      navigate(getStoredWorkbenchRoute(), { replace: true })
+      navigate(getDefaultWorkbenchRoute(), { replace: true })
     } catch (error) {
       setOnboardingActionError(formatIpcError(error))
     } finally {

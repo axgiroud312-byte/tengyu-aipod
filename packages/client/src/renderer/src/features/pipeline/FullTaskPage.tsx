@@ -165,6 +165,33 @@ function parsePipelineStats(value: string): PipelineRunStats {
   }
 }
 
+function parsePipelineRunConfig(value: string): PipelineRunConfig | null {
+  try {
+    const parsed = JSON.parse(value) as unknown
+    if (!parsed || typeof parsed !== 'object') {
+      return null
+    }
+    const record = parsed as Record<string, unknown>
+    if (
+      !record.source ||
+      typeof record.source !== 'object' ||
+      !record.matting ||
+      typeof record.matting !== 'object' ||
+      !record.detection ||
+      typeof record.detection !== 'object' ||
+      !record.photoshop ||
+      typeof record.photoshop !== 'object' ||
+      !record.title ||
+      typeof record.title !== 'object'
+    ) {
+      return null
+    }
+    return parsed as PipelineRunConfig
+  } catch {
+    return null
+  }
+}
+
 function pipelineRunMessage(detail: Pick<PipelineRunDetail['run'], 'status' | 'error_summary'>) {
   if (detail.error_summary) {
     return detail.error_summary
@@ -645,9 +672,11 @@ function AdvancedDisclosure({
 
 export function FullTaskPage({
   initialRunId = null,
+  onRunSelectionChange,
   recordsOnly = false,
 }: {
   initialRunId?: string | null
+  onRunSelectionChange?: (selected: boolean) => void
   recordsOnly?: boolean
 }) {
   const [name, setName] = useFullTaskSessionState('name', '')
@@ -792,6 +821,7 @@ export function FullTaskPage({
   const [titleEnabled, setTitleEnabled] = useFullTaskSessionState('titleEnabled', false)
   const [extraRequirement, setExtraRequirement] = useFullTaskSessionState('extraRequirement', '')
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
+  const [activeRunConfig, setActiveRunConfig] = useState<PipelineRunConfig | null>(null)
   const [currentRunId, setCurrentRunId] = useFullTaskSessionState<string | null>(
     'currentRunId',
     initialRunId,
@@ -844,6 +874,10 @@ export function FullTaskPage({
       setCurrentRunId(initialRunId)
     }
   }, [initialRunId, setCurrentRunId])
+
+  useEffect(() => {
+    onRunSelectionChange?.(Boolean(currentRunId))
+  }, [currentRunId, onRunSelectionChange])
 
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const requiresPromptGeneration =
@@ -1198,7 +1232,13 @@ export function FullTaskPage({
         if (disposed || !detail) {
           return
         }
+        const runConfig = parsePipelineRunConfig(detail.run.config_json)
+        if (!runConfig) {
+          setError(`完整任务 ${detail.run.id} 的配置快照损坏，无法准确展示成果`)
+          return
+        }
         const restoredProgress = progressFromRunDetail(detail)
+        setActiveRunConfig(runConfig)
         setProgress(restoredProgress)
         setMessage(restoredProgress.message)
         setRunning(detail.run.status === 'running')
@@ -1229,10 +1269,16 @@ export function FullTaskPage({
         return
       }
       if (event.ok) {
+        const runConfig = parsePipelineRunConfig(event.result.run.config_json)
         setCurrentRunId(event.result.run.id)
+        setActiveRunConfig(runConfig)
         setProgress(progressFromRunDetail(event.result))
         setMessage(pipelineRunMessage(event.result.run))
-        setError(event.result.run.error_summary)
+        setError(
+          runConfig
+            ? event.result.run.error_summary
+            : `完整任务 ${event.result.run.id} 的配置快照损坏，无法准确展示成果`,
+        )
       } else {
         setError(event.error)
         setMessage('完整任务失败')
@@ -1793,8 +1839,10 @@ export function FullTaskPage({
     setError(null)
     setMessage('正在提交完整任务')
     try {
-      const runId = await window.api.pipeline.run(buildConfig())
+      const config = buildConfig()
+      const runId = await window.api.pipeline.run(config)
       setCurrentRunId(runId)
+      setActiveRunConfig(config)
       setRunning(true)
       setMessage('完整任务已启动')
       void refreshRunHistory()
@@ -3007,7 +3055,7 @@ export function FullTaskPage({
       </div>
 
       <RunTheater
-        config={buildConfig()}
+        config={activeRunConfig ?? buildConfig()}
         isLogOpen={isLogOpen}
         message={message}
         onLogOpenChange={setIsLogOpen}

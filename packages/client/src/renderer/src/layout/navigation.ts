@@ -165,6 +165,6 @@ export function isWorkbenchRoute(pathname: string) {
   )
 }
 
-export function getStoredWorkbenchRoute() {
+export function getDefaultWorkbenchRoute() {
   return defaultWorkbenchRoute
 }

@@ -50,10 +50,10 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
     >
       <div
         className={cn(
-          'flex shrink-0',
+          'flex h-[116px] shrink-0',
           collapsed
-            ? 'h-16 items-center justify-center px-0'
-            : 'h-[116px] flex-col items-center justify-center px-5 py-4',
+            ? 'items-center justify-center px-0'
+            : 'flex-col items-center justify-center px-5 py-4',
         )}
       >
         <img
@@ -73,12 +73,24 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
         )}
       </div>
 
-      <nav aria-label="Workbench 主导航" className="min-h-0 flex-1 overflow-y-auto px-2 py-3">
+      <nav
+        aria-label="Workbench 主导航"
+        className={cn(
+          'min-h-0 flex-1 overflow-y-auto px-2 py-3',
+          collapsed ? '[scrollbar-width:none] [&::-webkit-scrollbar]:hidden' : null,
+        )}
+      >
         {navigationGroups.map((group) => (
           <div className="mb-4 space-y-1 last:mb-0" key={group.label}>
-            {collapsed ? null : (
-              <p className="px-3 pb-1 text-xs font-medium text-muted-foreground">{group.label}</p>
-            )}
+            <p
+              aria-hidden={collapsed}
+              className={cn(
+                'h-5 px-3 pb-1 text-xs font-medium text-muted-foreground',
+                collapsed ? 'text-transparent' : null,
+              )}
+            >
+              {group.label}
+            </p>
             {group.modules.map((module) => {
               const Icon = module.path === '/pipeline/runs' ? History : moduleIcons[module.key]
               return (

@@ -7,6 +7,7 @@ import { SIDEBAR_COLLAPSED_STORAGE_KEY, moduleMetaFromPath } from './navigation'
 
 interface ShellProps {
   children?: ReactNode
+  contentWidth?: 'constrained' | 'wide'
   rightSlot?: ReactNode
 }
 
@@ -14,11 +15,13 @@ function readInitialCollapsedState() {
   return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === 'true'
 }
 
-export function Shell({ children, rightSlot }: ShellProps) {
+export function Shell({ children, contentWidth, rightSlot }: ShellProps) {
   const location = useLocation()
   const [collapsed, setCollapsed] = useState(readInitialCollapsedState)
   const module = moduleMetaFromPath(location.pathname)
-  const usesWideContent = module.key === 'pipeline' || module.key === 'listing'
+  const usesWideContent = contentWidth
+    ? contentWidth === 'wide'
+    : module.key === 'pipeline' || module.key === 'listing'
 
   useEffect(() => {
     window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(collapsed))

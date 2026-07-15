@@ -98,14 +98,27 @@ async function enterPreparedWorkbench(
 function seedRunningCompleteTasks(workbenchRoot: string) {
   const db = openWorkbenchDatabase(workbenchRoot)
   try {
+    const configJson = JSON.stringify({
+      printMode: 'local',
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'ai', requirement: 'fixture prompt', count: 1 },
+        grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
+      },
+      matting: { enabled: false, mode: 'comfyui' },
+      detection: { enabled: false },
+      photoshop: { enabled: false, templates: [] },
+      title: { enabled: false, platform: 'temu', language: 'en', model: 'qwen3.6-flash' },
+    })
     const insertRun = db.prepare(`
       INSERT INTO pipeline_runs (
         id, name, source_mode, status, config_json, stats_json,
         result_sections_json, logs_json, error_summary, created_at, started_at, completed_at
-      ) VALUES (?, ?, ?, 'running', '{}', '{}', '[]', '[]', NULL, ?, ?, NULL)
+      ) VALUES (?, ?, 'txt2img', 'running', ?, '{}', '[]', '[]', NULL, ?, ?, NULL)
     `)
-    insertRun.run('run-newer-created', 'Later created task', 'txt2img', 200, 200)
-    insertRun.run('run-most-recently-updated', 'Most recently updated task', 'collection', 100, 100)
+    insertRun.run('run-newer-created', 'Later created task', configJson, 200, 200)
+    insertRun.run('run-most-recently-updated', 'Most recently updated task', configJson, 100, 100)
     const insertStep = db.prepare(`
       INSERT INTO pipeline_steps (
         id, run_id, step_key, module, label, status,
@@ -155,6 +168,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(page).toHaveURL(/#\/pipeline$/)
     await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.locator('[data-content-width="constrained"]')).toBeVisible()
   })
 
   test('uses the production entry instead of a previously visited tool route', async () => {
@@ -206,6 +220,8 @@ test.describe('production-first Workbench shell', () => {
         .locator('xpath=..')
         .getByText('当前', { exact: true }),
     ).toBeVisible()
+    await expect(page.getByText('文生图产出', { exact: true })).toBeVisible()
+    await expect(page.locator('[data-content-width="wide"]')).toBeVisible()
     await expect
       .poll(() =>
         page.evaluate(
@@ -234,6 +250,7 @@ test.describe('production-first Workbench shell', () => {
 
     await navigation.getByRole('link', { name: '运行记录', exact: true }).click()
     await expect(page.getByText('历史记录', { exact: true })).toBeVisible()
+    await expect(page.locator('[data-content-width="wide"]')).toBeVisible()
     await expect(page.getByText('任务名', { exact: true }).filter({ visible: true })).toHaveCount(0)
 
     const routes = [
@@ -292,11 +309,20 @@ test.describe('production-first Workbench shell', () => {
     await enterPreparedWorkbench(page, join(tempRoot, 'workbench-responsive-shell'))
 
     const sidebar = page.getByRole('complementary')
+    const completeTaskLink = page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '完整任务', exact: true })
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(sidebar).toHaveCSS('width', '188px')
+    await expect(completeTaskLink).toBeVisible()
+    const expandedLinkTop = (await completeTaskLink.boundingBox())?.y
     await attachScreenshot(page, 'shell-expanded-1440x900')
     await page.getByRole('button', { name: '折叠', exact: true }).click()
     await expect(sidebar).toHaveCSS('width', '56px')
+    await expect(completeTaskLink).toBeVisible()
+    const collapsedLinkTop = (await completeTaskLink.boundingBox())?.y
+    expect(expandedLinkTop).toBeDefined()
+    expect(collapsedLinkTop).toBe(expandedLinkTop)
     await expect
       .poll(() => page.evaluate(() => window.localStorage.getItem('tengyu.ui.sidebar.collapsed')))
       .toBe('true')

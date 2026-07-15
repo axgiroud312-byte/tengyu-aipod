@@ -203,6 +203,15 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
   const location = useLocation()
   const navigate = useNavigate()
   const activeModule = moduleFromPath(location.pathname) ?? 'collection'
+  const [hasSelectedPipelineRun, setHasSelectedPipelineRun] = useState(
+    Boolean(initialPipelineRunId),
+  )
+  const contentWidth =
+    activeModule === 'listing' ||
+    location.pathname === '/pipeline/runs' ||
+    (activeModule === 'pipeline' && hasSelectedPipelineRun)
+      ? 'wide'
+      : 'constrained'
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
   const [isWorkspaceLoaded, setIsWorkspaceLoaded] = useState(false)
   const [platforms, setPlatforms] = useState<Array<{ key: string; label: string }>>([])
@@ -1197,7 +1206,7 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
   }
 
   return (
-    <Shell>
+    <Shell contentWidth={contentWidth}>
       <div className="space-y-6">
         {!isWorkspaceLoaded ? (
           <div className="mt-20 text-sm text-muted-foreground">正在读取工作区...</div>
@@ -1287,6 +1296,7 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
                 <div hidden={activeModule !== 'pipeline'}>
                   <FullTaskPage
                     initialRunId={initialPipelineRunId}
+                    onRunSelectionChange={setHasSelectedPipelineRun}
                     recordsOnly={location.pathname === '/pipeline/runs'}
                   />
                 </div>

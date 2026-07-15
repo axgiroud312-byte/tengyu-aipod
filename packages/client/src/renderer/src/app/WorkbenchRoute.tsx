@@ -1,5 +1,5 @@
 import { Button } from '@/components/ui/button'
-import { getStoredWorkbenchRoute, isWorkbenchRoute } from '@/layout/navigation'
+import { getDefaultWorkbenchRoute, isWorkbenchRoute } from '@/layout/navigation'
 import { formatIpcError } from '@tengyu-aipod/shared'
 import type { PipelineRunDetail } from '@tengyu-aipod/shared'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
@@ -63,12 +63,10 @@ export function WorkbenchRoute() {
       if (state.needs_onboarding) {
         navigate(onboardingPath(1), { replace: true })
         setInitialPipelineRunId(null)
+      } else if (state.workbench_root) {
+        setInitialPipelineRunId(await mostRecentlyUpdatedRunningRunId())
       } else {
-        try {
-          setInitialPipelineRunId(await mostRecentlyUpdatedRunningRunId())
-        } catch {
-          setInitialPipelineRunId(null)
-        }
+        setInitialPipelineRunId(null)
       }
     } catch (error) {
       setNeedsOnboarding(null)
@@ -118,7 +116,7 @@ export function WorkbenchRoute() {
 
   const activePath = isWorkbenchRoute(location.pathname)
     ? location.pathname
-    : getStoredWorkbenchRoute()
+    : getDefaultWorkbenchRoute()
 
   if (activePath !== location.pathname) {
     return <Navigate replace to={activePath} />
