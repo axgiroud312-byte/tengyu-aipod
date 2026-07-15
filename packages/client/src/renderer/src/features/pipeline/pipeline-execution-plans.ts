@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import type { PipelineSourceDraftMap } from './pipeline-source-drafts'
 import { resolvePipelineStagePolicy } from './pipeline-stage-policy'
+import type { PipelineConfigStage, PipelineValidationIssue } from './types'
 
 export const EXECUTION_PLAN_STORAGE_KEY = 'tengyu-aipod:pipeline-execution-plans'
 export const LAST_USED_EXECUTION_PLAN_STORAGE_KEY =
@@ -130,8 +131,43 @@ export type PipelineExecutionPlanCaptureInput = PipelineExecutionPlanConfig & {
   sourceDrafts: PipelineSourceDraftMap
 }
 
+export type PipelineExecutionPlanReferenceOptions = {
+  providers: readonly ('grsai' | 'comfyui-chenyu')[]
+  grsaiModels: readonly string[]
+  promptModels: readonly string[]
+  titleModels: readonly string[]
+  detectionModels: readonly string[]
+  generationSkills: readonly string[]
+  detectionSkills: readonly string[]
+  txt2imgWorkflows: readonly string[]
+  img2imgWorkflows: readonly string[]
+  extractWorkflows: readonly string[]
+  mattingWorkflows: readonly string[]
+  runningMachineIds: readonly string[]
+  psdTemplatePaths: readonly string[]
+}
+
+export type PipelineExecutionPlanReferenceIssue = PipelineValidationIssue & { value: string }
+
 type StorageReader = Pick<Storage, 'getItem'>
 type StorageWriter = Pick<Storage, 'getItem' | 'setItem'>
+
+export type PipelineExecutionPlanStorageError = {
+  code: 'corrupt-json' | 'unsupported-version' | 'invalid-structure'
+  message: string
+}
+
+export type PipelineExecutionPlanReadResult =
+  | { ok: true; document: PipelineExecutionPlanDocument }
+  | { ok: false; error: PipelineExecutionPlanStorageError }
+
+type PipelineExecutionPlanSaveResult =
+  | { ok: true; document: PipelineExecutionPlanDocument }
+  | { ok: false; reason: 'limit' | 'invalid-storage'; message?: string }
+
+type PipelineExecutionPlanUpdateResult =
+  | { ok: true; document: PipelineExecutionPlanDocument }
+  | { ok: false; reason: 'not-found' | 'invalid-storage'; message?: string }
 
 export function captureExecutionPlanConfig(
   input: PipelineExecutionPlanCaptureInput,
@@ -379,6 +415,198 @@ export function validateExecutionPlanConfig(config: PipelineExecutionPlanConfig)
   return issues
 }
 
+export function validateExecutionPlanReferences(
+  config: PipelineExecutionPlanConfig,
+  options: PipelineExecutionPlanReferenceOptions,
+): PipelineExecutionPlanReferenceIssue[] {
+  const issues: PipelineExecutionPlanReferenceIssue[] = []
+  const stagePolicy = resolvePipelineStagePolicy({
+    sourceMode: config.sourceMode,
+    existingPrintStartStep: config.existingPrintStartStep,
+    enabled: config.stages,
+  })
+  const requireReference = (
+    stage: PipelineConfigStage,
+    field: string,
+    label: string,
+    value: string,
+    available: readonly string[],
+  ) => {
+    if (value && !available.includes(value)) {
+      issues.push({
+        stage,
+        field,
+        value,
+        message: `${label} ${value} 已不可用，请重新选择。`,
+      })
+    }
+  }
+  const requireProvider = (field: string, provider: 'grsai' | 'comfyui-chenyu') =>
+    requireReference('source', field, 'Provider', provider, options.providers)
+  const requireMachine = (stage: PipelineConfigStage, field: string, machineId: string) =>
+    requireReference(
+      stage,
+      field,
+      stage === 'matting' ? '抠图运行云机' : '图生图运行云机',
+      machineId,
+      options.runningMachineIds,
+    )
+
+  if (config.sourceMode === 'collection') {
+    requireProvider('source.extractProvider', config.source.extractProvider)
+    requireReference(
+      'source',
+      'source.extractSkillId',
+      '提取 Skill',
+      config.source.extractSkillId,
+      options.generationSkills,
+    )
+    if (config.source.extractProvider === 'grsai') {
+      requireReference(
+        'source',
+        'generation.grsaiModel',
+        '生图模型',
+        config.generation.grsaiModel,
+        options.grsaiModels,
+      )
+    } else {
+      requireReference(
+        'source',
+        'source.extractWorkflowId',
+        '提取工作流',
+        config.source.extractWorkflowId,
+        options.extractWorkflows,
+      )
+      requireReference(
+        'source',
+        'source.extractInstanceUuid',
+        '提取运行云机',
+        config.source.extractInstanceUuid,
+        options.runningMachineIds,
+      )
+    }
+  }
+
+  if (config.sourceMode === 'txt2img') {
+    requireProvider('source.txt2imgProvider', config.source.txt2imgProvider)
+    if (config.source.txt2imgProvider === 'grsai') {
+      requireReference(
+        'source',
+        'generation.grsaiModel',
+        '生图模型',
+        config.generation.grsaiModel,
+        options.grsaiModels,
+      )
+    } else {
+      requireReference(
+        'source',
+        'source.txt2imgComfyuiWorkflowId',
+        '文生图工作流',
+        config.source.txt2imgComfyuiWorkflowId,
+        options.txt2imgWorkflows,
+      )
+      requireReference(
+        'source',
+        'source.txt2imgComfyuiInstanceUuid',
+        '文生图运行云机',
+        config.source.txt2imgComfyuiInstanceUuid,
+        options.runningMachineIds,
+      )
+    }
+  }
+
+  if (config.sourceMode === 'img2img') {
+    requireProvider('source.img2imgProvider', config.source.img2imgProvider)
+    if (config.source.img2imgProvider === 'grsai') {
+      requireReference(
+        'source',
+        'generation.grsaiModel',
+        '生图模型',
+        config.generation.grsaiModel,
+        options.grsaiModels,
+      )
+    } else {
+      requireReference(
+        'source',
+        'source.img2imgComfyuiWorkflowId',
+        '图生图工作流',
+        config.source.img2imgComfyuiWorkflowId,
+        options.img2imgWorkflows,
+      )
+      requireMachine(
+        'source',
+        'source.img2imgComfyuiInstanceUuid',
+        config.source.img2imgComfyuiInstanceUuid,
+      )
+    }
+  }
+
+  const needsPrompt =
+    config.sourceMode === 'txt2img' ||
+    (config.sourceMode === 'img2img' &&
+      (config.source.img2imgProvider === 'grsai' ||
+        config.source.img2imgComfyuiPromptMode === 'ai'))
+  if (needsPrompt) {
+    requireReference(
+      'source',
+      'generation.promptSkillId',
+      '提示词 Skill',
+      config.generation.promptSkillId,
+      options.generationSkills,
+    )
+    requireReference(
+      'source',
+      'generation.promptModel',
+      '提示词模型',
+      config.generation.promptModel,
+      options.promptModels,
+    )
+  }
+
+  if (stagePolicy.stages.matting.enabled) {
+    requireReference(
+      'matting',
+      'matting.workflowId',
+      '抠图工作流',
+      config.matting.workflowId,
+      options.mattingWorkflows,
+    )
+    requireMachine('matting', 'matting.instanceUuid', config.matting.instanceUuid)
+  }
+  if (stagePolicy.stages.detection.enabled) {
+    requireReference(
+      'detection',
+      'detection.model',
+      '检测模型',
+      config.detection.model,
+      options.detectionModels,
+    )
+    requireReference(
+      'detection',
+      'detection.skillKey',
+      '检测 Skill',
+      config.detection.skillKey,
+      options.detectionSkills,
+    )
+  }
+  if (stagePolicy.stages.photoshop.enabled) {
+    for (const templatePath of config.photoshop.templatePaths) {
+      requireReference(
+        'photoshop',
+        'photoshop.templatePaths',
+        'PSD 模板',
+        templatePath,
+        options.psdTemplatePaths,
+      )
+    }
+  }
+  if (stagePolicy.stages.title.enabled) {
+    requireReference('title', 'title.model', '标题模型', config.title.model, options.titleModels)
+  }
+
+  return issues
+}
+
 export function createExecutionPlan(
   name: string,
   config: PipelineExecutionPlanConfig,
@@ -392,35 +620,112 @@ export function createExecutionPlan(
   })
 }
 
-export function readExecutionPlanDocument(
-  storage: StorageReader,
-): PipelineExecutionPlanDocument | null {
+export function readExecutionPlanDocument(storage: StorageReader): PipelineExecutionPlanReadResult {
   const raw = storage.getItem(EXECUTION_PLAN_STORAGE_KEY)
   if (!raw) {
-    return { schema_version: 1, plans: [] }
+    return { ok: true, document: { schema_version: 1, plans: [] } }
   }
+  let value: unknown
   try {
-    const parsed = executionPlanDocumentSchema.safeParse(JSON.parse(raw) as unknown)
-    return parsed.success ? parsed.data : null
+    value = JSON.parse(raw) as unknown
   } catch {
-    return null
+    return {
+      ok: false,
+      error: {
+        code: 'corrupt-json',
+        message: '执行方案数据已损坏，无法解析。请删除损坏数据后重新保存方案。',
+      },
+    }
   }
+  if (
+    typeof value === 'object' &&
+    value !== null &&
+    'schema_version' in value &&
+    value.schema_version !== 1
+  ) {
+    return {
+      ok: false,
+      error: {
+        code: 'unsupported-version',
+        message: `执行方案数据版本 ${String(value.schema_version)} 不受支持，请升级 Workbench 或删除后重新保存。`,
+      },
+    }
+  }
+  const parsed = executionPlanDocumentSchema.safeParse(value)
+  return parsed.success
+    ? { ok: true, document: parsed.data }
+    : {
+        ok: false,
+        error: {
+          code: 'invalid-structure',
+          message: '执行方案数据结构无效，请删除损坏数据后重新保存方案。',
+        },
+      }
 }
 
 export function saveExecutionPlan(
   storage: StorageWriter,
   plan: PipelineExecutionPlan,
-): { ok: true; document: PipelineExecutionPlanDocument } | { ok: false; reason: 'limit' } {
-  const current = readExecutionPlanDocument(storage) ?? { schema_version: 1 as const, plans: [] }
-  if (current.plans.length >= MAX_EXECUTION_PLANS) {
+): PipelineExecutionPlanSaveResult {
+  const current = readExecutionPlanDocument(storage)
+  if (!current.ok) {
+    return { ok: false, reason: 'invalid-storage', message: current.error.message }
+  }
+  if (current.document.plans.length >= MAX_EXECUTION_PLANS) {
     return { ok: false, reason: 'limit' }
   }
   const document = executionPlanDocumentSchema.parse({
     schema_version: 1,
-    plans: [...current.plans, plan],
+    plans: [...current.document.plans, plan],
   })
   storage.setItem(EXECUTION_PLAN_STORAGE_KEY, JSON.stringify(document))
   return { ok: true, document }
+}
+
+function updateExecutionPlan(
+  storage: StorageWriter,
+  planId: string,
+  update: (plan: PipelineExecutionPlan) => PipelineExecutionPlan | null,
+): PipelineExecutionPlanUpdateResult {
+  const current = readExecutionPlanDocument(storage)
+  if (!current.ok) {
+    return { ok: false, reason: 'invalid-storage', message: current.error.message }
+  }
+  const planIndex = current.document.plans.findIndex((plan) => plan.id === planId)
+  if (planIndex < 0) {
+    return { ok: false, reason: 'not-found' }
+  }
+  const plan = current.document.plans[planIndex]
+  if (!plan) {
+    return { ok: false, reason: 'not-found' }
+  }
+  const nextPlan = update(plan)
+  const document = executionPlanDocumentSchema.parse({
+    schema_version: 1,
+    plans: nextPlan
+      ? current.document.plans.map((item) => (item.id === planId ? nextPlan : item))
+      : current.document.plans.filter((item) => item.id !== planId),
+  })
+  storage.setItem(EXECUTION_PLAN_STORAGE_KEY, JSON.stringify(document))
+  return { ok: true, document }
+}
+
+export function overwriteExecutionPlan(
+  storage: StorageWriter,
+  planId: string,
+  config: PipelineExecutionPlanConfig,
+) {
+  return updateExecutionPlan(storage, planId, (plan) => ({ ...plan, config }))
+}
+
+export function renameExecutionPlan(storage: StorageWriter, planId: string, name: string) {
+  return updateExecutionPlan(storage, planId, (plan) =>
+    executionPlanSchema.parse({ ...plan, name: name.trim() }),
+  )
+}
+
+export function deleteExecutionPlan(storage: StorageWriter, planId: string) {
+  return updateExecutionPlan(storage, planId, () => null)
 }
 
 export function writeLastUsedExecutionPlanId(storage: Pick<Storage, 'setItem'>, planId: string) {

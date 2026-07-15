@@ -5,10 +5,14 @@ import {
   applyExecutionPlanConfig,
   captureExecutionPlanConfig,
   createExecutionPlan,
+  deleteExecutionPlan,
+  overwriteExecutionPlan,
   readExecutionPlanDocument,
   readLastUsedExecutionPlanId,
+  renameExecutionPlan,
   saveExecutionPlan,
   validateExecutionPlanConfig,
+  validateExecutionPlanReferences,
   writeLastUsedExecutionPlanId,
 } from './pipeline-execution-plans'
 
@@ -16,6 +20,7 @@ function memoryStorage() {
   const values = new Map<string, string>()
   return {
     getItem: (key: string) => values.get(key) ?? null,
+    removeItem: (key: string) => values.delete(key),
     setItem: (key: string, value: string) => values.set(key, value),
   }
 }
@@ -271,6 +276,111 @@ describe('execution plan persistence', () => {
     ])
   })
 
+  it('marks every stale local resource on its relevant stage without changing the saved reference', () => {
+    const config = captureExecutionPlanConfig(planInput())
+    const available = {
+      providers: ['comfyui-chenyu'] as const,
+      grsaiModels: ['gpt-image-2'],
+      promptModels: ['qwen3-vl-plus'],
+      titleModels: ['qwen3.6-flash'],
+      detectionModels: ['qwen3-vl-flash'],
+      generationSkills: ['extract@@1.0.0', 'prompt@@2.0.0'],
+      detectionSkills: ['detect@@1.0.0'],
+      txt2imgWorkflows: ['wf-txt2img'],
+      img2imgWorkflows: ['wf-img2img'],
+      extractWorkflows: ['wf-extract'],
+      mattingWorkflows: ['wf-matting'],
+      runningMachineIds: ['machine-img2img', 'machine-matting'],
+      psdTemplatePaths: ['C:\\mockups\\shirt.psd'],
+    }
+    const cases = [
+      {
+        label: 'Provider',
+        available: { providers: [] },
+        expected: { stage: 'source', field: 'source.img2imgProvider', value: 'comfyui-chenyu' },
+      },
+      {
+        label: '提示词模型',
+        config: {
+          ...config,
+          source: { ...config.source, img2imgComfyuiPromptMode: 'ai' as const },
+        },
+        available: { promptModels: [] },
+        expected: { stage: 'source', field: 'generation.promptModel', value: 'qwen3-vl-plus' },
+      },
+      {
+        label: '提示词 Skill',
+        config: {
+          ...config,
+          source: { ...config.source, img2imgComfyuiPromptMode: 'ai' as const },
+        },
+        available: { generationSkills: ['extract@@1.0.0'] },
+        expected: { stage: 'source', field: 'generation.promptSkillId', value: 'prompt@@2.0.0' },
+      },
+      {
+        label: '图生图工作流',
+        available: { img2imgWorkflows: [] },
+        expected: {
+          stage: 'source',
+          field: 'source.img2imgComfyuiWorkflowId',
+          value: 'wf-img2img',
+        },
+      },
+      {
+        label: '图生图运行云机',
+        available: { runningMachineIds: ['machine-matting'] },
+        expected: {
+          stage: 'source',
+          field: 'source.img2imgComfyuiInstanceUuid',
+          value: 'machine-img2img',
+        },
+      },
+      {
+        label: '抠图工作流',
+        available: { mattingWorkflows: [] },
+        expected: { stage: 'matting', field: 'matting.workflowId', value: 'wf-matting' },
+      },
+      {
+        label: '检测模型',
+        available: { detectionModels: [] },
+        expected: { stage: 'detection', field: 'detection.model', value: 'qwen3-vl-flash' },
+      },
+      {
+        label: '检测 Skill',
+        available: { detectionSkills: [] },
+        expected: { stage: 'detection', field: 'detection.skillKey', value: 'detect@@1.0.0' },
+      },
+      {
+        label: 'PSD 模板',
+        available: { psdTemplatePaths: [] },
+        expected: {
+          stage: 'photoshop',
+          field: 'photoshop.templatePaths',
+          value: 'C:\\mockups\\shirt.psd',
+        },
+      },
+      {
+        label: '标题模型',
+        available: { titleModels: [] },
+        expected: { stage: 'title', field: 'title.model', value: 'qwen3.6-flash' },
+      },
+    ] as const
+
+    for (const testCase of cases) {
+      const testConfig = 'config' in testCase ? testCase.config : config
+      const beforeValidation = structuredClone(testConfig)
+      const issues = validateExecutionPlanReferences(testConfig, {
+        ...available,
+        ...testCase.available,
+      })
+      expect(issues, testCase.label).toContainEqual({
+        ...testCase.expected,
+        message: `${testCase.label} ${testCase.expected.value} 已不可用，请重新选择。`,
+      })
+      expect(testConfig, testCase.label).toEqual(beforeValidation)
+    }
+  })
+
   it('captures only stable allowlisted settings and validates schema version 1 on read', () => {
     const storage = memoryStorage()
     const plan = createExecutionPlan(
@@ -284,7 +394,7 @@ describe('execution plan persistence', () => {
 
     expect(saveExecutionPlan(storage, plan)).toMatchObject({ ok: true })
     const document = readExecutionPlanDocument(storage)
-    expect(document).toEqual({ schema_version: 1, plans: [plan] })
+    expect(document).toEqual({ ok: true, document: { schema_version: 1, plans: [plan] } })
     expect(plan.config).toMatchObject({
       sourceMode: 'img2img',
       existingPrintStartStep: 'detection',
@@ -319,8 +429,93 @@ describe('execution plan persistence', () => {
       expect(serialized).not.toContain(excluded)
     }
 
-    storage.setItem(EXECUTION_PLAN_STORAGE_KEY, JSON.stringify({ schema_version: 2, plans: [] }))
-    expect(readExecutionPlanDocument(storage)).toBeNull()
+    const invalidDocuments = [
+      {
+        raw: '{not json',
+        code: 'corrupt-json',
+        message: '执行方案数据已损坏，无法解析。请删除损坏数据后重新保存方案。',
+      },
+      {
+        raw: JSON.stringify({ schema_version: 2, plans: [] }),
+        code: 'unsupported-version',
+        message: '执行方案数据版本 2 不受支持，请升级 Workbench 或删除后重新保存。',
+      },
+      {
+        raw: JSON.stringify({ schema_version: 1, plans: [{ id: 'broken' }] }),
+        code: 'invalid-structure',
+        message: '执行方案数据结构无效，请删除损坏数据后重新保存方案。',
+      },
+    ] as const
+
+    for (const invalidDocument of invalidDocuments) {
+      storage.setItem(EXECUTION_PLAN_STORAGE_KEY, invalidDocument.raw)
+      expect(readExecutionPlanDocument(storage)).toEqual({
+        ok: false,
+        error: { code: invalidDocument.code, message: invalidDocument.message },
+      })
+    }
+  })
+
+  it('overwrites, renames, and deletes a plan by id without creating a duplicate', () => {
+    const storage = memoryStorage()
+    const original = createExecutionPlan('Original', captureExecutionPlanConfig(planInput()), {
+      id: 'plan-1',
+      createdAt: 1,
+    })
+    expect(saveExecutionPlan(storage, original)).toMatchObject({ ok: true })
+
+    const replacementConfig = {
+      ...original.config,
+      generation: { ...original.config.generation, promptCount: '9' },
+    }
+    expect(overwriteExecutionPlan(storage, 'plan-1', replacementConfig)).toMatchObject({
+      ok: true,
+    })
+    expect(renameExecutionPlan(storage, 'plan-1', 'Renamed')).toMatchObject({ ok: true })
+
+    const renamed = readExecutionPlanDocument(storage)
+    expect(renamed).toMatchObject({
+      ok: true,
+      document: {
+        plans: [
+          {
+            id: 'plan-1',
+            name: 'Renamed',
+            created_at: 1,
+            config: { generation: { promptCount: '9' } },
+          },
+        ],
+      },
+    })
+    expect(deleteExecutionPlan(storage, 'plan-1')).toEqual({
+      ok: true,
+      document: { schema_version: 1, plans: [] },
+    })
+  })
+
+  it('rejects lifecycle writes when persisted data is invalid or the plan is missing', () => {
+    const storage = memoryStorage()
+    const config = captureExecutionPlanConfig(planInput())
+    storage.setItem(EXECUTION_PLAN_STORAGE_KEY, '{broken')
+
+    expect(saveExecutionPlan(storage, createExecutionPlan('Plan', config))).toMatchObject({
+      ok: false,
+      reason: 'invalid-storage',
+    })
+    expect(overwriteExecutionPlan(storage, 'missing', config)).toMatchObject({
+      ok: false,
+      reason: 'invalid-storage',
+    })
+
+    storage.setItem(EXECUTION_PLAN_STORAGE_KEY, JSON.stringify({ schema_version: 1, plans: [] }))
+    expect(renameExecutionPlan(storage, 'missing', 'Renamed')).toEqual({
+      ok: false,
+      reason: 'not-found',
+    })
+    expect(deleteExecutionPlan(storage, 'missing')).toEqual({
+      ok: false,
+      reason: 'not-found',
+    })
   })
 
   it('keeps at most five plans and persists the last used plan separately', () => {
@@ -341,12 +536,13 @@ describe('execution plan persistence', () => {
         createExecutionPlan('Plan 6', config, { id: 'plan-6', createdAt: 6 }),
       ),
     ).toEqual({ ok: false, reason: 'limit' })
-    expect(readExecutionPlanDocument(storage)?.plans).toHaveLength(5)
+    const document = readExecutionPlanDocument(storage)
+    expect(document.ok ? document.document.plans : []).toHaveLength(5)
 
     writeLastUsedExecutionPlanId(storage, 'plan-3')
     expect(storage.getItem(LAST_USED_EXECUTION_PLAN_STORAGE_KEY)).toBe('plan-3')
-    expect(
-      readLastUsedExecutionPlanId(storage, readExecutionPlanDocument(storage)?.plans ?? []),
-    ).toBe('plan-3')
+    expect(readLastUsedExecutionPlanId(storage, document.ok ? document.document.plans : [])).toBe(
+      'plan-3',
+    )
   })
 })

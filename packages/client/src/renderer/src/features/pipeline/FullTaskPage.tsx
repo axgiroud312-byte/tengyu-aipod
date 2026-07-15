@@ -1,3 +1,13 @@
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -22,6 +32,7 @@ import {
   MAX_EXECUTION_PLANS,
   captureExecutionPlanConfig,
   validateExecutionPlanConfig,
+  validateExecutionPlanReferences,
 } from '@/features/pipeline/pipeline-execution-plans'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
@@ -61,6 +72,7 @@ import {
   ChevronDown,
   FolderOpen,
   Loader2,
+  Pencil,
   Play,
   Plus,
   RefreshCw,
@@ -694,7 +706,14 @@ export function FullTaskPage({
   const executionPlans = useExecutionPlanStore((state) => state.plans)
   const selectedExecutionPlanId = useExecutionPlanStore((state) => state.selectedPlanId)
   const activeExecutionPlanId = useExecutionPlanStore((state) => state.activePlanId)
+  const executionPlanStorageError = useExecutionPlanStore((state) => state.storageError)
   const saveExecutionPlan = useExecutionPlanStore((state) => state.savePlan)
+  const overwriteExecutionPlan = useExecutionPlanStore((state) => state.overwritePlan)
+  const renameExecutionPlan = useExecutionPlanStore((state) => state.renamePlan)
+  const deleteExecutionPlan = useExecutionPlanStore((state) => state.deletePlan)
+  const clearInvalidExecutionPlanStorage = useExecutionPlanStore(
+    (state) => state.clearInvalidStorage,
+  )
   const selectExecutionPlan = useExecutionPlanStore((state) => state.selectPlan)
   const applyExecutionPlan = useExecutionPlanStore((state) => state.applyPlan)
   const activeSourceDraft = sourceDrafts[sourceMode]
@@ -828,6 +847,7 @@ export function FullTaskPage({
   const [titleEnabled, setTitleEnabled] = useFullTaskSessionState('titleEnabled', false)
   const [extraRequirement, setExtraRequirement] = useFullTaskSessionState('extraRequirement', '')
   const [executionPlanName, setExecutionPlanName] = useState('')
+  const [deleteConfirmationOpen, setDeleteConfirmationOpen] = useState(false)
   const [progress, setProgress] = useState<PipelineProgress | null>(null)
   const [activeRunConfig, setActiveRunConfig] = useState<PipelineRunConfig | null>(null)
   const [currentRunId, setCurrentRunId] = useFullTaskSessionState<string | null>(
@@ -840,6 +860,7 @@ export function FullTaskPage({
   const [message, setMessage] = useState('按三个大区块配置后即可启动')
   const [running, setRunning] = useState(false)
   const [optionsLoading, setOptionsLoading] = useState(false)
+  const [optionsLoaded, setOptionsLoaded] = useState(false)
   const [isLogOpen, setIsLogOpen] = useState(false)
   const [selectedPipelineStage, setSelectedPipelineStage] = useState<PipelineConfigStage>('source')
   const [generationSettings, setGenerationSettings] = useState<GenerationSettingsSnapshot | null>(
@@ -856,6 +877,7 @@ export function FullTaskPage({
   const [titleModels, setTitleModels] = useState<Option[]>([])
   const [detectionModels, setDetectionModels] = useState<string[]>([])
   const [detectionSkills, setDetectionSkills] = useState<SkillSummary[]>([])
+  const [availablePsdTemplatePaths, setAvailablePsdTemplatePaths] = useState<string[]>([])
   const previousSourceModeRef = useRef<TaskSourceMode | null>(null)
   const existingPrintToggleSnapshotRef = useRef<FullTaskToggleSnapshot | null>(null)
   const chooseSourceFolderMutation = useIpcMutation(() => window.api.generation.chooseImageFolder())
@@ -1021,7 +1043,7 @@ export function FullTaskPage({
     }),
     [stagePolicy],
   )
-  const validationIssues = useMemo(
+  const pipelineValidationIssues = useMemo(
     () =>
       validatePipelineConfig({
         effectivePhotoshopEnabled,
@@ -1102,31 +1124,43 @@ export function FullTaskPage({
       titlePlatform,
     ],
   )
-  const validationMessages = validationIssues.map((issue) => issue.message)
-  const railView = useMemo(
-    () =>
-      buildPipelineRailViewModel({
-        progress,
-        issues: validationIssues,
-        enabled: {
-          source: true,
-          matting: effectiveMattingEnabled,
-          detection: effectiveDetectionEnabled,
-          photoshop: effectivePhotoshopEnabled,
-          title: effectiveTitleEnabled,
-        },
-        locked: pipelineStageLocks,
-      }),
-    [
-      effectiveDetectionEnabled,
-      effectiveMattingEnabled,
-      effectivePhotoshopEnabled,
-      effectiveTitleEnabled,
-      pipelineStageLocks,
-      progress,
-      validationIssues,
+  const executionPlanReferenceOptions = {
+    providers: ['grsai', 'comfyui-chenyu'] as const,
+    grsaiModels: generationSettings?.grsaiModels.map((model) => model.id) ?? [],
+    promptModels: [
+      ...new Set([
+        ...textModelsFor(generationSettings).map((model) => model.id),
+        ...visionModelsFor(generationSettings).map((model) => model.id),
+      ]),
     ],
-  )
+    titleModels: titleModels.map((option) => option.key),
+    detectionModels: detectionModelOptions,
+    generationSkills: generationSkills.map(skillVersionOptionKey),
+    detectionSkills: detectionSkillOptions.map((option) => option.key),
+    txt2imgWorkflows: txt2imgWorkflows.map((option) => option.key),
+    img2imgWorkflows: img2imgWorkflows.map((option) => option.key),
+    extractWorkflows: extractWorkflows.map((option) => option.key),
+    mattingWorkflows: mattingWorkflows.map((option) => option.key),
+    runningMachineIds: runningInstances.map((instance) => instance.instanceUuid),
+    psdTemplatePaths: availablePsdTemplatePaths,
+  }
+  const referenceIssues = optionsLoaded
+    ? validateExecutionPlanReferences(currentExecutionPlanConfig(), executionPlanReferenceOptions)
+    : []
+  const validationIssues = [...pipelineValidationIssues, ...referenceIssues]
+  const validationMessages = validationIssues.map((issue) => issue.message)
+  const railView = buildPipelineRailViewModel({
+    progress,
+    issues: validationIssues,
+    enabled: {
+      source: true,
+      matting: effectiveMattingEnabled,
+      detection: effectiveDetectionEnabled,
+      photoshop: effectivePhotoshopEnabled,
+      title: effectiveTitleEnabled,
+    },
+    locked: pipelineStageLocks,
+  })
   const canStart = !running && validationIssues.length === 0
   const selectedExecutionPlan =
     executionPlans.find((plan) => plan.id === selectedExecutionPlanId) ?? null
@@ -1150,6 +1184,7 @@ export function FullTaskPage({
         window.api.detection.getConfig(),
         window.api.detection.listModels(),
         window.api.skill.list({ module: 'detection' }),
+        window.api.photoshop.listCachedTemplates(),
       ])
       const failed = results
         .map((result, index) => ({ result, index }))
@@ -1171,6 +1206,7 @@ export function FullTaskPage({
         '检测配置',
         '检测模型',
         '检测 Skill',
+        'PSD 模板缓存',
       ]
 
       if (failed.length) {
@@ -1190,6 +1226,7 @@ export function FullTaskPage({
       const nextDetectionConfig = results[10].status === 'fulfilled' ? results[10].value : null
       const nextDetectionModels = results[11].status === 'fulfilled' ? results[11].value : []
       const nextDetectionSkills = results[12].status === 'fulfilled' ? results[12].value : []
+      const nextCachedTemplates = results[13].status === 'fulfilled' ? results[13].value : []
 
       setGenerationSkills(skills)
       setTxt2imgWorkflows(nextTxt2imgWorkflows.map(optionFromWorkflow))
@@ -1204,8 +1241,10 @@ export function FullTaskPage({
       setDetectionConfig(nextDetectionConfig)
       setDetectionModels(nextDetectionModels)
       setDetectionSkills(nextDetectionSkills)
+      setAvailablePsdTemplatePaths(nextCachedTemplates.map((template) => template.file_path))
     } finally {
       setOptionsLoading(false)
+      setOptionsLoaded(true)
     }
   }, [])
 
@@ -1305,7 +1344,7 @@ export function FullTaskPage({
     if (grsaiModelOptions.length === 0) {
       return
     }
-    if (!grsaiModelOptions.some((item) => item.id === grsaiModel)) {
+    if (!grsaiModel) {
       setGrsaiModel(grsaiModelOptions[0]?.id ?? 'gpt-image-2')
     }
   }, [grsaiModel, grsaiModelOptions, setGrsaiModel])
@@ -1321,24 +1360,18 @@ export function FullTaskPage({
 
   useEffect(() => {
     if (!requiresPromptGeneration || promptModelOptions.length === 0) {
-      if (requiresPromptGeneration && promptModelOptions.length === 0) {
-        setPromptModel('')
-      }
       return
     }
-    if (!promptModelOptions.some((item) => item.key === promptModel)) {
+    if (!promptModel) {
       setPromptModel(promptModelOptions[0]?.key ?? '')
     }
   }, [promptModel, promptModelOptions, requiresPromptGeneration, setPromptModel])
 
   useEffect(() => {
     if (sourceMode !== 'collection' || extractSkillOptions.length === 0) {
-      if (sourceMode === 'collection' && extractSkillOptions.length === 0) {
-        setExtractSkillId('')
-      }
       return
     }
-    if (!extractSkillOptions.some((item) => item.key === extractSkillId)) {
+    if (!extractSkillId) {
       setExtractSkillId(extractSkillOptions[0]?.key ?? '')
     }
   }, [extractSkillId, extractSkillOptions, setExtractSkillId, sourceMode])
@@ -1349,20 +1382,12 @@ export function FullTaskPage({
     }
     const fallback = selectFallbackChenyuInstance(chenyuInstances)
     if (!fallback) {
-      setExtractInstanceUuid('')
       return
     }
-    if (!runningInstances.some((instance) => instance.instanceUuid === extractInstanceUuid)) {
+    if (!extractInstanceUuid) {
       setExtractInstanceUuid(fallback.instanceUuid)
     }
-  }, [
-    chenyuInstances,
-    extractInstanceUuid,
-    extractProvider,
-    runningInstances,
-    setExtractInstanceUuid,
-    sourceMode,
-  ])
+  }, [chenyuInstances, extractInstanceUuid, extractProvider, setExtractInstanceUuid, sourceMode])
 
   useEffect(() => {
     if (sourceMode !== 'txt2img' || txt2imgProvider !== 'comfyui-chenyu') {
@@ -1370,17 +1395,13 @@ export function FullTaskPage({
     }
     const fallback = selectFallbackChenyuInstance(chenyuInstances)
     if (!fallback) {
-      setTxt2imgComfyuiInstanceUuid('')
       return
     }
-    if (
-      !runningInstances.some((instance) => instance.instanceUuid === txt2imgComfyuiInstanceUuid)
-    ) {
+    if (!txt2imgComfyuiInstanceUuid) {
       setTxt2imgComfyuiInstanceUuid(fallback.instanceUuid)
     }
   }, [
     chenyuInstances,
-    runningInstances,
     setTxt2imgComfyuiInstanceUuid,
     sourceMode,
     txt2imgComfyuiInstanceUuid,
@@ -1393,19 +1414,15 @@ export function FullTaskPage({
     }
     const fallback = selectFallbackChenyuInstance(chenyuInstances)
     if (!fallback) {
-      setImg2imgComfyuiInstanceUuid('')
       return
     }
-    if (
-      !runningInstances.some((instance) => instance.instanceUuid === img2imgComfyuiInstanceUuid)
-    ) {
+    if (!img2imgComfyuiInstanceUuid) {
       setImg2imgComfyuiInstanceUuid(fallback.instanceUuid)
     }
   }, [
     chenyuInstances,
     img2imgComfyuiInstanceUuid,
     img2imgProvider,
-    runningInstances,
     setImg2imgComfyuiInstanceUuid,
     sourceMode,
   ])
@@ -1416,28 +1433,18 @@ export function FullTaskPage({
     }
     const fallback = selectFallbackChenyuInstance(chenyuInstances)
     if (!fallback) {
-      setMattingInstanceUuid('')
       return
     }
-    if (!runningInstances.some((instance) => instance.instanceUuid === mattingInstanceUuid)) {
+    if (!mattingInstanceUuid) {
       setMattingInstanceUuid(fallback.instanceUuid)
     }
-  }, [
-    chenyuInstances,
-    mattingEnabled,
-    mattingInstanceUuid,
-    runningInstances,
-    setMattingInstanceUuid,
-  ])
+  }, [chenyuInstances, mattingEnabled, mattingInstanceUuid, setMattingInstanceUuid])
 
   useEffect(() => {
     if (!requiresPromptGeneration || promptSkillOptions.length === 0) {
-      if (requiresPromptGeneration && promptSkillOptions.length === 0) {
-        setPromptSkillId('')
-      }
       return
     }
-    if (!promptSkillOptions.some((item) => item.key === promptSkillId)) {
+    if (!promptSkillId) {
       setPromptSkillId(promptSkillOptions[0]?.key ?? '')
     }
   }, [promptSkillId, promptSkillOptions, requiresPromptGeneration, setPromptSkillId])
@@ -1468,21 +1475,21 @@ export function FullTaskPage({
 
   useEffect(() => {
     const firstPlatform = platforms[0]
-    if (firstPlatform && !platforms.some((item) => item.key === titlePlatform)) {
+    if (firstPlatform && !titlePlatform) {
       setTitlePlatform(firstPlatform.key)
     }
   }, [platforms, setTitlePlatform, titlePlatform])
 
   useEffect(() => {
     const firstLanguage = languages[0]
-    if (firstLanguage && !languages.some((item) => item.key === titleLanguage)) {
+    if (firstLanguage && !titleLanguage) {
       setTitleLanguage(firstLanguage.key)
     }
   }, [languages, setTitleLanguage, titleLanguage])
 
   useEffect(() => {
     const firstTitleModel = titleModels[0]
-    if (firstTitleModel && !titleModels.some((item) => item.key === titleModel)) {
+    if (firstTitleModel && !titleModel) {
       setTitleModel(firstTitleModel.key)
     }
   }, [setTitleModel, titleModel, titleModels])
@@ -1491,7 +1498,7 @@ export function FullTaskPage({
     if (detectionModelOptions.length === 0) {
       return
     }
-    if (!detectionModel || !detectionModelOptions.includes(detectionModel)) {
+    if (!detectionModel) {
       setDetectionModel(detectionConfig?.model ?? detectionModelOptions[0] ?? 'qwen3.6-flash')
     }
   }, [detectionConfig, detectionModel, detectionModelOptions, setDetectionModel])
@@ -1507,10 +1514,7 @@ export function FullTaskPage({
             version: detectionConfig.skillVersion,
           })
         : ''
-    if (
-      !detectionSkillKey ||
-      !detectionSkillOptions.some((item) => item.key === detectionSkillKey)
-    ) {
+    if (!detectionSkillKey) {
       setDetectionSkillKey(
         detectionSkillOptions.some((item) => item.key === configSkillKey)
           ? configSkillKey
@@ -1660,6 +1664,7 @@ export function FullTaskPage({
     const selected = await chooseTemplatesMutation.run()
     if (selected?.ok) {
       setTemplatePaths(selected.data.paths)
+      setAvailablePsdTemplatePaths((current) => [...new Set([...current, ...selected.data.paths])])
     }
   }
 
@@ -1806,7 +1811,68 @@ export function FullTaskPage({
       setError(null)
       setExecutionPlanName('')
       setMessage(`已保存执行方案：${result.plan.name}`)
+    } else if (result.reason === 'invalid-storage') {
+      setError(result.message ?? '执行方案数据无效，无法保存。')
     }
+  }
+
+  function overwriteSelectedExecutionPlan() {
+    if (!selectedExecutionPlan) {
+      return
+    }
+    const config = currentExecutionPlanConfig()
+    const stableIssues = validateExecutionPlanConfig(config)
+    if (stableIssues.length > 0) {
+      setError(`执行方案只能保存完整的稳定配置：${stableIssues[0]?.message ?? '请补齐配置'}`)
+      return
+    }
+    const result = overwriteExecutionPlan(selectedExecutionPlan.id, config)
+    if (result.ok) {
+      setError(null)
+      setMessage(`已覆盖执行方案：${selectedExecutionPlan.name}`)
+    } else {
+      setError(result.message ?? '执行方案不存在，请重新选择。')
+    }
+  }
+
+  function renameSelectedExecutionPlan() {
+    if (!selectedExecutionPlan || !executionPlanName.trim()) {
+      return
+    }
+    const result = renameExecutionPlan(selectedExecutionPlan.id, executionPlanName)
+    if (result.ok) {
+      setError(null)
+      setExecutionPlanName('')
+      setMessage(`已重命名执行方案：${executionPlanName.trim()}`)
+    } else {
+      setError(result.message ?? '执行方案不存在，请重新选择。')
+    }
+  }
+
+  function confirmDeleteSelectedExecutionPlan() {
+    if (!selectedExecutionPlan) {
+      return
+    }
+    const deletedName = selectedExecutionPlan.name
+    const result = deleteExecutionPlan(selectedExecutionPlan.id)
+    if (result.ok) {
+      setDeleteConfirmationOpen(false)
+      setError(null)
+      setMessage(`已删除执行方案：${deletedName}；当前页面草稿已保留。`)
+    } else {
+      setError(result.message ?? '执行方案不存在，请重新选择。')
+    }
+  }
+
+  function requestDeleteSelectedExecutionPlan() {
+    if (!selectedExecutionPlan) {
+      return
+    }
+    if (selectedExecutionPlan.id === activeExecutionPlanId) {
+      setDeleteConfirmationOpen(true)
+      return
+    }
+    confirmDeleteSelectedExecutionPlan()
   }
 
   function applySelectedExecutionPlan() {
@@ -1819,7 +1885,15 @@ export function FullTaskPage({
     applyPipelineSourceState(application.sourceMode, application.sourceDrafts)
     setDetectionConfig(application.detectionConfig)
     setSelectedPipelineStage('source')
-    setMessage(`已应用执行方案：${selectedExecutionPlan.name}`)
+    const staleReferences = validateExecutionPlanReferences(
+      selectedExecutionPlan.config,
+      executionPlanReferenceOptions,
+    )
+    setMessage(
+      staleReferences.length
+        ? `已应用执行方案：${selectedExecutionPlan.name}；发现 ${staleReferences.length} 个失效资源，请按阶段重新配置。`
+        : `已应用执行方案：${selectedExecutionPlan.name}`,
+    )
   }
 
   function buildConfig(): PipelineRunConfig {
@@ -1949,7 +2023,7 @@ export function FullTaskPage({
     <div className="space-y-5">
       <div className="space-y-5">
         <PipelineStatusAlerts
-          error={error}
+          error={executionPlanStorageError ?? error}
           showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
         />
 
@@ -2007,6 +2081,39 @@ export function FullTaskPage({
                     <Check className="mr-2 h-4 w-4" />
                     应用执行方案
                   </Button>
+                  <div className="flex flex-wrap gap-2 lg:col-span-4">
+                    <Button
+                      disabled={optionsLoading || !selectedExecutionPlan}
+                      onClick={overwriteSelectedExecutionPlan}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Save className="mr-2 h-4 w-4" />
+                      覆盖保存
+                    </Button>
+                    <Button
+                      disabled={
+                        optionsLoading || !selectedExecutionPlan || !executionPlanName.trim()
+                      }
+                      onClick={renameSelectedExecutionPlan}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Pencil className="mr-2 h-4 w-4" />
+                      重命名
+                    </Button>
+                    <Button
+                      aria-label="删除执行方案"
+                      disabled={optionsLoading || !selectedExecutionPlan}
+                      onClick={requestDeleteSelectedExecutionPlan}
+                      title="删除执行方案"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      删除
+                    </Button>
+                  </div>
                 </div>
                 <p className="mt-2 text-xs text-muted-foreground">
                   已保存 {executionPlans.length}/{MAX_EXECUTION_PLANS} 套执行方案
@@ -2019,6 +2126,34 @@ export function FullTaskPage({
                     ? `当前已应用：${activeExecutionPlan.name}`
                     : '当前尚未应用执行方案'}
                 </p>
+                {executionPlanStorageError ? (
+                  <Button
+                    className="mt-3"
+                    onClick={clearInvalidExecutionPlanStorage}
+                    type="button"
+                    variant="destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    清除损坏方案数据
+                  </Button>
+                ) : null}
+                <AlertDialog onOpenChange={setDeleteConfirmationOpen} open={deleteConfirmationOpen}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>删除当前执行方案</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        删除“{selectedExecutionPlan?.name ?? ''}
+                        ”后不会自动应用其他方案，当前页面草稿会完整保留。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction onClick={confirmDeleteSelectedExecutionPlan}>
+                        确认删除
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
               </section>
             ) : null}
             {!progress ? (

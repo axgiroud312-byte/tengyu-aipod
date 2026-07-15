@@ -10,6 +10,7 @@ import {
   test,
 } from '@playwright/test'
 import { openSqliteDatabase } from '../src/main/lib/sqlite'
+import type { PipelineExecutionPlanDocument } from '../src/renderer/src/features/pipeline/pipeline-execution-plans'
 
 type MockState = {
   bailianCalls: number
@@ -981,6 +982,126 @@ test.describe('pipeline comfyui real probe', () => {
     ).toBeVisible()
     await fieldTextbox(page, '方案名称').fill('第六套方案')
     await expect(page.getByRole('button', { name: '保存执行方案' })).toBeDisabled()
+
+    await fieldCombobox(page, '执行方案').click()
+    await page.getByRole('option', { name: '标准生产', exact: true }).click()
+    const overwriteDetectionSwitch = page.getByRole('switch', { name: '启用侵权检测' })
+    if (!(await overwriteDetectionSwitch.isChecked())) {
+      await overwriteDetectionSwitch.click()
+    }
+    await page.getByRole('button', { name: '覆盖保存' }).click()
+    await expect(page.getByText('已覆盖执行方案：标准生产').first()).toBeVisible()
+    await expect(page.getByText(/已保存 5\/5 套执行方案/)).toBeVisible()
+    await overwriteDetectionSwitch.click()
+    await page.getByRole('button', { name: '应用执行方案' }).click()
+    await expect(overwriteDetectionSwitch).toBeChecked()
+
+    await fieldTextbox(page, '方案名称').fill('标准生产重命名')
+    await page.getByRole('button', { name: '重命名' }).click()
+    await expect(fieldCombobox(page, '执行方案')).toContainText('标准生产重命名')
+    await expect(page.getByText('当前已应用：标准生产重命名')).toBeVisible()
+
+    await fieldTextbox(page, '任务名').fill('删除时保留的任务')
+    await fieldTextbox(page, '印花货号').fill('KEEP-DRAFT')
+    await fieldTextbox(page, '采集文件夹').fill('C:\\source\\keep-draft')
+    await fieldCombobox(page, '执行方案').click()
+    await page.getByRole('option', { name: '待选方案' }).click()
+    await page.getByRole('button', { name: '删除执行方案' }).click()
+    await expect(page.getByRole('alertdialog', { name: '删除当前执行方案' })).toHaveCount(0)
+    await expect(page.getByText('当前已应用：标准生产重命名')).toBeVisible()
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('删除时保留的任务')
+
+    await fieldCombobox(page, '执行方案').click()
+    await page.getByRole('option', { name: '标准生产重命名' }).click()
+    await page.getByRole('button', { name: '删除执行方案' }).click()
+    const deleteDialog = page.getByRole('alertdialog', { name: '删除当前执行方案' })
+    await expect(deleteDialog).toBeVisible()
+    await expect(deleteDialog).toContainText('当前页面草稿会完整保留')
+    await deleteDialog.getByRole('button', { name: '取消' }).click()
+    await expect(page.getByText('当前已应用：标准生产重命名')).toBeVisible()
+    await page.getByRole('button', { name: '删除执行方案' }).click()
+    await deleteDialog.getByRole('button', { name: '确认删除' }).click()
+    await expect(page.getByText('当前尚未应用执行方案')).toBeVisible()
+    await expect(fieldTextbox(page, '任务名')).toHaveValue('删除时保留的任务')
+    await expect(fieldTextbox(page, '印花货号')).toHaveValue('KEEP-DRAFT')
+    await expect(fieldTextbox(page, '采集文件夹')).toHaveValue('C:\\source\\keep-draft')
+
+    const recoverableDocument = await page.evaluate(() =>
+      window.localStorage.getItem('tengyu-aipod:pipeline-execution-plans'),
+    )
+    expect(recoverableDocument).toBeTruthy()
+    const invalidStorageCases = [
+      {
+        raw: '{broken',
+        message: '执行方案数据已损坏，无法解析。请删除损坏数据后重新保存方案。',
+      },
+      {
+        raw: JSON.stringify({ schema_version: 2, plans: [] }),
+        message: '执行方案数据版本 2 不受支持，请升级 Workbench 或删除后重新保存。',
+      },
+      {
+        raw: JSON.stringify({ schema_version: 1, plans: [{ id: 'broken' }] }),
+        message: '执行方案数据结构无效，请删除损坏数据后重新保存方案。',
+      },
+    ]
+    for (const invalidStorage of invalidStorageCases) {
+      await page.evaluate((value) => {
+        window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans', value)
+      }, invalidStorage.raw)
+      await page.reload()
+      await expect(page.getByText(invalidStorage.message)).toBeVisible()
+      await expect(page.getByRole('button', { name: '保存执行方案' })).toBeDisabled()
+    }
+    await page.getByRole('button', { name: '清除损坏方案数据' }).click()
+    await expect(page.getByText(invalidStorageCases[2]?.message ?? '')).toHaveCount(0)
+    await expect(page.getByText('已保存 0/5 套执行方案')).toBeVisible()
+
+    await page.evaluate((rawDocument) => {
+      const document = JSON.parse(rawDocument ?? '') as PipelineExecutionPlanDocument
+      const plan = document.plans[0]
+      if (!plan) {
+        throw new Error('Expected a saved execution plan')
+      }
+      plan.id = 'stale-plan'
+      plan.name = '失效引用方案'
+      plan.config.sourceMode = 'img2img'
+      plan.config.source.img2imgProvider = 'comfyui-chenyu'
+      plan.config.source.img2imgComfyuiPromptMode = 'workflow'
+      plan.config.source.img2imgComfyuiWorkflowId = 'wf-removed'
+      plan.config.source.img2imgComfyuiInstanceUuid = 'machine-removed'
+      plan.config.stages = { matting: true, detection: true, photoshop: true, title: true }
+      plan.config.matting = { workflowId: 'wf-matting-removed', instanceUuid: 'machine-removed' }
+      plan.config.detection.model = 'detection-model-removed'
+      plan.config.detection.skillKey = 'detection-skill-removed@@1.0.0'
+      plan.config.photoshop.templatePaths = ['C:\\mockups\\removed.psd']
+      plan.config.title.model = 'title-model-removed'
+      document.plans = [plan]
+      window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans', JSON.stringify(document))
+      window.localStorage.setItem('tengyu-aipod:pipeline-execution-plans:last-used', 'stale-plan')
+    }, recoverableDocument)
+    await page.reload()
+    await expect(fieldCombobox(page, '执行方案')).toContainText('失效引用方案')
+    await page.getByRole('button', { name: '应用执行方案' }).click()
+    await expect(page.getByText(/发现 8 个失效资源/).first()).toBeVisible()
+    await expect(page.getByText('图生图工作流 wf-removed 已不可用，请重新选择。')).toBeVisible()
+    await expect(
+      page.getByText('图生图运行云机 machine-removed 已不可用，请重新选择。'),
+    ).toBeVisible()
+    await fieldCombobox(page, '生图方式').click()
+    await page.getByRole('option', { name: 'Grsai' }).click()
+    await expect(page.getByText(/图生图工作流 wf-removed 已不可用/)).toHaveCount(0)
+    await expect(page.getByText(/图生图运行云机 machine-removed 已不可用/)).toHaveCount(0)
+
+    await page.getByRole('button', { name: '编辑抠图' }).click()
+    await expect(
+      page.getByText('抠图工作流 wf-matting-removed 已不可用，请重新选择。'),
+    ).toBeVisible()
+    await expect(
+      page.getByText('抠图运行云机 machine-removed 已不可用，请重新选择。'),
+    ).toBeVisible()
+    await page.getByRole('switch', { name: '启用抠图' }).click()
+    await expect(page.getByText(/抠图工作流 wf-matting-removed 已不可用/)).toHaveCount(0)
+    await expect(page.getByText(/抠图运行云机 machine-removed 已不可用/)).toHaveCount(0)
   })
 
   test('runs txt2img and img2img comfyui complete tasks through electron IPC', async () => {
