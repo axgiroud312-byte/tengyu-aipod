@@ -27,6 +27,7 @@ import {
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
 import { useIpcMutation } from '@/lib/use-ipc'
+import { isPipelineRunConfig } from '@tengyu-aipod/shared'
 import type {
   PipelinePrintMode,
   PipelineProgress,
@@ -168,25 +169,7 @@ function parsePipelineStats(value: string): PipelineRunStats {
 function parsePipelineRunConfig(value: string): PipelineRunConfig | null {
   try {
     const parsed = JSON.parse(value) as unknown
-    if (!parsed || typeof parsed !== 'object') {
-      return null
-    }
-    const record = parsed as Record<string, unknown>
-    if (
-      !record.source ||
-      typeof record.source !== 'object' ||
-      !record.matting ||
-      typeof record.matting !== 'object' ||
-      !record.detection ||
-      typeof record.detection !== 'object' ||
-      !record.photoshop ||
-      typeof record.photoshop !== 'object' ||
-      !record.title ||
-      typeof record.title !== 'object'
-    ) {
-      return null
-    }
-    return parsed as PipelineRunConfig
+    return isPipelineRunConfig(parsed) ? parsed : null
   } catch {
     return null
   }
