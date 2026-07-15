@@ -63,6 +63,68 @@ describe('generateJsx', () => {
     expect(jsx).not.toContain('JSON.stringify(result)')
   })
 
+  it('renders smart object editing with configured inner image scaling', () => {
+    const jsx = generateJsx(
+      createJob({
+        smart_object_replace_mode: 'editSmartObject',
+        so_replacements: [
+          {
+            layer_path: 'mockup/智能对象 1',
+            input_image: 'C:\\prints\\sku-1.png',
+            inner_layer_name: 'PRINT_PLACEHOLDER',
+            inner_fit_mode: 'fill',
+          },
+        ],
+      }),
+    )
+
+    expect(jsx).toContain("stringIDToTypeID('placedLayerEditContents')")
+    expect(jsx).toContain("charIDToTypeID('Plc ')")
+    expect(jsx).toContain('function replaceArtworkInsideSmartObject(soDoc, replacement)')
+    expect(jsx).toContain('function fitLayerToBounds(layer, targetBounds, mode)')
+    expect(jsx).toContain('"smart_object_replace_mode":"editSmartObject"')
+    expect(jsx).toContain('"inner_layer_name":"PRINT_PLACEHOLDER"')
+    expect(jsx).toContain('"inner_fit_mode":"fill"')
+  })
+
+  it('defaults smart object inner scaling to fill', () => {
+    const jsx = generateJsx(
+      createJob({
+        smart_object_replace_mode: 'editSmartObject',
+        so_replacements: [
+          {
+            layer_path: 'mockup/智能对象 1',
+            input_image: 'C:\\prints\\sku-1.png',
+          },
+        ],
+      }),
+    )
+
+    expect(jsx).toContain("replacement.inner_fit_mode || 'fill'")
+  })
+
+  it('replaces the previously generated inner artwork layer before placing the next image', () => {
+    const jsx = generateJsx(
+      createJob({
+        smart_object_replace_mode: 'editSmartObject',
+        so_replacements: [
+          {
+            layer_path: 'mockup/智能对象 1',
+            input_image: 'C:\\prints\\sku-1.png',
+          },
+        ],
+      }),
+    )
+
+    expect(jsx).toContain("var GENERATED_ARTWORK_LAYER_NAME = '__TENGYU_ARTWORK__';")
+    expect(jsx).toContain('function removeGeneratedArtwork(container)')
+    expect(jsx).toContain('removeGeneratedArtwork(soDoc);')
+    expect(jsx).toContain('placedLayer.name = GENERATED_ARTWORK_LAYER_NAME;')
+    expect(jsx.indexOf('removeGeneratedArtwork(soDoc);')).toBeLessThan(
+      jsx.indexOf('var placedLayer = placeImage(replacement.input_image);'),
+    )
+  })
+
   it('rejects mismatched crop and output counts before generating JSX', () => {
     expect(() =>
       generateJsx(
@@ -108,6 +170,44 @@ describe('generateTemplateBatchJsx', () => {
     expect(jsx).toContain('cancelRequested()')
     expect(jsx).toContain('writeResult(result)')
     expect(jsx).toContain('SaveOptions.DONOTSAVECHANGES')
+  })
+
+  it('prefers replacement mode over group and config modes and logs the selected mode', () => {
+    const jsx = generateTemplateBatchJsx({
+      task_id: 'task-1',
+      mockup_path: 'C:\\templates\\mockup.psd',
+      template_name: 'mockup',
+      smart_object_replace_mode: 'replaceContents',
+      result_file_path: 'C:\\tmp\\result.json',
+      log_file_path: 'C:\\tmp\\photoshop-task.log',
+      cancel_file_path: 'C:\\tmp\\cancel.flag',
+      groups: [
+        {
+          group_index: 0,
+          sku_folder: 'sku-1',
+          smart_object_replace_mode: 'editSmartObject',
+          so_replacements: [
+            {
+              layer_path: 'SO 1',
+              input_image: 'C:\\prints\\sku-1.png',
+              replace_mode: 'replaceContents',
+            },
+          ],
+          clip_areas: [{ x: 0, y: 0, w: 500, h: 500, is_full: true }],
+          output_paths: ['C:\\outputs\\sku-1\\mockup\\01.jpg'],
+          format: 'jpg',
+          jpg_quality: 10,
+        },
+      ],
+    })
+
+    expect(jsx).toContain(
+      "replacement.replace_mode || group.smart_object_replace_mode || CONFIG.smart_object_replace_mode || 'replaceContents'",
+    )
+    expect(jsx).toContain("stage: 'so_edit_open'")
+    expect(jsx).toContain("stage: 'so_inner_place'")
+    expect(jsx).toContain("stage: 'so_edit_save'")
+    expect(jsx).toContain('replace_mode: mode')
   })
 })
 

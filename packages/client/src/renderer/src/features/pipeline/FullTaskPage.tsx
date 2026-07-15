@@ -736,6 +736,12 @@ export function FullTaskPage() {
   const [replaceRange, setReplaceRange] = useFullTaskSessionState<
     'auto' | 'topmost' | 'top' | 'all'
   >('replaceRange', 'topmost')
+  const [smartObjectReplaceMode, setSmartObjectReplaceMode] = useFullTaskSessionState<
+    'replaceContents' | 'editSmartObject'
+  >('smartObjectReplaceMode', 'replaceContents')
+  const [smartObjectInnerFitMode, setSmartObjectInnerFitMode] = useFullTaskSessionState<
+    'fit' | 'fill'
+  >('smartObjectInnerFitMode', 'fill')
   const [clipMode, setClipMode] = useFullTaskSessionState<'auto' | 'guides' | 'none'>(
     'clipMode',
     'auto',
@@ -1735,6 +1741,8 @@ export function FullTaskPage() {
         templates: templatePaths,
         ...(nonEmpty(outputRoot) ? { outputRoot: outputRoot.trim() } : {}),
         replaceRange,
+        smartObjectReplaceMode,
+        smartObjectInnerFitMode,
         format,
         clipMode,
         skipCompleted,
@@ -2042,7 +2050,7 @@ export function FullTaskPage() {
                         </div>
                       ) : null}
                     </div>
-                    <div className="grid gap-4 lg:grid-cols-4">
+                    <div className="grid gap-4 lg:grid-cols-5">
                       <SelectField
                         label="提示词 Skill"
                         onValueChange={setPromptSkillId}
@@ -2669,7 +2677,7 @@ export function FullTaskPage() {
                       </label>
                     </div>
 
-                    <div className="grid gap-4 lg:grid-cols-4">
+                    <div className="grid gap-4 lg:grid-cols-3">
                       <SelectField
                         label="替换范围"
                         onValueChange={(value) =>
@@ -2682,6 +2690,28 @@ export function FullTaskPage() {
                           { key: 'all', label: '全部智能对象' },
                         ]}
                         value={replaceRange}
+                      />
+                      <SelectField
+                        label="智能对象替换方式"
+                        onValueChange={(value) =>
+                          setSmartObjectReplaceMode(value as 'replaceContents' | 'editSmartObject')
+                        }
+                        options={[
+                          { key: 'replaceContents', label: '直接替换内容（旧模板）' },
+                          { key: 'editSmartObject', label: '进入内部替换（链接模板）' },
+                        ]}
+                        value={smartObjectReplaceMode}
+                      />
+                      <SelectField
+                        label="内部缩放方式"
+                        onValueChange={(value) =>
+                          setSmartObjectInnerFitMode(value as 'fit' | 'fill')
+                        }
+                        options={[
+                          { key: 'fill', label: '铺满（fill）' },
+                          { key: 'fit', label: '完整显示（fit）' },
+                        ]}
+                        value={smartObjectInnerFitMode}
                       />
                       <SelectField
                         label="裁切模式"

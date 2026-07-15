@@ -1,6 +1,11 @@
 import { writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
-import { AppErrorClass, type PhotoshopJob, type PhotoshopJsxJobFile } from '@tengyu-aipod/shared'
+import {
+  AppErrorClass,
+  type PhotoshopJob,
+  type PhotoshopJsxJobFile,
+  type PhotoshopSmartObjectReplaceMode,
+} from '@tengyu-aipod/shared'
 import { type TempFileManager, tempFileManager } from '../lib/temp-file-manager'
 
 type TextWriter = (path: string, data: string, encoding: BufferEncoding) => Promise<void>
@@ -13,6 +18,7 @@ interface WritePhotoshopJobJsxOptions {
 export interface PhotoshopTemplateBatchJsxGroup {
   group_index: number
   sku_folder: string
+  smart_object_replace_mode?: PhotoshopSmartObjectReplaceMode
   so_replacements: PhotoshopJob['so_replacements']
   clip_areas: PhotoshopJob['clip_areas']
   output_paths: string[]
@@ -24,6 +30,7 @@ export interface PhotoshopTemplateBatchJsxInput {
   task_id: string
   mockup_path: string
   template_name: string
+  smart_object_replace_mode?: PhotoshopSmartObjectReplaceMode
   groups: PhotoshopTemplateBatchJsxGroup[]
   result_file_path: string
   log_file_path: string
@@ -101,6 +108,7 @@ export function generateJsx(job: PhotoshopJob): string {
 
   return `var CONFIG = ${jsonString({
     mockup_path: job.mockup_path,
+    smart_object_replace_mode: job.smart_object_replace_mode,
     so_replacements: job.so_replacements,
     clip_areas: job.clip_areas,
     output_paths: job.output_paths,
@@ -108,6 +116,7 @@ export function generateJsx(job: PhotoshopJob): string {
     jpg_quality: job.jpg_quality,
   })};
 var RESULT_FILE_PATH = ${jsonString(job.result_file_path)};
+var GENERATED_ARTWORK_LAYER_NAME = '__TENGYU_ARTWORK__';
 
 function escapeJsonString(value) {
   return String(value)
@@ -204,7 +213,116 @@ function findLayerByPath(container, layerPath) {
   return null;
 }
 
-function replaceSmartObject(doc, replacement, result) {
+function findLayerByNameRecursive(container, layerName) {
+  for (var i = 0; i < container.artLayers.length; i++) {
+    if (container.artLayers[i].name === layerName) {
+      return container.artLayers[i];
+    }
+  }
+  for (var j = 0; j < container.layerSets.length; j++) {
+    var layerSet = container.layerSets[j];
+    if (layerSet.name === layerName) {
+      return layerSet;
+    }
+    var nested = findLayerByNameRecursive(layerSet, layerName);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+}
+
+function removeGeneratedArtwork(container) {
+  var removed = 0;
+  for (var i = container.artLayers.length - 1; i >= 0; i--) {
+    if (container.artLayers[i].name === GENERATED_ARTWORK_LAYER_NAME) {
+      container.artLayers[i].remove();
+      removed++;
+    }
+  }
+  for (var j = container.layerSets.length - 1; j >= 0; j--) {
+    removed += removeGeneratedArtwork(container.layerSets[j]);
+  }
+  return removed;
+}
+
+function getLayerBoundsPx(layer) {
+  var bounds = layer.bounds;
+  var left = Number(bounds[0].value);
+  var top = Number(bounds[1].value);
+  var right = Number(bounds[2].value);
+  var bottom = Number(bounds[3].value);
+  return {
+    left: left,
+    top: top,
+    right: right,
+    bottom: bottom,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
+function getDocumentBoundsPx(doc) {
+  return {
+    left: 0,
+    top: 0,
+    right: Number(doc.width.value),
+    bottom: Number(doc.height.value),
+    width: Number(doc.width.value),
+    height: Number(doc.height.value)
+  };
+}
+
+function placeImage(filePath) {
+  var inputFile = new File(filePath);
+  if (!inputFile.exists) {
+    throw new Error('Smart object input image not found: ' + filePath);
+  }
+  var desc = new ActionDescriptor();
+  desc.putPath(charIDToTypeID('null'), inputFile);
+  executeAction(charIDToTypeID('Plc '), desc, DialogModes.NO);
+  return app.activeDocument.activeLayer;
+}
+
+function fitLayerToBounds(layer, targetBounds, mode) {
+  var layerBounds = getLayerBoundsPx(layer);
+  if (layerBounds.width <= 0 || layerBounds.height <= 0) {
+    throw new Error('Placed artwork has empty bounds');
+  }
+  if (targetBounds.width <= 0 || targetBounds.height <= 0) {
+    throw new Error('Smart object target has empty bounds');
+  }
+  var scaleX = targetBounds.width / layerBounds.width;
+  var scaleY = targetBounds.height / layerBounds.height;
+  var scale = mode === 'fill' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+  layer.resize(scale * 100, scale * 100, AnchorPosition.MIDDLECENTER);
+
+  var resized = getLayerBoundsPx(layer);
+  var layerCenterX = resized.left + resized.width / 2;
+  var layerCenterY = resized.top + resized.height / 2;
+  var targetCenterX = targetBounds.left + targetBounds.width / 2;
+  var targetCenterY = targetBounds.top + targetBounds.height / 2;
+  layer.translate(targetCenterX - layerCenterX, targetCenterY - layerCenterY);
+}
+
+function replaceArtworkInsideSmartObject(soDoc, replacement) {
+  removeGeneratedArtwork(soDoc);
+  var targetLayer = null;
+  if (replacement.inner_layer_path) {
+    targetLayer = findLayerByPath(soDoc, replacement.inner_layer_path);
+  } else if (replacement.inner_layer_name) {
+    targetLayer = findLayerByNameRecursive(soDoc, replacement.inner_layer_name);
+  }
+  var targetBounds = targetLayer ? getLayerBoundsPx(targetLayer) : getDocumentBoundsPx(soDoc);
+  if (targetLayer) {
+    targetLayer.visible = false;
+  }
+  var placedLayer = placeImage(replacement.input_image);
+  placedLayer.name = GENERATED_ARTWORK_LAYER_NAME;
+  fitLayerToBounds(placedLayer, targetBounds, replacement.inner_fit_mode || 'fill');
+}
+
+function replaceSmartObjectContents(doc, replacement, result, mode) {
   var layer = findLayerByPath(doc, replacement.layer_path);
   if (!layer) {
     result.stages.push({ stage: 'find_layer', ok: false, layer: replacement.layer_path });
@@ -219,8 +337,51 @@ function replaceSmartObject(doc, replacement, result) {
     stage: 'replace_so',
     ok: true,
     layer: replacement.layer_path,
-    input: replacement.input_image
+    input: replacement.input_image,
+    replace_mode: mode
   });
+}
+
+function editSmartObjectContents(doc, replacement, result, mode) {
+  var layer = findLayerByPath(doc, replacement.layer_path);
+  if (!layer) {
+    result.stages.push({ stage: 'find_layer', ok: false, layer: replacement.layer_path });
+    throw new Error('Smart object layer not found: ' + replacement.layer_path);
+  }
+
+  doc.activeLayer = layer;
+  var desc = new ActionDescriptor();
+  executeAction(stringIDToTypeID('placedLayerEditContents'), desc, DialogModes.NO);
+  var soDoc = app.activeDocument;
+  if (!soDoc || soDoc === doc) {
+    throw new Error('Photoshop did not open smart object contents: ' + replacement.layer_path);
+  }
+
+  try {
+    replaceArtworkInsideSmartObject(soDoc, replacement);
+    soDoc.save();
+    result.stages.push({
+      stage: 'replace_so',
+      ok: true,
+      layer: replacement.layer_path,
+      input: replacement.input_image,
+      replace_mode: mode
+    });
+  } finally {
+    try {
+      soDoc.close(SaveOptions.DONOTSAVECHANGES);
+    } catch (closeSmartObjectError) {}
+    app.activeDocument = doc;
+  }
+}
+
+function replaceSmartObject(doc, replacement, result) {
+  var mode = replacement.replace_mode || CONFIG.smart_object_replace_mode || 'replaceContents';
+  if (mode === 'editSmartObject') {
+    editSmartObjectContents(doc, replacement, result, mode);
+    return;
+  }
+  replaceSmartObjectContents(doc, replacement, result, mode);
 }
 
 function saveAs(doc, outputPath, format, jpgQuality) {
@@ -316,6 +477,9 @@ function validateTemplateBatch(input: PhotoshopTemplateBatchJsxInput): void {
       task_id: input.task_id,
       group_index: group.group_index,
       mockup_path: input.mockup_path,
+      ...(group.smart_object_replace_mode
+        ? { smart_object_replace_mode: group.smart_object_replace_mode }
+        : {}),
       so_replacements: group.so_replacements,
       clip_areas: group.clip_areas,
       output_paths: group.output_paths,
@@ -333,6 +497,7 @@ export function generateTemplateBatchJsx(input: PhotoshopTemplateBatchJsxInput):
     task_id: input.task_id,
     mockup_path: input.mockup_path,
     template_name: input.template_name,
+    smart_object_replace_mode: input.smart_object_replace_mode,
     groups: input.groups,
     result_file_path: input.result_file_path,
     log_file_path: input.log_file_path,
@@ -341,6 +506,7 @@ export function generateTemplateBatchJsx(input: PhotoshopTemplateBatchJsxInput):
 var RESULT_FILE_PATH = ${jsonString(input.result_file_path)};
 var LOG_FILE_PATH = ${jsonString(input.log_file_path)};
 var CANCEL_FILE_PATH = ${jsonString(input.cancel_file_path)};
+var GENERATED_ARTWORK_LAYER_NAME = '__TENGYU_ARTWORK__';
 
 function escapeJsonString(value) {
   return String(value)
@@ -453,16 +619,130 @@ function findLayerByPath(container, layerPath) {
   return null;
 }
 
-function replaceSmartObject(doc, group, replacement) {
+function findLayerByNameRecursive(container, layerName) {
+  for (var i = 0; i < container.artLayers.length; i++) {
+    if (container.artLayers[i].name === layerName) {
+      return container.artLayers[i];
+    }
+  }
+  for (var j = 0; j < container.layerSets.length; j++) {
+    var layerSet = container.layerSets[j];
+    if (layerSet.name === layerName) {
+      return layerSet;
+    }
+    var nested = findLayerByNameRecursive(layerSet, layerName);
+    if (nested) {
+      return nested;
+    }
+  }
+  return null;
+}
+
+function removeGeneratedArtwork(container) {
+  var removed = 0;
+  for (var i = container.artLayers.length - 1; i >= 0; i--) {
+    if (container.artLayers[i].name === GENERATED_ARTWORK_LAYER_NAME) {
+      container.artLayers[i].remove();
+      removed++;
+    }
+  }
+  for (var j = container.layerSets.length - 1; j >= 0; j--) {
+    removed += removeGeneratedArtwork(container.layerSets[j]);
+  }
+  return removed;
+}
+
+function getLayerBoundsPx(layer) {
+  var bounds = layer.bounds;
+  var left = Number(bounds[0].value);
+  var top = Number(bounds[1].value);
+  var right = Number(bounds[2].value);
+  var bottom = Number(bounds[3].value);
+  return {
+    left: left,
+    top: top,
+    right: right,
+    bottom: bottom,
+    width: right - left,
+    height: bottom - top
+  };
+}
+
+function getDocumentBoundsPx(doc) {
+  return {
+    left: 0,
+    top: 0,
+    right: Number(doc.width.value),
+    bottom: Number(doc.height.value),
+    width: Number(doc.width.value),
+    height: Number(doc.height.value)
+  };
+}
+
+function placeImage(filePath) {
+  var inputFile = new File(filePath);
+  if (!inputFile.exists) {
+    throw new Error('Smart object input image not found: ' + filePath);
+  }
+  var desc = new ActionDescriptor();
+  desc.putPath(charIDToTypeID('null'), inputFile);
+  executeAction(charIDToTypeID('Plc '), desc, DialogModes.NO);
+  return app.activeDocument.activeLayer;
+}
+
+function fitLayerToBounds(layer, targetBounds, mode) {
+  var layerBounds = getLayerBoundsPx(layer);
+  if (layerBounds.width <= 0 || layerBounds.height <= 0) {
+    throw new Error('Placed artwork has empty bounds');
+  }
+  if (targetBounds.width <= 0 || targetBounds.height <= 0) {
+    throw new Error('Smart object target has empty bounds');
+  }
+  var scaleX = targetBounds.width / layerBounds.width;
+  var scaleY = targetBounds.height / layerBounds.height;
+  var scale = mode === 'fill' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+  layer.resize(scale * 100, scale * 100, AnchorPosition.MIDDLECENTER);
+
+  var resized = getLayerBoundsPx(layer);
+  var layerCenterX = resized.left + resized.width / 2;
+  var layerCenterY = resized.top + resized.height / 2;
+  var targetCenterX = targetBounds.left + targetBounds.width / 2;
+  var targetCenterY = targetBounds.top + targetBounds.height / 2;
+  layer.translate(targetCenterX - layerCenterX, targetCenterY - layerCenterY);
+}
+
+function replaceArtworkInsideSmartObject(soDoc, group, replacement) {
+  removeGeneratedArtwork(soDoc);
+  var targetLayer = null;
+  if (replacement.inner_layer_path) {
+    targetLayer = findLayerByPath(soDoc, replacement.inner_layer_path);
+  } else if (replacement.inner_layer_name) {
+    targetLayer = findLayerByNameRecursive(soDoc, replacement.inner_layer_name);
+  }
+  var targetBounds = targetLayer ? getLayerBoundsPx(targetLayer) : getDocumentBoundsPx(soDoc);
+  if (targetLayer) {
+    targetLayer.visible = false;
+  }
+  var placedLayer = placeImage(replacement.input_image);
+  placedLayer.name = GENERATED_ARTWORK_LAYER_NAME;
+  var fitMode = replacement.inner_fit_mode || 'fill';
+  fitLayerToBounds(placedLayer, targetBounds, fitMode);
   appendLog({
-    level: 'debug',
-    stage: 'so_find',
-    message: '定位智能对象',
+    level: 'info',
+    stage: 'so_inner_place',
+    message: '智能对象内部置入印花',
     group: group.group_index,
     sku_folder: group.sku_folder,
     smart_object: replacement.layer_path,
-    input: replacement.input_image
+    input: replacement.input_image,
+    inner_layer_path: replacement.inner_layer_path || '',
+    inner_layer_name: replacement.inner_layer_name || '',
+    fit_mode: fitMode,
+    replace_mode: 'editSmartObject'
   });
+}
+
+function replaceSmartObjectContents(doc, group, replacement, mode) {
   var layer = findLayerByPath(doc, replacement.layer_path);
   if (!layer) {
     throw new Error('Smart object layer not found: ' + replacement.layer_path);
@@ -481,8 +761,72 @@ function replaceSmartObject(doc, group, replacement) {
     sku_folder: group.sku_folder,
     smart_object: replacement.layer_path,
     input: replacement.input_image,
+    replace_mode: mode,
     duration_ms: new Date().getTime() - startedAt
   });
+}
+
+function editSmartObjectContents(doc, group, replacement) {
+  var layer = findLayerByPath(doc, replacement.layer_path);
+  if (!layer) {
+    throw new Error('Smart object layer not found: ' + replacement.layer_path);
+  }
+
+  doc.activeLayer = layer;
+  appendLog({
+    level: 'info',
+    stage: 'so_edit_open',
+    message: '打开智能对象内容',
+    group: group.group_index,
+    sku_folder: group.sku_folder,
+    smart_object: replacement.layer_path,
+    input: replacement.input_image,
+    replace_mode: 'editSmartObject'
+  });
+  var desc = new ActionDescriptor();
+  executeAction(stringIDToTypeID('placedLayerEditContents'), desc, DialogModes.NO);
+  var soDoc = app.activeDocument;
+  if (!soDoc || soDoc === doc) {
+    throw new Error('Photoshop did not open smart object contents: ' + replacement.layer_path);
+  }
+
+  try {
+    replaceArtworkInsideSmartObject(soDoc, group, replacement);
+    soDoc.save();
+    appendLog({
+      level: 'info',
+      stage: 'so_edit_save',
+      message: '保存智能对象内容',
+      group: group.group_index,
+      sku_folder: group.sku_folder,
+      smart_object: replacement.layer_path,
+      replace_mode: 'editSmartObject'
+    });
+  } finally {
+    try {
+      soDoc.close(SaveOptions.DONOTSAVECHANGES);
+    } catch (closeSmartObjectError) {}
+    app.activeDocument = doc;
+  }
+}
+
+function replaceSmartObject(doc, group, replacement) {
+  var mode = replacement.replace_mode || group.smart_object_replace_mode || CONFIG.smart_object_replace_mode || 'replaceContents';
+  appendLog({
+    level: 'debug',
+    stage: 'so_find',
+    message: '定位智能对象',
+    group: group.group_index,
+    sku_folder: group.sku_folder,
+    smart_object: replacement.layer_path,
+    input: replacement.input_image,
+    replace_mode: mode
+  });
+  if (mode === 'editSmartObject') {
+    editSmartObjectContents(doc, group, replacement);
+    return;
+  }
+  replaceSmartObjectContents(doc, group, replacement, mode);
 }
 
 function saveAs(doc, outputPath, format, jpgQuality) {

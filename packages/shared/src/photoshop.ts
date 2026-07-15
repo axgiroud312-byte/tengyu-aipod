@@ -12,6 +12,8 @@ export type SmartObjectMode = 'single' | 'shared' | 'independent' | 'none'
 export type PhotoshopClipMode = 'none' | 'auto' | 'guides'
 export type PhotoshopOutputLayout = 'template_first' | 'sku_first' | 'sku_flat'
 export type PhotoshopReplaceRange = 'auto' | 'topmost' | 'top' | 'all'
+export type PhotoshopSmartObjectReplaceMode = 'replaceContents' | 'editSmartObject'
+export type PhotoshopInnerFitMode = 'fit' | 'fill'
 
 export type PsdBounds = [number, number, number, number]
 
@@ -83,12 +85,17 @@ export type PhotoshopExportFormat = 'jpg' | 'png'
 export interface PhotoshopSoReplacement {
   layer_path: string
   input_image: string
+  replace_mode?: PhotoshopSmartObjectReplaceMode
+  inner_layer_path?: string
+  inner_layer_name?: string
+  inner_fit_mode?: PhotoshopInnerFitMode
 }
 
 export interface PhotoshopJob {
   task_id: string
   group_index: number
   mockup_path: string
+  smart_object_replace_mode?: PhotoshopSmartObjectReplaceMode
   so_replacements: PhotoshopSoReplacement[]
   clip_mode?: PhotoshopClipMode
   clip_areas: PsdClipArea[]
@@ -122,6 +129,9 @@ export type PhotoshopProgressStage =
   | 'jsx_exec'
   | 'so_find'
   | 'so_replace'
+  | 'so_edit_open'
+  | 'so_inner_place'
+  | 'so_edit_save'
   | 'export_start'
   | 'export_complete'
   | 'output_verify'
@@ -158,6 +168,10 @@ export interface PhotoshopProgressLogEntry {
   sku_folder?: string
   smart_object?: string
   input?: string
+  replace_mode?: PhotoshopSmartObjectReplaceMode
+  inner_layer_path?: string
+  inner_layer_name?: string
+  fit_mode?: PhotoshopInnerFitMode
   attempt?: number
   output_file?: string
   error?: string

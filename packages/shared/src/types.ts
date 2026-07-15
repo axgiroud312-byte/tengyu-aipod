@@ -157,6 +157,8 @@ export interface PipelinePhotoshopConfig {
   templates: string[]
   outputRoot?: string
   replaceRange?: 'auto' | 'topmost' | 'top' | 'all'
+  smartObjectReplaceMode?: 'replaceContents' | 'editSmartObject'
+  smartObjectInnerFitMode?: 'fit' | 'fill'
   format?: 'jpg' | 'png'
   clipMode?: 'none' | 'auto' | 'guides'
   skipCompleted?: boolean

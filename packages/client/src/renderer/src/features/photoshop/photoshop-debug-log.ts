@@ -34,6 +34,12 @@ function photoshopStageLabel(stage: PhotoshopProgressStage) {
       return '定位'
     case 'so_replace':
       return '替换'
+    case 'so_edit_open':
+      return '打开 SO'
+    case 'so_inner_place':
+      return '内部置入'
+    case 'so_edit_save':
+      return '保存 SO'
     case 'export_start':
       return '导出'
     case 'export_complete':
@@ -70,6 +76,17 @@ function photoshopDebugDetailText(entry: PhotoshopProgressLogEntry) {
   }
   if (entry.input) {
     parts.push(`输入=${entry.input}`)
+  }
+  if (entry.replace_mode) {
+    parts.push(`替换方式=${entry.replace_mode}`)
+  }
+  if (entry.inner_layer_path) {
+    parts.push(`内部图层=${entry.inner_layer_path}`)
+  } else if (entry.inner_layer_name) {
+    parts.push(`内部图层=${entry.inner_layer_name}`)
+  }
+  if (entry.fit_mode) {
+    parts.push(`缩放=${entry.fit_mode}`)
   }
   if (entry.output_file) {
     parts.push(`输出=${entry.output_file}`)

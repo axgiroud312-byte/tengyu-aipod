@@ -111,8 +111,12 @@ export async function hashOutputFile(path: string): Promise<string> {
 export function createPhotoshopJobSignature(job: PhotoshopJob): string {
   const replacements = [...job.so_replacements]
     .map((replacement) => ({
+      inner_fit_mode: replacement.inner_fit_mode ?? 'fill',
+      inner_layer_name: replacement.inner_layer_name ?? '',
+      inner_layer_path: replacement.inner_layer_path ?? '',
       input_image: replacement.input_image,
       layer_path: replacement.layer_path,
+      replace_mode: replacement.replace_mode ?? job.smart_object_replace_mode ?? 'replaceContents',
     }))
     .sort((left, right) => {
       const layerCompare = left.layer_path.localeCompare(right.layer_path)
@@ -122,6 +126,7 @@ export function createPhotoshopJobSignature(job: PhotoshopJob): string {
     .update(
       JSON.stringify({
         mockup_path: job.mockup_path,
+        smart_object_replace_mode: job.smart_object_replace_mode ?? 'replaceContents',
         so_replacements: replacements,
         clip_mode: job.clip_mode ?? 'auto',
         format: job.format,
@@ -550,6 +555,9 @@ export class PhotoshopExecutionEngine {
           groups: groups.map((group) => ({
             group_index: group.group_index,
             sku_folder: group.sku_folder,
+            ...(group.job.smart_object_replace_mode
+              ? { smart_object_replace_mode: group.job.smart_object_replace_mode }
+              : {}),
             so_replacements: group.job.so_replacements,
             clip_areas: group.job.clip_areas,
             output_paths: group.job.output_paths,

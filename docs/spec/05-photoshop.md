@@ -1,7 +1,7 @@
 # Spec 05 — PS 套版模块
 
 > Windows-only。通过 COM 接口启动 Photoshop，动态生成 JSX 脚本替换 PSD 智能对象，独立套版默认按单次套版批次 + 货号文件夹输出成品图；完整任务沿用模板批次布局。
-> v1 采用直接替换路径（路径 A），v1.5 加入进入 SO 编辑路径（路径 B）。
+> v1 支持直接替换路径（路径 A）和进入 SO 编辑路径（路径 B）显式切换，默认路径 A 以兼容旧模板。
 
 ## 1. 平台约束
 
@@ -261,11 +261,13 @@ function representativeSoCount(
 | `fit` | 输入图完整显示在 SO 内（可能留白）|
 | `center` | 输入图按原大小居中（不缩放）|
 
-实现：用路径 A 的 `placedLayerReplaceContents` 时，PS 默认行为是按 SO 原变换（一般是 fit）。要精确控制需要路径 B（v1.5）。
+实现：路径 A 使用 `placedLayerReplaceContents` 并沿用 PS 默认行为；路径 B 使用 `placedLayerEditContents` 进入内部，再通过 `Plc ` 置入印花。路径 B 优先使用配置的内部占位层 bounds，否则使用整个 SO 画布。
 
-**v1 限制**：仅 `fit`（PS 默认行为）。`fill` 和 `center` 在 v1.5 路径 B 中实现。
+路径 B 将程序置入层固定命名为 `__TENGYU_ARTWORK__`。每次 Place 前递归删除已有的同名程序层，再置入并重新标记，保证链接 SO 源文件不会随任务组累积印花层；不自动删除未带该标记的模板原始层。
 
-UI 上标注："v1 仅支持 fit 模式，fill/center 在 v1.5 推出"。
+路径 B 支持 `fill`（默认）和 `fit`；`center` 暂未实现。
+
+UI 的智能对象替换方式默认选择“直接替换内容”；300dpi 链接智能对象模板选择“进入内部替换”。内部缩放方式默认 `fill`，可切换为 `fit`。
 
 ### 4.3 裁切模式
 
@@ -398,7 +400,9 @@ function sanitizeTemplateName(psdFilename: string): string {
 }
 ```
 
-## 7. JSX 动态生成（路径 A，v1）
+## 7. JSX 动态生成（路径 A / 路径 B）
+
+实际生成器按 `replacement.replace_mode` → group 默认值 → CONFIG 默认值 → `replaceContents` 的顺序决定替换方式。路径 B 保存并关闭 SO 源文档后再回到主 PSD 导出；运行日志写入 `so_edit_open`、`so_inner_place`、`so_edit_save`。
 
 ```jsx
 // 动态生成的套版 JSX 模板
@@ -720,7 +724,7 @@ CREATE TABLE psd_templates (
                                           input_dir: string,
                                           templates: string[],
                                           replace_range: 'auto' | 'topmost' | 'top' | 'all',
-                                          adapt_mode: 'fill' | 'fit' | 'center',
+                                          smart_object_inner_fit_mode: 'fill' | 'fit', // 默认 fill
                                           format: 'jpg' | 'png',
                                           jpg_quality: number,
                                           clip_mode: 'none' | 'auto' | 'guides',
@@ -760,8 +764,8 @@ CREATE TABLE psd_templates (
 
 | 项 | v1 | v1.5 |
 |---|---|---|
-| SO 替换 | 路径 A（placedLayerReplaceContents）| + 路径 B（placedLayerEditContents + Plc）|
-| 适配模式 | 仅 fit | + fill / center |
+| SO 替换 | 路径 A / 路径 B 显式切换，默认路径 A | 链接源去重优化 |
+| 适配模式 | 路径 B 支持 fill（默认）/ fit | + center |
 | 嵌套 SO | 检测到提示，效果有限 | 递归处理 |
 | 共享 SO | 检测到提示 | 单次替换全部生效 |
 | 任务分组 | 字典序自动 | + 手动拖拽 |
@@ -772,7 +776,7 @@ CREATE TABLE psd_templates (
 详见 [../../references/photoshop/open-source-references.md](../../references/photoshop/open-source-references.md)：
 
 - **xKeNcHii/Mockup-Automation-Script** (102 行) — 路径 A 的极简实现，v1 直接借鉴
-- **joonaspaakko/Batch-Mockup-Smart-Object-Replacement** (1066 行) — 路径 B 的完整实现，v1.5 借鉴
+- **joonaspaakko/Batch-Mockup-Smart-Object-Replacement** (1066 行) — 路径 B 的完整实现参考
 
 不直接 port 代码，但抄关键 Action ID 和算法。
 

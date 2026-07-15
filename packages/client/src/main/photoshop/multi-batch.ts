@@ -6,11 +6,13 @@ import type {
   PhotoshopBatchTemplateResult,
   PhotoshopClipMode,
   PhotoshopExportFormat,
+  PhotoshopInnerFitMode,
   PhotoshopJobResult,
   PhotoshopOutputLayout,
   PhotoshopPrintAsset,
   PhotoshopProgressInfo,
   PhotoshopProgressLogEntry,
+  PhotoshopSmartObjectReplaceMode,
   PhotoshopTaskGroup,
   PsdTemplate,
 } from '@tengyu-aipod/shared'
@@ -28,6 +30,8 @@ export interface PhotoshopBatchConfig {
   taskId: string
   outputRoot: string
   replaceRange?: GroupPhotoshopTasksOptions['replaceRange']
+  smartObjectReplaceMode?: PhotoshopSmartObjectReplaceMode
+  smartObjectInnerFitMode?: PhotoshopInnerFitMode
   format?: PhotoshopExportFormat
   jpgQuality?: number
   clipMode?: PhotoshopClipMode
@@ -165,6 +169,12 @@ export class PhotoshopMultiBatchRunner {
       }
       if (config.replaceRange !== undefined) {
         groupOptions.replaceRange = config.replaceRange
+      }
+      if (config.smartObjectReplaceMode !== undefined) {
+        groupOptions.smartObjectReplaceMode = config.smartObjectReplaceMode
+      }
+      if (config.smartObjectInnerFitMode !== undefined) {
+        groupOptions.smartObjectInnerFitMode = config.smartObjectInnerFitMode
       }
       if (config.format !== undefined) {
         groupOptions.format = config.format

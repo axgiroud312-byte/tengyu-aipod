@@ -782,6 +782,8 @@ export const api = {
       excluded_print_paths?: string[]
       templates: string[]
       replace_range: 'auto' | 'topmost' | 'top' | 'all'
+      smart_object_replace_mode: 'replaceContents' | 'editSmartObject'
+      smart_object_inner_fit_mode: 'fit' | 'fill'
       output_layout: PhotoshopOutputLayout
       format: PhotoshopExportFormat
       clip_mode: PhotoshopClipMode

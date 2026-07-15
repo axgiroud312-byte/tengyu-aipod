@@ -363,8 +363,8 @@
 **PSD 模板扫描**：按 hash 缓存，扫描结果包括智能对象/参考线/裁切区/嵌套关系。
 
 **JSX 实现两条路径**：
-- **路径 A（v1）**：直接 `placedLayerReplaceContents`，简单可靠（xKeNcHii 极简模式）
-- **路径 B（v1.5）**：进入 SO 编辑 + flattenImage + Plc，处理嵌套/共享 SO（joonaspaakko 复杂模式）
+- **路径 A（v1 默认）**：直接 `placedLayerReplaceContents`，简单可靠（xKeNcHii 极简模式）
+- **路径 B（v1 可选）**：进入 SO 编辑 + `Plc `，按内部占位层或画布 bounds 置入印花，适合链接智能对象模板
 
 **v1 检测嵌套 SO 时**：UI 提示"v1 不支持，效果可能不理想"。
 
@@ -372,7 +372,8 @@
 - 印花文件夹路径
 - 模板（多选）
 - 替换范围（最上方/自动/根级/全部）
-- 适配方式（fill/fit/center）
+- 智能对象替换方式（直接替换/进入内部替换）
+- 路径 B 适配方式（fill 默认/fit）
 - 导出格式（JPG/PNG）
 - 裁切模式（none/auto/guides）
 - 跳过已完成、失败重试

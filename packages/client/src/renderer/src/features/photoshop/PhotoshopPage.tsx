@@ -167,6 +167,10 @@ export function PhotoshopPage() {
   const [loadingPrints, setLoadingPrints] = useState(false)
   const [templatePaths, setTemplatePaths] = useState<string[]>([])
   const [replaceRange, setReplaceRange] = useState<'auto' | 'topmost' | 'top' | 'all'>('topmost')
+  const [smartObjectReplaceMode, setSmartObjectReplaceMode] = useState<
+    'replaceContents' | 'editSmartObject'
+  >('replaceContents')
+  const [smartObjectInnerFitMode, setSmartObjectInnerFitMode] = useState<'fit' | 'fill'>('fill')
   const [clipMode, setClipMode] = useState<'auto' | 'guides' | 'none'>('auto')
   const [format, setFormat] = useState<'jpg' | 'png'>('jpg')
   const [maxRetries, setMaxRetries] = useState(1)
@@ -365,6 +369,8 @@ export function PhotoshopPage() {
         excluded_print_paths: excludedPrintPaths,
         templates: templatePaths,
         replace_range: replaceRange,
+        smart_object_replace_mode: smartObjectReplaceMode,
+        smart_object_inner_fit_mode: smartObjectInnerFitMode,
         output_layout: outputLayout,
         format,
         clip_mode: clipMode,
@@ -574,6 +580,32 @@ export function PhotoshopPage() {
                   <option value="auto">自动识别（最上方优先）</option>
                   <option value="top">根级智能对象</option>
                   <option value="all">全部智能对象</option>
+                </select>
+              </label>
+              <label className="space-y-2 text-sm font-medium">
+                <span>智能对象替换方式</span>
+                <select
+                  className="h-10 w-full rounded-md border px-3"
+                  onChange={(event) =>
+                    setSmartObjectReplaceMode(event.target.value as typeof smartObjectReplaceMode)
+                  }
+                  value={smartObjectReplaceMode}
+                >
+                  <option value="replaceContents">直接替换内容，兼容旧模板</option>
+                  <option value="editSmartObject">进入内部替换，适合链接智能对象</option>
+                </select>
+              </label>
+              <label className="space-y-2 text-sm font-medium">
+                <span>内部缩放方式</span>
+                <select
+                  className="h-10 w-full rounded-md border px-3"
+                  onChange={(event) =>
+                    setSmartObjectInnerFitMode(event.target.value as typeof smartObjectInnerFitMode)
+                  }
+                  value={smartObjectInnerFitMode}
+                >
+                  <option value="fill">铺满（fill）</option>
+                  <option value="fit">完整显示（fit）</option>
                 </select>
               </label>
               <label className="space-y-2 text-sm font-medium">

@@ -31,6 +31,10 @@ const runBatchInputSchema = z.object({
   excluded_print_paths: z.array(z.string().min(1)).default([]),
   templates: z.array(z.string().min(1)).min(1),
   replace_range: z.enum(['auto', 'topmost', 'top', 'all']).default('topmost'),
+  smart_object_replace_mode: z
+    .enum(['replaceContents', 'editSmartObject'])
+    .default('replaceContents'),
+  smart_object_inner_fit_mode: z.enum(['fit', 'fill']).default('fill'),
   output_layout: z.enum(['template_first', 'sku_first', 'sku_flat']).default('sku_flat'),
   format: z.enum(['jpg', 'png']).default('jpg'),
   clip_mode: z.enum(['none', 'auto', 'guides']).default('auto'),
@@ -187,6 +191,8 @@ export function registerPhotoshopIpc(): void {
           outputRoot: parsed.data.output_root,
           outputLayout: parsed.data.output_layout,
           replaceRange: parsed.data.replace_range,
+          smartObjectReplaceMode: parsed.data.smart_object_replace_mode,
+          smartObjectInnerFitMode: parsed.data.smart_object_inner_fit_mode,
           format: parsed.data.format,
           clipMode: parsed.data.clip_mode,
           skipCompleted: parsed.data.skip_completed,

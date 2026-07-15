@@ -174,8 +174,23 @@ describe('groupTasks', () => {
       {
         layer_path: 'zndx',
         input_image: 'C:\\素材\\img1.png',
+        replace_mode: 'replaceContents',
+        inner_fit_mode: 'fill',
       },
     ])
+  })
+
+  it('propagates the configured smart object replace mode to each replacement', () => {
+    const groups = groupTasks([{ id: 'img1', file_path: 'C:\\素材\\img1.png' }], createTemplate(), {
+      taskId: 'task-1',
+      outputRoot: 'C:\\Users\\niilo\\Desktop\\新建文件夹',
+      smartObjectReplaceMode: 'editSmartObject',
+      smartObjectInnerFitMode: 'fit',
+    })
+
+    expect(groups[0]?.job.smart_object_replace_mode).toBe('editSmartObject')
+    expect(groups[0]?.job.so_replacements[0]?.replace_mode).toBe('editSmartObject')
+    expect(groups[0]?.job.so_replacements[0]?.inner_fit_mode).toBe('fit')
   })
 
   it('writes single-print sku-first outputs under sku then template', () => {

@@ -1,10 +1,12 @@
 import type {
   PhotoshopClipMode,
   PhotoshopExportFormat,
+  PhotoshopInnerFitMode,
   PhotoshopJob,
   PhotoshopOutputLayout,
   PhotoshopPrintAsset,
   PhotoshopReplaceRange,
+  PhotoshopSmartObjectReplaceMode,
   PhotoshopSoReplacement,
   PhotoshopTaskGroup,
   PsdSmartObject,
@@ -19,6 +21,8 @@ export interface GroupPhotoshopTasksOptions {
   format?: PhotoshopExportFormat
   jpgQuality?: number
   outputLayout?: PhotoshopOutputLayout
+  smartObjectReplaceMode?: PhotoshopSmartObjectReplaceMode
+  smartObjectInnerFitMode?: PhotoshopInnerFitMode
 }
 
 function splitNatural(value: string): Array<string | number> {
@@ -124,12 +128,15 @@ function buildJob(
   ).map((smartObject, smartObjectIndex) => ({
     layer_path: smartObject.path,
     input_image: printAssets[smartObjectIndex % printAssets.length]?.file_path ?? '',
+    replace_mode: options.smartObjectReplaceMode,
+    inner_fit_mode: options.smartObjectInnerFitMode,
   }))
 
   return {
     task_id: options.taskId,
     group_index: groupIndex,
     mockup_path: template.file_path,
+    smart_object_replace_mode: options.smartObjectReplaceMode,
     so_replacements: soReplacements,
     clip_mode: options.clipMode,
     clip_areas: clipAreas,
@@ -181,6 +188,8 @@ export function groupTasks(
     format: options.format ?? 'jpg',
     jpgQuality: options.jpgQuality ?? 12,
     outputLayout: options.outputLayout ?? 'template_first',
+    smartObjectReplaceMode: options.smartObjectReplaceMode ?? 'replaceContents',
+    smartObjectInnerFitMode: options.smartObjectInnerFitMode ?? 'fill',
     outputRoot: options.outputRoot,
     taskId: options.taskId,
   }
