@@ -102,7 +102,7 @@
 
 - 通用编排引擎 + 多个流程模板
 - 上架支持 TikTok / Temu Full / Ozon / Mercado Libre
-- PS 套版"路径 B"（嵌套 SO、共享 SO、对齐缩放）
+- PS 套版路径 B 高级能力（嵌套 SO 递归、共享源去重、center 对齐）
 - electron-updater 全自动更新
 - 多语言 UI（英文）
 - macOS 代码签名（如用户量起来）
@@ -650,7 +650,7 @@ v1.5 再把固定完整任务升级为通用编排引擎：
 |---|---|---|
 | 完整任务 / 编排 | ✅ 固定流程最初版 | ✅ 通用编排引擎 + 多模板 |
 | 上架平台 | Temu + Shein | + TikTok / Temu Full / Ozon / Mercado |
-| PS 套版 | 路径 A（直接替换）| + 路径 B（嵌套/共享 SO + 对齐缩放）|
+| PS 套版 | 路径 A（默认）+ 基础路径 B（内部置入 + fill/fit）| + 嵌套/共享 SO 优化 + center |
 | 自动更新 | 半自动（跳转下载页）| 全自动（electron-updater）|
 | UI 多语言 | 中文 only | + 英文 |
 | 代码签名 | 不签 | Windows + macOS 签名 |

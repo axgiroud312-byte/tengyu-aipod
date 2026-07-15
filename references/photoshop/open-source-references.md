@@ -66,11 +66,13 @@ soDoc.close(SaveOptions.SAVECHANGES);
 
 **适合场景**：复杂 mockup（嵌套智能对象、共享 SO、需精确控制图像填充方式）。
 
-### 腾域决策：**v1 用路径 A，v1.5 加路径 B**
+### 腾域决策：**v1 默认路径 A，可选基础路径 B**
 
-- **v1**：所有 mockup 默认走 `placedLayerReplaceContents`，简单可靠
-- **当检测到 SO 嵌套或共享时**：UI 提示用户"此模板含嵌套 SO，效果可能不理想，需要 v1.5 增强"
-- **v1.5**：增加路径 B，支持嵌套/共享/对齐/缩放
+- **v1**：mockup 默认走 `placedLayerReplaceContents`；300dpi 链接智能对象模板可显式选择基础路径 B，支持内部置入和 fill/fit
+- **当检测到 SO 嵌套或共享时**：UI 仍提示高级处理尚未支持
+- **v1.5**：增加嵌套递归、共享源去重和 center 对齐等高级能力
+
+该时间安排已由 ADR-0018 更新；本文的外部实现调研结论不变。
 
 ---
 
@@ -173,7 +175,7 @@ joonaspaakko 用 `placedLayerEditContents` 进入 SO 后：
 3. 用 `calculateNewSize` 算缩放百分比
 4. 应用 transform
 
-腾域 v1 用 `placedLayerReplaceContents` 不需要这个（PS 自动处理），但 v1.5 路径 B 时要参考。
+腾域 v1 的基础路径 B 已借鉴该思路实现 fill/fit；center 和更复杂的对齐参数仍留在 v1.5。
 
 ---
 
@@ -313,7 +315,8 @@ function scanSmartObjects(doc) {
 | 多 SO 替换（顶层）| ✅ 路径 A 循环 | - |
 | 嵌套 SO（SO 内套 SO）| ⚠️ 检测后提示不支持 | ✅ 路径 B 递归 |
 | 共享 SO（多个 SO 指向同源）| ⚠️ 检测后提示 | ✅ 路径 B + 单次替换全部生效 |
-| 精确尺寸/对齐控制 | ❌ PS 自动 | ✅ align/resize 参数 |
+| 基础内部置入 + fill/fit | ✅ 可选基础路径 B | - |
+| 高级对齐控制 | ❌ | ✅ center 等对齐参数 |
 | 裁切模式（none/auto/guides）| ✅ | - |
 | 多输出格式（JPG/PNG）| ✅ | + TIF/PSD/PDF |
 

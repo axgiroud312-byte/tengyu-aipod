@@ -261,7 +261,7 @@ function representativeSoCount(
 | `fit` | 输入图完整显示在 SO 内（可能留白）|
 | `center` | 输入图按原大小居中（不缩放）|
 
-实现：路径 A 使用 `placedLayerReplaceContents` 并沿用 PS 默认行为；路径 B 使用 `placedLayerEditContents` 进入内部，再通过 `Plc ` 置入印花。路径 B 优先使用配置的内部占位层 bounds，否则使用整个 SO 画布。
+实现：路径 A 使用 `placedLayerReplaceContents` 并沿用 PS 默认行为；路径 B 使用 `placedLayerEditContents` 进入内部，再通过 `Plc ` 置入印花。当前公开 UI / IPC 使用整个 SO 画布作为目标 bounds；底层 replacement 可为专用调用显式传入内部图层路径或名称，当前不提供模板级占位层配置 UI。
 
 路径 B 将程序置入层固定命名为 `__TENGYU_ARTWORK__`。每次 Place 前递归删除已有的同名程序层，再置入并重新标记，保证链接 SO 源文件不会随任务组累积印花层；不自动删除未带该标记的模板原始层。
 
@@ -724,6 +724,7 @@ CREATE TABLE psd_templates (
                                           input_dir: string,
                                           templates: string[],
                                           replace_range: 'auto' | 'topmost' | 'top' | 'all',
+                                          smart_object_replace_mode: 'replaceContents' | 'editSmartObject', // 默认 replaceContents
                                           smart_object_inner_fit_mode: 'fill' | 'fit', // 默认 fill
                                           format: 'jpg' | 'png',
                                           jpg_quality: number,
