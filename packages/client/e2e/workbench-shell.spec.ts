@@ -148,6 +148,16 @@ async function emitPipelineCompleted(app: ElectronApplication, event: PipelineTa
   }, event)
 }
 
+async function emitPublicModuleEvent(app: ElectronApplication, channel: string, payload: unknown) {
+  await app.evaluate(
+    ({ BrowserWindow }, input) => {
+      const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      target?.webContents.send(input.channel, input.payload)
+    },
+    { channel, payload },
+  )
+}
+
 function theaterProgress(input: {
   baseUrl: string
   imageCount: number
@@ -660,6 +670,142 @@ test.describe('production-first Workbench shell', () => {
       await navigation.getByRole('link', { name: label, exact: true }).click()
       await expect(page).toHaveURL(new RegExp(`#${path.replace('/', '\\/')}$`))
     }
+  })
+
+  test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-lightweight-task-dock'),
+    })
+    const page = await app.firstWindow()
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-lightweight-task-dock'))
+
+    const collectionSession = {
+      id: 'collection-session-1',
+      platform: 'temu',
+      profile_id: 'profile-1',
+      mode: 'click',
+      status: 'active',
+      output_dir: join(tempRoot, 'collection-output'),
+      started_at: Date.now(),
+    }
+    await emitPublicModuleEvent(app, 'collection:event', {
+      type: 'session-started',
+      session: collectionSession,
+    })
+    await emitPublicModuleEvent(app, 'generation:progress', {
+      task_id: 'generation-1',
+      capability: 'img2img',
+      processed: 3,
+      total: 8,
+      succeeded: 2,
+      failed: 1,
+    })
+    await emitPublicModuleEvent(app, 'detection:progress', {
+      task_id: 'detection-1',
+      processed: 4,
+      total: 10,
+      succeeded: 3,
+      failed: 1,
+      skipped: 0,
+    })
+    await emitPublicModuleEvent(app, 'photoshop:progress', {
+      task_id: 'photoshop-1',
+      total_groups: 6,
+      completed: 2,
+      failed: 1,
+      skipped: 0,
+      current_group: 4,
+      current_stage: 'group_start',
+      verified_outputs: 4,
+    })
+    await emitPublicModuleEvent(app, 'title:progress', {
+      task_id: 'title-1',
+      processed: 6,
+      total: 12,
+      succeeded: 5,
+      failed: 1,
+      skipped: 0,
+    })
+    await emitPublicModuleEvent(app, 'listing:progress', {
+      batchId: 'listing-1',
+      profileId: 'profile-7',
+      status: 'failed',
+      totalCount: 20,
+      finishedCount: 3,
+      lastError: {
+        code: 'PROFILE_LOCKED',
+        appErrorCode: 'PROFILE_LOCKED',
+        message: 'profile occupied',
+        retryable: false,
+        stage: 'enter_page',
+      },
+    })
+    await emitPublicModuleEvent(app, 'video:completed', {
+      ok: false,
+      task_id: 'video-1',
+      mode: 'reference-to-video',
+      error: 'quota exceeded',
+    })
+    await emitPublicModuleEvent(app, 'collection:event', {
+      type: 'session-paused',
+      session: { ...collectionSession, status: 'paused', pause_reason: 'browser_closed' },
+      reason: 'browser_closed',
+    })
+
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    for (const title of [
+      '采集任务',
+      '图生图任务',
+      '侵权检测任务',
+      'PS 套版任务',
+      '标题生成任务',
+      '上架任务 · profile-7',
+      '参考生视频任务',
+    ]) {
+      await expect(taskDock.getByText(title, { exact: true })).toBeVisible()
+    }
+    await expect(taskDock.getByText('3 / 8 · 失败 1', { exact: true })).toBeVisible()
+    await expect(taskDock.getByText('4 / 10 · 失败 1', { exact: true })).toBeVisible()
+    await expect(
+      taskDock.getByText('比特浏览器已关闭，请重新打开后继续采集', { exact: true }),
+    ).toBeVisible()
+    await expect(
+      taskDock.getByText('比特浏览器环境 profile-7 被占用，请先结束冲突的采集或上架任务', {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await expect(
+      taskDock.getByRole('button', { name: '打开轻量任务 参考生视频任务' }).getByText('失败'),
+    ).toBeVisible()
+
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', {
+        name: '标题生成',
+        exact: true,
+      })
+      .click()
+    await page.getByLabel('标题额外要求').fill('保留当前标题页状态')
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', {
+        name: '完整任务',
+        exact: true,
+      })
+      .click()
+    await taskDock.getByRole('button', { name: '打开轻量任务 标题生成任务' }).click()
+    await expect(page).toHaveURL(/#\/title$/)
+    await expect(page.getByLabel('标题额外要求')).toHaveValue('保留当前标题页状态')
+
+    await page.reload()
+    await expect(
+      page
+        .getByRole('complementary', { name: '任务坞' })
+        .getByRole('button', { name: '打开轻量任务 标题生成任务' }),
+    ).toHaveCount(0)
   })
 
   test('keeps Settings in the sidebar without duplicating it in the header', async () => {

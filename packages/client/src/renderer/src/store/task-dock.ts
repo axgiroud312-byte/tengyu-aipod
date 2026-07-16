@@ -1,10 +1,12 @@
 import type { PipelineRunRecord, PipelineRunStatus } from '@tengyu-aipod/shared'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
+import type { LightweightTaskSummary } from './lightweight-task'
 
 type TaskDockState = {
   completeTaskRuns: PipelineRunRecord[]
   expanded: boolean
+  lightweightTasks: LightweightTaskSummary[]
   selectedRunId: string | null
   softStoppingRunIds: string[]
   markRunSoftStopping: (runId: string) => void
@@ -13,6 +15,7 @@ type TaskDockState = {
   selectCompleteTaskRun: (runId: string | null) => void
   setExpanded: (expanded: boolean) => void
   upsertCompleteTaskRun: (run: PipelineRunRecord) => void
+  upsertLightweightTask: (task: LightweightTaskSummary) => void
 }
 
 export const useTaskDockStore = create<TaskDockState>()(
@@ -20,6 +23,7 @@ export const useTaskDockStore = create<TaskDockState>()(
     (set) => ({
       completeTaskRuns: [],
       expanded: true,
+      lightweightTasks: [],
       selectedRunId: null,
       softStoppingRunIds: [],
       markRunSoftStopping: (runId) =>
@@ -49,6 +53,15 @@ export const useTaskDockStore = create<TaskDockState>()(
               ? state.completeTaskRuns.map((run) => (run.id === nextRun.id ? nextRun : run))
               : [nextRun, ...state.completeTaskRuns],
             softStoppingRunIds: state.softStoppingRunIds.filter((id) => id !== nextRun.id),
+          }
+        }),
+      upsertLightweightTask: (nextTask) =>
+        set((state) => {
+          const exists = state.lightweightTasks.some((task) => task.id === nextTask.id)
+          return {
+            lightweightTasks: exists
+              ? state.lightweightTasks.map((task) => (task.id === nextTask.id ? nextTask : task))
+              : [nextTask, ...state.lightweightTasks],
           }
         }),
     }),
