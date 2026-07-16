@@ -406,7 +406,7 @@ export function CollectionPage({
   const [expandedProductGroupKeys, setExpandedProductGroupKeys] = useState<Set<string>>(
     () => new Set(),
   )
-  const [showFailedRecords, setShowFailedRecords] = useState(false)
+  const [failedRecordSessionId, setFailedRecordSessionId] = useState<string | null>(null)
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const keywordPreview = state.platform === 'temu' ? temuSearchUrl(keyword) : ''
@@ -418,6 +418,8 @@ export function CollectionPage({
   const sessionLocked = Boolean(
     session && session.status !== 'completed' && session.status !== 'failed',
   )
+  const canRetryRecords = session?.status === 'active'
+  const showFailedRecords = Boolean(session?.id && failedRecordSessionId === session.id)
   const failedRecords = useMemo(
     () => records.filter((record) => record.status === 'failed'),
     [records],
@@ -1098,13 +1100,16 @@ export function CollectionPage({
             <div>
               <CardTitle className="text-lg">采集结果与异常</CardTitle>
               <p className="text-sm text-muted-foreground">
-                当前会话 {records.length} 条记录，失败项可直接重试。
+                当前会话 {records.length} 条记录，
+                {canRetryRecords ? '失败项可直接重试。' : '已保留结果供查看。'}
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
               <Button
-                disabled={!failedRecords.length}
-                onClick={() => setShowFailedRecords((current) => !current)}
+                disabled={!failedRecords.length && !showFailedRecords}
+                onClick={() =>
+                  setFailedRecordSessionId(showFailedRecords ? null : (session?.id ?? null))
+                }
                 type="button"
                 variant={showFailedRecords ? 'default' : 'secondary'}
               >
@@ -1162,8 +1167,9 @@ export function CollectionPage({
                     <div className="flex items-center gap-2">
                       {record.status === 'failed' ? (
                         <Button
-                          disabled={retryingRecordId === record.id}
+                          disabled={!canRetryRecords || retryingRecordId === record.id}
                           onClick={() => onRetryRecord(record.id)}
+                          title={canRetryRecords ? '重试下载' : '只有进行中的会话可以重试'}
                           type="button"
                           variant="secondary"
                         >
@@ -1173,7 +1179,7 @@ export function CollectionPage({
                       ) : null}
                       <Button
                         aria-label={`删除采集记录 ${record.id}`}
-                        disabled={deletingRecordId === record.id}
+                        disabled={!sessionLocked || deletingRecordId === record.id}
                         onClick={() => onDeleteRecord(record.id)}
                         title="删除记录"
                         type="button"

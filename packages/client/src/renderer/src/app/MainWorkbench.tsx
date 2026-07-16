@@ -455,9 +455,7 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
         void refreshCollectionRecords()
       }
       if (event.type === 'session-stopped') {
-        void refreshCollectionRecordsForSession(event.session).catch((error) => {
-          setCollectionError(error instanceof Error ? error.message : '读取采集记录失败')
-        })
+        setCollectionSession(event.session)
       }
     })
     return () => {
@@ -1150,7 +1148,7 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
     try {
       const session = await window.api.collection.stopSession()
       if (session) {
-        await refreshCollectionRecordsForSession(session)
+        setCollectionSession(session)
       }
     } catch (error) {
       setCollectionError(error instanceof Error ? error.message : '停止采集会话失败')

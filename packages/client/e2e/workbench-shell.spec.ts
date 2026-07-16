@@ -712,7 +712,12 @@ test.describe('production-first Workbench shell', () => {
         ipcMain.removeHandler('collection:get-active-session')
         ipcMain.handle('collection:get-active-session', () => activeSession)
         ipcMain.removeHandler('collection:list-records')
-        ipcMain.handle('collection:list-records', () => input.records)
+        ipcMain.handle('collection:list-records', () => {
+          if (!activeSession) {
+            throw new Error('completed collection records must remain renderer evidence')
+          }
+          return input.records
+        })
         ipcMain.removeHandler('collection:stop-session')
         ipcMain.handle('collection:stop-session', () => {
           const completed = { ...input.session, ended_at: Date.now(), status: 'completed' }
@@ -771,6 +776,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(tools.getByLabel('平台')).toBeEnabled()
     await expect(tools.getByLabel('浏览器环境')).toBeEnabled()
     await expect(results.getByText('HTTP 404', { exact: true })).toBeVisible()
+    await expect(results.getByRole('button', { name: '重试' })).toBeDisabled()
 
     await tools.getByLabel('搜索关键词').fill('保留采集搜索草稿')
     await emitPublicModuleEvent(app, 'collection:event', {
