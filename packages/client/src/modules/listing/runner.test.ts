@@ -3,6 +3,7 @@ import {
   AppErrorClass,
   type ListingConfig,
   type ListingItem,
+  type ListingProgress,
   type ListingTaskStatus,
   type ListingTemplateConfig,
   type ListingWorkspaceStatus,
@@ -901,6 +902,42 @@ describe('listing runner', () => {
     expect(locks.status('profile-a')).toBeNull()
     expect(cdp.disconnect).toHaveBeenCalledWith('profile-a')
     expect(store.closed).toBe(true)
+  })
+
+  it('emits the existing progress contract when a browser profile is locked', async () => {
+    const store = new FakeStatusStore()
+    const locks = new BrowserProfileLockManager()
+    const heldLock = locks.acquire('profile-a', 'collection', 'collection-session')
+    const { cdp } = createBrowserRuntime()
+    const progress: ListingProgress[] = []
+
+    try {
+      await expect(
+        runLocalListingBatch(
+          createConfig({ workspaces: [{ profile_id: 'profile-a' }] }),
+          [createItem('SKU-1')],
+          {
+            readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+            openStatusStore: () => store,
+            cdp,
+            locks,
+            workflows: {},
+            emitProgress: (item) => progress.push(item),
+            now: () => 1000,
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'PROFILE_LOCKED' })
+    } finally {
+      heldLock.release()
+    }
+
+    expect(progress.at(-1)).toMatchObject({
+      batchId: 'batch-1',
+      profileId: 'profile-a',
+      status: 'failed',
+      lastError: { code: 'PROFILE_LOCKED' },
+    })
+    expect(progress.at(-1)).not.toHaveProperty('currentSku')
   })
 })
 

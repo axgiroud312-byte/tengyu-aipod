@@ -1,4 +1,5 @@
 import type { ListingProgress, PhotoshopProgressInfo } from '@tengyu-aipod/shared'
+import type { PhotoshopProgressLogEntry } from '@tengyu-aipod/shared'
 import type { CollectionSessionEvent } from '../../../main/lib/collection-session-manager'
 import type { DetectionProgress, DetectionTaskEvent } from '../../../main/lib/detection-service'
 import type { GenerationProgress, GenerationTaskEvent } from '../../../main/lib/generation-service'
@@ -26,11 +27,24 @@ export type LightweightTaskSummary = {
   status: LightweightTaskStatus
   title: string
   updatedAt: number
+  hasException?: boolean
   waitingReason?: string
   counts?: {
-    completed: number
+    finished: number
     total: number
     failed?: number
+  }
+}
+
+export function mergeLightweightTaskSummary(
+  current: LightweightTaskSummary,
+  next: LightweightTaskSummary,
+): LightweightTaskSummary {
+  const counts = next.counts ?? current.counts
+  return {
+    ...next,
+    ...(current.hasException || next.hasException ? { hasException: true } : {}),
+    ...(counts ? { counts } : {}),
   }
 }
 
@@ -98,7 +112,7 @@ export function lightweightTaskFromGenerationProgress(
     title: generationTaskTitle(progress.capability),
     updatedAt,
     counts: {
-      completed: progress.processed,
+      finished: progress.processed,
       total: progress.total,
       failed: progress.failed,
     },
@@ -127,7 +141,7 @@ export function lightweightTaskFromGenerationCompleted(
     title: '生图任务',
     updatedAt,
     counts: {
-      completed: event.result.succeeded + event.result.failed,
+      finished: event.result.succeeded + event.result.failed,
       total: event.result.total,
       failed: event.result.failed,
     },
@@ -146,7 +160,7 @@ export function lightweightTaskFromDetectionProgress(
     title: '侵权检测任务',
     updatedAt,
     counts: {
-      completed: progress.processed,
+      finished: progress.processed,
       total: progress.total,
       failed: progress.failed,
     },
@@ -175,7 +189,7 @@ export function lightweightTaskFromDetectionCompleted(
     title: '侵权检测任务',
     updatedAt,
     counts: {
-      completed: event.result.succeeded + event.result.failed + event.result.skipped,
+      finished: event.result.succeeded + event.result.failed + event.result.skipped,
       total: event.result.total,
       failed: event.result.failed,
     },
@@ -194,7 +208,7 @@ export function lightweightTaskFromTitleProgress(
     title: '标题生成任务',
     updatedAt,
     counts: {
-      completed: progress.processed,
+      finished: progress.processed,
       total: progress.total,
       failed: progress.failed,
     },
@@ -223,7 +237,7 @@ export function lightweightTaskFromTitleCompleted(
     title: '标题生成任务',
     updatedAt,
     counts: {
-      completed: event.result.succeeded + event.result.failed + event.result.skipped,
+      finished: event.result.succeeded + event.result.failed + event.result.skipped,
       total: event.result.total,
       failed: event.result.failed,
     },
@@ -236,29 +250,33 @@ export function lightweightTaskFromListingProgress(
 ): LightweightTaskSummary {
   const profileLocked =
     progress.status === 'failed' && progress.lastError?.code === 'PROFILE_LOCKED'
+  const terminalFailure = progress.status === 'failed' && progress.currentSku === undefined
   const status = profileLocked
     ? 'waiting'
     : progress.status === 'failed'
-      ? 'failed'
+      ? terminalFailure || progress.finishedCount >= progress.totalCount
+        ? 'failed'
+        : 'running'
       : progress.finishedCount >= progress.totalCount &&
           (progress.status === 'success' || progress.status === 'skipped')
         ? 'completed'
         : 'running'
 
   return {
-    id: `listing:${progress.batchId}:${progress.profileId}`,
+    id: `listing:${progress.batchId}`,
     module: 'listing',
     route: '/listing',
     status,
-    title: `上架任务 · ${progress.profileId}`,
+    title: '上架任务',
     updatedAt,
+    ...(progress.status === 'failed' && !profileLocked ? { hasException: true } : {}),
     ...(profileLocked
       ? {
           waitingReason: `比特浏览器环境 ${progress.profileId} 被占用，请先结束冲突的采集或上架任务`,
         }
       : {}),
     counts: {
-      completed: progress.finishedCount,
+      finished: progress.finishedCount,
       total: progress.totalCount,
     },
   }
@@ -281,10 +299,28 @@ export function lightweightTaskFromPhotoshopProgress(
     title: 'PS 套版任务',
     updatedAt,
     counts: {
-      completed: progress.completed + progress.failed + progress.skipped,
+      finished: progress.completed + progress.failed + progress.skipped,
       total: progress.total_groups,
       failed: progress.failed,
     },
+  }
+}
+
+export function lightweightTaskFromPhotoshopLog(
+  entry: PhotoshopProgressLogEntry,
+  updatedAt: number,
+): LightweightTaskSummary | null {
+  if (entry.level !== 'error' || !entry.task_id) {
+    return null
+  }
+  return {
+    id: `photoshop:${entry.task_id}`,
+    module: 'photoshop',
+    route: '/photoshop',
+    status: 'failed',
+    title: 'PS 套版任务',
+    updatedAt,
+    hasException: true,
   }
 }
 

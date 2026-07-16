@@ -1,7 +1,7 @@
 import type { PipelineRunRecord, PipelineRunStatus } from '@tengyu-aipod/shared'
 import { create } from 'zustand'
 import { createJSONStorage, persist } from 'zustand/middleware'
-import type { LightweightTaskSummary } from './lightweight-task'
+import { type LightweightTaskSummary, mergeLightweightTaskSummary } from './lightweight-task'
 
 type TaskDockState = {
   completeTaskRuns: PipelineRunRecord[]
@@ -60,7 +60,9 @@ export const useTaskDockStore = create<TaskDockState>()(
           const exists = state.lightweightTasks.some((task) => task.id === nextTask.id)
           return {
             lightweightTasks: exists
-              ? state.lightweightTasks.map((task) => (task.id === nextTask.id ? nextTask : task))
+              ? state.lightweightTasks.map((task) =>
+                  task.id === nextTask.id ? mergeLightweightTaskSummary(task, nextTask) : task,
+                )
               : [nextTask, ...state.lightweightTasks],
           }
         }),

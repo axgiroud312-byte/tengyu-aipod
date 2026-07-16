@@ -1,7 +1,11 @@
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import type { PhotoshopPrintAsset, PsdTemplate } from '@tengyu-aipod/shared'
+import type {
+  PhotoshopPrintAsset,
+  PhotoshopProgressLogEntry,
+  PsdTemplate,
+} from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TempFileManager } from '../lib/temp-file-manager'
 import { PhotoshopExecutionEngine } from './execution-engine'
@@ -433,6 +437,42 @@ describe('PhotoshopMultiBatchRunner', () => {
       },
     ])
     expect(progressStages.filter((stage) => stage === 'cancelled')).toHaveLength(1)
+  })
+
+  it('emits an existing public error log when a running batch fails', async () => {
+    const template = createTemplate('C:\\templates\\template.psd', 'tpl-error')
+    const logs: PhotoshopProgressLogEntry[] = []
+
+    await expect(
+      runBatch(
+        createPrints(),
+        [template.file_path],
+        {
+          taskId: 'batch-failed',
+          outputRoot: 'C:\\Users\\niilo\\Desktop\\failed-output',
+        },
+        {
+          scanner: { scanPsd: async () => template },
+          engine: {
+            runTemplateBatch: async () => {
+              throw new Error('Photoshop execution failed')
+            },
+            runJob: async (job) => createCompletedJobResult(job.output_paths),
+          },
+          onLog: (entry) => {
+            logs.push(entry)
+          },
+          progressLogger: null,
+        },
+      ),
+    ).rejects.toThrow('Photoshop execution failed')
+
+    expect(logs.at(-1)).toMatchObject({
+      task_id: 'batch-failed',
+      level: 'error',
+      stage: 'group_complete',
+      message: 'Photoshop execution failed',
+    })
   })
 
   it('runs a small real multi-template Photoshop batch when REAL_PS=1', async () => {

@@ -6,6 +6,7 @@ import {
   lightweightTaskFromGenerationCompleted,
   lightweightTaskFromGenerationProgress,
   lightweightTaskFromListingProgress,
+  lightweightTaskFromPhotoshopLog,
   lightweightTaskFromPhotoshopProgress,
   lightweightTaskFromTitleCompleted,
   lightweightTaskFromTitleProgress,
@@ -50,6 +51,9 @@ function lightweightStatus(task: LightweightTaskSummary) {
     return { icon: Clock3, label: '等待资源', tone: 'text-amber-700' }
   }
   if (task.status === 'running') {
+    if (task.hasException) {
+      return { icon: CircleAlert, label: '运行中，有失败', tone: 'text-amber-700' }
+    }
     return { icon: Activity, label: '运行中', tone: 'text-primary' }
   }
   if (task.status === 'failed') {
@@ -58,7 +62,7 @@ function lightweightStatus(task: LightweightTaskSummary) {
   if (task.status === 'cancelled') {
     return { icon: CircleStop, label: '已取消', tone: 'text-muted-foreground' }
   }
-  if ((task.counts?.failed ?? 0) > 0) {
+  if (task.hasException || (task.counts?.failed ?? 0) > 0) {
     return { icon: CircleAlert, label: '已完成，有失败', tone: 'text-amber-700' }
   }
   return { icon: CheckCircle2, label: '已完成', tone: 'text-emerald-700' }
@@ -69,7 +73,7 @@ function LightweightTaskButton({ task }: { task: LightweightTaskSummary }) {
   const status = lightweightStatus(task)
   const StatusIcon = status.icon
   const countText = task.counts
-    ? `${task.counts.completed} / ${task.counts.total}${
+    ? `${task.counts.finished} / ${task.counts.total}${
         task.counts.failed === undefined ? '' : ` · 失败 ${task.counts.failed}`
       }`
     : null
@@ -181,6 +185,9 @@ export function TaskDock() {
     const offPhotoshopProgress = window.api.photoshop.onProgress((event) =>
       upsert(lightweightTaskFromPhotoshopProgress(event, Date.now())),
     )
+    const offPhotoshopLog = window.api.photoshop.onLog((event) =>
+      upsert(lightweightTaskFromPhotoshopLog(event, Date.now())),
+    )
     const offVideoProgress = window.api.video.onProgress((event) =>
       upsert(lightweightTaskFromVideoProgress(event, Date.now())),
     )
@@ -197,6 +204,7 @@ export function TaskDock() {
       offTitleCompleted()
       offListingProgress()
       offPhotoshopProgress()
+      offPhotoshopLog()
       offVideoProgress()
       offVideoCompleted()
     }
@@ -228,7 +236,7 @@ export function TaskDock() {
     if (task.status === 'running' || task.status === 'waiting') {
       runningCount += 1
     }
-    if (task.status === 'failed' || (task.counts?.failed ?? 0) > 0) {
+    if (task.status === 'failed' || task.hasException || (task.counts?.failed ?? 0) > 0) {
       exceptionCount += 1
     }
   }
@@ -303,7 +311,9 @@ export function TaskDock() {
           <div className="space-y-4">
             {runs.length > 0 ? (
               <section aria-label="完整任务">
-                <h3 className="px-3 pb-1 text-xs font-medium text-muted-foreground">完整任务</h3>
+                <h3 className="px-3 pb-1 text-xs font-medium text-muted-foreground">
+                  完整任务运行
+                </h3>
                 <div className="space-y-1">
                   {runs.slice(0, 12).map((run) => {
                     const status = runStatus(run.status, softStoppingRunIds.includes(run.id))

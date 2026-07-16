@@ -7,11 +7,13 @@ import {
   lightweightTaskFromGenerationCompleted,
   lightweightTaskFromGenerationProgress,
   lightweightTaskFromListingProgress,
+  lightweightTaskFromPhotoshopLog,
   lightweightTaskFromPhotoshopProgress,
   lightweightTaskFromTitleCompleted,
   lightweightTaskFromTitleProgress,
   lightweightTaskFromVideoCompleted,
   lightweightTaskFromVideoProgress,
+  mergeLightweightTaskSummary,
 } from './lightweight-task'
 
 const session = {
@@ -88,7 +90,7 @@ describe('lightweight task public event adapters', () => {
       route: '/generation',
       status: 'running',
       title: '图生图任务',
-      counts: { completed: 3, total: 8, failed: 1 },
+      counts: { finished: 3, total: 8, failed: 1 },
     })
 
     expect(
@@ -108,7 +110,7 @@ describe('lightweight task public event adapters', () => {
       ),
     ).toMatchObject({
       status: 'completed',
-      counts: { completed: 8, total: 8, failed: 1 },
+      counts: { finished: 8, total: 8, failed: 1 },
     })
 
     expect(
@@ -144,7 +146,7 @@ describe('lightweight task public event adapters', () => {
       status: 'running',
       title: '侵权检测任务',
       updatedAt: 1_000,
-      counts: { completed: 4, total: 10, failed: 1 },
+      counts: { finished: 4, total: 10, failed: 1 },
     })
 
     expect(
@@ -178,7 +180,7 @@ describe('lightweight task public event adapters', () => {
       route: '/title',
       status: 'running',
       title: '标题生成任务',
-      counts: { completed: 6, total: 12, failed: 1 },
+      counts: { finished: 6, total: 12, failed: 1 },
     })
 
     expect(
@@ -200,7 +202,7 @@ describe('lightweight task public event adapters', () => {
       ),
     ).toMatchObject({
       status: 'cancelled',
-      counts: { completed: 6, total: 12, failed: 1 },
+      counts: { finished: 6, total: 12, failed: 1 },
     })
   })
 
@@ -221,14 +223,14 @@ describe('lightweight task public event adapters', () => {
       },
     }
     expect(lightweightTaskFromListingProgress(progress, 1_000)).toEqual({
-      id: 'listing:listing-1:profile-7',
+      id: 'listing:listing-1',
       module: 'listing',
       route: '/listing',
       status: 'waiting',
-      title: '上架任务 · profile-7',
+      title: '上架任务',
       updatedAt: 1_000,
       waitingReason: '比特浏览器环境 profile-7 被占用，请先结束冲突的采集或上架任务',
-      counts: { completed: 3, total: 20 },
+      counts: { finished: 3, total: 20 },
     })
 
     expect(
@@ -236,11 +238,31 @@ describe('lightweight task public event adapters', () => {
         {
           ...progress,
           profileId: 'profile-8',
+          currentSku: 'SKU-1',
           lastError: { ...progress.lastError, code: 'PUBLISH_FAILED', appErrorCode: 'HTTP_4XX' },
         },
         2_000,
       ),
-    ).toMatchObject({ status: 'failed' })
+    ).toMatchObject({
+      id: 'listing:listing-1',
+      status: 'running',
+      hasException: true,
+    })
+
+    expect(
+      lightweightTaskFromListingProgress(
+        {
+          ...progress,
+          profileId: 'profile-8',
+          lastError: {
+            ...progress.lastError,
+            code: 'BROWSER_NOT_CONNECTED',
+            appErrorCode: 'BROWSER_NOT_CONNECTED',
+          },
+        },
+        2_500,
+      ),
+    ).toMatchObject({ status: 'failed', hasException: true })
 
     expect(
       lightweightTaskFromListingProgress(
@@ -254,6 +276,31 @@ describe('lightweight task public event adapters', () => {
         3_000,
       ),
     ).toMatchObject({ status: 'running' })
+
+    const failedItem = lightweightTaskFromListingProgress(
+      {
+        ...progress,
+        currentSku: 'SKU-1',
+        lastError: { ...progress.lastError, code: 'PUBLISH_FAILED', appErrorCode: 'HTTP_4XX' },
+      },
+      4_000,
+    )
+    const nextItem = lightweightTaskFromListingProgress(
+      {
+        batchId: progress.batchId,
+        profileId: 'profile-9',
+        status: 'uploading',
+        totalCount: progress.totalCount,
+        finishedCount: 4,
+      },
+      5_000,
+    )
+    expect(mergeLightweightTaskSummary(failedItem, nextItem)).toMatchObject({
+      id: 'listing:listing-1',
+      status: 'running',
+      hasException: true,
+      counts: { finished: 4, total: 20 },
+    })
   })
 
   it('uses Photoshop progress as the only lifecycle contract', () => {
@@ -273,7 +320,7 @@ describe('lightweight task public event adapters', () => {
       route: '/photoshop',
       status: 'running',
       title: 'PS 套版任务',
-      counts: { completed: 3, total: 6, failed: 1 },
+      counts: { finished: 3, total: 6, failed: 1 },
     })
     expect(
       lightweightTaskFromPhotoshopProgress(
@@ -284,6 +331,23 @@ describe('lightweight task public event adapters', () => {
     expect(
       lightweightTaskFromPhotoshopProgress({ ...progress, current_stage: 'cancelled' }, 3_000),
     ).toMatchObject({ status: 'cancelled' })
+
+    expect(
+      lightweightTaskFromPhotoshopLog(
+        {
+          ts: 4_000,
+          level: 'error',
+          stage: 'group_complete',
+          task_id: 'photoshop-1',
+          message: 'Photoshop 执行失败',
+        },
+        4_000,
+      ),
+    ).toMatchObject({
+      id: 'photoshop:photoshop-1',
+      status: 'failed',
+      title: 'PS 套版任务',
+    })
   })
 
   it('maps video lifecycle without treating remote pending as a resource wait', () => {

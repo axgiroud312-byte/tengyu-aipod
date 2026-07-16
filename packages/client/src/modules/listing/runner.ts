@@ -649,6 +649,14 @@ export class ListingRunner {
     } catch (error) {
       await markWorkspaceTaskFailed(taskStore, binding, config.task_id)
       const failure = failureFromUnknown(error, DEFAULT_STAGE)
+      this.emitProgress?.({
+        batchId: config.batch_id,
+        profileId,
+        status: 'failed',
+        totalCount: progress.total,
+        finishedCount: progress.completed + progress.failed + progress.skipped,
+        lastError: failure,
+      })
       await this.writeListingDiagnostic({
         config,
         profileId,

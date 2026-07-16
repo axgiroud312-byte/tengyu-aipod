@@ -149,6 +149,21 @@ export class PhotoshopMultiBatchRunner {
       logger && 'logPath' in logger && typeof logger.logPath === 'string'
         ? logger.logPath
         : undefined
+    const emitFailureLog = async (error: unknown, group?: number, startedAt?: number) => {
+      const message = error instanceof Error ? error.message : String(error)
+      const failureLog: PhotoshopProgressLogEntry = {
+        ts: Date.now(),
+        level: 'error',
+        stage: 'group_complete',
+        task_id: config.taskId,
+        message,
+        error: message,
+        ...(group === undefined ? {} : { group }),
+        ...(startedAt === undefined ? {} : { duration_ms: Date.now() - startedAt }),
+      }
+      logger?.write(failureLog)
+      await this.emitLog(failureLog)
+    }
 
     logger?.write({ ts: Date.now(), level: 'info', stage: 'task_start' })
 
@@ -232,11 +247,9 @@ export class PhotoshopMultiBatchRunner {
           template_name: templateName,
           message: `开始处理模板：${templateName}`,
         })
-        const result = await this.engine.runTemplateBatch(
-          template,
-          groups,
-          config.maxRetries ?? 0,
-          {
+        let result: PhotoshopTemplateBatchRunResult
+        try {
+          result = await this.engine.runTemplateBatch(template, groups, config.maxRetries ?? 0, {
             skipCompleted: config.skipCompleted ?? true,
             ...(config.cancelFilePath ? { cancelFilePath: config.cancelFilePath } : {}),
             onLog: async (entry) => {
@@ -279,8 +292,12 @@ export class PhotoshopMultiBatchRunner {
                 ),
               })
             },
-          },
-        )
+          })
+        } catch (error) {
+          failed += 1
+          await emitFailureLog(error)
+          throw error
+        }
         verifiedOutputs += result.outputs.length
         templateOutputs.push(...result.outputs)
         allOutputs.push(...result.outputs)
@@ -436,14 +453,7 @@ export class PhotoshopMultiBatchRunner {
           })
         } catch (error) {
           failed += 1
-          logger?.write({
-            ts: Date.now(),
-            level: 'error',
-            stage: 'group_complete',
-            group: group.group_index,
-            error: error instanceof Error ? error.message : String(error),
-            duration_ms: Date.now() - startedAt,
-          })
+          await emitFailureLog(error, group.group_index, startedAt)
           throw error
         }
       }
