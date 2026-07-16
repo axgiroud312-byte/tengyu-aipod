@@ -25,6 +25,7 @@ export type LightweightTaskSummary = {
   module: LightweightTaskModule
   route: string
   status: LightweightTaskStatus
+  startsNewRun?: boolean
   title: string
   updatedAt: number
   hasException?: boolean
@@ -40,8 +41,13 @@ export function mergeLightweightTaskSummary(
   current: LightweightTaskSummary,
   next: LightweightTaskSummary,
 ): LightweightTaskSummary {
+  if (next.startsNewRun) {
+    return next
+  }
   const counts = next.counts ?? current.counts
-  const waitingReason = next.waitingReason ?? current.waitingReason
+  const waitingReason =
+    next.waitingReason ??
+    (current.module === 'listing' && next.module === 'listing' ? current.waitingReason : undefined)
   return {
     ...next,
     ...(current.hasException || next.hasException ? { hasException: true } : {}),
@@ -271,6 +277,7 @@ export function lightweightTaskFromListingProgress(
     status,
     title: '上架任务',
     updatedAt,
+    ...(progress.status === 'pending' ? { startsNewRun: true } : {}),
     ...(progress.status === 'failed' && !profileLocked ? { hasException: true } : {}),
     ...(profileLocked
       ? {

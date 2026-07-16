@@ -53,9 +53,21 @@ describe('lightweight task public event adapters', () => {
       waitingReason: '比特浏览器已关闭，请重新打开后继续采集',
     })
 
-    expect(
-      lightweightTaskFromCollectionEvent({ type: 'session-resumed', session }, 3_000),
-    ).toMatchObject({ status: 'running' })
+    const resumed = lightweightTaskFromCollectionEvent({ type: 'session-resumed', session }, 3_000)
+    const paused = lightweightTaskFromCollectionEvent(
+      {
+        type: 'session-paused',
+        session: { ...session, status: 'paused', pause_reason: 'browser_closed' },
+        reason: 'browser_closed',
+      },
+      2_000,
+    )
+    expect(resumed).toMatchObject({ status: 'running' })
+    expect(paused).not.toBeNull()
+    if (!paused || !resumed) {
+      throw new Error('Expected collection lifecycle events to create task summaries')
+    }
+    expect(mergeLightweightTaskSummary(paused, resumed)).not.toHaveProperty('waitingReason')
 
     expect(
       lightweightTaskFromCollectionEvent(
@@ -307,6 +319,26 @@ describe('lightweight task public event adapters', () => {
       status: 'running',
       waitingReason: '比特浏览器环境 profile-7 被占用，请先结束冲突的采集或上架任务',
     })
+
+    const restarted = lightweightTaskFromListingProgress(
+      {
+        batchId: progress.batchId,
+        profileId: '',
+        status: 'pending',
+        totalCount: progress.totalCount,
+        finishedCount: 0,
+      },
+      6_000,
+    )
+    expect(
+      mergeLightweightTaskSummary(
+        mergeLightweightTaskSummary(
+          lightweightTaskFromListingProgress(progress, 1_000),
+          failedItem,
+        ),
+        restarted,
+      ),
+    ).toEqual(restarted)
   })
 
   it('uses Photoshop progress as the only lifecycle contract', () => {
