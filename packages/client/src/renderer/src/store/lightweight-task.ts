@@ -41,10 +41,12 @@ export function mergeLightweightTaskSummary(
   next: LightweightTaskSummary,
 ): LightweightTaskSummary {
   const counts = next.counts ?? current.counts
+  const waitingReason = next.waitingReason ?? current.waitingReason
   return {
     ...next,
     ...(current.hasException || next.hasException ? { hasException: true } : {}),
     ...(counts ? { counts } : {}),
+    ...(waitingReason ? { waitingReason } : {}),
   }
 }
 

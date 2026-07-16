@@ -301,6 +301,12 @@ describe('lightweight task public event adapters', () => {
       hasException: true,
       counts: { finished: 4, total: 20 },
     })
+    expect(
+      mergeLightweightTaskSummary(lightweightTaskFromListingProgress(progress, 1_000), nextItem),
+    ).toMatchObject({
+      status: 'running',
+      waitingReason: '比特浏览器环境 profile-7 被占用，请先结束冲突的采集或上架任务',
+    })
   })
 
   it('uses Photoshop progress as the only lifecycle contract', () => {

@@ -166,6 +166,16 @@ export class PhotoshopMultiBatchRunner {
     }
 
     logger?.write({ ts: Date.now(), level: 'info', stage: 'task_start' })
+    await this.emitProgress({
+      task_id: config.taskId,
+      total_groups: 0,
+      completed: 0,
+      failed: 0,
+      skipped: 0,
+      current_group: null,
+      current_stage: 'task_start',
+      verified_outputs: 0,
+    })
 
     const preparedTemplates: Array<{
       templateIndex: number
@@ -174,51 +184,57 @@ export class PhotoshopMultiBatchRunner {
       groups: PhotoshopTaskGroup[]
     }> = []
 
-    for (let templateIndex = 0; templateIndex < templatePaths.length; templateIndex += 1) {
-      const template = await this.scanner.scanPsd(templatePaths[templateIndex] ?? '')
-      const templateName = sanitizeTemplateName(template.file_path)
-      const groupOptions: GroupPhotoshopTasksOptions = {
-        taskId: config.taskId,
-        outputRoot: config.outputRoot,
-        outputLayout,
+    try {
+      for (let templateIndex = 0; templateIndex < templatePaths.length; templateIndex += 1) {
+        const template = await this.scanner.scanPsd(templatePaths[templateIndex] ?? '')
+        const templateName = sanitizeTemplateName(template.file_path)
+        const groupOptions: GroupPhotoshopTasksOptions = {
+          taskId: config.taskId,
+          outputRoot: config.outputRoot,
+          outputLayout,
+        }
+        if (config.replaceRange !== undefined) {
+          groupOptions.replaceRange = config.replaceRange
+        }
+        if (config.smartObjectReplaceMode !== undefined) {
+          groupOptions.smartObjectReplaceMode = config.smartObjectReplaceMode
+        }
+        if (config.smartObjectInnerFitMode !== undefined) {
+          groupOptions.smartObjectInnerFitMode = config.smartObjectInnerFitMode
+        }
+        if (config.format !== undefined) {
+          groupOptions.format = config.format
+        }
+        if (config.jpgQuality !== undefined) {
+          groupOptions.jpgQuality = config.jpgQuality
+        }
+        const clipMode = config.clipMode ?? 'auto'
+        groupOptions.clipMode = clipMode
+        const templateWithClipAreas: PsdTemplate = {
+          ...template,
+          clip_areas: deriveClipAreas(
+            {
+              doc_size: template.doc_size,
+              guides: template.guides,
+              smart_objects: template.smart_objects,
+              layers: template.layers,
+            },
+            clipMode,
+          ),
+        }
+        const groups = groupTasks(prints, templateWithClipAreas, groupOptions)
+        groupsTotal += groups.length
+        preparedTemplates.push({
+          templateIndex,
+          template: templateWithClipAreas,
+          templateName,
+          groups,
+        })
       }
-      if (config.replaceRange !== undefined) {
-        groupOptions.replaceRange = config.replaceRange
-      }
-      if (config.smartObjectReplaceMode !== undefined) {
-        groupOptions.smartObjectReplaceMode = config.smartObjectReplaceMode
-      }
-      if (config.smartObjectInnerFitMode !== undefined) {
-        groupOptions.smartObjectInnerFitMode = config.smartObjectInnerFitMode
-      }
-      if (config.format !== undefined) {
-        groupOptions.format = config.format
-      }
-      if (config.jpgQuality !== undefined) {
-        groupOptions.jpgQuality = config.jpgQuality
-      }
-      const clipMode = config.clipMode ?? 'auto'
-      groupOptions.clipMode = clipMode
-      const templateWithClipAreas: PsdTemplate = {
-        ...template,
-        clip_areas: deriveClipAreas(
-          {
-            doc_size: template.doc_size,
-            guides: template.guides,
-            smart_objects: template.smart_objects,
-            layers: template.layers,
-          },
-          clipMode,
-        ),
-      }
-      const groups = groupTasks(prints, templateWithClipAreas, groupOptions)
-      groupsTotal += groups.length
-      preparedTemplates.push({
-        templateIndex,
-        template: templateWithClipAreas,
-        templateName,
-        groups,
-      })
+    } catch (error) {
+      failed += 1
+      await emitFailureLog(error)
+      throw error
     }
 
     for (const { templateIndex, template, templateName, groups } of preparedTemplates) {

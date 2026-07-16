@@ -398,14 +398,17 @@ export class ListingRunner {
 
     try {
       this.emitBatchProgress(resolved, progress, 'pending')
+      const workspaceEntries = Array.from(queues.entries())
       const settledWorkspaceResults = await Promise.allSettled(
-        Array.from(queues.entries()).map(([profileId, queue]) =>
+        workspaceEntries.map(([profileId, queue]) =>
           this.runWorkspaceQueue(profileId, queue, resolved, store, progress, taskStore),
         ),
       )
       const workspaceResults: WorkspaceResult[] = []
-      for (const result of settledWorkspaceResults) {
+      for (const [index, result] of settledWorkspaceResults.entries()) {
         if (result.status === 'rejected') {
+          const profileId = workspaceEntries[index]?.[0] ?? ''
+          this.emitWorkspaceFailure(resolved, progress, profileId, result.reason)
           throw result.reason
         }
         workspaceResults.push(result.value)
@@ -648,15 +651,7 @@ export class ListingRunner {
       }
     } catch (error) {
       await markWorkspaceTaskFailed(taskStore, binding, config.task_id)
-      const failure = failureFromUnknown(error, DEFAULT_STAGE)
-      this.emitProgress?.({
-        batchId: config.batch_id,
-        profileId,
-        status: 'failed',
-        totalCount: progress.total,
-        finishedCount: progress.completed + progress.failed + progress.skipped,
-        lastError: failure,
-      })
+      const failure = this.emitWorkspaceFailure(config, progress, profileId, error)
       await this.writeListingDiagnostic({
         config,
         profileId,
@@ -716,6 +711,24 @@ export class ListingRunner {
       ...(progress.current ? { currentStage: progress.current.stage } : {}),
       ...(progress.lastError ? { lastError: progress.lastError } : {}),
     })
+  }
+
+  private emitWorkspaceFailure(
+    config: ResolvedRunConfig,
+    progress: ProgressSnapshot,
+    profileId: string,
+    error: unknown,
+  ) {
+    const failure = failureFromUnknown(error, DEFAULT_STAGE)
+    this.emitProgress?.({
+      batchId: config.batch_id,
+      profileId,
+      status: 'failed',
+      totalCount: progress.total,
+      finishedCount: progress.completed + progress.failed + progress.skipped,
+      lastError: failure,
+    })
+    return failure
   }
 
   private async closeBrowser(profileId: string, browser: PlaywrightBrowser | null) {

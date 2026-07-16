@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import type {
   PhotoshopPrintAsset,
+  PhotoshopProgressInfo,
   PhotoshopProgressLogEntry,
   PsdTemplate,
 } from '@tengyu-aipod/shared'
@@ -117,6 +118,7 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(executed).toHaveLength(4)
     expect(skipFlags).toEqual([true, true, true, true])
     expect(progress).toEqual([
+      'task_start:undefined:undefined',
       'task_start:cup_front_:0',
       'group_complete:cup_front_:0',
       'task_start:cup_front_:1',
@@ -230,7 +232,8 @@ describe('PhotoshopMultiBatchRunner', () => {
     )
 
     expect(progressTotals).not.toHaveLength(0)
-    expect(new Set(progressTotals)).toEqual(new Set([4]))
+    expect(progressTotals[0]).toBe(0)
+    expect(new Set(progressTotals.slice(1))).toEqual(new Set([4]))
   })
 
   it('uses template-level execution when the engine supports it', async () => {
@@ -472,6 +475,47 @@ describe('PhotoshopMultiBatchRunner', () => {
       level: 'error',
       stage: 'group_complete',
       message: 'Photoshop execution failed',
+    })
+  })
+
+  it('publishes task activity and failure when template scanning fails', async () => {
+    const logs: PhotoshopProgressLogEntry[] = []
+    const progress: PhotoshopProgressInfo[] = []
+
+    await expect(
+      runBatch(
+        createPrints(),
+        ['C:\\templates\\broken.psd'],
+        {
+          taskId: 'batch-scan-failed',
+          outputRoot: 'C:\\Users\\niilo\\Desktop\\failed-output',
+        },
+        {
+          scanner: {
+            scanPsd: async () => {
+              throw new Error('PSD scan failed')
+            },
+          },
+          onProgress: (entry) => {
+            progress.push(entry)
+          },
+          onLog: (entry) => {
+            logs.push(entry)
+          },
+          progressLogger: null,
+        },
+      ),
+    ).rejects.toThrow('PSD scan failed')
+
+    expect(progress[0]).toMatchObject({
+      task_id: 'batch-scan-failed',
+      current_stage: 'task_start',
+      total_groups: 0,
+    })
+    expect(logs.at(-1)).toMatchObject({
+      task_id: 'batch-scan-failed',
+      level: 'error',
+      message: 'PSD scan failed',
     })
   })
 

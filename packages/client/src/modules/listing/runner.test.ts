@@ -939,6 +939,50 @@ describe('listing runner', () => {
     })
     expect(progress.at(-1)).not.toHaveProperty('currentSku')
   })
+
+  it('re-emits a locked workspace after all parallel workspaces settle', async () => {
+    const store = new FakeStatusStore()
+    const locks = new BrowserProfileLockManager()
+    const heldLock = locks.acquire('profile-a', 'collection', 'collection-session')
+    const { cdp } = createBrowserRuntime()
+    const progress: ListingProgress[] = []
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) =>
+        successResult(item, config),
+      ),
+    }
+
+    try {
+      await expect(
+        runLocalListingBatch(
+          createConfig({
+            workspaces: [{ profile_id: 'profile-a' }, { profile_id: 'profile-b' }],
+          }),
+          [createItem('SKU-1'), createItem('SKU-2')],
+          {
+            readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+            openStatusStore: () => store,
+            cdp,
+            locks,
+            workflows: { 'temu-pop': workflow },
+            emitProgress: (item) => progress.push(item),
+            now: () => 1000,
+          },
+        ),
+      ).rejects.toMatchObject({ code: 'PROFILE_LOCKED' })
+    } finally {
+      heldLock.release()
+    }
+
+    expect(progress.at(-1)).toMatchObject({
+      batchId: 'batch-1',
+      profileId: 'profile-a',
+      status: 'failed',
+      totalCount: 2,
+      finishedCount: 1,
+      lastError: { code: 'PROFILE_LOCKED' },
+    })
+  })
 })
 
 function statusRow(
