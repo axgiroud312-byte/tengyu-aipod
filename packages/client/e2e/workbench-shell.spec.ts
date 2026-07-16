@@ -825,6 +825,16 @@ test.describe('production-first Workbench shell', () => {
     await expect(workspace).toBeVisible()
     await expect(results).toBeVisible()
 
+    const txt2imgMode = workspace.getByRole('group', { name: '文生图提示词方式' })
+    await expect(txt2imgMode.getByRole('button', { name: '智能生成提示词' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    const manualPrompt = txt2imgMode.getByRole('button', { name: '自己写提示词' })
+    await manualPrompt.focus()
+    await page.keyboard.press('Enter')
+    await expect(manualPrompt).toHaveAttribute('aria-pressed', 'true')
+
     const txt2imgPath = workspace.getByRole('group', { name: '文生图生图路径' })
     const launch = workspace.getByRole('complementary', { name: '生图启动与运行' })
     await expect(txt2imgPath.getByRole('button', { name: 'Grsai', exact: true })).toBeVisible()
@@ -849,6 +859,15 @@ test.describe('production-first Workbench shell', () => {
     const img2imgWorkspace = page.getByRole('region', { name: '图生图生产工作区' })
     const provider = img2imgWorkspace.getByRole('group', { name: '图生图实现方式' })
     await expect(provider.getByRole('button', { name: '付费 Grsai', exact: true })).toBeVisible()
+    const img2imgMode = img2imgWorkspace.getByRole('group', { name: '图生图生成模式' })
+    await expect(img2imgMode.getByRole('button', { name: '参考构图' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    const referenceStyle = img2imgMode.getByRole('button', { name: '参考风格' })
+    await referenceStyle.focus()
+    await page.keyboard.press('Enter')
+    await expect(referenceStyle).toHaveAttribute('aria-pressed', 'true')
     await expect(img2imgWorkspace.getByText('参考图', { exact: true })).toBeVisible()
     await provider.getByRole('button', { name: 'ComfyUI 晨羽' }).click()
     await expect(provider.getByRole('button', { name: 'ComfyUI 晨羽' })).toHaveAttribute(

@@ -396,10 +396,14 @@ export function GrsaiPromptGenerationPanel({
       >
         <section aria-label="生图输入" className="space-y-5">
           <div className="rounded-md border bg-background p-4">
-            <div className="flex gap-2">
+            <fieldset
+              aria-label={capability === 'txt2img' ? '文生图提示词方式' : '图生图生成模式'}
+              className="flex gap-2"
+            >
               {capability === 'txt2img' ? (
                 <>
                   <Button
+                    aria-pressed={mode === 'ai'}
                     onClick={() => setMode('ai')}
                     type="button"
                     variant={mode === 'ai' ? 'default' : 'secondary'}
@@ -407,6 +411,7 @@ export function GrsaiPromptGenerationPanel({
                     智能生成提示词
                   </Button>
                   <Button
+                    aria-pressed={mode === 'manual'}
                     onClick={() => setMode('manual')}
                     type="button"
                     variant={mode === 'manual' ? 'default' : 'secondary'}
@@ -417,6 +422,7 @@ export function GrsaiPromptGenerationPanel({
               ) : (
                 img2imgModes.map((item) => (
                   <Button
+                    aria-pressed={img2imgMode === item.key}
                     key={item.key}
                     onClick={() => setImg2imgMode(item.key)}
                     type="button"
@@ -426,7 +432,7 @@ export function GrsaiPromptGenerationPanel({
                   </Button>
                 ))
               )}
-            </div>
+            </fieldset>
 
             {capability === 'img2img' ? (
               <div className="mt-4 rounded-md border p-3">
