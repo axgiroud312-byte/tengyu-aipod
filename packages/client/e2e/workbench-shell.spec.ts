@@ -2,7 +2,14 @@ import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type ElectronApplication, _electron as electron, expect, test } from '@playwright/test'
+import {
+  type ElectronApplication,
+  type Page,
+  type TestInfo,
+  _electron as electron,
+  expect,
+  test,
+} from '@playwright/test'
 import type { PipelineProgress, PipelineTaskEvent } from '@tengyu-aipod/shared'
 import sharp from 'sharp'
 import { openCollectionDatabase as openWorkbenchDatabase } from '../src/main/lib/collection-record-store'
@@ -10,6 +17,12 @@ import { openCollectionDatabase as openWorkbenchDatabase } from '../src/main/lib
 function sendJson(response: ServerResponse, body: unknown, status = 200) {
   response.writeHead(status, { 'content-type': 'application/json' })
   response.end(JSON.stringify(body))
+}
+
+async function attachScreenshot(page: Page, testInfo: TestInfo, name: string, fullPage = false) {
+  const path = testInfo.outputPath(`${name}.png`)
+  await page.screenshot({ path, fullPage })
+  await testInfo.attach(name, { path, contentType: 'image/png' })
 }
 
 async function startMockServer() {
@@ -140,10 +153,6 @@ async function installDetectionWorkspaceHarness(
 ) {
   await app.evaluate(
     ({ ipcMain }, input) => {
-      const state = globalThis as typeof globalThis & {
-        __detectionPromoteCalls?: number
-        __detectionDeleteCalls?: number
-      }
       const skill = {
         id: 'infringement-detection',
         module: 'detection',
@@ -217,16 +226,10 @@ async function installDetectionWorkspaceHarness(
       ipcMain.removeHandler('detection:promote-to-matting')
       ipcMain.handle(
         'detection:promote-to-matting',
-        (_event, value: { artifact_ids: string[] }) => {
-          state.__detectionPromoteCalls = (state.__detectionPromoteCalls ?? 0) + 1
-          return value.artifact_ids.length
-        },
+        (_event, value: { artifact_ids: string[] }) => value.artifact_ids.length,
       )
       ipcMain.removeHandler('detection:delete-result')
-      ipcMain.handle('detection:delete-result', () => {
-        state.__detectionDeleteCalls = (state.__detectionDeleteCalls ?? 0) + 1
-        return 1
-      })
+      ipcMain.handle('detection:delete-result', () => 1)
       ipcMain.removeHandler('detection:retest')
       ipcMain.handle('detection:retest', () => 'detection-retest-1')
     },
@@ -577,11 +580,6 @@ test.describe('production-first Workbench shell', () => {
 
   test('streams the newest result into the theater while isolating item failures', async () => {
     const testInfo = test.info()
-    const attachScreenshot = async (name: string) => {
-      const path = testInfo.outputPath(`${name}.png`)
-      await page.screenshot({ path })
-      await testInfo.attach(name, { path, contentType: 'image/png' })
-    }
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -632,7 +630,7 @@ test.describe('production-first Workbench shell', () => {
       { width: 1920, height: 1080 },
     ]) {
       await page.setViewportSize(viewport)
-      await attachScreenshot(`run-theater-${viewport.width}x${viewport.height}`)
+      await attachScreenshot(page, testInfo, `run-theater-${viewport.width}x${viewport.height}`)
     }
 
     await page.getByRole('button', { name: '停止任务' }).click()
@@ -700,7 +698,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(page.getByText('完成战报', { exact: true }).first()).toBeVisible()
     await expect(page.getByText(/部分配置加载失败/)).toHaveCount(0)
     await page.setViewportSize({ width: 1440, height: 900 })
-    await attachScreenshot('run-theater-completed-1440x900')
+    await attachScreenshot(page, testInfo, 'run-theater-completed-1440x900')
     await page.getByRole('button', { name: '按此方案再建任务' }).click()
     await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '文生图' })).toHaveAttribute('data-state', 'active')
@@ -715,7 +713,7 @@ test.describe('production-first Workbench shell', () => {
       )
       .toBe('null')
     await page.setViewportSize({ width: 1280, height: 720 })
-    await attachScreenshot('run-theater-create-another-1280x720')
+    await attachScreenshot(page, testInfo, 'run-theater-create-another-1280x720')
 
     await page.getByRole('button', { name: '从中断处继续' }).click()
     await expect
@@ -774,11 +772,6 @@ test.describe('production-first Workbench shell', () => {
 
   test('presents Collection as an image-pool production workspace', async () => {
     const testInfo = test.info()
-    const attachScreenshot = async (name: string) => {
-      const path = testInfo.outputPath(`${name}.png`)
-      await page.screenshot({ path })
-      await testInfo.attach(name, { path, contentType: 'image/png' })
-    }
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -863,7 +856,11 @@ test.describe('production-first Workbench shell', () => {
     ]) {
       await page.setViewportSize(viewport)
       await tools.scrollIntoViewIfNeeded()
-      await attachScreenshot(`collection-workspace-${viewport.width}x${viewport.height}`)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `collection-workspace-${viewport.width}x${viewport.height}`,
+      )
     }
     await page.setViewportSize({ width: 1440, height: 900 })
 
@@ -897,11 +894,6 @@ test.describe('production-first Workbench shell', () => {
 
   test('presents Generation as five capability workspaces with distinct provider paths', async () => {
     const testInfo = test.info()
-    const attachScreenshot = async (name: string) => {
-      const path = testInfo.outputPath(`${name}.png`)
-      await page.screenshot({ path, fullPage: true })
-      await testInfo.attach(name, { path, contentType: 'image/png' })
-    }
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -940,7 +932,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(txt2imgPath.getByRole('button', { name: 'Grsai', exact: true })).toBeVisible()
     await expect(launch.getByLabel('生图模型')).toBeVisible()
     await page.setViewportSize({ width: 1440, height: 900 })
-    await attachScreenshot('generation-grsai-txt2img-1440x900')
+    await attachScreenshot(page, testInfo, 'generation-grsai-txt2img-1440x900', true)
     await txt2imgPath.getByRole('button', { name: 'ComfyUI 工作流' }).click()
     await expect(txt2imgPath.getByRole('button', { name: 'ComfyUI 工作流' })).toHaveAttribute(
       'aria-pressed',
@@ -953,7 +945,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(machine.getByRole('button', { name: '刷新' })).toBeVisible()
     await expect(machine.getByRole('button', { name: /开机|关机/ })).toHaveCount(0)
     await page.setViewportSize({ width: 1280, height: 720 })
-    await attachScreenshot('generation-comfyui-txt2img-1280x720')
+    await attachScreenshot(page, testInfo, 'generation-comfyui-txt2img-1280x720', true)
 
     await capabilities.getByRole('tab', { name: '图生图' }).click()
     const img2imgWorkspace = page.getByRole('region', { name: '图生图生产工作区' })
@@ -978,16 +970,11 @@ test.describe('production-first Workbench shell', () => {
     await expect(img2imgWorkspace.getByRole('heading', { name: 'ComfyUI 工作流' })).toBeVisible()
     await expect(img2imgWorkspace.getByRole('region', { name: '生图结果' })).toBeVisible()
     await page.setViewportSize({ width: 1920, height: 1080 })
-    await attachScreenshot('generation-comfyui-img2img-1920x1080')
+    await attachScreenshot(page, testInfo, 'generation-comfyui-img2img-1920x1080', true)
   })
 
   test('runs Detection and exposes three risk result buckets with their actions', async () => {
     const testInfo = test.info()
-    const attachScreenshot = async (name: string) => {
-      const path = testInfo.outputPath(`${name}.png`)
-      await page.screenshot({ path, fullPage: true })
-      await testInfo.attach(name, { path, contentType: 'image/png' })
-    }
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     const detectionApp = await launchApp({
@@ -1034,6 +1021,10 @@ test.describe('production-first Workbench shell', () => {
     await expect(inputAndRules.getByText('无风险 0-20')).toBeVisible()
     await expect(inputAndRules.getByText('疑似 21-60')).toBeVisible()
     await expect(inputAndRules.getByText('高风险 61-100')).toBeVisible()
+    const concurrencyInput = inputAndRules.getByLabel('并发')
+    await expect(concurrencyInput).toHaveValue('20')
+    await concurrencyInput.fill('50')
+    await expect(concurrencyInput).toHaveValue('20')
 
     await inputAndRules.getByRole('button', { name: /提取.*3 张/ }).click()
     await expect(launch.getByText('运行图片')).toBeVisible()
@@ -1119,18 +1110,58 @@ test.describe('production-first Workbench shell', () => {
       await workspace
         .getByRole('heading', { name: '侵权检测', exact: true })
         .scrollIntoViewIfNeeded()
-      await attachScreenshot(`detection-config-${viewport.width}x${viewport.height}`)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `detection-config-${viewport.width}x${viewport.height}`,
+        true,
+      )
       const horizontalOverflow = await page
         .getByRole('main')
         .evaluate((element) => element.scrollWidth - element.clientWidth)
       expect(horizontalOverflow).toBeLessThanOrEqual(1)
       await results.getByRole('heading', { name: '检测结果', exact: true }).scrollIntoViewIfNeeded()
-      await attachScreenshot(`detection-results-${viewport.width}x${viewport.height}`)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `detection-results-${viewport.width}x${viewport.height}`,
+        true,
+      )
     }
 
     await results.getByRole('button', { name: '预览 review.png' }).click()
     await expect(page.getByRole('dialog', { name: '侵权检测预览' })).toBeVisible()
     await page.keyboard.press('Escape')
+    await results.getByRole('button', { name: '重测 review.png' }).click()
+    await expect(page.getByText('当前任务 detection-retest-1')).toBeVisible()
+    await emitPublicModuleEvent(app, 'detection:completed', {
+      ok: true,
+      result: {
+        taskId: 'detection-retest-1',
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        skipped: 0,
+        diagnosticsLogPath: 'C:\\logs\\detection-retest-1.jsonl',
+        results: [
+          {
+            imagePath: detectionImagePaths[1],
+            thumbnailUrl: '',
+            artifactId: 'artifact-review',
+            printId: 'pri_review',
+            status: 'success',
+            riskScore: 52,
+            riskLevel: 'review',
+            reason: '重测后仍需人工判断',
+            outputPath: 'C:\\workspace\\03-检测工作区\\detection-retest-1\\疑似\\review.png',
+            cached: false,
+          },
+        ],
+      },
+    })
+    await expect(results.getByRole('button', { name: '预览 pass.png' })).toBeVisible()
+    await expect(results.getByRole('button', { name: '预览 block.png' })).toBeVisible()
+    await expect(results.getByText('重测后仍需人工判断')).toBeVisible()
     await results.getByRole('button', { name: '加入套版候选清单' }).click()
     await expect(page.getByText('已加入 1 张无风险图片到套版候选清单')).toBeVisible()
     await results.getByRole('button', { name: '删除 block.png' }).click()
@@ -1139,11 +1170,11 @@ test.describe('production-first Workbench shell', () => {
     if (await expandTaskDock.isVisible()) {
       await expandTaskDock.click()
     }
-    await expect(
-      page
-        .getByRole('complementary', { name: '任务坞' })
-        .getByRole('button', { name: '打开轻量任务 侵权检测任务' }),
-    ).toBeVisible()
+    const detectionTasks = page
+      .getByRole('complementary', { name: '任务坞' })
+      .getByRole('button', { name: '打开轻量任务 侵权检测任务' })
+    await expect(detectionTasks).toHaveCount(2)
+    await expect(detectionTasks.first()).toBeVisible()
   })
 
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
@@ -1349,14 +1380,6 @@ test.describe('production-first Workbench shell', () => {
 
   test('keeps the sidebar and task dock responsive, persistent, and keyboard accessible', async () => {
     const testInfo = test.info()
-    const attachScreenshot = async (
-      page: Awaited<ReturnType<ElectronApplication['firstWindow']>>,
-      name: string,
-    ) => {
-      const path = testInfo.outputPath(`${name}.png`)
-      await page.screenshot({ path })
-      await testInfo.attach(name, { path, contentType: 'image/png' })
-    }
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -1415,7 +1438,11 @@ test.describe('production-first Workbench shell', () => {
       { width: 1920, height: 1080 },
     ]) {
       await page.setViewportSize(viewport)
-      await attachScreenshot(page, `shell-task-dock-expanded-${viewport.width}x${viewport.height}`)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `shell-task-dock-expanded-${viewport.width}x${viewport.height}`,
+      )
     }
 
     await page.getByRole('button', { name: '折叠任务坞' }).click()
@@ -1426,7 +1453,11 @@ test.describe('production-first Workbench shell', () => {
     ]) {
       await page.setViewportSize(viewport)
       await expect(taskDock).toHaveCSS('width', '44px')
-      await attachScreenshot(page, `shell-task-dock-collapsed-${viewport.width}x${viewport.height}`)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `shell-task-dock-collapsed-${viewport.width}x${viewport.height}`,
+      )
     }
 
     await taskDock.getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }).click()

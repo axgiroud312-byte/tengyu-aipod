@@ -39,6 +39,7 @@ const DEFAULT_DETECTION_SKILL_ID = 'infringement-detection'
 const DEFAULT_THRESHOLD = { passMax: 39, reviewMax: 69 }
 const DEFAULT_MAX_SIZE = 1024
 const DEFAULT_CONCURRENCY = 20
+const MAX_CONCURRENCY = 20
 const DEFAULT_MAX_RETRIES = 1
 
 const RISK_LEVELS: RiskLevel[] = ['pass', 'review', 'block']
@@ -128,8 +129,10 @@ function selectDefaultSkill(skills: SkillSummary[], config: DetectionConfig | nu
 function thresholdSummary(threshold: DetectionThresholdConfig) {
   return [
     `无风险 0-${threshold.passMax}`,
-    `疑似 ${threshold.passMax + 1}-${threshold.reviewMax}`,
-    `高风险 ${threshold.reviewMax + 1}-100`,
+    threshold.passMax < threshold.reviewMax
+      ? `疑似 ${threshold.passMax + 1}-${threshold.reviewMax}`
+      : '疑似 无',
+    threshold.reviewMax < 100 ? `高风险 ${threshold.reviewMax + 1}-100` : '高风险 无',
   ]
 }
 
@@ -750,10 +753,12 @@ function DetectionRulesPanel({
           <input
             className="h-10 w-full rounded-md border bg-background px-3 text-sm tabular-nums outline-none focus-visible:ring-2 focus-visible:ring-primary"
             disabled={running}
-            max={20}
+            max={MAX_CONCURRENCY}
             min={1}
             onChange={(event) =>
-              onConcurrencyChange(Math.max(1, Math.min(20, Number(event.target.value) || 1)))
+              onConcurrencyChange(
+                Math.max(1, Math.min(MAX_CONCURRENCY, Number(event.target.value) || 1)),
+              )
             }
             type="number"
             value={concurrency}
@@ -1055,6 +1060,7 @@ export function DetectionWorkbench() {
   const [error, setError] = useState<string | null>(null)
   const [message, setMessage] = useState<string | null>(null)
   const runningTaskIdRef = useRef<string | null>(null)
+  const retestArtifactIdRef = useRef<string | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -1090,7 +1096,15 @@ export function DetectionWorkbench() {
               : undefined,
           ),
         )
-        setConcurrency(generationSettings?.config.default_concurrency ?? DEFAULT_CONCURRENCY)
+        setConcurrency(
+          Math.max(
+            1,
+            Math.min(
+              MAX_CONCURRENCY,
+              generationSettings?.config.default_concurrency ?? DEFAULT_CONCURRENCY,
+            ),
+          ),
+        )
         setError(null)
       } catch (nextError) {
         if (!mounted) {
@@ -1127,15 +1141,24 @@ export function DetectionWorkbench() {
         return
       }
 
+      const retestArtifactId = retestArtifactIdRef.current
       setRunning(false)
       runningTaskIdRef.current = null
+      retestArtifactIdRef.current = null
       if (!event.ok) {
         setError(event.error)
         setMessage(null)
         return
       }
 
-      setResults(event.result.results)
+      setResults((current) =>
+        retestArtifactId
+          ? [
+              ...current.filter((item) => item.artifactId !== retestArtifactId),
+              ...event.result.results,
+            ]
+          : event.result.results,
+      )
       setProgress((current) => ({
         task_id: event.result.taskId,
         processed: event.result.cancelled
@@ -1256,6 +1279,7 @@ export function DetectionWorkbench() {
   }
 
   async function retestResult(result: DetectionPreviewResult) {
+    retestArtifactIdRef.current = result.artifactId
     setPendingArtifactId(result.artifactId)
     setError(null)
     setMessage(null)
@@ -1275,6 +1299,7 @@ export function DetectionWorkbench() {
       })
       setMessage(`已开始重测 ${fileName(result.imagePath)}`)
     } catch (nextError) {
+      retestArtifactIdRef.current = null
       setError(nextError instanceof Error ? nextError.message : '启动重测失败')
     } finally {
       setPendingArtifactId(null)
@@ -1329,6 +1354,7 @@ export function DetectionWorkbench() {
     setSelectedImagePaths(new Set())
     setResults([])
     setProgress(null)
+    retestArtifactIdRef.current = null
     setMessage(null)
     setLoadingImages(true)
     setError(null)
@@ -1358,6 +1384,7 @@ export function DetectionWorkbench() {
     setSelectedImagePaths(new Set())
     setResults([])
     setProgress(null)
+    retestArtifactIdRef.current = null
     setMessage(null)
   }
 
@@ -1416,6 +1443,7 @@ export function DetectionWorkbench() {
     setMessage(null)
     setResults([])
     setProgress(null)
+    retestArtifactIdRef.current = null
     try {
       const taskId = await window.api.detection.run({
         imagePaths: selectedImages.map((image) => image.path),
