@@ -1,4 +1,10 @@
 import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion'
+import {
   AlertDialog,
   AlertDialogAction,
   AlertDialogCancel,
@@ -26,8 +32,12 @@ import {
   FolderOpen,
   Globe2,
   Images,
+  Play,
   RefreshCw,
+  RotateCcw,
   Search,
+  SlidersHorizontal,
+  Square,
   Store,
   Terminal,
   Trash2,
@@ -154,6 +164,58 @@ function platformLabel(value: string, platforms: CollectionPlatformOption[]) {
 
 function fileNameFromPath(path: string) {
   return path.split(/[\\/]/).at(-1) || path
+}
+
+function sessionStatusLabel(status: CollectionSessionStatus | undefined) {
+  switch (status) {
+    case 'starting':
+      return '启动中'
+    case 'active':
+      return '进行中'
+    case 'paused':
+      return '已暂停'
+    case 'stopping':
+      return '停止中'
+    case 'completed':
+      return '已完成'
+    default:
+      return '未开始'
+  }
+}
+
+function pauseReasonLabel(reason: CollectionPauseReason | undefined) {
+  switch (reason) {
+    case 'manual_intervention':
+      return '需要回到目标平台页面'
+    case 'browser_closed':
+      return '比特浏览器已关闭'
+    case 'window_closed':
+      return '采集窗口已关闭'
+    default:
+      return null
+  }
+}
+
+function collectionRecordStatusLabel(status: CollectionRecordRow['status']) {
+  switch (status) {
+    case 'success':
+      return '成功'
+    case 'skipped':
+      return '跳过'
+    default:
+      return '失败'
+  }
+}
+
+function collectionRecordStatusClassName(status: CollectionRecordRow['status']) {
+  switch (status) {
+    case 'success':
+      return 'text-emerald-700'
+    case 'skipped':
+      return 'text-amber-700'
+    default:
+      return 'text-red-700'
+  }
 }
 
 function sourceLabel(source: CollectionImageIndexItem['source']) {
@@ -293,6 +355,7 @@ function debugLogLevelClassName(level: CollectionDebugLogEntry['level']) {
 
 export function CollectionPage({
   session,
+  records,
   error,
   platforms,
   profiles,
@@ -306,14 +369,25 @@ export function CollectionPage({
   lastScanExistingCount,
   lastDownloadFailedCount,
   state,
+  starting,
+  stopping,
+  resuming,
   refreshingProfiles,
   imageIndexScanning,
   imageIndexDownloading,
   detectingCurrentPage,
   openingSearchPage,
   openingShopPage,
+  retryingRecordId,
+  deletingRecordId,
   onStateChange,
   onRefreshProfiles,
+  onStartSession,
+  onStopSession,
+  onResumeSession,
+  onRetryRecord,
+  onDeleteRecord,
+  onRefreshRecords,
   onClearDebugLogs,
   onOpenSearchPage,
   onOpenShopPage,
@@ -396,7 +470,10 @@ export function CollectionPage({
 
   return (
     <div className="space-y-4">
-      <Card className="shadow-sm">
+      <section
+        aria-label="采集工具"
+        className="rounded-md border bg-card text-card-foreground shadow-sm"
+      >
         <CardContent className="space-y-4 p-4">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div className="min-w-0 space-y-1">
@@ -409,97 +486,42 @@ export function CollectionPage({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <Button onClick={() => setIsDebugLogOpen(true)} type="button" variant="secondary">
+              {!session ? (
+                <Button disabled={starting} onClick={onStartSession} type="button">
+                  <Play className="mr-2 h-4 w-4" />
+                  {starting ? '启动中' : '开始采集会话'}
+                </Button>
+              ) : null}
+              {session?.status === 'paused' ? (
+                <Button disabled={resuming} onClick={onResumeSession} type="button">
+                  <Play className="mr-2 h-4 w-4" />
+                  {resuming ? '恢复中' : '恢复采集'}
+                </Button>
+              ) : null}
+              {session ? (
+                <Button
+                  disabled={stopping}
+                  onClick={onStopSession}
+                  type="button"
+                  variant="secondary"
+                >
+                  <Square className="mr-2 h-4 w-4" />
+                  {stopping ? '停止中' : '停止采集'}
+                </Button>
+              ) : null}
+              <Button
+                aria-label={`采集日志 ${debugLogs.length}`}
+                onClick={() => setIsDebugLogOpen(true)}
+                type="button"
+                variant="secondary"
+              >
                 <Terminal className="mr-2 h-4 w-4" />
-                日志 {debugLogs.length}
+                采集日志 {debugLogs.length}
                 {debugIssueCount > 0 ? (
                   <span className="ml-2 rounded bg-red-600 px-1.5 py-0.5 text-[10px] font-semibold text-white">
                     {debugIssueCount}
                   </span>
                 ) : null}
-              </Button>
-              <Button
-                disabled={imageIndexScanning || !canScanCurrentPage}
-                onClick={() => onScanImageIndex(currentPageUrl)}
-                type="button"
-                variant="secondary"
-              >
-                <RefreshCw className="mr-2 h-4 w-4" />
-                {imageIndexScanning ? '扫描中' : '扫描图池'}
-              </Button>
-              <label
-                className="flex h-10 items-center gap-2 rounded-md border bg-background px-2 text-xs font-medium"
-                htmlFor="collection-see-more-clicks"
-              >
-                <span className="whitespace-nowrap">See more 次数</span>
-                <Input
-                  className="h-8 w-16 px-2"
-                  id="collection-see-more-clicks"
-                  max={10}
-                  min={0}
-                  onChange={(event) =>
-                    onStateChange(
-                      'searchSeeMoreClicks',
-                      clampSearchSeeMoreClicks(Number(event.target.value)),
-                    )
-                  }
-                  type="number"
-                  value={state.searchSeeMoreClicks}
-                />
-              </label>
-              <Button
-                disabled={!imageItems.length}
-                onClick={onSelectAllImagePoolItems}
-                type="button"
-                variant="secondary"
-              >
-                <CheckSquare className="mr-2 h-4 w-4" />
-                全选
-              </Button>
-              <Button
-                disabled={!imageItems.length}
-                onClick={onClearImagePoolSelection}
-                type="button"
-                variant="secondary"
-              >
-                <X className="mr-2 h-4 w-4" />
-                取消选择
-              </Button>
-              <AlertDialog>
-                <AlertDialogTrigger asChild>
-                  <Button disabled={!imageItems.length} type="button" variant="secondary">
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    清空图池
-                  </Button>
-                </AlertDialogTrigger>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>清空图池</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      将清空当前图池、选择状态和本次扫描结果。已下载到工作区的图片不会被删除。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>取消</AlertDialogCancel>
-                    <AlertDialogAction onClick={onClearImagePool}>清空</AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-              <Button
-                disabled={!selectedItems.length || imageIndexDownloading}
-                onClick={() => onDownloadImageIndexItems(selectedItems)}
-                type="button"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                {imageIndexDownloading ? '下载中' : `下载选中 ${selectedItems.length}`}
-              </Button>
-              <Button
-                disabled={!imageItems.length || imageIndexDownloading}
-                onClick={() => onDownloadImageIndexItems(imageItems)}
-                type="button"
-              >
-                <Download className="mr-2 h-4 w-4" />
-                下载全部 {imageItems.length}
               </Button>
             </div>
           </div>
@@ -618,132 +640,213 @@ export function CollectionPage({
               </Button>
             </div>
           </div>
-
-          <div className="grid gap-3 lg:grid-cols-[minmax(220px,1fr)_minmax(260px,1.6fr)]">
-            <label className="grid gap-2 text-sm font-medium" htmlFor="collection-profile-id">
-              <span>环境编号</span>
-              <Input
-                id="collection-profile-id"
-                onChange={(event) => onStateChange('profileId', event.target.value)}
-                placeholder="手动输入环境编号"
-                value={state.profileId}
-              />
-            </label>
-            <div className="grid gap-2 text-sm font-medium">
-              <span>采集任务目录</span>
-              <div className="flex min-h-10 items-center rounded-md border bg-muted/40 px-3 text-sm text-muted-foreground">
-                {session?.output_dir ?? '启动后自动创建：01-采集工作区 / 平台-时间'}
-              </div>
-            </div>
+          <div className="flex flex-wrap items-center gap-2 border-t pt-3">
+            <Button
+              disabled={imageIndexScanning || !canScanCurrentPage}
+              onClick={() => onScanImageIndex(currentPageUrl)}
+              type="button"
+              variant="secondary"
+            >
+              <RefreshCw className="mr-2 h-4 w-4" />
+              {imageIndexScanning ? '扫描中' : '扫描图池'}
+            </Button>
+            <Button
+              aria-label="全选图池"
+              className="h-10 w-10 p-0"
+              disabled={!imageItems.length}
+              onClick={onSelectAllImagePoolItems}
+              title="全选图池"
+              type="button"
+              variant="secondary"
+            >
+              <CheckSquare className="h-4 w-4" />
+            </Button>
+            <Button
+              aria-label="取消图池选择"
+              className="h-10 w-10 p-0"
+              disabled={!imageItems.length}
+              onClick={onClearImagePoolSelection}
+              title="取消图池选择"
+              type="button"
+              variant="secondary"
+            >
+              <X className="h-4 w-4" />
+            </Button>
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  aria-label="清空图池"
+                  className="h-10 w-10 p-0"
+                  disabled={!imageItems.length}
+                  title="清空图池"
+                  type="button"
+                  variant="secondary"
+                >
+                  <Trash2 className="h-4 w-4" />
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>清空图池</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    将清空当前图池、选择状态和本次扫描结果。已下载到工作区的图片不会被删除。
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>取消</AlertDialogCancel>
+                  <AlertDialogAction onClick={onClearImagePool}>清空</AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+            <Button
+              disabled={!selectedItems.length || imageIndexDownloading}
+              onClick={() => onDownloadImageIndexItems(selectedItems)}
+              type="button"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              {imageIndexDownloading ? '下载中' : `下载选中 ${selectedItems.length}`}
+            </Button>
+            <Button
+              disabled={!imageItems.length || imageIndexDownloading}
+              onClick={() => onDownloadImageIndexItems(imageItems)}
+              type="button"
+            >
+              <Download className="mr-2 h-4 w-4" />
+              下载全部 {imageItems.length}
+            </Button>
           </div>
-
-          <div className="flex flex-col gap-3 rounded-md border bg-muted/40 p-3 text-sm lg:flex-row lg:items-center lg:justify-between">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Badge variant="secondary">{platformLabel(state.platform, platforms)}</Badge>
-              <Badge variant="secondary">{profileLabel(state.profileId, profiles)}</Badge>
-              <span className="truncate text-muted-foreground">
-                {session?.output_dir ?? '采集会话启动后自动创建任务目录'}
-              </span>
-            </div>
-            <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-              <span>图池 {imageItems.length}</span>
-              <span>已选 {selectedItems.length}</span>
-              <span>本次新增 {lastScanAddedCount}</span>
-              <span>本次已存在 {lastScanExistingCount}</span>
-              <span>下载失败 {lastDownloadFailedCount}</span>
-              <span>当前页图片 {imageIndexScan?.imageCount ?? 0}</span>
-              <span>当前页可下载 {imageIndexScan?.collectableCount ?? 0}</span>
-            </div>
-          </div>
-
-          <div className="rounded-md border bg-background p-3 text-sm">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <Globe2 className="h-4 w-4 shrink-0 text-primary" />
-                  <Badge variant={currentPage?.status === 'last_valid' ? 'secondary' : 'default'}>
-                    {currentPageStatusLabel(currentPage)}
+          <section aria-label="采集运行反馈" className="space-y-3 border-t pt-4">
+            <div className="grid gap-3 lg:grid-cols-2">
+              <div className="flex flex-col gap-3 rounded-md border bg-muted/40 p-3 text-sm">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{platformLabel(state.platform, platforms)}</Badge>
+                  <Badge variant="secondary">{profileLabel(state.profileId, profiles)}</Badge>
+                  <Badge variant={session?.status === 'active' ? 'default' : 'secondary'}>
+                    {sessionStatusLabel(session?.status)}
                   </Badge>
-                  <Badge variant="secondary">{currentPageKindLabel(currentPage)}</Badge>
-                  {detectingCurrentPage ? (
-                    <span className="text-xs text-muted-foreground">检测中...</span>
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {session?.output_dir ?? '采集会话启动后自动创建任务目录'}
+                </div>
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span>图池 {imageItems.length}</span>
+                  <span>已选 {selectedItems.length}</span>
+                  <span>本次新增 {lastScanAddedCount}</span>
+                  <span>本次已存在 {lastScanExistingCount}</span>
+                  <span>下载失败 {lastDownloadFailedCount}</span>
+                  <span>当前页图片 {imageIndexScan?.imageCount ?? 0}</span>
+                  <span>当前页可下载 {imageIndexScan?.collectableCount ?? 0}</span>
+                </div>
+              </div>
+
+              <div className="rounded-md border bg-background p-3 text-sm">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Globe2 className="h-4 w-4 shrink-0 text-primary" />
+                      <Badge
+                        variant={currentPage?.status === 'last_valid' ? 'secondary' : 'default'}
+                      >
+                        {currentPageStatusLabel(currentPage)}
+                      </Badge>
+                      <Badge variant="secondary">{currentPageKindLabel(currentPage)}</Badge>
+                      {detectingCurrentPage ? (
+                        <span className="text-xs text-muted-foreground">检测中...</span>
+                      ) : null}
+                    </div>
+                    <div className="mt-2 truncate font-medium">
+                      {currentPage?.title || '等待比特浏览器当前页面'}
+                    </div>
+                    <div className="mt-1 truncate text-xs text-muted-foreground">
+                      {currentPageUrl || '等待目标平台页面'}
+                    </div>
+                  </div>
+                  {currentPage?.goodsId ? (
+                    <div className="shrink-0 text-xs text-muted-foreground">
+                      商品 {currentPage.goodsId}
+                    </div>
                   ) : null}
                 </div>
-                <div className="mt-2 truncate font-medium">
-                  {currentPage?.title || '等待比特浏览器当前页面'}
-                </div>
-                <div className="mt-1 break-all text-xs text-muted-foreground">
-                  {currentPageUrl || '请选择浏览器环境，并在比特浏览器里打开目标平台页面'}
-                </div>
-              </div>
-              <div className="shrink-0 text-xs text-muted-foreground">
-                {currentPage?.goodsId ? `商品 ${currentPage.goodsId}` : '扫描前会短暂等待页面稳定'}
+                {keywordPreview ? (
+                  <div className="mt-2 truncate text-xs text-muted-foreground">
+                    搜索页 {keywordPreview}
+                  </div>
+                ) : null}
+                {lastScanExistingCount > 0 && lastScanAddedCount === 0 ? (
+                  <div className="mt-2 text-xs text-muted-foreground">
+                    本次扫描到的图片已在图池中，已更新来源页面信息。
+                  </div>
+                ) : null}
               </div>
             </div>
-            <div className="mt-2 text-xs text-muted-foreground">
-              搜索页按设置次数加载 See more，店铺页会自动加载到稳定。
-              {keywordPreview ? ` 当前关键词搜索页：${keywordPreview}` : ''}
-            </div>
-            {lastScanExistingCount > 0 && lastScanAddedCount === 0 ? (
-              <div className="mt-2 text-xs text-muted-foreground">
-                本次扫描到的图片已在图池中，已更新来源页面信息。
+
+            {session?.status === 'paused' && pauseReasonLabel(session.pause_reason) ? (
+              <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+                暂停原因：{pauseReasonLabel(session.pause_reason)}
               </div>
             ) : null}
-          </div>
 
-          {imageIndexDownload ? (
-            <div className="rounded-md border bg-muted/40 p-3 text-sm">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <div className="font-medium">保存目录</div>
-                  <div className="mt-1 break-all text-xs text-muted-foreground">
-                    {imageIndexDownload.outputDir}
+            {imageIndexDownload ? (
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <div className="font-medium">保存目录</div>
+                    <div className="mt-1 break-all text-xs text-muted-foreground">
+                      {imageIndexDownload.outputDir}
+                    </div>
                   </div>
+                  <Badge variant="secondary">
+                    成功 {imageIndexDownload.saved.length} / 失败 {imageIndexDownload.failed.length}
+                  </Badge>
                 </div>
-                <Badge variant="secondary">
-                  成功 {imageIndexDownload.saved.length} / 失败 {imageIndexDownload.failed.length}
-                </Badge>
-              </div>
-              {imageIndexDownload.saved.length ? (
-                <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
-                  {imageIndexDownload.saved.slice(0, 6).map((item) => (
-                    <div
-                      className="flex min-w-0 items-center gap-2 rounded-md border bg-background p-2"
-                      key={item.savedPath}
-                    >
-                      <img
-                        alt=""
-                        className="h-10 w-10 rounded border object-cover"
-                        decoding="async"
-                        loading="lazy"
-                        src={localImageUrl(item.savedPath)}
-                      />
-                      <div className="min-w-0 text-xs">
-                        <div className="truncate font-medium">
-                          {fileNameFromPath(item.savedPath)}
-                        </div>
-                        <div className="text-muted-foreground">
-                          {Math.round(item.bytes / 1024)} KB
+                {imageIndexDownload.saved.length ? (
+                  <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+                    {imageIndexDownload.saved.slice(0, 6).map((item) => (
+                      <div
+                        className="flex min-w-0 items-center gap-2 rounded-md border bg-background p-2"
+                        key={item.savedPath}
+                      >
+                        <img
+                          alt=""
+                          className="h-10 w-10 rounded border object-cover"
+                          decoding="async"
+                          loading="lazy"
+                          src={localImageUrl(item.savedPath)}
+                        />
+                        <div className="min-w-0 text-xs">
+                          <div className="truncate font-medium">
+                            {fileNameFromPath(item.savedPath)}
+                          </div>
+                          <div className="text-muted-foreground">
+                            {Math.round(item.bytes / 1024)} KB
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          ) : null}
+                    ))}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+          </section>
         </CardContent>
-      </Card>
+      </section>
 
-      <Card className="shadow-sm">
+      <section
+        aria-label="图池工作区"
+        className="min-h-[520px] rounded-md border bg-card text-card-foreground shadow-sm"
+      >
         <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
           <div>
-            <CardTitle className="text-lg">图池列表</CardTitle>
+            <CardTitle className="text-lg">图池</CardTitle>
             <p className="text-sm text-muted-foreground">
               {imageItems.length
                 ? `散图 ${imagePoolGroups.looseItems.length} 张 · 商品页 ${imagePoolGroups.productGroups.length} 组/${productImageCount} 张`
                 : '等待扫描'}
             </p>
+            <div className="mt-2 flex flex-wrap gap-2 text-xs">
+              <Badge variant="secondary">商品页</Badge>
+              <Badge variant="secondary">散图</Badge>
+            </div>
           </div>
         </CardHeader>
         <CardContent className="p-4 pt-0">
@@ -969,7 +1072,196 @@ export function CollectionPage({
             </div>
           )}
         </CardContent>
-      </Card>
+      </section>
+
+      <section aria-label="采集结果与异常">
+        <Card className="shadow-sm">
+          <CardHeader className="flex-row items-center justify-between space-y-0 p-4">
+            <div>
+              <CardTitle className="text-lg">采集结果与异常</CardTitle>
+              <p className="text-sm text-muted-foreground">
+                当前会话 {records.length} 条记录，失败项可直接重试。
+              </p>
+            </div>
+            <Button onClick={onRefreshRecords} type="button" variant="secondary">
+              <RefreshCw className="mr-2 h-4 w-4" />
+              刷新记录
+            </Button>
+          </CardHeader>
+          <CardContent className="p-4 pt-0">
+            {records.length ? (
+              <div className="space-y-2">
+                {records.slice(0, 20).map((record) => (
+                  <div
+                    className="grid gap-3 rounded-md border p-3 text-sm md:grid-cols-[72px_minmax(0,1fr)_auto]"
+                    key={record.id}
+                  >
+                    {record.savedPath && record.status !== 'failed' ? (
+                      <img
+                        alt=""
+                        className="h-14 w-[72px] rounded-md border object-cover"
+                        decoding="async"
+                        loading="lazy"
+                        src={localImageUrl(record.savedPath)}
+                      />
+                    ) : (
+                      <div className="grid h-14 w-[72px] place-items-center rounded-md border bg-muted text-xs text-muted-foreground">
+                        无预览
+                      </div>
+                    )}
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span
+                          className={cn(
+                            'font-medium',
+                            collectionRecordStatusClassName(record.status),
+                          )}
+                        >
+                          {collectionRecordStatusLabel(record.status)}
+                        </span>
+                        {record.skuCode ? (
+                          <Badge variant="secondary">{record.skuCode}</Badge>
+                        ) : null}
+                      </div>
+                      <div className="mt-1 truncate text-xs text-muted-foreground">
+                        {fileNameFromPath(record.savedPath ?? record.sourceUrl)}
+                      </div>
+                      {record.reason ? (
+                        <div className="mt-1 text-xs text-red-700">{record.reason}</div>
+                      ) : null}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      {record.status === 'failed' ? (
+                        <Button
+                          disabled={retryingRecordId === record.id}
+                          onClick={() => onRetryRecord(record.id)}
+                          type="button"
+                          variant="secondary"
+                        >
+                          <RotateCcw className="mr-2 h-4 w-4" />
+                          {retryingRecordId === record.id ? '重试中' : '重试'}
+                        </Button>
+                      ) : null}
+                      <Button
+                        aria-label={`删除采集记录 ${record.id}`}
+                        disabled={deletingRecordId === record.id}
+                        onClick={() => onDeleteRecord(record.id)}
+                        title="删除记录"
+                        type="button"
+                        variant="ghost"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
+                暂无采集记录
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </section>
+
+      <Accordion collapsible type="single">
+        <AccordionItem className="rounded-md border bg-card px-4" value="advanced">
+          <AccordionTrigger className="text-sm">
+            <span className="flex items-center gap-2">
+              <SlidersHorizontal className="h-4 w-4 text-muted-foreground" />
+              高级设置
+            </span>
+          </AccordionTrigger>
+          <AccordionContent>
+            <div className="grid gap-4 border-t pt-4 md:grid-cols-2 xl:grid-cols-4">
+              <label
+                className="grid gap-2 text-sm font-medium"
+                htmlFor="collection-see-more-clicks"
+              >
+                <span>See more 次数</span>
+                <Input
+                  id="collection-see-more-clicks"
+                  max={10}
+                  min={0}
+                  onChange={(event) =>
+                    onStateChange(
+                      'searchSeeMoreClicks',
+                      clampSearchSeeMoreClicks(Number(event.target.value)),
+                    )
+                  }
+                  type="number"
+                  value={state.searchSeeMoreClicks}
+                />
+              </label>
+              <label className="grid gap-2 text-sm font-medium" htmlFor="collection-mode">
+                <span>采集模式</span>
+                <select
+                  className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  id="collection-mode"
+                  onChange={(event) =>
+                    onStateChange('mode', event.target.value === 'scroll' ? 'scroll' : 'click')
+                  }
+                  value={state.mode}
+                >
+                  <option value="click">点击采集</option>
+                  <option value="scroll">滚动采集</option>
+                </select>
+              </label>
+              <label className="grid gap-2 text-sm font-medium" htmlFor="collection-profile-id">
+                <span>环境编号</span>
+                <Input
+                  id="collection-profile-id"
+                  onChange={(event) => onStateChange('profileId', event.target.value)}
+                  placeholder="手动输入环境编号"
+                  value={state.profileId}
+                />
+              </label>
+              <label
+                className="grid gap-2 text-sm font-medium"
+                htmlFor="collection-scroll-keywords"
+              >
+                <span>滚动关键词</span>
+                <Input
+                  id="collection-scroll-keywords"
+                  onChange={(event) => onStateChange('scrollKeywords', event.target.value)}
+                  placeholder="每行一个过滤关键词"
+                  value={state.scrollKeywords}
+                />
+              </label>
+              <div className="grid gap-2 text-sm font-medium">
+                <span>采集任务目录</span>
+                <div className="flex min-h-10 items-center rounded-md border bg-muted/40 px-3 text-xs text-muted-foreground">
+                  {session?.output_dir ?? '启动后自动创建'}
+                </div>
+              </div>
+              {(
+                [
+                  ['minWidth', '最小宽度'],
+                  ['maxWidth', '最大宽度'],
+                  ['minHeight', '最小高度'],
+                  ['maxHeight', '最大高度'],
+                ] as const
+              ).map(([key, label]) => (
+                <label
+                  className="grid gap-2 text-sm font-medium"
+                  htmlFor={`collection-${key}`}
+                  key={key}
+                >
+                  <span>{label}</span>
+                  <Input
+                    id={`collection-${key}`}
+                    min={0}
+                    onChange={(event) => onStateChange(key, Number(event.target.value) || 0)}
+                    type="number"
+                    value={state[key]}
+                  />
+                </label>
+              ))}
+            </div>
+          </AccordionContent>
+        </AccordionItem>
+      </Accordion>
 
       <Dialog onOpenChange={setIsDebugLogOpen} open={isDebugLogOpen}>
         <DialogContent className="max-w-5xl gap-0 p-0">

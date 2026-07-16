@@ -672,6 +672,83 @@ test.describe('production-first Workbench shell', () => {
     }
   })
 
+  test('presents Collection as an image-pool production workspace', async () => {
+    const testInfo = test.info()
+    const attachScreenshot = async (name: string) => {
+      const path = testInfo.outputPath(`${name}.png`)
+      await page.screenshot({ path })
+      await testInfo.attach(name, { path, contentType: 'image/png' })
+    }
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-collection-workspace'),
+    })
+    const page = await app.firstWindow()
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-collection-workspace'))
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '采集', exact: true })
+      .click()
+
+    const tools = page.getByRole('region', { name: '采集工具' })
+    const feedback = page.getByRole('region', { name: '采集运行反馈' })
+    const imagePool = page.getByRole('region', { name: '图池工作区' })
+    const results = page.getByRole('region', { name: '采集结果与异常' })
+    await expect(tools).toBeVisible()
+    await expect(feedback).toBeVisible()
+    await expect(imagePool).toBeVisible()
+    await expect(results).toBeVisible()
+    await expect(tools.getByRole('button', { name: '开始采集会话' })).toBeVisible()
+    await expect(tools.getByRole('button', { name: '扫描图池' })).toBeVisible()
+    await expect(tools.getByRole('button', { name: '下载选中 0' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '高级设置' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '采集日志 0' })).toBeVisible()
+    await expect(imagePool.getByText('商品页', { exact: true })).toBeVisible()
+    await expect(imagePool.getByText('散图', { exact: true })).toBeVisible()
+    await expect(results.getByText('暂无采集记录', { exact: true })).toBeVisible()
+
+    const poolBox = await imagePool.boundingBox()
+    expect(poolBox).not.toBeNull()
+    expect(poolBox?.height ?? 0).toBeGreaterThanOrEqual(520)
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await attachScreenshot(`collection-workspace-${viewport.width}x${viewport.height}`)
+    }
+    await page.setViewportSize({ width: 1440, height: 900 })
+
+    await tools.getByLabel('搜索关键词').fill('保留采集搜索草稿')
+    await emitPublicModuleEvent(app, 'collection:event', {
+      type: 'session-started',
+      session: {
+        id: 'collection-workspace-session',
+        platform: 'temu',
+        profile_id: 'profile-1',
+        mode: 'click',
+        status: 'active',
+        output_dir: join(tempRoot, 'collection-output'),
+        started_at: Date.now(),
+      },
+    })
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '设置', exact: true })
+      .click()
+    await page
+      .getByRole('complementary', { name: '任务坞' })
+      .getByRole('button', { name: '打开轻量任务 采集任务' })
+      .click()
+    await expect(page).toHaveURL(/#\/collection$/)
+    await expect(page.getByLabel('搜索关键词')).toHaveValue('保留采集搜索草稿')
+  })
+
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
