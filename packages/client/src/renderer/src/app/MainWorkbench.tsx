@@ -450,10 +450,14 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
         event.type === 'image-saved' ||
         event.type === 'session-started' ||
         event.type === 'session-paused' ||
-        event.type === 'session-resumed' ||
-        event.type === 'session-stopped'
+        event.type === 'session-resumed'
       ) {
         void refreshCollectionRecords()
+      }
+      if (event.type === 'session-stopped') {
+        void refreshCollectionRecordsForSession(event.session).catch((error) => {
+          setCollectionError(error instanceof Error ? error.message : '读取采集记录失败')
+        })
       }
     })
     return () => {
@@ -717,20 +721,23 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
     setOpenMessage(response.ok ? null : response.error.message)
   }
 
+  async function refreshCollectionRecordsForSession(session: CollectionSession) {
+    const records = await window.api.collection.listRecords({
+      session_id: session.id,
+      limit: 10_000,
+    })
+    setCollectionSession(session)
+    setCollectionRecords(records)
+    setCollectionError(null)
+  }
+
   async function refreshCollectionRecords() {
     try {
       const session = await window.api.collection.getActiveSession()
-      setCollectionSession(session)
       if (!session) {
-        setCollectionRecords([])
         return
       }
-      const records = await window.api.collection.listRecords({
-        session_id: session.id,
-        limit: 10_000,
-      })
-      setCollectionRecords(records)
-      setCollectionError(null)
+      await refreshCollectionRecordsForSession(session)
     } catch (error) {
       setCollectionError(error instanceof Error ? error.message : '读取采集记录失败')
     }
@@ -875,13 +882,19 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
   }
 
   function collectionImageIndexRequest(limit?: number, pageUrl?: string) {
-    const profileId = collectionPageState.profileId.trim()
+    const activeSession =
+      collectionSession &&
+      collectionSession.status !== 'completed' &&
+      collectionSession.status !== 'failed'
+        ? collectionSession
+        : null
+    const profileId = (activeSession?.profile_id ?? collectionPageState.profileId).trim()
     if (!profileId) {
       throw new Error('请先选择或填写比特浏览器环境编号')
     }
-    const outputDir = collectionSession?.output_dir
+    const outputDir = activeSession?.output_dir
     return {
-      platform: collectionPageState.platform,
+      platform: activeSession?.platform ?? collectionPageState.platform,
       profile_id: profileId,
       ...(outputDir ? { output_dir: outputDir } : {}),
       ...(pageUrl?.trim() ? { page_url: pageUrl.trim() } : {}),
@@ -1136,11 +1149,9 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
     setCollectionError(null)
     try {
       const session = await window.api.collection.stopSession()
-      setCollectionSession(session)
-      if (!session) {
-        setCollectionRecords([])
+      if (session) {
+        await refreshCollectionRecordsForSession(session)
       }
-      await refreshCollectionRecords()
     } catch (error) {
       setCollectionError(error instanceof Error ? error.message : '停止采集会话失败')
     } finally {

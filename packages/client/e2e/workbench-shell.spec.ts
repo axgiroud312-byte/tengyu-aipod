@@ -687,6 +687,41 @@ test.describe('production-first Workbench shell', () => {
     })
     const page = await app.firstWindow()
     await enterPreparedWorkbench(page, join(tempRoot, 'workbench-collection-workspace'))
+    const collectionSession = {
+      id: 'collection-workspace-session',
+      platform: 'temu',
+      profile_id: 'profile-locked',
+      mode: 'click',
+      status: 'active',
+      output_dir: join(tempRoot, 'collection-output'),
+      started_at: Date.now(),
+    }
+    const collectionRecords = Array.from({ length: 21 }, (_, index) => ({
+      id: `collection-record-${index + 1}`,
+      sessionId: collectionSession.id,
+      sourceUrl: `${mockServer.baseUrl}/image/${(index % 2) + 1}`,
+      pageUrl: 'https://www.temu.com/search_result.html?search_key=mock',
+      savedPath: null,
+      status: index === 20 ? 'failed' : 'success',
+      reason: index === 20 ? 'HTTP 404' : null,
+      createdAt: Date.now() - index,
+    }))
+    await app.evaluate(
+      ({ ipcMain }, input) => {
+        let activeSession: typeof input.session | null = input.session
+        ipcMain.removeHandler('collection:get-active-session')
+        ipcMain.handle('collection:get-active-session', () => activeSession)
+        ipcMain.removeHandler('collection:list-records')
+        ipcMain.handle('collection:list-records', () => input.records)
+        ipcMain.removeHandler('collection:stop-session')
+        ipcMain.handle('collection:stop-session', () => {
+          const completed = { ...input.session, ended_at: Date.now(), status: 'completed' }
+          activeSession = null
+          return completed
+        })
+      },
+      { records: collectionRecords, session: collectionSession },
+    )
     await page.setViewportSize({ width: 1440, height: 900 })
     await page
       .getByRole('navigation', { name: 'Workbench 主导航' })
@@ -701,14 +736,16 @@ test.describe('production-first Workbench shell', () => {
     await expect(feedback).toBeVisible()
     await expect(imagePool).toBeVisible()
     await expect(results).toBeVisible()
-    await expect(tools.getByRole('button', { name: '开始采集会话' })).toBeVisible()
+    await expect(tools.getByRole('button', { name: '停止采集' })).toBeVisible()
     await expect(tools.getByRole('button', { name: '扫描图池' })).toBeVisible()
     await expect(tools.getByRole('button', { name: '下载选中 0' })).toBeVisible()
+    await expect(tools.getByLabel('平台')).toBeDisabled()
+    await expect(tools.getByLabel('浏览器环境')).toBeDisabled()
     await expect(page.getByRole('button', { name: '高级设置' })).toBeVisible()
     await expect(page.getByRole('button', { name: '采集日志 0' })).toBeVisible()
     await expect(imagePool.getByText('商品页', { exact: true })).toBeVisible()
     await expect(imagePool.getByText('散图', { exact: true })).toBeVisible()
-    await expect(results.getByText('暂无采集记录', { exact: true })).toBeVisible()
+    await expect(results.getByRole('button', { name: '查看失败 1' })).toBeVisible()
 
     const poolBox = await imagePool.boundingBox()
     expect(poolBox).not.toBeNull()
@@ -720,22 +757,25 @@ test.describe('production-first Workbench shell', () => {
       { width: 1920, height: 1080 },
     ]) {
       await page.setViewportSize(viewport)
+      await tools.scrollIntoViewIfNeeded()
       await attachScreenshot(`collection-workspace-${viewport.width}x${viewport.height}`)
     }
     await page.setViewportSize({ width: 1440, height: 900 })
 
+    await results.getByRole('button', { name: '查看失败 1' }).click()
+    await expect(results.getByText('HTTP 404', { exact: true })).toBeVisible()
+    await expect(results.getByRole('button', { name: '重试' })).toBeVisible()
+
+    await tools.getByRole('button', { name: '停止采集' }).click()
+    await expect(tools.getByRole('button', { name: '开始采集会话' })).toBeVisible()
+    await expect(tools.getByLabel('平台')).toBeEnabled()
+    await expect(tools.getByLabel('浏览器环境')).toBeEnabled()
+    await expect(results.getByText('HTTP 404', { exact: true })).toBeVisible()
+
     await tools.getByLabel('搜索关键词').fill('保留采集搜索草稿')
     await emitPublicModuleEvent(app, 'collection:event', {
       type: 'session-started',
-      session: {
-        id: 'collection-workspace-session',
-        platform: 'temu',
-        profile_id: 'profile-1',
-        mode: 'click',
-        status: 'active',
-        output_dir: join(tempRoot, 'collection-output'),
-        started_at: Date.now(),
-      },
+      session: collectionSession,
     })
     await page
       .getByRole('navigation', { name: 'Workbench 主导航' })

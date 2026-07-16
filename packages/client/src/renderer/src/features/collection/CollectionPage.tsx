@@ -178,6 +178,8 @@ function sessionStatusLabel(status: CollectionSessionStatus | undefined) {
       return '停止中'
     case 'completed':
       return '已完成'
+    case 'failed':
+      return '失败'
     default:
       return '未开始'
   }
@@ -404,6 +406,7 @@ export function CollectionPage({
   const [expandedProductGroupKeys, setExpandedProductGroupKeys] = useState<Set<string>>(
     () => new Set(),
   )
+  const [showFailedRecords, setShowFailedRecords] = useState(false)
   const [isDebugLogOpen, setIsDebugLogOpen] = useState(false)
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const keywordPreview = state.platform === 'temu' ? temuSearchUrl(keyword) : ''
@@ -412,6 +415,14 @@ export function CollectionPage({
   const canScanCurrentPage = Boolean(currentPageUrl) && currentPage?.status !== 'none'
   const debugLogCounts = useMemo(() => collectionDebugLogLevelCounts(debugLogs), [debugLogs])
   const debugIssueCount = debugLogCounts.warn + debugLogCounts.error
+  const sessionLocked = Boolean(
+    session && session.status !== 'completed' && session.status !== 'failed',
+  )
+  const failedRecords = useMemo(
+    () => records.filter((record) => record.status === 'failed'),
+    [records],
+  )
+  const visibleRecords = showFailedRecords ? failedRecords : records.slice(0, 20)
   const imagePoolGroups = useMemo(() => groupCollectionImagePoolItems(imageItems), [imageItems])
   const openProductGroup = imagePoolGroups.productGroups.find(
     (group) => group.key === openProductGroupKey,
@@ -486,7 +497,7 @@ export function CollectionPage({
               </p>
             </div>
             <div className="flex flex-wrap gap-2">
-              {!session ? (
+              {!sessionLocked ? (
                 <Button disabled={starting} onClick={onStartSession} type="button">
                   <Play className="mr-2 h-4 w-4" />
                   {starting ? '启动中' : '开始采集会话'}
@@ -498,7 +509,7 @@ export function CollectionPage({
                   {resuming ? '恢复中' : '恢复采集'}
                 </Button>
               ) : null}
-              {session ? (
+              {sessionLocked ? (
                 <Button
                   disabled={stopping}
                   onClick={onStopSession}
@@ -564,6 +575,7 @@ export function CollectionPage({
               </label>
               <select
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                disabled={sessionLocked}
                 id="collection-platform"
                 onChange={(event) => onStateChange('platform', event.target.value)}
                 value={state.platform}
@@ -578,7 +590,7 @@ export function CollectionPage({
 
             <div className="grid gap-2 text-sm font-medium">
               <div className="flex items-center justify-between gap-2">
-                <span>浏览器环境</span>
+                <label htmlFor="collection-profile">浏览器环境</label>
                 <Button
                   className="h-7 px-2"
                   disabled={refreshingProfiles}
@@ -592,6 +604,8 @@ export function CollectionPage({
               </div>
               <select
                 className="h-10 w-full rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
+                disabled={sessionLocked}
+                id="collection-profile"
                 onChange={(event) => onStateChange('profileId', event.target.value)}
                 value={state.profileId}
               >
@@ -719,8 +733,12 @@ export function CollectionPage({
             <div className="grid gap-3 lg:grid-cols-2">
               <div className="flex flex-col gap-3 rounded-md border bg-muted/40 p-3 text-sm">
                 <div className="flex min-w-0 flex-wrap items-center gap-2">
-                  <Badge variant="secondary">{platformLabel(state.platform, platforms)}</Badge>
-                  <Badge variant="secondary">{profileLabel(state.profileId, profiles)}</Badge>
+                  <Badge variant="secondary">
+                    {platformLabel(session?.platform ?? state.platform, platforms)}
+                  </Badge>
+                  <Badge variant="secondary">
+                    {profileLabel(session?.profile_id ?? state.profileId, profiles)}
+                  </Badge>
                   <Badge variant={session?.status === 'active' ? 'default' : 'secondary'}>
                     {sessionStatusLabel(session?.status)}
                   </Badge>
@@ -1083,15 +1101,26 @@ export function CollectionPage({
                 当前会话 {records.length} 条记录，失败项可直接重试。
               </p>
             </div>
-            <Button onClick={onRefreshRecords} type="button" variant="secondary">
-              <RefreshCw className="mr-2 h-4 w-4" />
-              刷新记录
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                disabled={!failedRecords.length}
+                onClick={() => setShowFailedRecords((current) => !current)}
+                type="button"
+                variant={showFailedRecords ? 'default' : 'secondary'}
+              >
+                <RotateCcw className="mr-2 h-4 w-4" />
+                {showFailedRecords ? '查看最近' : `查看失败 ${failedRecords.length}`}
+              </Button>
+              <Button onClick={onRefreshRecords} type="button" variant="secondary">
+                <RefreshCw className="mr-2 h-4 w-4" />
+                刷新记录
+              </Button>
+            </div>
           </CardHeader>
           <CardContent className="p-4 pt-0">
-            {records.length ? (
+            {visibleRecords.length ? (
               <div className="space-y-2">
-                {records.slice(0, 20).map((record) => (
+                {visibleRecords.map((record) => (
                   <div
                     className="grid gap-3 rounded-md border p-3 text-sm md:grid-cols-[72px_minmax(0,1fr)_auto]"
                     key={record.id}
@@ -1158,7 +1187,7 @@ export function CollectionPage({
               </div>
             ) : (
               <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                暂无采集记录
+                {showFailedRecords ? '暂无失败记录' : '暂无采集记录'}
               </div>
             )}
           </CardContent>
@@ -1198,6 +1227,7 @@ export function CollectionPage({
                 <span>采集模式</span>
                 <select
                   className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                  disabled={sessionLocked}
                   id="collection-mode"
                   onChange={(event) =>
                     onStateChange('mode', event.target.value === 'scroll' ? 'scroll' : 'click')
@@ -1211,6 +1241,7 @@ export function CollectionPage({
               <label className="grid gap-2 text-sm font-medium" htmlFor="collection-profile-id">
                 <span>环境编号</span>
                 <Input
+                  disabled={sessionLocked}
                   id="collection-profile-id"
                   onChange={(event) => onStateChange('profileId', event.target.value)}
                   placeholder="手动输入环境编号"
@@ -1223,6 +1254,7 @@ export function CollectionPage({
               >
                 <span>滚动关键词</span>
                 <Input
+                  disabled={sessionLocked}
                   id="collection-scroll-keywords"
                   onChange={(event) => onStateChange('scrollKeywords', event.target.value)}
                   placeholder="每行一个过滤关键词"
@@ -1250,6 +1282,7 @@ export function CollectionPage({
                 >
                   <span>{label}</span>
                   <Input
+                    disabled={sessionLocked}
                     id={`collection-${key}`}
                     min={0}
                     onChange={(event) => onStateChange(key, Number(event.target.value) || 0)}
