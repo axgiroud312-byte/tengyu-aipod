@@ -115,6 +115,22 @@ button {
   background: hsl(var(--background));
 }
 
+@media (max-width: 1399px) {
+  .workbench-shell:has(> [data-workbench-region="task-dock"][data-state="expanded"])
+    > [data-workbench-region="central"] {
+    padding-right: 310px;
+  }
+
+  [data-workbench-region="task-dock"][data-state="expanded"] {
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 40;
+    box-shadow: -12px 0 30px rgb(15 23 42 / 14%);
+  }
+}
+
 .auth-brand-surface {
   background: hsl(var(--background));
 }

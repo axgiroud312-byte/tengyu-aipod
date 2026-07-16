@@ -58,6 +58,7 @@ import { useIpcMutation } from '@/lib/use-ipc'
 import { cn } from '@/lib/utils'
 import { useExecutionPlanStore } from '@/store/execution-plans'
 import { usePipelineDraftStore } from '@/store/pipeline'
+import { useTaskDockStore } from '@/store/task-dock'
 import { isPipelineRunConfig } from '@tengyu-aipod/shared'
 import type {
   PipelinePrintMode,
@@ -863,6 +864,9 @@ export function FullTaskPage({
     'currentRunId',
     initialRunId,
   )
+  const taskDockSelectedRunId = useTaskDockStore((state) => state.selectedRunId)
+  const markTaskDockRunSoftStopping = useTaskDockStore((state) => state.markRunSoftStopping)
+  const selectTaskDockRun = useTaskDockStore((state) => state.selectCompleteTaskRun)
   const [runHistory, setRunHistory] = useState<PipelineRunRecord[]>([])
   const [runHistoryLoading, setRunHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -908,10 +912,18 @@ export function FullTaskPage({
   )
 
   useEffect(() => {
-    if (initialRunId) {
-      setCurrentRunId(initialRunId)
+    setCurrentRunId(initialRunId)
+    selectTaskDockRun(initialRunId)
+  }, [initialRunId, selectTaskDockRun, setCurrentRunId])
+
+  useEffect(() => {
+    if (!taskDockSelectedRunId || taskDockSelectedRunId === currentRunId) {
+      return
     }
-  }, [initialRunId, setCurrentRunId])
+    setProgress(null)
+    setActiveRunConfig(null)
+    setCurrentRunId(taskDockSelectedRunId)
+  }, [currentRunId, setCurrentRunId, taskDockSelectedRunId])
 
   useEffect(() => {
     onRunSelectionChange?.(Boolean(currentRunId))
@@ -1349,6 +1361,7 @@ export function FullTaskPage({
       if (event.ok) {
         const runConfig = parsePipelineRunConfig(event.result.run.config_json)
         setCurrentRunId(event.result.run.id)
+        selectTaskDockRun(event.result.run.id)
         setActiveRunConfig(runConfig)
         setProgress(progressFromRunDetail(event.result))
         setMessage(pipelineRunMessage(event.result.run))
@@ -1367,7 +1380,7 @@ export function FullTaskPage({
       setRunning(false)
       void refreshRunHistory()
     })
-  }, [currentRunId, refreshRunHistory, setCurrentRunId])
+  }, [currentRunId, refreshRunHistory, selectTaskDockRun, setCurrentRunId])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
@@ -2004,6 +2017,7 @@ export function FullTaskPage({
       const config = buildConfig()
       const runId = await window.api.pipeline.run(config)
       setCurrentRunId(runId)
+      selectTaskDockRun(runId)
       setActiveRunConfig(config)
       setProgress({
         run_id: runId,
@@ -2032,6 +2046,7 @@ export function FullTaskPage({
       return
     }
     setCurrentRunId(resumedRunId)
+    selectTaskDockRun(resumedRunId)
     setRunning(true)
     setMessage('完整任务续跑已启动')
     void refreshRunHistory()
@@ -2054,6 +2069,7 @@ export function FullTaskPage({
     setProgress(null)
     setActiveRunConfig(null)
     setCurrentRunId(null)
+    selectTaskDockRun(null)
     setRunning(false)
     setSelectedPipelineStage('source')
     setError(null)
@@ -2073,6 +2089,7 @@ export function FullTaskPage({
       setError('当前完整任务已结束，无法取消')
       return
     }
+    markTaskDockRunSoftStopping(currentRunId)
     setMessage('已请求取消，当前步骤结束后停止')
   }
 

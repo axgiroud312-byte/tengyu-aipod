@@ -3,6 +3,7 @@ import { type ReactNode, useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
+import { TaskDock } from './TaskDock'
 import { SIDEBAR_COLLAPSED_STORAGE_KEY, moduleMetaFromPath } from './navigation'
 
 interface ShellProps {
@@ -47,12 +48,7 @@ export function Shell({ children, contentWidth, rightSlot }: ShellProps) {
           </section>
         </main>
       </div>
-      <div
-        aria-label="任务坞预留区域"
-        className="w-0 shrink-0 overflow-hidden"
-        data-workbench-region="task-dock"
-        role="region"
-      />
+      <TaskDock />
     </div>
   )
 }

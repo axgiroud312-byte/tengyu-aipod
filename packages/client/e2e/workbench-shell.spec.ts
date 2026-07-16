@@ -262,8 +262,9 @@ function theaterProgress(input: {
   }
 }
 
-function completeTaskFixtureConfig() {
+function completeTaskFixtureConfig(name = 'Most recently updated task') {
   return {
+    name,
     printMode: 'local',
     source: {
       mode: 'txt2img',
@@ -281,15 +282,26 @@ function completeTaskFixtureConfig() {
 function seedRunningCompleteTasks(workbenchRoot: string) {
   const db = openWorkbenchDatabase(workbenchRoot)
   try {
-    const configJson = JSON.stringify(completeTaskFixtureConfig())
     const insertRun = db.prepare(`
       INSERT INTO pipeline_runs (
         id, name, source_mode, status, config_json, stats_json,
         result_sections_json, logs_json, error_summary, created_at, started_at, completed_at
       ) VALUES (?, ?, 'txt2img', 'running', ?, '{}', '[]', '[]', NULL, ?, ?, NULL)
     `)
-    insertRun.run('run-newer-created', 'Later created task', configJson, 200, 200)
-    insertRun.run('run-most-recently-updated', 'Most recently updated task', configJson, 100, 100)
+    insertRun.run(
+      'run-newer-created',
+      'Later created task',
+      JSON.stringify(completeTaskFixtureConfig('Later created task')),
+      200,
+      200,
+    )
+    insertRun.run(
+      'run-most-recently-updated',
+      'Most recently updated task',
+      JSON.stringify(completeTaskFixtureConfig()),
+      100,
+      100,
+    )
     db.prepare(`
       INSERT INTO pipeline_runs (
         id, name, source_mode, status, config_json, stats_json,
@@ -298,7 +310,7 @@ function seedRunningCompleteTasks(workbenchRoot: string) {
     `).run(
       'run-interrupted',
       'Interrupted task',
-      configJson,
+      JSON.stringify(completeTaskFixtureConfig('Interrupted task')),
       'Workbench 退出，已完成产物已保留',
       50,
       50,
@@ -411,6 +423,25 @@ test.describe('production-first Workbench shell', () => {
     await expect(page.getByRole('button', { name: '启动完整任务' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '保存执行方案' })).toHaveCount(0)
     await expect(page.locator('[data-content-width="wide"]')).toBeVisible()
+
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    await expect(taskDock.getByText('Most recently updated task', { exact: true })).toBeVisible()
+    await expect(taskDock.getByText('Later created task', { exact: true })).toBeVisible()
+    await expect(
+      taskDock.getByRole('button', { name: '打开完整任务 Most recently updated task' }),
+    ).toHaveAttribute('aria-current', 'true')
+
+    await taskDock.getByRole('button', { name: '打开完整任务 Later created task' }).click()
+    await expect(page).toHaveURL(/#\/pipeline$/)
+    await expect(
+      page
+        .getByRole('heading', { name: '成果剧场' })
+        .locator('xpath=../..')
+        .getByText('Later created task', { exact: true }),
+    ).toBeVisible()
+    await expect(
+      taskDock.getByRole('button', { name: '打开完整任务 Later created task' }),
+    ).toHaveAttribute('aria-current', 'true')
     await expect
       .poll(() =>
         page.evaluate(
@@ -420,6 +451,18 @@ test.describe('production-first Workbench shell', () => {
         ),
       )
       .toBe(0)
+
+    await page.getByRole('button', { name: '折叠任务坞' }).click()
+    await expect(
+      taskDock.getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }),
+    ).toBeVisible()
+
+    await page.reload()
+    await expect(
+      page
+        .getByRole('complementary', { name: '任务坞' })
+        .getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }),
+    ).toBeVisible()
   })
 
   test('streams the newest result into the theater while isolating item failures', async () => {
@@ -469,7 +512,8 @@ test.describe('production-first Workbench shell', () => {
         return canvas.getByRole('img', { name: '印花 2' }).count()
       })
       .toBe(1)
-    await page.getByRole('button', { name: '查看 印花 1', exact: true }).click()
+    await page.getByRole('button', { name: '查看 印花 1', exact: true }).focus()
+    await page.keyboard.press('Enter')
     await expect(canvas.getByRole('img', { name: '印花 1' })).toBeVisible()
     await page.getByRole('button', { name: '查看 印花 1', exact: true }).focus()
     for (const viewport of [
@@ -483,6 +527,10 @@ test.describe('production-first Workbench shell', () => {
 
     await page.getByRole('button', { name: '停止任务' }).click()
     await expect(page.getByText('已请求取消，当前步骤结束后停止', { exact: true })).toBeVisible()
+    const selectedDockTask = page
+      .getByRole('complementary', { name: '任务坞' })
+      .getByRole('button', { name: '打开完整任务 Most recently updated task' })
+    await expect(selectedDockTask.getByText('正在停止', { exact: true })).toBeVisible()
     await expect
       .poll(() =>
         app.evaluate(
@@ -502,6 +550,7 @@ test.describe('production-first Workbench shell', () => {
       error: '启动资源已失效，请检查后续跑',
     })
     await expect(page.getByText('运行失败', { exact: true })).toBeVisible()
+    await expect(selectedDockTask.getByText('失败', { exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '按此方案再建任务' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '停止任务' })).toHaveCount(0)
 
@@ -535,6 +584,8 @@ test.describe('production-first Workbench shell', () => {
       },
     }
     await emitPipelineCompleted(app, completedEvent)
+
+    await expect(selectedDockTask.getByText('已完成', { exact: true })).toBeVisible()
 
     await expect(page.getByText('完成战报', { exact: true }).first()).toBeVisible()
     await expect(page.getByText(/部分配置加载失败/)).toHaveCount(0)
@@ -627,7 +678,7 @@ test.describe('production-first Workbench shell', () => {
     ).toHaveCount(0)
   })
 
-  test('persists stable sidebar dimensions and keeps responsive work regions usable', async () => {
+  test('keeps the sidebar and task dock responsive, persistent, and keyboard accessible', async () => {
     const testInfo = test.info()
     const attachScreenshot = async (
       page: Awaited<ReturnType<ElectronApplication['firstWindow']>>,
@@ -644,17 +695,73 @@ test.describe('production-first Workbench shell', () => {
       userDataDir: join(tempRoot, 'user-data-responsive-shell'),
     })
     const page = await app.firstWindow()
-    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-responsive-shell'))
+    const workbenchRoot = join(tempRoot, 'workbench-responsive-shell')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
 
-    const sidebar = page.getByRole('complementary')
-    const completeTaskLink = page
-      .getByRole('navigation', { name: 'Workbench 主导航' })
-      .getByRole('link', { name: '完整任务', exact: true })
+    const navigation = page.getByRole('navigation', { name: 'Workbench 主导航' })
+    const sidebar = navigation.locator('xpath=..')
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const central = page.locator('[data-workbench-region="central"]')
+    const completeTaskLink = navigation.getByRole('link', { name: '完整任务', exact: true })
     await page.setViewportSize({ width: 1440, height: 900 })
     await expect(sidebar).toHaveCSS('width', '188px')
+    await expect(taskDock).toHaveCSS('position', 'static')
+    await expect(taskDock).toHaveCSS('width', '310px')
+    await expect(central).toHaveCSS('width', '942px')
     await expect(completeTaskLink).toBeVisible()
     const expandedLinkTop = (await completeTaskLink.boundingBox())?.y
-    await attachScreenshot(page, 'shell-expanded-1440x900')
+
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await expect(taskDock).toHaveCSS('position', 'absolute')
+    await expect(taskDock).toHaveCSS('right', '0px')
+    await expect(central).toHaveCSS('width', '1092px')
+    const stopTaskButton = page.getByRole('button', { name: '停止任务' })
+    await expect(stopTaskButton).toBeVisible()
+    const [stopTaskBox, narrowDockBox] = await Promise.all([
+      stopTaskButton.boundingBox(),
+      taskDock.boundingBox(),
+    ])
+    expect(stopTaskBox).not.toBeNull()
+    expect(narrowDockBox).not.toBeNull()
+    expect((stopTaskBox?.x ?? 0) + (stopTaskBox?.width ?? 0)).toBeLessThanOrEqual(
+      narrowDockBox?.x ?? 0,
+    )
+    await page.keyboard.press('Escape')
+    const expandDockButton = taskDock.getByRole('button', {
+      name: '展开任务坞，2 个运行中，1 个异常',
+    })
+    await expect(expandDockButton).toBeVisible()
+    await expandDockButton.focus()
+    await page.keyboard.press('Enter')
+    await expect(taskDock.getByRole('button', { name: '折叠任务坞' })).toBeVisible()
+
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(
+      taskDock.getByRole('button', { name: '打开完整任务 Most recently updated task' }),
+    ).toHaveCSS('transition-property', 'none')
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await attachScreenshot(page, `shell-task-dock-expanded-${viewport.width}x${viewport.height}`)
+    }
+
+    await page.getByRole('button', { name: '折叠任务坞' }).click()
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await expect(taskDock).toHaveCSS('width', '44px')
+      await attachScreenshot(page, `shell-task-dock-collapsed-${viewport.width}x${viewport.height}`)
+    }
+
+    await taskDock.getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }).click()
+    await page.setViewportSize({ width: 1440, height: 900 })
     await page.getByRole('button', { name: '折叠', exact: true }).click()
     await expect(sidebar).toHaveCSS('width', '56px')
     await expect(completeTaskLink).toBeVisible()
@@ -666,7 +773,9 @@ test.describe('production-first Workbench shell', () => {
       .toBe('true')
 
     await page.reload()
-    await expect(page.getByRole('complementary')).toHaveCSS('width', '56px')
+    await expect(
+      page.getByRole('navigation', { name: 'Workbench 主导航' }).locator('xpath=..'),
+    ).toHaveCSS('width', '56px')
     await expect(page.getByRole('button', { name: '展开侧边栏' })).toBeVisible()
 
     for (const viewport of [
@@ -681,13 +790,14 @@ test.describe('production-first Workbench shell', () => {
         return {
           centralWidth: central?.getBoundingClientRect().width ?? 0,
           dockWidth: dock?.getBoundingClientRect().width ?? -1,
+          dockPosition: dock ? getComputedStyle(dock).position : '',
           hasHorizontalOverflow: document.documentElement.scrollWidth > window.innerWidth,
         }
       })
       expect(regions.centralWidth).toBeGreaterThan(0)
-      expect(regions.dockWidth).toBe(0)
+      expect(regions.dockWidth).toBe(310)
+      expect(regions.dockPosition).toBe(viewport.width < 1400 ? 'absolute' : 'static')
       expect(regions.hasHorizontalOverflow).toBe(false)
-      await attachScreenshot(page, `shell-collapsed-${viewport.width}x${viewport.height}`)
     }
   })
 })

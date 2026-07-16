@@ -27,6 +27,7 @@ import { TutorialPage } from '@/features/tutorial/TutorialPage'
 import { VideoPage } from '@/features/video/VideoPage'
 import { Shell } from '@/layout/Shell'
 import { type WorkbenchModule, moduleFromPath, workbenchModules } from '@/layout/navigation'
+import { useTaskDockStore } from '@/store/task-dock'
 import { AlertTriangle } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
@@ -206,6 +207,7 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
   const [hasSelectedPipelineRun, setHasSelectedPipelineRun] = useState(
     Boolean(initialPipelineRunId),
   )
+  const selectCompleteTaskRun = useTaskDockStore((state) => state.selectCompleteTaskRun)
   const contentWidth =
     activeModule === 'listing' ||
     location.pathname === '/pipeline/runs' ||
@@ -291,6 +293,10 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
     useState(false)
   const [isDownloadingCollectionImageIndex, setIsDownloadingCollectionImageIndex] = useState(false)
   const [deletingRecordId, setDeletingRecordId] = useState<string | null>(null)
+  useEffect(() => {
+    selectCompleteTaskRun(initialPipelineRunId)
+  }, [initialPipelineRunId, selectCompleteTaskRun])
+
   useEffect(() => {
     let mounted = true
     async function loadWorkspace() {
