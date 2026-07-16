@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -132,6 +132,106 @@ async function installPipelineEventHarness(app: ElectronApplication) {
       return input.run_id
     })
   })
+}
+
+async function installDetectionWorkspaceHarness(
+  app: ElectronApplication,
+  imagePaths: [string, string, string],
+) {
+  await app.evaluate(
+    ({ ipcMain }, input) => {
+      const state = globalThis as typeof globalThis & {
+        __detectionPromoteCalls?: number
+        __detectionDeleteCalls?: number
+      }
+      const skill = {
+        id: 'infringement-detection',
+        module: 'detection',
+        category: null,
+        platform: null,
+        language: 'zh-CN',
+        version: 'e2e-v1',
+        enabled: true,
+        recommendedModel: 'qwen3.6-flash',
+        notes: null,
+        systemPrompt: 'Classify infringement risk.',
+        variables: [
+          {
+            key: 'focus',
+            label: '关注重点',
+            type: 'select',
+            options: [
+              { value: 'logo', label: '品牌标识' },
+              { value: 'character', label: '角色形象' },
+            ],
+            default: 'logo',
+          },
+        ],
+      }
+      const images = ['pass', 'review', 'block'].map((risk, index) => ({
+        id: `source-${risk}`,
+        path: input.imagePaths[index] ?? '',
+        name: `${risk}.png`,
+        relativePath: `${risk}.png`,
+        sizeBytes: 1024 + index,
+        modifiedAt: 1_700_000_000_000 + index,
+        thumbnailUrl: '',
+      }))
+      const sourceFolder = input.imagePaths[0].replace(/[\\/][^\\/]+$/, '')
+
+      ipcMain.removeHandler('skill:list')
+      ipcMain.handle('skill:list', () => [skill])
+      ipcMain.removeHandler('skill:get')
+      ipcMain.handle('skill:get', () => skill)
+      ipcMain.removeHandler('detection:list-models')
+      ipcMain.handle('detection:list-models', () => ['qwen3.6-flash', 'qwen3-vl-plus'])
+      ipcMain.removeHandler('detection:get-config')
+      ipcMain.handle('detection:get-config', () => ({
+        threshold: { passMax: 20, reviewMax: 60 },
+        skillId: skill.id,
+        skillVersion: skill.version,
+        model: 'qwen3.6-flash',
+        variables: { focus: 'logo' },
+      }))
+      ipcMain.removeHandler('detection:save-config')
+      ipcMain.handle('detection:save-config', (_event, config) => config)
+      ipcMain.removeHandler('detection:list-input-sources')
+      ipcMain.handle('detection:list-input-sources', () => ({
+        dirs: [sourceFolder],
+        counts: { [sourceFolder]: images.length },
+        sources: [
+          {
+            key: 'generation-extract',
+            label: '02-印花工作区 / 提取',
+            folder: sourceFolder,
+            count: images.length,
+          },
+        ],
+      }))
+      ipcMain.removeHandler('detection:scan-paths')
+      ipcMain.handle('detection:scan-paths', () => images)
+      ipcMain.removeHandler('detection:run')
+      ipcMain.handle('detection:run', () => 'detection-ui-run')
+      ipcMain.removeHandler('detection:cancel')
+      ipcMain.handle('detection:cancel', () => ({ ok: true }))
+      ipcMain.removeHandler('detection:promote-to-matting')
+      ipcMain.handle(
+        'detection:promote-to-matting',
+        (_event, value: { artifact_ids: string[] }) => {
+          state.__detectionPromoteCalls = (state.__detectionPromoteCalls ?? 0) + 1
+          return value.artifact_ids.length
+        },
+      )
+      ipcMain.removeHandler('detection:delete-result')
+      ipcMain.handle('detection:delete-result', () => {
+        state.__detectionDeleteCalls = (state.__detectionDeleteCalls ?? 0) + 1
+        return 1
+      })
+      ipcMain.removeHandler('detection:retest')
+      ipcMain.handle('detection:retest', () => 'detection-retest-1')
+    },
+    { imagePaths },
+  )
 }
 
 async function emitPipelineProgress(app: ElectronApplication, progress: PipelineProgress) {
@@ -879,6 +979,171 @@ test.describe('production-first Workbench shell', () => {
     await expect(img2imgWorkspace.getByRole('region', { name: '生图结果' })).toBeVisible()
     await page.setViewportSize({ width: 1920, height: 1080 })
     await attachScreenshot('generation-comfyui-img2img-1920x1080')
+  })
+
+  test('runs Detection and exposes three risk result buckets with their actions', async () => {
+    const testInfo = test.info()
+    const attachScreenshot = async (name: string) => {
+      const path = testInfo.outputPath(`${name}.png`)
+      await page.screenshot({ path, fullPage: true })
+      await testInfo.attach(name, { path, contentType: 'image/png' })
+    }
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    const detectionApp = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-detection-workspace'),
+    })
+    app = detectionApp
+    const page = await detectionApp.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-detection-workspace')
+    const detectionInputDir = join(workbenchRoot, '02-印花工作区', '提取')
+    await mkdir(detectionInputDir, { recursive: true })
+    const detectionImagePaths = [
+      join(detectionInputDir, 'pass.png'),
+      join(detectionInputDir, 'review.png'),
+      join(detectionInputDir, 'block.png'),
+    ] as [string, string, string]
+    await Promise.all(
+      [
+        { path: detectionImagePaths[0], background: '#d1fae5' },
+        { path: detectionImagePaths[1], background: '#fef3c7' },
+        { path: detectionImagePaths[2], background: '#fee2e2' },
+      ].map((image) =>
+        sharp({ create: { width: 480, height: 360, channels: 3, background: image.background } })
+          .png()
+          .toFile(image.path),
+      ),
+    )
+    await enterPreparedWorkbench(page, workbenchRoot, () =>
+      installDetectionWorkspaceHarness(detectionApp, detectionImagePaths),
+    )
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '侵权检测', exact: true })
+      .click()
+
+    const workspace = page.getByRole('region', { name: '侵权检测生产工作区' })
+    const inputAndRules = workspace.getByRole('region', { name: '检测输入与规则' })
+    const launch = workspace.getByRole('complementary', { name: '检测启动与运行' })
+    const results = workspace.getByRole('region', { name: '检测结果' })
+    await expect(inputAndRules).toBeVisible()
+    await expect(launch).toBeVisible()
+    await expect(results).toBeVisible()
+    await expect(inputAndRules.getByLabel('检测模型')).toHaveValue('qwen3.6-flash')
+    await expect(inputAndRules.getByText('无风险 0-20')).toBeVisible()
+    await expect(inputAndRules.getByText('疑似 21-60')).toBeVisible()
+    await expect(inputAndRules.getByText('高风险 61-100')).toBeVisible()
+
+    await inputAndRules.getByRole('button', { name: /提取.*3 张/ }).click()
+    await expect(launch.getByText('运行图片')).toBeVisible()
+    await expect(launch.getByText('3', { exact: true })).toBeVisible()
+    await launch.getByRole('button', { name: '开始检测' }).click()
+    await expect(page.getByText('当前任务 detection-ui-run')).toBeVisible()
+
+    await emitPublicModuleEvent(app, 'detection:progress', {
+      task_id: 'detection-ui-run',
+      processed: 2,
+      total: 3,
+      succeeded: 2,
+      failed: 0,
+      skipped: 0,
+      concurrency: 4,
+      current_image: 'review.png',
+      status: 'running',
+    })
+    await emitPublicModuleEvent(app, 'detection:completed', {
+      ok: true,
+      result: {
+        taskId: 'detection-ui-run',
+        total: 3,
+        succeeded: 3,
+        failed: 0,
+        skipped: 0,
+        diagnosticsLogPath: 'C:\\logs\\detection-ui-run.jsonl',
+        results: [
+          {
+            imagePath: detectionImagePaths[0],
+            thumbnailUrl: '',
+            artifactId: 'artifact-pass',
+            printId: 'pri_pass',
+            status: 'success',
+            riskScore: 12,
+            riskLevel: 'pass',
+            reason: '未发现品牌或角色元素',
+            outputPath: 'C:\\workspace\\03-检测工作区\\detection-ui-run\\无风险\\pass.png',
+            cached: false,
+          },
+          {
+            imagePath: detectionImagePaths[1],
+            thumbnailUrl: '',
+            artifactId: 'artifact-review',
+            printId: 'pri_review',
+            status: 'success',
+            riskScore: 48,
+            riskLevel: 'review',
+            reason: '可能包含相似角色轮廓',
+            outputPath: 'C:\\workspace\\03-检测工作区\\detection-ui-run\\疑似\\review.png',
+            cached: false,
+          },
+          {
+            imagePath: detectionImagePaths[2],
+            thumbnailUrl: '',
+            artifactId: 'artifact-block',
+            printId: 'pri_block',
+            status: 'success',
+            riskScore: 88,
+            riskLevel: 'block',
+            reason: '检测到明确品牌标识',
+            outputPath: 'C:\\workspace\\03-检测工作区\\detection-ui-run\\高风险\\block.png',
+            cached: false,
+          },
+        ],
+      },
+    })
+
+    for (const bucket of ['无风险结果', '疑似结果', '高风险结果']) {
+      await expect(results.getByRole('region', { name: bucket })).toBeVisible()
+    }
+    await expect(results.getByRole('button', { name: '预览 pass.png' })).toBeVisible()
+    await expect(results.getByRole('button', { name: '重测 review.png' })).toBeVisible()
+    await expect(results.getByRole('button', { name: '删除 block.png' })).toBeVisible()
+    await expect(results.getByText('诊断日志：C:\\logs\\detection-ui-run.jsonl')).toBeVisible()
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await workspace
+        .getByRole('heading', { name: '侵权检测', exact: true })
+        .scrollIntoViewIfNeeded()
+      await attachScreenshot(`detection-config-${viewport.width}x${viewport.height}`)
+      const horizontalOverflow = await page
+        .getByRole('main')
+        .evaluate((element) => element.scrollWidth - element.clientWidth)
+      expect(horizontalOverflow).toBeLessThanOrEqual(1)
+      await results.getByRole('heading', { name: '检测结果', exact: true }).scrollIntoViewIfNeeded()
+      await attachScreenshot(`detection-results-${viewport.width}x${viewport.height}`)
+    }
+
+    await results.getByRole('button', { name: '预览 review.png' }).click()
+    await expect(page.getByRole('dialog', { name: '侵权检测预览' })).toBeVisible()
+    await page.keyboard.press('Escape')
+    await results.getByRole('button', { name: '加入套版候选清单' }).click()
+    await expect(page.getByText('已加入 1 张无风险图片到套版候选清单')).toBeVisible()
+    await results.getByRole('button', { name: '删除 block.png' }).click()
+    await expect(results.getByRole('region', { name: '高风险结果' }).getByText('0')).toBeVisible()
+    const expandTaskDock = page.getByRole('button', { name: /展开任务坞/ })
+    if (await expandTaskDock.isVisible()) {
+      await expandTaskDock.click()
+    }
+    await expect(
+      page
+        .getByRole('complementary', { name: '任务坞' })
+        .getByRole('button', { name: '打开轻量任务 侵权检测任务' }),
+    ).toBeVisible()
   })
 
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
