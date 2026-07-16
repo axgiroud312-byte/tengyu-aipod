@@ -79,6 +79,11 @@ function templateLabel(path: string) {
   return path.split(/[\\/]/).pop() ?? path
 }
 
+function parentLocalPath(path: string) {
+  const slashIndex = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'))
+  return slashIndex >= 0 ? path.slice(0, slashIndex) : path
+}
+
 function timestampSlug(value: number) {
   const date = new Date(value)
   const pad = (item: number) => String(item).padStart(2, '0')
@@ -130,8 +135,21 @@ function PhotoshopStatusBar() {
     return () => window.clearInterval(timer)
   }, [refreshStatus])
 
+  const readinessMessage = !status
+    ? '正在检查 Photoshop 与 COM 状态。'
+    : status.com_connected
+      ? 'Photoshop 已就绪，可以启动套版任务。'
+      : status.running
+        ? 'Photoshop 已运行但 COM 未连接，请按错误信息处理后刷新。'
+        : status.installed
+          ? '请先启动 Photoshop，再刷新状态。'
+          : '请在 Windows 安装 Photoshop CC 2018 或更高版本。'
+
   return (
-    <div className={`rounded-md border px-4 py-3 text-sm ${statusTone(status)}`}>
+    <section
+      aria-label="Photoshop 就绪状态"
+      className={`rounded-md border px-4 py-3 text-sm ${statusTone(status)}`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${statusDot(status)}`} />
@@ -139,7 +157,9 @@ function PhotoshopStatusBar() {
             <p className="font-medium">Photoshop 状态：{statusLabel(status)}</p>
             {status?.error_message ? (
               <p className="truncate text-xs opacity-80">{status.error_message}</p>
-            ) : null}
+            ) : (
+              <p className="mt-0.5 text-xs opacity-80">{readinessMessage}</p>
+            )}
           </div>
         </div>
         <Button
@@ -153,7 +173,7 @@ function PhotoshopStatusBar() {
           刷新
         </Button>
       </div>
-    </div>
+    </section>
   )
 }
 
@@ -212,6 +232,16 @@ export function PhotoshopPage() {
   const selectedSkuCard = useMemo(
     () => skuCards.find((card) => card.skuFolder === selectedSkuFolder) ?? null,
     [selectedSkuFolder, skuCards],
+  )
+  const standaloneBatchPath = useMemo(() => {
+    const skuFolderPath = skuCards.find((card) => card.folderPath)?.folderPath
+    return skuFolderPath ? parentLocalPath(skuFolderPath) : outputDir
+  }, [outputDir, skuCards])
+  const standaloneBatchName = templateLabel(standaloneBatchPath)
+  const resultOutputCount = skuCards.reduce((count, card) => count + card.imageCount, 0)
+  const failureLogs = useMemo(
+    () => debugLogs.filter((entry) => entry.level === 'error').slice(-20),
+    [debugLogs],
   )
 
   useEffect(() => {
@@ -408,7 +438,7 @@ export function PhotoshopPage() {
 
   if (isMac) {
     return (
-      <div className="space-y-6">
+      <section aria-label="PS 套版生产工作区" className="space-y-6">
         <PhotoshopStatusBar />
         <div className="rounded-md border border-amber-200 bg-amber-50 p-6 text-amber-950 shadow-sm">
           <div className="flex items-start gap-3">
@@ -422,12 +452,12 @@ export function PhotoshopPage() {
             </div>
           </div>
         </div>
-      </div>
+      </section>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <section aria-label="PS 套版生产工作区" className="space-y-5">
       <div className="rounded-md border bg-background p-5 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
@@ -450,8 +480,11 @@ export function PhotoshopPage() {
 
       <PhotoshopStatusBar />
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
-        <div className="grid gap-6 lg:grid-cols-2">
+      <div className="grid min-w-0 gap-5 min-[1600px]:grid-cols-[minmax(0,1fr)_320px]">
+        <section
+          aria-label="套版输入与设置"
+          className="grid min-w-0 gap-5 min-[1800px]:grid-cols-2"
+        >
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <p className="text-sm font-medium text-muted-foreground">印花文件夹</p>
             <h2 className="mt-1 text-lg font-semibold">套版输入图片</h2>
@@ -547,7 +580,12 @@ export function PhotoshopPage() {
                   ? templatePaths.map(templateLabel).join('，')
                   : '未选择模板'}
               </div>
-              <Button onClick={() => void chooseTemplates()} type="button" variant="secondary">
+              <Button
+                aria-label="选择模板"
+                onClick={() => void chooseTemplates()}
+                type="button"
+                variant="secondary"
+              >
                 选择
               </Button>
             </div>
@@ -676,9 +714,12 @@ export function PhotoshopPage() {
               默认是本次套版批次目录，成品图会保存到该目录下的货号文件夹。
             </p>
           </div>
-        </div>
+        </section>
 
-        <aside className="space-y-5 lg:sticky lg:top-6 lg:self-start">
+        <aside
+          aria-label="套版启动与运行"
+          className="space-y-5 min-[1600px]:sticky min-[1600px]:top-6 min-[1600px]:self-start"
+        >
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <p className="text-sm font-medium text-muted-foreground">预估</p>
             <h2 className="mt-1 text-lg font-semibold">准备套版</h2>
@@ -798,11 +839,14 @@ export function PhotoshopPage() {
         </aside>
       </div>
 
-      <section className="rounded-md border bg-background p-5 shadow-sm">
+      <section
+        aria-label="套版结果与异常"
+        className="rounded-md border bg-background p-5 shadow-sm"
+      >
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
-            <p className="text-sm font-medium text-muted-foreground">套版结果</p>
-            <h2 className="mt-1 text-lg font-semibold">输出缩略图</h2>
+            <p className="text-sm font-medium text-muted-foreground">单次套版批次成果</p>
+            <h2 className="mt-1 text-lg font-semibold">套版结果与异常</h2>
           </div>
           <div className="flex rounded-md border bg-muted p-1">
             {resultFilters.map((filter) => (
@@ -821,48 +865,92 @@ export function PhotoshopPage() {
             ))}
           </div>
         </div>
-        <div className="mt-4 flex min-h-40 items-center justify-center rounded-md border border-dashed bg-muted/40 p-6 text-center">
+        <div className="mt-4 min-h-40 rounded-md border border-dashed bg-muted/40 p-4">
           {skuCards.length ? (
-            <div className="grid w-full gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {filteredSkuCards.length ? (
-                filteredSkuCards.map((card) => (
-                  <button
-                    className="rounded-md border bg-background p-3 text-left shadow-sm transition hover:border-primary/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
-                    key={card.skuFolder}
-                    onClick={() => setSelectedSkuFolder(card.skuFolder)}
-                    type="button"
-                  >
-                    <img
-                      alt={card.skuFolder}
-                      className="aspect-[4/3] w-full rounded border bg-muted object-cover"
-                      loading="lazy"
-                      src={localImageUrl(card.coverPath)}
-                    />
-                    <div className="mt-3 flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-semibold">{card.skuFolder}</p>
-                        <p className="mt-1 truncate text-xs text-muted-foreground">
-                          {card.templates.join('，')} · {card.imageCount} 张
-                        </p>
-                      </div>
-                      <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                    </div>
-                  </button>
-                ))
-              ) : (
-                <div className="col-span-full rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-                  当前筛选下没有可展示的货号文件夹
+            <section aria-label={`单次套版批次 ${standaloneBatchName}`} className="text-left">
+              <div className="flex min-w-0 flex-wrap items-start justify-between gap-3 border-b pb-3">
+                <div className="min-w-0">
+                  <p className="text-xs font-medium text-muted-foreground">单次套版批次</p>
+                  <h3 className="mt-1 truncate text-base font-semibold">{standaloneBatchName}</h3>
+                  <p className="mt-1 truncate text-xs text-muted-foreground">
+                    {standaloneBatchPath}
+                  </p>
                 </div>
-              )}
-            </div>
+                <span className="rounded-md bg-background px-2.5 py-1 text-xs tabular-nums text-muted-foreground">
+                  {skuCards.length} 个 SKU · {resultOutputCount} 张成品图
+                </span>
+              </div>
+              <div className="mt-3 grid w-full gap-3 sm:grid-cols-2 min-[1600px]:grid-cols-3">
+                {filteredSkuCards.length ? (
+                  filteredSkuCards.map((card) => (
+                    <button
+                      aria-label={`查看 SKU ${card.skuFolder}，${card.imageCount} 张成品图`}
+                      className="rounded-md border bg-background p-3 text-left shadow-sm transition hover:border-primary/40 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                      key={card.skuFolder}
+                      onClick={() => setSelectedSkuFolder(card.skuFolder)}
+                      type="button"
+                    >
+                      <img
+                        alt={`${card.skuFolder} 成品图预览`}
+                        className="aspect-[4/3] w-full rounded border bg-muted object-cover"
+                        loading="lazy"
+                        src={localImageUrl(card.coverPath)}
+                      />
+                      <div className="mt-3 flex items-start justify-between gap-2">
+                        <div className="min-w-0">
+                          <p className="truncate text-sm font-semibold">{card.skuFolder}</p>
+                          <p className="mt-1 truncate text-xs text-muted-foreground">
+                            {card.templates.join('，')} · {card.imageCount} 张
+                          </p>
+                        </div>
+                        <ExternalLink className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      </div>
+                    </button>
+                  ))
+                ) : (
+                  <div className="col-span-full rounded-md bg-background px-3 py-8 text-center text-sm text-muted-foreground">
+                    当前筛选下没有可展示的货号文件夹
+                  </div>
+                )}
+              </div>
+            </section>
           ) : (
-            <div className="max-w-sm">
+            <div className="mx-auto max-w-sm py-5 text-center">
               <ImageIcon className="mx-auto h-8 w-8 text-muted-foreground" />
               <p className="mt-3 text-sm font-medium">暂无套版结果</p>
               <p className="mt-1 text-xs text-muted-foreground">套版完成后显示输出缩略图。</p>
             </div>
           )}
         </div>
+        <section aria-label="套版异常" className="mt-4 rounded-md border bg-muted/30 p-4">
+          <div className="flex items-center justify-between gap-3">
+            <h3 className="text-sm font-semibold">套版异常</h3>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {failureLogs.length} 条
+            </span>
+          </div>
+          {failureLogs.length ? (
+            <div className="mt-3 grid gap-2">
+              {failureLogs.map((entry, index) => (
+                <div
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-900"
+                  key={`${entry.ts}-${index}`}
+                >
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1 font-medium">
+                    <span>{entry.sku_folder ?? '未定位 SKU'}</span>
+                    {entry.template_name ? <span>模板 {entry.template_name}</span> : null}
+                  </div>
+                  <p className="mt-1 break-words">{entry.message ?? entry.error ?? '套版失败'}</p>
+                  {entry.error && entry.error !== entry.message ? (
+                    <p className="mt-1 break-all text-xs opacity-80">{entry.error}</p>
+                  ) : null}
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="mt-2 text-sm text-muted-foreground">当前没有套版异常。</p>
+          )}
+        </section>
       </section>
 
       <Dialog
@@ -876,7 +964,9 @@ export function PhotoshopPage() {
         <DialogContent className="max-w-5xl">
           <DialogHeader>
             <div className="flex flex-wrap items-center justify-between gap-3 pr-8">
-              <DialogTitle>{selectedSkuCard?.skuFolder ?? '货号图片'}</DialogTitle>
+              <DialogTitle>
+                {selectedSkuCard ? `${selectedSkuCard.skuFolder} 成品图` : 'SKU 成品图'}
+              </DialogTitle>
               <Button
                 className="h-8 px-3"
                 disabled={!selectedSkuCard?.folderPath}
@@ -896,13 +986,14 @@ export function PhotoshopPage() {
             <div className="grid gap-3 p-1 sm:grid-cols-2 lg:grid-cols-3">
               {selectedSkuCard?.outputs.map((output) => (
                 <button
+                  aria-label={`查看成品图 ${templateLabel(output)}`}
                   className="rounded-md border bg-muted/30 p-2 text-left transition hover:shadow-sm"
                   key={output}
                   onDoubleClick={() => void window.api.photoshop.openPath(output)}
                   type="button"
                 >
                   <img
-                    alt=""
+                    alt={templateLabel(output)}
                     className="aspect-square w-full rounded border bg-muted object-cover"
                     loading="lazy"
                     src={localImageUrl(output)}
@@ -968,6 +1059,6 @@ export function PhotoshopPage() {
           </div>
         </DialogContent>
       </Dialog>
-    </div>
+    </section>
   )
 }

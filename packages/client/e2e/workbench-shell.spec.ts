@@ -237,6 +237,161 @@ async function installDetectionWorkspaceHarness(
   )
 }
 
+async function installPhotoshopWorkspaceHarness(
+  app: ElectronApplication,
+  input: {
+    printPaths: [string, string]
+    outputPaths: [string, string, string]
+    templatePaths: [string, string]
+  },
+) {
+  await app.evaluate(({ ipcMain }, fixture) => {
+    const prints = fixture.printPaths.map((filePath, index) => ({
+      id: `SKU-00${index + 1}`,
+      file_path: filePath,
+      thumbnail_url: `tengyu-local-image://image/${encodeURIComponent(filePath)}`,
+    }))
+    const resultGroups = [
+      {
+        template_id: 'template-front',
+        template_name: 'front',
+        group_index: 0,
+        sku_folder: 'SKU-001',
+        print_ids: ['SKU-001'],
+        outputs: [fixture.outputPaths[0]],
+        status: 'completed',
+      },
+      {
+        template_id: 'template-back',
+        template_name: 'back',
+        group_index: 0,
+        sku_folder: 'SKU-001',
+        print_ids: ['SKU-001'],
+        outputs: [fixture.outputPaths[1]],
+        status: 'completed',
+      },
+      {
+        template_id: 'template-front',
+        template_name: 'front',
+        group_index: 1,
+        sku_folder: 'SKU-002',
+        print_ids: ['SKU-002'],
+        outputs: [fixture.outputPaths[2]],
+        status: 'completed',
+      },
+    ] as const
+
+    ipcMain.removeHandler('photoshop:get-status')
+    ipcMain.handle('photoshop:get-status', () => ({
+      installed: true,
+      running: true,
+      com_connected: true,
+      version: '2025',
+      last_check_at: Date.now(),
+    }))
+    ipcMain.removeHandler('photoshop:choose-templates')
+    ipcMain.handle('photoshop:choose-templates', () => ({
+      ok: true,
+      data: { paths: fixture.templatePaths },
+    }))
+    ipcMain.removeHandler('photoshop:scan-print-folder')
+    ipcMain.handle('photoshop:scan-print-folder', () => ({
+      folder: fixture.printPaths[0].replace(/[\\/][^\\/]+$/, ''),
+      prints,
+    }))
+    ipcMain.removeHandler('photoshop:scan-template')
+    ipcMain.handle('photoshop:scan-template', (_event, value: { psd_path: string }) => ({
+      id: value.psd_path.includes('front') ? 'template-front' : 'template-back',
+      file_path: value.psd_path,
+      file_hash: value.psd_path,
+      doc_size: { w: 1200, h: 1200 },
+      smart_objects: [
+        {
+          name: 'Artwork',
+          path: 'Artwork',
+          sort_order: 0,
+          is_top_level: true,
+          bounds: [0, 0, 1200, 1200],
+          shared_indicator: 'artwork',
+        },
+      ],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1200, h: 1200, is_full: true }],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: Date.now(),
+      layers: [],
+      text_layers: [],
+    }))
+    ipcMain.removeHandler('photoshop:run-batch')
+    ipcMain.handle('photoshop:run-batch', (event) => {
+      const taskId = 'photoshop-ui-run'
+      event.sender.send('photoshop:progress', {
+        task_id: taskId,
+        total_groups: 3,
+        completed: 1,
+        failed: 0,
+        skipped: 0,
+        current_group: 2,
+        current_stage: 'group_start',
+        verified_outputs: 1,
+        result_group: resultGroups[0],
+      })
+      event.sender.send('photoshop:log', {
+        ts: Date.now(),
+        level: 'error',
+        stage: 'group_complete',
+        task_id: taskId,
+        template_name: 'back',
+        group: 2,
+        sku_folder: 'SKU-003',
+        message: '导出失败，请检查智能对象',
+        error: 'JSX_EXEC_FAILED',
+      })
+      event.sender.send('photoshop:progress', {
+        task_id: taskId,
+        total_groups: 3,
+        completed: 2,
+        failed: 1,
+        skipped: 0,
+        current_group: null,
+        current_stage: 'task_complete',
+        verified_outputs: 3,
+        result_group: resultGroups[2],
+      })
+      return {
+        ok: true,
+        task_id: taskId,
+        output_layout: 'sku_flat',
+        log_path: fixture.outputPaths[0].replace(/[\\/][^\\/]+$/, '\\photoshop-ui-run.log'),
+        templates_total: 2,
+        groups_total: 3,
+        groups_completed: 2,
+        outputs: fixture.outputPaths,
+        templates: [
+          {
+            template_id: 'template-front',
+            template_name: 'front',
+            groups_total: 2,
+            groups_completed: 2,
+            outputs: [fixture.outputPaths[0], fixture.outputPaths[2]],
+          },
+          {
+            template_id: 'template-back',
+            template_name: 'back',
+            groups_total: 1,
+            groups_completed: 1,
+            outputs: [fixture.outputPaths[1]],
+          },
+        ],
+        result_groups: resultGroups,
+      }
+    })
+    ipcMain.removeHandler('photoshop:cancel')
+    ipcMain.handle('photoshop:cancel', () => ({ ok: true }))
+  }, input)
+}
+
 async function emitPipelineProgress(app: ElectronApplication, progress: PipelineProgress) {
   await app.evaluate(({ BrowserWindow }, value) => {
     const target = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
@@ -1175,6 +1330,151 @@ test.describe('production-first Workbench shell', () => {
       .getByRole('button', { name: '打开轻量任务 侵权检测任务' })
     await expect(detectionTasks).toHaveCount(2)
     await expect(detectionTasks.first()).toBeVisible()
+  })
+
+  test('runs Photoshop from readiness through standalone batch and SKU results', async () => {
+    const testInfo = test.info()
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    const photoshopApp = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-photoshop-workspace'),
+    })
+    app = photoshopApp
+    const page = await photoshopApp.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-photoshop-workspace')
+    const printDir = join(workbenchRoot, '02-印花工作区', '提取')
+    const batchDir = join(workbenchRoot, '04-上架工作区', '套版-e2e')
+    const printPaths = [join(printDir, 'SKU-001.png'), join(printDir, 'SKU-002.png')] as [
+      string,
+      string,
+    ]
+    const outputPaths = [
+      join(batchDir, 'SKU-001', 'front-01.jpg'),
+      join(batchDir, 'SKU-001', 'back-01.jpg'),
+      join(batchDir, 'SKU-002', 'front-01.jpg'),
+    ] as [string, string, string]
+    const templatePaths = [
+      join(workbenchRoot, 'mockups', 'front.psd'),
+      join(workbenchRoot, 'mockups', 'back.psd'),
+    ] as [string, string]
+    await Promise.all([
+      mkdir(printDir, { recursive: true }),
+      mkdir(join(batchDir, 'SKU-001'), { recursive: true }),
+      mkdir(join(batchDir, 'SKU-002'), { recursive: true }),
+    ])
+    await Promise.all(
+      [...printPaths, ...outputPaths].map((path, index) =>
+        sharp({
+          create: {
+            width: 480,
+            height: 360,
+            channels: 3,
+            background: index % 2 === 0 ? '#2563eb' : '#e85d3f',
+          },
+        })
+          .jpeg()
+          .toFile(path),
+      ),
+    )
+    await enterPreparedWorkbench(page, workbenchRoot, () =>
+      installPhotoshopWorkspaceHarness(photoshopApp, {
+        printPaths,
+        outputPaths,
+        templatePaths,
+      }),
+    )
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: 'PS 套版', exact: true })
+      .click()
+
+    const workspace = page.getByRole('region', { name: 'PS 套版生产工作区' })
+    const readiness = workspace.getByRole('region', { name: 'Photoshop 就绪状态' })
+    const inputAndSettings = workspace.getByRole('region', { name: '套版输入与设置' })
+    const launch = workspace.getByRole('complementary', { name: '套版启动与运行' })
+    const results = workspace.getByRole('region', { name: '套版结果与异常' })
+    await expect(readiness.getByText('Photoshop 状态：已连接 · 版本 2025')).toBeVisible()
+    await expect(inputAndSettings).toBeVisible()
+    await expect(launch).toBeVisible()
+    await expect(results).toBeVisible()
+    await expect(inputAndSettings.getByLabel('替换范围')).toHaveValue('topmost')
+    await expect(inputAndSettings.getByLabel('智能对象替换方式')).toHaveValue('replaceContents')
+    await expect(inputAndSettings.getByLabel('内部缩放方式')).toHaveValue('fill')
+    await expect(inputAndSettings.getByLabel('裁切模式')).toHaveValue('auto')
+    await expect(inputAndSettings.getByLabel('导出格式')).toHaveValue('jpg')
+    await expect(inputAndSettings.getByLabel('失败重试')).toHaveValue('1')
+    await expect(inputAndSettings.getByLabel('跳过已完成')).toBeChecked()
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await workspace
+        .getByRole('heading', { name: '模板批量套版与上架图输出' })
+        .scrollIntoViewIfNeeded()
+      await attachScreenshot(
+        page,
+        testInfo,
+        `photoshop-config-${viewport.width}x${viewport.height}`,
+        true,
+      )
+      const horizontalOverflow = await page
+        .getByRole('main')
+        .evaluate((element) => element.scrollWidth - element.clientWidth)
+      expect(horizontalOverflow).toBeLessThanOrEqual(1)
+    }
+
+    await inputAndSettings.getByRole('button', { name: '选择模板' }).click()
+    await launch.getByRole('button', { name: '扫描模板' }).click()
+    await expect(launch.getByText('模板数')).toBeVisible()
+    await launch.getByRole('button', { name: '开始套版' }).click()
+
+    const batch = results.getByRole('region', { name: '单次套版批次 套版-e2e' })
+    await expect(batch).toBeVisible()
+    await expect(batch.getByRole('button', { name: '查看 SKU SKU-001，2 张成品图' })).toBeVisible()
+    await expect(batch.getByRole('button', { name: '查看 SKU SKU-002，1 张成品图' })).toBeVisible()
+    const failures = results.getByRole('region', { name: '套版异常' })
+    await expect(failures.getByText('SKU-003')).toBeVisible()
+    await expect(failures.getByText('导出失败，请检查智能对象')).toBeVisible()
+
+    await batch.getByRole('button', { name: '查看 SKU SKU-001，2 张成品图' }).click()
+    const resultDialog = page.getByRole('dialog', { name: 'SKU-001 成品图' })
+    await expect(
+      resultDialog.getByRole('button', { name: '查看成品图 front-01.jpg' }),
+    ).toBeVisible()
+    await expect(resultDialog.getByRole('button', { name: '查看成品图 back-01.jpg' })).toBeVisible()
+    await page.keyboard.press('Escape')
+
+    const expandTaskDock = page.getByRole('button', { name: /展开任务坞/ })
+    if (await expandTaskDock.isVisible()) {
+      await expandTaskDock.click()
+    }
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const task = taskDock.getByRole('button', { name: '打开轻量任务 PS 套版任务' })
+    await expect(task.getByText('已完成，有失败', { exact: true })).toBeVisible()
+    await expect(task.getByText('3 / 3 · 失败 1', { exact: true })).toBeVisible()
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await results.getByRole('heading', { name: '套版结果与异常' }).scrollIntoViewIfNeeded()
+      await attachScreenshot(
+        page,
+        testInfo,
+        `photoshop-results-${viewport.width}x${viewport.height}`,
+        true,
+      )
+      const horizontalOverflow = await page
+        .getByRole('main')
+        .evaluate((element) => element.scrollWidth - element.clientWidth)
+      expect(horizontalOverflow).toBeLessThanOrEqual(1)
+    }
   })
 
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
