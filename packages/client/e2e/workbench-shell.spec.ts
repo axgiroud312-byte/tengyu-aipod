@@ -246,6 +246,7 @@ async function installPhotoshopWorkspaceHarness(
   },
 ) {
   await app.evaluate(({ ipcMain }, fixture) => {
+    let statusCheckCount = 0
     const prints = fixture.printPaths.map((filePath, index) => ({
       id: `SKU-00${index + 1}`,
       file_path: filePath,
@@ -282,13 +283,25 @@ async function installPhotoshopWorkspaceHarness(
     ] as const
 
     ipcMain.removeHandler('photoshop:get-status')
-    ipcMain.handle('photoshop:get-status', () => ({
-      installed: true,
-      running: true,
-      com_connected: true,
-      version: '2025',
-      last_check_at: Date.now(),
-    }))
+    ipcMain.handle('photoshop:get-status', () => {
+      statusCheckCount += 1
+      return statusCheckCount === 1
+        ? {
+            installed: true,
+            running: false,
+            com_connected: false,
+            version: '2025',
+            last_check_at: Date.now(),
+            error_code: 'PS_NOT_RUNNING',
+          }
+        : {
+            installed: true,
+            running: true,
+            com_connected: true,
+            version: '2025',
+            last_check_at: Date.now(),
+          }
+    })
     ipcMain.removeHandler('photoshop:choose-templates')
     ipcMain.handle('photoshop:choose-templates', () => ({
       ok: true,
@@ -328,7 +341,7 @@ async function installPhotoshopWorkspaceHarness(
       const taskId = 'photoshop-ui-run'
       event.sender.send('photoshop:progress', {
         task_id: taskId,
-        total_groups: 3,
+        total_groups: 4,
         completed: 1,
         failed: 0,
         skipped: 0,
@@ -343,15 +356,15 @@ async function installPhotoshopWorkspaceHarness(
         stage: 'group_complete',
         task_id: taskId,
         template_name: 'back',
-        group: 2,
-        sku_folder: 'SKU-003',
+        group: 1,
+        sku_folder: 'SKU-002',
         message: '导出失败，请检查智能对象',
         error: 'JSX_EXEC_FAILED',
       })
       event.sender.send('photoshop:progress', {
         task_id: taskId,
-        total_groups: 3,
-        completed: 2,
+        total_groups: 4,
+        completed: 3,
         failed: 1,
         skipped: 0,
         current_group: null,
@@ -365,8 +378,8 @@ async function installPhotoshopWorkspaceHarness(
         output_layout: 'sku_flat',
         log_path: fixture.outputPaths[0].replace(/[\\/][^\\/]+$/, '\\photoshop-ui-run.log'),
         templates_total: 2,
-        groups_total: 3,
-        groups_completed: 2,
+        groups_total: 4,
+        groups_completed: 3,
         outputs: fixture.outputPaths,
         templates: [
           {
@@ -379,7 +392,7 @@ async function installPhotoshopWorkspaceHarness(
           {
             template_id: 'template-back',
             template_name: 'back',
-            groups_total: 1,
+            groups_total: 2,
             groups_completed: 1,
             outputs: [fixture.outputPaths[1]],
           },
@@ -1394,7 +1407,7 @@ test.describe('production-first Workbench shell', () => {
     const inputAndSettings = workspace.getByRole('region', { name: '套版输入与设置' })
     const launch = workspace.getByRole('complementary', { name: '套版启动与运行' })
     const results = workspace.getByRole('region', { name: '套版结果与异常' })
-    await expect(readiness.getByText('Photoshop 状态：已连接 · 版本 2025')).toBeVisible()
+    await expect(readiness.getByText('Photoshop 状态：已安装 · 未启动')).toBeVisible()
     await expect(inputAndSettings).toBeVisible()
     await expect(launch).toBeVisible()
     await expect(results).toBeVisible()
@@ -1428,6 +1441,10 @@ test.describe('production-first Workbench shell', () => {
     }
 
     await inputAndSettings.getByRole('button', { name: '选择模板' }).click()
+    await expect(launch.getByRole('button', { name: '开始套版' })).toBeDisabled()
+    await readiness.getByRole('button', { name: '刷新' }).click()
+    await expect(readiness.getByText('Photoshop 状态：已连接 · 版本 2025')).toBeVisible()
+    await expect(launch.getByRole('button', { name: '开始套版' })).toBeEnabled()
     await launch.getByRole('button', { name: '扫描模板' }).click()
     await expect(launch.getByText('模板数')).toBeVisible()
     await launch.getByRole('button', { name: '开始套版' }).click()
@@ -1437,8 +1454,9 @@ test.describe('production-first Workbench shell', () => {
     await expect(batch.getByRole('button', { name: '查看 SKU SKU-001，2 张成品图' })).toBeVisible()
     await expect(batch.getByRole('button', { name: '查看 SKU SKU-002，1 张成品图' })).toBeVisible()
     const failures = results.getByRole('region', { name: '套版异常' })
-    await expect(failures.getByText('SKU-003')).toBeVisible()
+    await expect(failures.getByText('SKU-002')).toBeVisible()
     await expect(failures.getByText('导出失败，请检查智能对象')).toBeVisible()
+    await expect(results.getByRole('button', { name: '失败', exact: true })).toHaveCount(0)
 
     await batch.getByRole('button', { name: '查看 SKU SKU-001，2 张成品图' }).click()
     const resultDialog = page.getByRole('dialog', { name: 'SKU-001 成品图' })
@@ -1455,7 +1473,7 @@ test.describe('production-first Workbench shell', () => {
     const taskDock = page.getByRole('complementary', { name: '任务坞' })
     const task = taskDock.getByRole('button', { name: '打开轻量任务 PS 套版任务' })
     await expect(task.getByText('已完成，有失败', { exact: true })).toBeVisible()
-    await expect(task.getByText('3 / 3 · 失败 1', { exact: true })).toBeVisible()
+    await expect(task.getByText('4 / 4 · 失败 1', { exact: true })).toBeVisible()
 
     for (const viewport of [
       { width: 1280, height: 720 },

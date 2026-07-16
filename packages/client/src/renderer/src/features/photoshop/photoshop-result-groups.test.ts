@@ -113,7 +113,6 @@ describe('photoshop result groups', () => {
     expect(filterPhotoshopSkuCards(cards, 'skipped').map((card) => card.skuFolder)).toEqual([
       'SKU-002',
     ])
-    expect(filterPhotoshopSkuCards(cards, 'failed')).toEqual([])
   })
 
   it('derives the sku folder path from the first output path', () => {

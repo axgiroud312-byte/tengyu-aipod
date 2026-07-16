@@ -1,6 +1,6 @@
 import type { PhotoshopBatchOutputGroup } from '@tengyu-aipod/shared'
 
-export type PhotoshopResultFilter = 'all' | 'done' | 'failed' | 'skipped'
+export type PhotoshopResultFilter = 'all' | 'done' | 'skipped'
 
 export interface PhotoshopSkuCard {
   skuFolder: string
@@ -86,8 +86,5 @@ export function filterPhotoshopSkuCards(
   if (filter === 'done') {
     return cards.filter((card) => card.status === 'completed')
   }
-  if (filter === 'skipped') {
-    return cards.filter((card) => card.status === 'skipped')
-  }
-  return []
+  return cards.filter((card) => card.status === 'skipped')
 }

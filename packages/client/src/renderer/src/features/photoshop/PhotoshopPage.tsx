@@ -108,11 +108,14 @@ function photoshopDebugLogLevelClassName(level: PhotoshopProgressLogEntry['level
 const resultFilters = [
   { key: 'all', label: '全部' },
   { key: 'done', label: '完成' },
-  { key: 'failed', label: '失败' },
   { key: 'skipped', label: '跳过' },
 ] as const satisfies Array<{ key: PhotoshopResultFilter; label: string }>
 
-function PhotoshopStatusBar() {
+function PhotoshopStatusBar({
+  onStatusChange,
+}: {
+  onStatusChange: (status: PhotoshopStatus) => void
+}) {
   const [status, setStatus] = useState<PhotoshopStatus | null>(null)
   const [checking, setChecking] = useState(false)
 
@@ -121,10 +124,11 @@ function PhotoshopStatusBar() {
     try {
       const nextStatus = await window.api.photoshop.getStatus()
       setStatus(nextStatus)
+      onStatusChange(nextStatus)
     } finally {
       setChecking(false)
     }
-  }, [])
+  }, [onStatusChange])
 
   useEffect(() => {
     void refreshStatus()
@@ -206,6 +210,7 @@ export function PhotoshopPage() {
   const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
   const [scanningTemplates, setScanningTemplates] = useState(false)
   const [batchRunning, setBatchRunning] = useState(false)
+  const [photoshopReady, setPhotoshopReady] = useState(false)
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
   const percent = progressPercent(progress)
@@ -242,6 +247,10 @@ export function PhotoshopPage() {
   const failureLogs = useMemo(
     () => debugLogs.filter((entry) => entry.level === 'error').slice(-20),
     [debugLogs],
+  )
+  const handlePhotoshopStatusChange = useCallback(
+    (status: PhotoshopStatus) => setPhotoshopReady(status.com_connected),
+    [],
   )
 
   useEffect(() => {
@@ -439,7 +448,7 @@ export function PhotoshopPage() {
   if (isMac) {
     return (
       <section aria-label="PS 套版生产工作区" className="space-y-6">
-        <PhotoshopStatusBar />
+        <PhotoshopStatusBar onStatusChange={handlePhotoshopStatusChange} />
         <div className="rounded-md border border-amber-200 bg-amber-50 p-6 text-amber-950 shadow-sm">
           <div className="flex items-start gap-3">
             <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" />
@@ -478,7 +487,7 @@ export function PhotoshopPage() {
         </div>
       </div>
 
-      <PhotoshopStatusBar />
+      <PhotoshopStatusBar onStatusChange={handlePhotoshopStatusChange} />
 
       <div className="grid min-w-0 gap-5 min-[1600px]:grid-cols-[minmax(0,1fr)_320px]">
         <section
@@ -759,6 +768,7 @@ export function PhotoshopPage() {
               disabled={
                 scanningTemplates ||
                 batchRunning ||
+                !photoshopReady ||
                 templatePaths.length === 0 ||
                 !printFolder.trim()
               }
