@@ -867,6 +867,13 @@ export function FullTaskPage({
   const taskDockSelectedRunId = useTaskDockStore((state) => state.selectedRunId)
   const markTaskDockRunSoftStopping = useTaskDockStore((state) => state.markRunSoftStopping)
   const selectTaskDockRun = useTaskDockStore((state) => state.selectCompleteTaskRun)
+  const selectCurrentRun = useCallback(
+    (runId: string | null) => {
+      setCurrentRunId(runId)
+      selectTaskDockRun(runId)
+    },
+    [selectTaskDockRun, setCurrentRunId],
+  )
   const [runHistory, setRunHistory] = useState<PipelineRunRecord[]>([])
   const [runHistoryLoading, setRunHistoryLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -912,9 +919,8 @@ export function FullTaskPage({
   )
 
   useEffect(() => {
-    setCurrentRunId(initialRunId)
-    selectTaskDockRun(initialRunId)
-  }, [initialRunId, selectTaskDockRun, setCurrentRunId])
+    selectCurrentRun(initialRunId)
+  }, [initialRunId, selectCurrentRun])
 
   useEffect(() => {
     if (!taskDockSelectedRunId || taskDockSelectedRunId === currentRunId) {
@@ -1360,8 +1366,7 @@ export function FullTaskPage({
       }
       if (event.ok) {
         const runConfig = parsePipelineRunConfig(event.result.run.config_json)
-        setCurrentRunId(event.result.run.id)
-        selectTaskDockRun(event.result.run.id)
+        selectCurrentRun(event.result.run.id)
         setActiveRunConfig(runConfig)
         setProgress(progressFromRunDetail(event.result))
         setMessage(pipelineRunMessage(event.result.run))
@@ -1380,7 +1385,7 @@ export function FullTaskPage({
       setRunning(false)
       void refreshRunHistory()
     })
-  }, [currentRunId, refreshRunHistory, selectTaskDockRun, setCurrentRunId])
+  }, [currentRunId, refreshRunHistory, selectCurrentRun])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
@@ -2016,8 +2021,7 @@ export function FullTaskPage({
     try {
       const config = buildConfig()
       const runId = await window.api.pipeline.run(config)
-      setCurrentRunId(runId)
-      selectTaskDockRun(runId)
+      selectCurrentRun(runId)
       setActiveRunConfig(config)
       setProgress({
         run_id: runId,
@@ -2045,8 +2049,7 @@ export function FullTaskPage({
     if (!resumedRunId) {
       return
     }
-    setCurrentRunId(resumedRunId)
-    selectTaskDockRun(resumedRunId)
+    selectCurrentRun(resumedRunId)
     setRunning(true)
     setMessage('完整任务续跑已启动')
     void refreshRunHistory()
@@ -2068,8 +2071,7 @@ export function FullTaskPage({
 
     setProgress(null)
     setActiveRunConfig(null)
-    setCurrentRunId(null)
-    selectTaskDockRun(null)
+    selectCurrentRun(null)
     setRunning(false)
     setSelectedPipelineStage('source')
     setError(null)
