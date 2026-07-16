@@ -44,7 +44,7 @@ export function ComfyuiInstanceSelectorCard({
 }) {
   const status = selection.selectedInstance ? 'running' : 'none'
   return (
-    <div className="rounded-md border bg-background p-4">
+    <section aria-label="运行云机" className="rounded-md border bg-background p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
           <h4 className="font-semibold">运行云机</h4>
@@ -110,6 +110,6 @@ export function ComfyuiInstanceSelectorCard({
           {selection.error}
         </div>
       ) : null}
-    </div>
+    </section>
   )
 }

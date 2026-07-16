@@ -390,11 +390,11 @@ export function GrsaiPromptGenerationPanel({
   return (
     <>
       <div
-        className={`grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px] ${
+        className={`grid gap-5 min-[1400px]:grid-cols-[minmax(0,1fr)_340px] ${
           capability === 'txt2img' ? '' : 'mt-5'
         }`}
       >
-        <div className="space-y-5">
+        <section aria-label="生图输入" className="space-y-5">
           <div className="rounded-md border bg-background p-4">
             <div className="flex gap-2">
               {capability === 'txt2img' ? (
@@ -651,9 +651,9 @@ export function GrsaiPromptGenerationPanel({
               </div>
             ) : null}
           </div>
-        </div>
+        </section>
 
-        <aside className="space-y-5">
+        <aside aria-label="生图启动与运行" className="space-y-5">
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">生图设置</h4>
             {settingsError ? (
@@ -663,8 +663,12 @@ export function GrsaiPromptGenerationPanel({
             ) : null}
             <div className="mt-4 grid gap-3">
               {capability === 'txt2img' ? (
-                <div className="grid grid-cols-2 gap-2 rounded-md bg-muted p-1">
+                <fieldset
+                  aria-label="文生图生图路径"
+                  className="grid grid-cols-2 gap-2 rounded-md bg-muted p-1"
+                >
                   <Button
+                    aria-pressed={txt2imgGenerationPath === 'grsai'}
                     className="h-9"
                     onClick={() => setTxt2imgGenerationPath('grsai')}
                     type="button"
@@ -673,6 +677,7 @@ export function GrsaiPromptGenerationPanel({
                     Grsai
                   </Button>
                   <Button
+                    aria-pressed={txt2imgGenerationPath === 'comfyui'}
                     className="h-9"
                     onClick={() => setTxt2imgGenerationPath('comfyui')}
                     type="button"
@@ -680,7 +685,7 @@ export function GrsaiPromptGenerationPanel({
                   >
                     ComfyUI 工作流
                   </Button>
-                </div>
+                </fieldset>
               ) : null}
 
               {!usesComfyuiTxt2img ? (

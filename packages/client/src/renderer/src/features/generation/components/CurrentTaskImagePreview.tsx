@@ -87,9 +87,12 @@ export function CurrentTaskImagePreview({ images }: { images: GenerationRunImage
   }
 
   return (
-    <div className="mt-5 rounded-md border bg-background p-4">
+    <section
+      aria-label="生图结果"
+      className="mt-5 min-h-44 rounded-md border bg-card p-4 text-card-foreground shadow-sm"
+    >
       <div className="flex items-center justify-between gap-3">
-        <h4 className="font-semibold">当前任务图片预览</h4>
+        <h4 className="font-semibold">生成结果</h4>
         <span className="text-sm tabular-nums text-muted-foreground">{images.length} 张</span>
       </div>
       {images.length ? (
@@ -145,6 +148,6 @@ export function CurrentTaskImagePreview({ images }: { images: GenerationRunImage
         title="图片预览"
         onActiveIndexChange={setActiveIndex}
       />
-    </div>
+    </section>
   )
 }

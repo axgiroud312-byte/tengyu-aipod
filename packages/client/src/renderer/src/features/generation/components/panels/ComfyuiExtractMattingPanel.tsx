@@ -128,8 +128,8 @@ export function ComfyuiExtractMattingPanel() {
 
   return (
     <>
-      <div className="mt-5 grid gap-5 xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-5">
+      <div className="mt-5 grid gap-5 min-[1400px]:grid-cols-[minmax(0,1fr)_340px]">
+        <section aria-label="生图输入" className="space-y-5">
           <ImageFolderPickerPanel
             emptyText="暂无可用于提取后抠图的图片"
             folderPath={sourceFolder}
@@ -194,9 +194,9 @@ export function ComfyuiExtractMattingPanel() {
               />
             </div>
           </div>
-        </div>
+        </section>
 
-        <aside className="space-y-5">
+        <aside aria-label="生图启动与运行" className="space-y-5">
           <div className="rounded-md border bg-background p-4">
             <h4 className="font-semibold">执行</h4>
             <dl className="mt-4 grid grid-cols-2 gap-3 text-sm">

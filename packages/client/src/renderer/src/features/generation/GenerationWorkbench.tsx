@@ -171,19 +171,19 @@ export function GenerationWorkbench() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <ActiveGenerationTaskNotice
         tasks={activeTasks}
         onCancelAll={() => void cancelAllActiveTasks()}
       />
 
-      <div className="rounded-md border bg-background p-5 shadow-sm">
+      <section
+        aria-label="生图能力"
+        className="rounded-md border bg-card p-4 text-card-foreground shadow-sm"
+      >
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-muted-foreground">生图模块</p>
-            <h2 className="mt-1 text-xl font-semibold text-balance">
-              按能力选择 Grsai 或 ComfyUI 路径
-            </h2>
+            <h2 className="text-lg font-semibold">生图生产</h2>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <Button onClick={() => setIsDebugLogOpen(true)} type="button" variant="secondary">
@@ -205,7 +205,7 @@ export function GenerationWorkbench() {
         </div>
 
         <Tabs
-          className="mt-5"
+          className="mt-4"
           onValueChange={(value) => {
             if (isGenerationCapabilityKey(value)) {
               setActiveCapability(value)
@@ -225,89 +225,94 @@ export function GenerationWorkbench() {
             })}
           </TabsList>
         </Tabs>
-      </div>
+      </section>
 
-      <div
-        className="rounded-md border bg-background p-5 shadow-sm"
-        hidden={activeCapability !== 'txt2img'}
+      <section
+        aria-label={`${activeCapabilityMeta?.label ?? '生图'}生产工作区`}
+        className="space-y-4"
       >
-        <GrsaiPromptGenerationPanel capability="txt2img" />
-      </div>
-
-      <div
-        className="rounded-md border bg-background p-5 shadow-sm"
-        hidden={activeCapability === 'txt2img'}
-      >
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h3 className="text-base font-semibold">实现方式</h3>
-            <p className="mt-1 text-sm text-muted-foreground">{providerNotes[activeProvider]}</p>
-          </div>
-          <div className="flex gap-2">
-            {generationProviders.map((provider) => {
-              const available = isGenerationProviderAvailable(activeCapability, provider.key)
-              const selected = activeProvider === provider.key
-              return (
-                <Button
-                  className="h-10"
-                  disabled={!available}
-                  key={provider.key}
-                  onClick={() => setProvider(activeCapability, provider.key)}
-                  title={available ? provider.label : unavailableText[activeCapability]}
-                  type="button"
-                  variant={selected ? 'default' : 'secondary'}
-                >
-                  {provider.label}
-                </Button>
-              )
-            })}
-          </div>
+        <div hidden={activeCapability !== 'txt2img'}>
+          <GrsaiPromptGenerationPanel capability="txt2img" />
         </div>
 
-        <div hidden={!(activeCapability === 'extract' && activeProvider === 'grsai')}>
-          <GrsaiExtractPanel />
-        </div>
-        <div hidden={!(activeCapability === 'extract' && activeProvider === 'comfyui-chenyu')}>
-          <ComfyuiExtractPanel />
-        </div>
-        <div hidden={!(activeCapability === 'matting' && activeProvider === 'comfyui-chenyu')}>
-          <ComfyuiMattingPanel />
-        </div>
-        <div
-          hidden={!(activeCapability === 'extract-matting' && activeProvider === 'comfyui-chenyu')}
-        >
-          <ComfyuiExtractMattingPanel />
-        </div>
-        <div hidden={!(activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu')}>
-          <ComfyuiImg2imgPanel />
-        </div>
-        <div hidden={!(activeCapability === 'img2img' && activeProvider === 'grsai')}>
-          <GrsaiPromptGenerationPanel capability="img2img" />
-        </div>
-        <div
-          className={`mt-5 rounded-md border p-5 ${
-            unavailable ? 'border-amber-200 bg-amber-50 text-amber-900' : 'bg-muted/40'
-          }`}
-          hidden={
-            (activeCapability === 'extract' &&
-              (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu')) ||
-            (activeCapability === 'matting' && activeProvider === 'comfyui-chenyu') ||
-            (activeCapability === 'extract-matting' && activeProvider === 'comfyui-chenyu') ||
-            (activeCapability === 'img2img' &&
-              (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu'))
-          }
-        >
-          <div className="flex items-start gap-3">
-            <CircleDashed className="mt-0.5 h-5 w-5 shrink-0" />
+        <div hidden={activeCapability === 'txt2img'}>
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border bg-card p-4 shadow-sm">
             <div>
-              <h4 className="font-semibold">{activeCopy.title}</h4>
-              <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                {activeCopy.description}
-              </p>
+              <h3 className="text-base font-semibold">实现方式</h3>
+              <p className="mt-1 text-sm text-muted-foreground">{providerNotes[activeProvider]}</p>
+            </div>
+            <fieldset
+              aria-label={`${activeCapabilityMeta?.label ?? '生图'}实现方式`}
+              className="flex gap-2"
+            >
+              {generationProviders.map((provider) => {
+                const available = isGenerationProviderAvailable(activeCapability, provider.key)
+                const selected = activeProvider === provider.key
+                return (
+                  <Button
+                    aria-pressed={selected}
+                    className="h-10"
+                    disabled={!available}
+                    key={provider.key}
+                    onClick={() => setProvider(activeCapability, provider.key)}
+                    title={available ? provider.label : unavailableText[activeCapability]}
+                    type="button"
+                    variant={selected ? 'default' : 'secondary'}
+                  >
+                    {provider.label}
+                  </Button>
+                )
+              })}
+            </fieldset>
+          </div>
+
+          <div hidden={!(activeCapability === 'extract' && activeProvider === 'grsai')}>
+            <GrsaiExtractPanel />
+          </div>
+          <div hidden={!(activeCapability === 'extract' && activeProvider === 'comfyui-chenyu')}>
+            <ComfyuiExtractPanel />
+          </div>
+          <div hidden={!(activeCapability === 'matting' && activeProvider === 'comfyui-chenyu')}>
+            <ComfyuiMattingPanel />
+          </div>
+          <div
+            hidden={
+              !(activeCapability === 'extract-matting' && activeProvider === 'comfyui-chenyu')
+            }
+          >
+            <ComfyuiExtractMattingPanel />
+          </div>
+          <div hidden={!(activeCapability === 'img2img' && activeProvider === 'comfyui-chenyu')}>
+            <ComfyuiImg2imgPanel />
+          </div>
+          <div hidden={!(activeCapability === 'img2img' && activeProvider === 'grsai')}>
+            <GrsaiPromptGenerationPanel capability="img2img" />
+          </div>
+          <div
+            className={`mt-5 rounded-md border p-5 ${
+              unavailable ? 'border-amber-200 bg-amber-50 text-amber-900' : 'bg-muted/40'
+            }`}
+            hidden={
+              (activeCapability === 'extract' &&
+                (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu')) ||
+              (activeCapability === 'matting' && activeProvider === 'comfyui-chenyu') ||
+              (activeCapability === 'extract-matting' && activeProvider === 'comfyui-chenyu') ||
+              (activeCapability === 'img2img' &&
+                (activeProvider === 'grsai' || activeProvider === 'comfyui-chenyu'))
+            }
+          >
+            <div className="flex items-start gap-3">
+              <CircleDashed className="mt-0.5 h-5 w-5 shrink-0" />
+              <div>
+                <h4 className="font-semibold">{activeCopy.title}</h4>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  {activeCopy.description}
+                </p>
+              </div>
             </div>
           </div>
         </div>
-      </div>
+      </section>
 
       <Dialog onOpenChange={setIsDebugLogOpen} open={isDebugLogOpen}>
         <DialogContent className="max-w-5xl gap-0 p-0">

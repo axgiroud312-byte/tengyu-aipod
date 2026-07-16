@@ -795,6 +795,73 @@ test.describe('production-first Workbench shell', () => {
     await expect(page.getByLabel('搜索关键词')).toHaveValue('保留采集搜索草稿')
   })
 
+  test('presents Generation as five capability workspaces with distinct provider paths', async () => {
+    const testInfo = test.info()
+    const attachScreenshot = async (name: string) => {
+      const path = testInfo.outputPath(`${name}.png`)
+      await page.screenshot({ path, fullPage: true })
+      await testInfo.attach(name, { path, contentType: 'image/png' })
+    }
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-generation-workspace'),
+    })
+    const page = await app.firstWindow()
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-generation-workspace'))
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '生图', exact: true })
+      .click()
+
+    const capabilities = page.getByRole('region', { name: '生图能力' })
+    const workspace = page.getByRole('region', { name: '文生图生产工作区' })
+    const results = workspace.getByRole('region', { name: '生图结果' })
+    await expect(capabilities).toBeVisible()
+    for (const capability of ['文生图', '图生图', '提取', '抠图', '提取后抠图']) {
+      await expect(capabilities.getByRole('tab', { name: capability, exact: true })).toBeVisible()
+    }
+    await expect(workspace).toBeVisible()
+    await expect(results).toBeVisible()
+
+    const txt2imgPath = workspace.getByRole('group', { name: '文生图生图路径' })
+    const launch = workspace.getByRole('complementary', { name: '生图启动与运行' })
+    await expect(txt2imgPath.getByRole('button', { name: 'Grsai', exact: true })).toBeVisible()
+    await expect(launch.getByLabel('生图模型')).toBeVisible()
+    await page.setViewportSize({ width: 1440, height: 900 })
+    await attachScreenshot('generation-grsai-txt2img-1440x900')
+    await txt2imgPath.getByRole('button', { name: 'ComfyUI 工作流' }).click()
+    await expect(txt2imgPath.getByRole('button', { name: 'ComfyUI 工作流' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await expect(launch.getByLabel('文生图工作流')).toBeVisible()
+    await expect(launch.getByRole('button', { name: '刷新工作流' })).toBeVisible()
+    const machine = workspace.getByRole('region', { name: '运行云机' })
+    await expect(machine).toBeVisible()
+    await expect(machine.getByRole('button', { name: '刷新' })).toBeVisible()
+    await expect(machine.getByRole('button', { name: /开机|关机/ })).toHaveCount(0)
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await attachScreenshot('generation-comfyui-txt2img-1280x720')
+
+    await capabilities.getByRole('tab', { name: '图生图' }).click()
+    const img2imgWorkspace = page.getByRole('region', { name: '图生图生产工作区' })
+    const provider = img2imgWorkspace.getByRole('group', { name: '图生图实现方式' })
+    await expect(provider.getByRole('button', { name: '付费 Grsai', exact: true })).toBeVisible()
+    await expect(img2imgWorkspace.getByText('参考图', { exact: true })).toBeVisible()
+    await provider.getByRole('button', { name: 'ComfyUI 晨羽' }).click()
+    await expect(provider.getByRole('button', { name: 'ComfyUI 晨羽' })).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    )
+    await expect(img2imgWorkspace.getByRole('heading', { name: '图生图图片文件夹' })).toBeVisible()
+    await expect(img2imgWorkspace.getByRole('heading', { name: 'ComfyUI 工作流' })).toBeVisible()
+    await expect(img2imgWorkspace.getByRole('region', { name: '生图结果' })).toBeVisible()
+    await page.setViewportSize({ width: 1920, height: 1080 })
+    await attachScreenshot('generation-comfyui-img2img-1920x1080')
+  })
+
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
