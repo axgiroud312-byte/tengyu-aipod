@@ -147,6 +147,9 @@ describe('PsdScanner', () => {
       runJsxFile: async (jsxPath) => {
         const jsx = await readFile(jsxPath, 'utf8')
         expect(jsx).toContain(JSON.stringify(psdPath))
+        expect(jsx).toContain("reference.putProperty(stringIDToTypeID('property'), slicesKey)")
+        expect(jsx).toContain('executeActionGet(reference)')
+        expect(jsx).not.toContain('doc.slices')
         await writeFile(
           join(jsxPath, '..', 'scan-result.json'),
           JSON.stringify({

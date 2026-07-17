@@ -178,38 +178,62 @@ function deriveClipAreas(guides, docSize) {
   return areas.length > 0 ? areas : [{ x: 0, y: 0, w: docSize.w, h: docSize.h, is_full: true }];
 }
 
-function nativeSliceKind(slice) {
-  var value = '';
-  try {
-    value = String(slice.type).toLowerCase();
-  } catch (e) {}
+function nativeSliceKind(origin) {
+  var value = String(origin).toLowerCase();
+  if (value.indexOf('auto') >= 0) {
+    return 'auto';
+  }
   if (value.indexOf('layer') >= 0) {
     return 'layer';
   }
-  if (value.indexOf('user') >= 0) {
-    return 'user';
-  }
-  return 'auto';
+  return 'user';
 }
 
-function scanNativeSlices(doc) {
+function descriptorNumber(descriptor, key) {
+  try { return descriptor.getUnitDoubleValue(key); } catch (e1) {}
+  try { return descriptor.getDouble(key); } catch (e2) {}
+  return descriptor.getInteger(key);
+}
+
+function scanNativeSlices() {
   var output = [];
-  try {
-    for (var i = 0; i < doc.slices.length; i++) {
-      var slice = doc.slices[i];
-      var bounds = slice.bounds;
-      output.push({
-        name: String(slice.name || ('slice-' + (i + 1))),
-        kind: nativeSliceKind(slice),
-        bounds: [
-          numberValue(bounds[0]),
-          numberValue(bounds[1]),
-          numberValue(bounds[2]),
-          numberValue(bounds[3])
-        ]
-      });
+  var slicesKey = stringIDToTypeID('slices');
+  var reference = new ActionReference();
+  reference.putProperty(stringIDToTypeID('property'), slicesKey);
+  reference.putEnumerated(
+    stringIDToTypeID('document'),
+    stringIDToTypeID('ordinal'),
+    stringIDToTypeID('targetEnum')
+  );
+  var documentDescriptor = executeActionGet(reference);
+  if (!documentDescriptor.hasKey(slicesKey)) {
+    throw new Error('Photoshop does not expose the document slices descriptor');
+  }
+  var slices = documentDescriptor.getObjectValue(slicesKey).getList(slicesKey);
+  var originKey = stringIDToTypeID('origin');
+  var nameKey = stringIDToTypeID('name');
+  var boundsKey = stringIDToTypeID('bounds');
+  var topKey = stringIDToTypeID('top');
+  var leftKey = stringIDToTypeID('left');
+  var bottomKey = stringIDToTypeID('bottom');
+  var rightKey = stringIDToTypeID('right');
+  for (var i = 0; i < slices.count; i++) {
+    var slice = slices.getObjectValue(i);
+    var origin = slice.hasKey(originKey)
+      ? typeIDToStringID(slice.getEnumerationValue(originKey))
+      : 'userGenerated';
+    var bounds = slice.getObjectValue(boundsKey);
+    output.push({
+      name: slice.hasKey(nameKey) ? slice.getString(nameKey) : ('slice-' + (i + 1)),
+      kind: nativeSliceKind(origin),
+      bounds: [
+        descriptorNumber(bounds, leftKey),
+        descriptorNumber(bounds, topKey),
+        descriptorNumber(bounds, rightKey),
+        descriptorNumber(bounds, bottomKey)
+      ]
+    });
     }
-  } catch (e) {}
   return output;
 }
 
@@ -242,7 +266,7 @@ function scanPsd() {
       smart_objects: [],
       guides: { horizontal: [], vertical: [] },
       clip_areas: [],
-      native_slices: scanNativeSlices(doc),
+      native_slices: scanNativeSlices(),
       layers: [],
       text_layers: []
     };

@@ -550,13 +550,18 @@ function orderExportedImages(files, slices) {
   for (var i = 0; i < slices.length; i++) {
     var sliceKey = normalizedExportKey(slices[i].name);
     var matchIndex = -1;
+    var matches = 0;
     for (var j = 0; j < remaining.length; j++) {
-      if (sliceKey && normalizedExportKey(remaining[j].name).indexOf(sliceKey) >= 0) {
+      var fileKey = normalizedExportKey(remaining[j].name);
+      if (sliceKey && (fileKey === sliceKey || fileKey.slice(-sliceKey.length) === sliceKey)) {
         matchIndex = j;
-        break;
+        matches++;
       }
     }
-    if (matchIndex >= 0) {
+    if (matches > 1) {
+      throw new Error('Ambiguous native slice export name: ' + slices[i].name);
+    }
+    if (matches === 1) {
       ordered.push(remaining[matchIndex]);
       remaining.splice(matchIndex, 1);
     }
@@ -667,6 +672,14 @@ function exportOutputs(doc, group, groupResult) {
   const workingDocumentStart = useNativeSlices
     ? 'var workingDocument = baseDocument;'
     : 'var workingDocument = baseDocument.duplicate();'
+  const pristineHistoryState = useNativeSlices
+    ? 'var pristineHistoryState = baseDocument.activeHistoryState;'
+    : ''
+  const restorePristineState = useNativeSlices
+    ? `if (i > 0) {
+        baseDocument.activeHistoryState = pristineHistoryState;
+      }`
+    : ''
   const workingDocumentClose = useNativeSlices
     ? ''
     : `try {
@@ -1042,6 +1055,7 @@ function runBatch() {
     appendLog({ level: 'info', stage: 'template_start', message: '开始处理模板' });
     appendLog({ level: 'info', stage: 'template_open', message: '打开模板' });
     baseDocument = app.open(new File(CONFIG.mockup_path));
+    ${pristineHistoryState}
 
     for (var i = 0; i < CONFIG.groups.length; i++) {
       var group = CONFIG.groups[i];
@@ -1057,6 +1071,7 @@ function runBatch() {
         break;
       }
 
+      ${restorePristineState}
       ${workingDocumentStart}
       var groupResult = {
         ok: false,

@@ -170,6 +170,7 @@ describe('generateTemplateBatchJsx', () => {
     expect(jsx).toContain("stage: 'native_slice_export'")
     expect(jsx).toContain('CONFIG.native_slices.length')
     expect(jsx).toContain('orderExportedImages(exported, CONFIG.native_slices)')
+    expect(jsx).toContain('baseDocument.activeHistoryState = pristineHistoryState')
     expect(jsx).not.toContain('baseDocument.duplicate()')
     expect(jsx).not.toContain('duplicate.crop(')
   })
