@@ -11,7 +11,7 @@ export type SkillSyncResult = Awaited<ReturnType<typeof window.api.skill.refresh
 export type LocalWorkflowSummary = Awaited<ReturnType<typeof window.api.workflow.listLocal>>[number]
 export type ConnectionStatus = 'unchecked' | 'checking' | 'connected' | 'failed'
 export type InstanceAction = 'startup' | 'shutdown' | 'restart' | 'active'
-export type SettingsTab = 'general' | 'chenyu'
+export type SettingsTab = 'general' | 'models' | 'chenyu'
 
 export const DEFAULT_GPU_NUMS = 1
 export const POLL_INTERVAL_MS = 2_500

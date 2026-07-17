@@ -11,7 +11,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { CheckCircle2, Loader2, RefreshCw } from 'lucide-react'
+import { Boxes, CheckCircle2, CloudCog, Loader2, RefreshCw, Settings2 } from 'lucide-react'
 import { AdvancedSettings } from './components/AdvancedSettings'
 import { BitBrowserSettingsCard } from './components/BitBrowserSettingsCard'
 import { ConnectionCard } from './components/ConnectionCard'
@@ -121,187 +121,213 @@ export function SettingsPage({
   }
 
   return (
-    <div className="space-y-6">
-      <Tabs
-        onValueChange={(value) => {
-          if (value === 'general' || value === 'chenyu') {
-            setActiveSettingsTab(value)
-          }
-        }}
-        value={activeSettingsTab}
-      >
-        <TabsList className="grid h-auto w-full max-w-md grid-cols-2 p-1">
-          <TabsTrigger className="h-10" value="general">
-            通用
-          </TabsTrigger>
-          <TabsTrigger className="h-10" value="chenyu">
-            晨羽智云
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
+    <section aria-label="本机设置" className="space-y-5">
+      <header className="border-b pb-4">
+        <p className="text-sm font-medium text-muted-foreground">设置</p>
+        <h2 className="mt-1 text-xl font-semibold">本机配置</h2>
+      </header>
 
-      {message ? (
-        <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-          {message}
-        </div>
-      ) : null}
-      {error ? (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          {error}
-        </div>
-      ) : null}
+      <div className="min-w-0 space-y-5">
+        <Tabs
+          className="min-w-0"
+          onValueChange={(value) => {
+            if (value === 'general' || value === 'models' || value === 'chenyu') {
+              setActiveSettingsTab(value)
+            }
+          }}
+          value={activeSettingsTab}
+        >
+          <TabsList
+            aria-label="设置分类"
+            className="grid h-auto w-full max-w-2xl grid-cols-3 gap-1 p-1"
+          >
+            <TabsTrigger className="min-h-11 min-w-0 justify-center gap-2 px-3" value="general">
+              <Settings2 className="h-4 w-4 shrink-0" />
+              <span className="truncate">常规</span>
+            </TabsTrigger>
+            <TabsTrigger className="min-h-11 min-w-0 justify-center gap-2 px-3" value="models">
+              <Boxes className="h-4 w-4 shrink-0" />
+              <span className="truncate">模型与工作流</span>
+            </TabsTrigger>
+            <TabsTrigger className="min-h-11 min-w-0 justify-center gap-2 px-3" value="chenyu">
+              <CloudCog className="h-4 w-4 shrink-0" />
+              <span className="truncate">晨羽智云</span>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
 
-      {activeSettingsTab === 'general' ? (
-        <div className="space-y-6">
-          <WorkspaceSettingsCard
-            saving={savingWorkspace}
-            workspace={workspace}
-            workspaceDraft={workspaceDraft}
-            onChooseRoot={() => void chooseWorkspaceRoot()}
-            onSaveRoot={() => void saveWorkspaceRoot()}
-            onWorkspaceDraftChange={setWorkspaceDraft}
-          />
-
-          <LogsSettingsCard
-            deleting={deletingLogs}
-            exporting={exportingLogs}
-            opening={openingLogs}
-            workspace={workspace}
-            onDeleteAll={() => setDeleteLogsOpen(true)}
-            onExportZip={() => void exportLogsZip()}
-            onOpenDirectory={() => void openLogsDirectory()}
-          />
-
-          <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
-            <div className="space-y-6">
-              <GenerationLocalSettingsCard
-                bailianApiKey={bailianApiKey}
-                config={generationConfig}
-                grsaiApiKey={grsaiApiKey}
-                saving={savingGenerationSettings}
-                settings={generationSettings}
-                onBailianApiKeyChange={setBailianApiKey}
-                onConfigChange={updateGenerationConfig}
-                onGrsaiApiKeyChange={setGrsaiApiKey}
-                onSave={() => void saveGenerationSettings()}
-              />
-
-              <BitBrowserSettingsCard
-                baseUrl={bitBrowserBaseUrl}
-                saving={savingBitBrowserBaseUrl}
-                onBaseUrlChange={setBitBrowserBaseUrl}
-                onSave={() => void saveBitBrowserSettings()}
-              />
-
-              <SkillSyncCard
-                result={syncResult}
-                syncing={syncingConfig}
-                onSync={() => void syncBackendConfig()}
-              />
+        <div className="min-w-0 space-y-5">
+          {message ? (
+            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+              {message}
             </div>
+          ) : null}
+          {error ? (
+            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+              {error}
+            </div>
+          ) : null}
 
-            <LocalWorkflowCard
-              directoryPath={workflowDirectoryPath}
-              importing={importingWorkflow}
-              workflows={workflows}
-              onChooseDirectory={() => void chooseWorkflowDirectory()}
-              onDirectoryPathChange={setWorkflowDirectoryPath}
-              onImport={() => void importWorkflowDirectory()}
-              onRemove={(id) => void removeLocalWorkflow(id)}
-            />
-          </div>
+          {activeSettingsTab === 'general' ? (
+            <section aria-label="常规设置" className="space-y-5">
+              <div className="border-b pb-3">
+                <h2 className="text-lg font-semibold">常规</h2>
+                <p className="mt-1 text-sm text-muted-foreground">工作区、浏览器连接和本地日志。</p>
+              </div>
+              <WorkspaceSettingsCard
+                saving={savingWorkspace}
+                workspace={workspace}
+                workspaceDraft={workspaceDraft}
+                onChooseRoot={() => void chooseWorkspaceRoot()}
+                onSaveRoot={() => void saveWorkspaceRoot()}
+                onWorkspaceDraftChange={setWorkspaceDraft}
+              />
+              <div className="grid gap-5 2xl:grid-cols-2">
+                <BitBrowserSettingsCard
+                  baseUrl={bitBrowserBaseUrl}
+                  saving={savingBitBrowserBaseUrl}
+                  onBaseUrlChange={setBitBrowserBaseUrl}
+                  onSave={() => void saveBitBrowserSettings()}
+                />
+                <LogsSettingsCard
+                  deleting={deletingLogs}
+                  exporting={exportingLogs}
+                  opening={openingLogs}
+                  workspace={workspace}
+                  onDeleteAll={() => setDeleteLogsOpen(true)}
+                  onExportZip={() => void exportLogsZip()}
+                  onOpenDirectory={() => void openLogsDirectory()}
+                />
+              </div>
+            </section>
+          ) : activeSettingsTab === 'models' ? (
+            <section aria-label="模型与工作流设置" className="space-y-5">
+              <div className="border-b pb-3">
+                <h2 className="text-lg font-semibold">模型与工作流</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  本地模型、接口密钥、Skill 缓存和 ComfyUI Workflow。
+                </p>
+              </div>
+              <div className="grid gap-5 2xl:grid-cols-[420px_minmax(0,1fr)]">
+                <div className="space-y-5">
+                  <GenerationLocalSettingsCard
+                    bailianApiKey={bailianApiKey}
+                    config={generationConfig}
+                    grsaiApiKey={grsaiApiKey}
+                    saving={savingGenerationSettings}
+                    settings={generationSettings}
+                    onBailianApiKeyChange={setBailianApiKey}
+                    onConfigChange={updateGenerationConfig}
+                    onGrsaiApiKeyChange={setGrsaiApiKey}
+                    onSave={() => void saveGenerationSettings()}
+                  />
+                  <SkillSyncCard
+                    result={syncResult}
+                    syncing={syncingConfig}
+                    onSync={() => void syncBackendConfig()}
+                  />
+                </div>
+                <LocalWorkflowCard
+                  directoryPath={workflowDirectoryPath}
+                  importing={importingWorkflow}
+                  workflows={workflows}
+                  onChooseDirectory={() => void chooseWorkflowDirectory()}
+                  onDirectoryPathChange={setWorkflowDirectoryPath}
+                  onImport={() => void importWorkflowDirectory()}
+                  onRemove={(id) => void removeLocalWorkflow(id)}
+                />
+              </div>
+            </section>
+          ) : (
+            <section aria-label="晨羽智云设置" className="space-y-5">
+              <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3">
+                <div>
+                  <h2 className="text-lg font-semibold">晨羽智云</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    连接、创建云机、实例操作和默认 ComfyUI 云机。
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    disabled={refreshing || !apiKeyConfigured}
+                    onClick={() => void refreshRemoteData()}
+                    type="button"
+                    variant="outline"
+                  >
+                    {refreshing ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="mr-2 h-4 w-4" />
+                    )}
+                    刷新
+                  </Button>
+                  <Button disabled={saving} onClick={() => void saveSettings()} type="button">
+                    {saving ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <CheckCircle2 className="mr-2 h-4 w-4" />
+                    )}
+                    保存设置
+                  </Button>
+                </div>
+              </div>
+
+              <div className="grid gap-5 2xl:grid-cols-[420px_minmax(0,1fr)]">
+                <div className="space-y-5">
+                  <ConnectionCard
+                    apiKey={apiKey}
+                    apiKeyConfigured={apiKeyConfigured}
+                    connectionError={connectionError}
+                    connectionStatus={connectionStatus}
+                    onApiKeyChange={setApiKey}
+                  />
+                  <CreateInstanceCard
+                    apiKeyConfigured={apiKeyConfigured}
+                    config={config}
+                    createOpen={createOpen}
+                    creating={creating}
+                    currentVersion={currentVersion}
+                    effectiveGpuName={effectiveGpuName}
+                    effectiveGpuUuid={effectiveGpuUuid}
+                    gpus={gpus}
+                    onCreate={() => void createInstance()}
+                    onCreateOpenChange={setCreateOpen}
+                    onUpdateConfig={updateConfig}
+                  />
+                  <AdvancedSettings
+                    busyInstance={busyInstance}
+                    config={config}
+                    destroyingInstanceUuid={destroyTarget?.instanceUuid ?? null}
+                    discovering={discovering}
+                    instances={instances}
+                    onDestroy={(instance) => {
+                      setDestroyTarget(instance)
+                      setDestroyConfirm('')
+                    }}
+                    onDiscoverPod={() => void discoverPod()}
+                    onRestart={(instance) => void runInstanceAction(instance, 'restart')}
+                    onTagsTextChange={updateTagsText}
+                    onUpdateConfig={updateConfig}
+                    tagsText={tagsText}
+                  />
+                </div>
+                <InstanceManagementCard
+                  busyInstance={busyInstance}
+                  instances={instances}
+                  refreshing={refreshing}
+                  statusOverrides={statusOverrides}
+                  urlDrafts={instanceUrlDrafts}
+                  onRefresh={() => void refreshRemoteData()}
+                  onSetDefault={(instance) => void runInstanceAction(instance, 'active')}
+                  onShutdown={(instance) => void runInstanceAction(instance, 'shutdown')}
+                  onStartup={(instance) => void runInstanceAction(instance, 'startup')}
+                  onUpdateUrl={updateInstanceUrlDraft}
+                />
+              </div>
+            </section>
+          )}
         </div>
-      ) : (
-        <div className="space-y-6">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <h2 className="text-2xl font-semibold tracking-normal">晨羽智云设置</h2>
-              <p className="mt-1 text-sm text-muted-foreground">
-                管理连接、创建杭州慎思云机，并指定 ComfyUI 生图默认云机。
-              </p>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                disabled={refreshing || !apiKeyConfigured}
-                onClick={() => void refreshRemoteData()}
-                type="button"
-                variant="outline"
-              >
-                {refreshing ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="mr-2 h-4 w-4" />
-                )}
-                刷新
-              </Button>
-              <Button disabled={saving} onClick={() => void saveSettings()} type="button">
-                {saving ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="mr-2 h-4 w-4" />
-                )}
-                保存设置
-              </Button>
-            </div>
-          </div>
-
-          <div className="grid gap-6 xl:grid-cols-[420px_minmax(0,1fr)]">
-            <div className="space-y-6">
-              <ConnectionCard
-                apiKey={apiKey}
-                apiKeyConfigured={apiKeyConfigured}
-                connectionError={connectionError}
-                connectionStatus={connectionStatus}
-                onApiKeyChange={setApiKey}
-              />
-
-              <CreateInstanceCard
-                apiKeyConfigured={apiKeyConfigured}
-                config={config}
-                createOpen={createOpen}
-                creating={creating}
-                currentVersion={currentVersion}
-                effectiveGpuName={effectiveGpuName}
-                effectiveGpuUuid={effectiveGpuUuid}
-                gpus={gpus}
-                onCreate={() => void createInstance()}
-                onCreateOpenChange={setCreateOpen}
-                onUpdateConfig={updateConfig}
-              />
-
-              <AdvancedSettings
-                busyInstance={busyInstance}
-                config={config}
-                destroyingInstanceUuid={destroyTarget?.instanceUuid ?? null}
-                discovering={discovering}
-                instances={instances}
-                onDestroy={(instance) => {
-                  setDestroyTarget(instance)
-                  setDestroyConfirm('')
-                }}
-                onDiscoverPod={() => void discoverPod()}
-                onRestart={(instance) => void runInstanceAction(instance, 'restart')}
-                onTagsTextChange={updateTagsText}
-                onUpdateConfig={updateConfig}
-                tagsText={tagsText}
-              />
-            </div>
-
-            <InstanceManagementCard
-              busyInstance={busyInstance}
-              instances={instances}
-              refreshing={refreshing}
-              statusOverrides={statusOverrides}
-              urlDrafts={instanceUrlDrafts}
-              onRefresh={() => void refreshRemoteData()}
-              onSetDefault={(instance) => void runInstanceAction(instance, 'active')}
-              onShutdown={(instance) => void runInstanceAction(instance, 'shutdown')}
-              onStartup={(instance) => void runInstanceAction(instance, 'startup')}
-              onUpdateUrl={updateInstanceUrlDraft}
-            />
-          </div>
-        </div>
-      )}
+      </div>
 
       <AlertDialog onOpenChange={setDeleteLogsOpen} open={deleteLogsOpen}>
         <AlertDialogContent>
@@ -350,6 +376,6 @@ export function SettingsPage({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
+    </section>
   )
 }
