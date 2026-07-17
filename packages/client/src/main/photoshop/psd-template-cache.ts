@@ -2,6 +2,7 @@ import type {
   PsdClipArea,
   PsdGuides,
   PsdLayerInfo,
+  PsdNativeSlice,
   PsdSmartObject,
   PsdTemplate,
   PsdTextLayer,
@@ -25,6 +26,7 @@ interface PsdTemplateRow {
   smart_objects: string
   guides: string
   clip_areas: string
+  native_slices?: string
   mode: SmartObjectMode
   representative_so_count: number
   scanned_at: number
@@ -68,6 +70,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
         smart_objects,
         guides,
         clip_areas,
+        native_slices,
         mode,
         representative_so_count,
         scanned_at,
@@ -82,6 +85,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
         @smart_objects,
         @guides,
         @clip_areas,
+        @native_slices,
         @mode,
         @representative_so_count,
         @scanned_at,
@@ -95,6 +99,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
         smart_objects = excluded.smart_objects,
         guides = excluded.guides,
         clip_areas = excluded.clip_areas,
+        native_slices = excluded.native_slices,
         mode = excluded.mode,
         representative_so_count = excluded.representative_so_count,
         scanned_at = excluded.scanned_at,
@@ -126,6 +131,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
       smart_objects: JSON.stringify(template.smart_objects),
       guides: JSON.stringify(template.guides),
       clip_areas: JSON.stringify(template.clip_areas),
+      native_slices: JSON.stringify(template.native_slices),
       mode: template.mode,
       representative_so_count: template.representative_so_count,
       scanned_at: template.scanned_at,
@@ -143,6 +149,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
       smart_objects: parseJson<PsdSmartObject[]>(row.smart_objects),
       guides: parseJson<PsdGuides>(row.guides),
       clip_areas: parseJson<PsdClipArea[]>(row.clip_areas),
+      native_slices: row.native_slices ? parseJson<PsdNativeSlice[]>(row.native_slices) : [],
       mode: row.mode,
       representative_so_count: row.representative_so_count,
       scanned_at: row.scanned_at,

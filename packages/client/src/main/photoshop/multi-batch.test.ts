@@ -10,7 +10,7 @@ import type {
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { TempFileManager } from '../lib/temp-file-manager'
 import { PhotoshopExecutionEngine } from './execution-engine'
-import { writePhotoshopJobJsx } from './jsx-generator'
+import { writePhotoshopJobJsx, writePhotoshopTemplateBatchJsx } from './jsx-generator'
 import { PhotoshopMultiBatchRunner, createCompletedJobResult, runBatch } from './multi-batch'
 import { PsdScanner } from './psd-scanner'
 
@@ -42,6 +42,7 @@ function createTemplate(filePath: string, id: string): PsdTemplate {
     ],
     guides: { horizontal: [], vertical: [] },
     clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+    native_slices: [],
     mode: 'single',
     representative_so_count: 1,
     scanned_at: 123,
@@ -301,6 +302,93 @@ describe('PhotoshopMultiBatchRunner', () => {
     ])
   })
 
+  it('selects native slice export and preserves output naming at the runner boundary', async () => {
+    const template = createTemplate('C:\\templates\\native.psd', 'tpl-native')
+    template.native_slices = [
+      { name: 'Front', kind: 'user', bounds: [0, 0, 500, 1000] },
+      { name: 'Back', kind: 'layer', bounds: [500, 0, 1000, 1000] },
+    ]
+    const logs: PhotoshopProgressLogEntry[] = []
+    const outputPaths: string[][] = []
+
+    const result = await runBatch(
+      createPrints().slice(0, 1),
+      [template.file_path],
+      {
+        taskId: 'batch-native',
+        outputRoot: 'C:\\outputs',
+      },
+      {
+        scanner: { scanPsd: async () => template },
+        engine: {
+          runTemplateBatch: async (_template, groups) => {
+            outputPaths.push(...groups.map((group) => group.job.output_paths))
+            return {
+              ok: true,
+              outputs: groups.flatMap((group) => group.job.output_paths),
+              groups: groups.map((group) => ({
+                group_index: group.group_index,
+                sku_folder: group.sku_folder,
+                outputs: group.job.output_paths,
+              })),
+            }
+          },
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        onLog: (entry) => {
+          logs.push(entry)
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(outputPaths).toEqual([
+      ['C:\\outputs/native/img2/01.jpg', 'C:\\outputs/native/img2/02.jpg'],
+    ])
+    expect(logs).toContainEqual(
+      expect.objectContaining({ stage: 'native_slice_detected', template_name: 'native' }),
+    )
+    expect(logs).not.toContainEqual(expect.objectContaining({ stage: 'native_slice_fallback' }))
+    expect(result.outputs).toEqual(outputPaths[0])
+  })
+
+  it('logs one compatibility fallback when a template has no native slices', async () => {
+    const template = createTemplate('C:\\templates\\legacy.psd', 'tpl-legacy')
+    const logs: PhotoshopProgressLogEntry[] = []
+
+    await runBatch(
+      createPrints(),
+      [template.file_path],
+      { taskId: 'batch-legacy', outputRoot: 'C:\\outputs' },
+      {
+        scanner: { scanPsd: async () => template },
+        engine: {
+          runTemplateBatch: async (_template, groups) => ({
+            ok: true,
+            outputs: groups.flatMap((group) => group.job.output_paths),
+            groups: groups.map((group) => ({
+              group_index: group.group_index,
+              sku_folder: group.sku_folder,
+              outputs: group.job.output_paths,
+            })),
+          }),
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        onLog: (entry) => {
+          logs.push(entry)
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(logs.filter((entry) => entry.stage === 'native_slice_fallback')).toEqual([
+      expect.objectContaining({
+        message: '将使用旧模式裁切导出，速度会慢一些',
+        template_name: 'legacy',
+      }),
+    ])
+  })
+
   it('emits template-level progress as group_complete logs arrive', async () => {
     const template = createTemplate('C:\\templates\\template.psd', 'tpl-1')
     const progress: Array<{
@@ -519,25 +607,27 @@ describe('PhotoshopMultiBatchRunner', () => {
     })
   })
 
-  it('runs a small real multi-template Photoshop batch when REAL_PS=1', async () => {
+  it('compares native-slice and legacy export with a real PSD when REAL_PS=1', async () => {
     if (process.env.REAL_PS !== '1' || process.env.REAL_PS_MUTATE !== '1') {
       return
     }
 
     const materialRoot = process.env.PS_MATERIAL_ROOT
     const outputRoot = process.env.PS_OUTPUT_ROOT
+    const psdPath = process.env.PS_PSD_PATH
     expect(materialRoot).toBeTruthy()
     expect(outputRoot).toBeTruthy()
+    expect(psdPath).toBeTruthy()
 
     const materialFiles = (await readdir(materialRoot as string))
       .filter((file) => /\.(png|jpe?g)$/i.test(file))
-      .slice(0, 1)
-    expect(materialFiles.length).toBe(1)
+      .slice(0, 3)
+    expect(materialFiles.length).toBeGreaterThan(0)
     const prints = materialFiles.map((file) => ({
       id: basename(file, file.includes('.') ? file.slice(file.lastIndexOf('.')) : undefined),
       file_path: join(materialRoot as string, file),
     }))
-    const realOutputRoot = join(outputRoot as string, `__codex_real_ps_multi_batch_${Date.now()}`)
+    const realOutputRoot = join(outputRoot as string, `__codex_real_ps_native_slice_${Date.now()}`)
     await mkdir(realOutputRoot, { recursive: true })
 
     const scanner = new PsdScanner({
@@ -545,33 +635,77 @@ describe('PhotoshopMultiBatchRunner', () => {
       tempFiles: new TempFileManager({ rootDir: join(tempDir, 'scan-tmp') }),
       cache: createMemoryCache(),
     })
-    const engine = new PhotoshopExecutionEngine({
-      platform: 'win32',
-      shouldSkipJob: async () => false,
-      recorder: {
-        recordRunning: async () => undefined,
-        recordCompleted: async () => undefined,
-        recordFailed: async () => undefined,
-      },
-      writeJsx: (job) =>
-        writePhotoshopJobJsx(job, {
-          tempFiles: new TempFileManager({ rootDir: join(tempDir, 'jsx-tmp') }),
-        }),
-    })
-    const runner = new PhotoshopMultiBatchRunner({ scanner, engine, progressLogger: null })
-
-    await expect(
-      runner.runBatch(prints, ['C:\\Users\\niilo\\Desktop\\钥匙扣x.psd'], {
-        taskId: 'real-multi-batch',
-        outputRoot: realOutputRoot,
+    const template = await scanner.scanPsd(psdPath as string)
+    expect(template.native_slices.length).toBeGreaterThan(0)
+    const legacyTemplate: PsdTemplate = {
+      ...template,
+      native_slices: [],
+      clip_areas: template.native_slices.map((slice) => ({
+        x: slice.bounds[0],
+        y: slice.bounds[1],
+        w: slice.bounds[2] - slice.bounds[0],
+        h: slice.bounds[3] - slice.bounds[1],
+        is_full: false,
+      })),
+    }
+    const createEngine = (tempName: string) =>
+      new PhotoshopExecutionEngine({
+        platform: 'win32',
+        shouldSkipJob: async () => false,
+        recorder: {
+          recordRunning: async () => undefined,
+          recordCompleted: async () => undefined,
+          recordFailed: async () => undefined,
+        },
+        writeJsx: (job) =>
+          writePhotoshopJobJsx(job, {
+            tempFiles: new TempFileManager({ rootDir: join(tempDir, tempName) }),
+          }),
+        writeTemplateBatchJsx: (nextTemplate, groups, cancelFilePath) =>
+          writePhotoshopTemplateBatchJsx(
+            {
+              task_id: groups[0]?.job.task_id ?? tempName,
+              mockup_path: nextTemplate.file_path,
+              template_name: groups[0]?.template_name ?? 'template',
+              native_slices: nextTemplate.native_slices,
+              cancel_file_path: cancelFilePath,
+              groups: groups.map((group) => ({
+                group_index: group.group_index,
+                sku_folder: group.sku_folder,
+                so_replacements: group.job.so_replacements,
+                clip_areas: group.job.clip_areas,
+                output_paths: group.job.output_paths,
+                format: group.job.format,
+                jpg_quality: group.job.jpg_quality,
+              })),
+            },
+            { tempFiles: new TempFileManager({ rootDir: join(tempDir, tempName) }) },
+          ),
+      })
+    const runRealBatch = async (nextTemplate: PsdTemplate, mode: 'legacy' | 'native') => {
+      const runner = new PhotoshopMultiBatchRunner({
+        scanner: { scanPsd: async () => nextTemplate },
+        engine: createEngine(`${mode}-jsx-tmp`),
+        progressLogger: null,
+      })
+      const startedAt = performance.now()
+      const result = await runner.runBatch(prints, [nextTemplate.file_path], {
+        taskId: `real-${mode}`,
+        outputRoot: join(realOutputRoot, mode),
         format: 'jpg',
         jpgQuality: 10,
         maxRetries: 0,
-      }),
-    ).resolves.toMatchObject({
-      ok: true,
-      templates_total: 1,
-      groups_completed: 1,
-    })
-  }, 120_000)
+      })
+      return { result, durationMs: performance.now() - startedAt }
+    }
+
+    const legacy = await runRealBatch(legacyTemplate, 'legacy')
+    const native = await runRealBatch(template, 'native')
+
+    expect(native.result.outputs).toHaveLength(legacy.result.outputs.length)
+    expect(native.result.outputs.map((path) => basename(path))).toEqual(
+      legacy.result.outputs.map((path) => basename(path)),
+    )
+    expect(native.durationMs).toBeLessThan(legacy.durationMs)
+  }, 600_000)
 })

@@ -38,6 +38,7 @@ function template(hash: string, scannedAt: number): PsdTemplate {
     ],
     guides: { horizontal: [400], vertical: [] },
     clip_areas: [{ x: 0, y: 0, w: 1000, h: 400, is_full: false }],
+    native_slices: [{ name: 'Front', kind: 'user', bounds: [0, 0, 1000, 400] }],
     mode: 'single',
     representative_so_count: 1,
     scanned_at: scannedAt,
@@ -70,6 +71,7 @@ describe('SqlitePsdTemplateCache', () => {
       doc_size: { w: 1000, h: 800 },
       smart_objects: [{ name: 'Artwork' }],
       text_layers: [{ text: 'Sample' }],
+      native_slices: [{ name: 'Front', kind: 'user' }],
     })
     await expect(cache.list()).resolves.toMatchObject([
       { file_hash: 'hash-b' },

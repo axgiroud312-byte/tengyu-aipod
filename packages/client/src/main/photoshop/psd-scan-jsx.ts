@@ -178,6 +178,41 @@ function deriveClipAreas(guides, docSize) {
   return areas.length > 0 ? areas : [{ x: 0, y: 0, w: docSize.w, h: docSize.h, is_full: true }];
 }
 
+function nativeSliceKind(slice) {
+  var value = '';
+  try {
+    value = String(slice.type).toLowerCase();
+  } catch (e) {}
+  if (value.indexOf('layer') >= 0) {
+    return 'layer';
+  }
+  if (value.indexOf('user') >= 0) {
+    return 'user';
+  }
+  return 'auto';
+}
+
+function scanNativeSlices(doc) {
+  var output = [];
+  try {
+    for (var i = 0; i < doc.slices.length; i++) {
+      var slice = doc.slices[i];
+      var bounds = slice.bounds;
+      output.push({
+        name: String(slice.name || ('slice-' + (i + 1))),
+        kind: nativeSliceKind(slice),
+        bounds: [
+          numberValue(bounds[0]),
+          numberValue(bounds[1]),
+          numberValue(bounds[2]),
+          numberValue(bounds[3])
+        ]
+      });
+    }
+  } catch (e) {}
+  return output;
+}
+
 function writeResult(value) {
   var file = new File(RESULT_FILE_PATH);
   file.encoding = 'UTF8';
@@ -207,6 +242,7 @@ function scanPsd() {
       smart_objects: [],
       guides: { horizontal: [], vertical: [] },
       clip_areas: [],
+      native_slices: scanNativeSlices(doc),
       layers: [],
       text_layers: []
     };

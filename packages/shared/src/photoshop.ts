@@ -44,6 +44,12 @@ export interface PsdClipArea {
   is_full?: boolean
 }
 
+export interface PsdNativeSlice {
+  name: string
+  kind: 'user' | 'layer'
+  bounds: PsdBounds
+}
+
 export interface PsdLayerInfo {
   name: string
   path: string
@@ -69,6 +75,7 @@ export interface PsdTemplate {
   smart_objects: PsdSmartObject[]
   guides: PsdGuides
   clip_areas: PsdClipArea[]
+  native_slices: PsdNativeSlice[]
   mode: SmartObjectMode
   representative_so_count: number
   scanned_at: number
@@ -124,6 +131,9 @@ export type PhotoshopProgressStage =
   | 'task_start'
   | 'template_start'
   | 'template_open'
+  | 'native_slice_detected'
+  | 'native_slice_fallback'
+  | 'native_slice_export'
   | 'group_start'
   | 'jsx_generate'
   | 'jsx_exec'

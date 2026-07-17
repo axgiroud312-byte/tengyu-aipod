@@ -135,11 +135,6 @@ export function createPhotoshopJobSignature(job: PhotoshopJob): string {
     .digest('hex')
 }
 
-interface ArtifactRow {
-  file_path: string
-  file_hash: string
-}
-
 interface RawTemplateBatchGroupResult {
   group_index?: unknown
   sku_folder?: unknown
@@ -157,41 +152,14 @@ interface RawTemplateBatchResult {
 }
 
 interface ShouldSkipJobOptions {
-  db?: SqliteDatabase
-  dbProvider?: DatabaseProvider
   accessFile?: AccessFn
-  hashFile?: HashFileFn
 }
 
 export async function shouldSkipJob(
   job: PhotoshopJob,
   options: ShouldSkipJobOptions = {},
 ): Promise<boolean> {
-  const dbProvider = options.db ? () => options.db as SqliteDatabase : options.dbProvider
-  if (!dbProvider) {
-    return false
-  }
-
-  const db = await dbProvider()
-  const signature = createPhotoshopJobSignature(job)
-  const rows = db
-    .prepare(
-      `SELECT params_snapshot
-       FROM workflow_steps
-       WHERE task_id = ?
-         AND module = 'photoshop'
-         AND status = 'completed'`,
-    )
-    .all(job.task_id) as Array<{ params_snapshot: string }>
-  const hasCompletedStep = rows.some((row) => {
-    try {
-      const snapshot = JSON.parse(row.params_snapshot) as { job_signature?: unknown }
-      return snapshot.job_signature === signature
-    } catch {
-      return false
-    }
-  })
-  if (!hasCompletedStep) {
+  if (job.output_paths.length === 0) {
     return false
   }
 
@@ -200,31 +168,6 @@ export async function shouldSkipJob(
     try {
       await accessFile(outputPath)
     } catch {
-      return false
-    }
-  }
-
-  if (job.output_paths.length === 0) {
-    return false
-  }
-
-  const placeholders = job.output_paths.map(() => '?').join(',')
-  const artifactRows = db
-    .prepare(
-      `SELECT file_path, file_hash
-       FROM artifacts
-       WHERE provider = 'photoshop'
-         AND file_path IN (${placeholders})`,
-    )
-    .all(...job.output_paths) as unknown as ArtifactRow[]
-  const expectedHashes = new Map(artifactRows.map((row) => [row.file_path, row.file_hash]))
-  if (!job.output_paths.every((outputPath) => expectedHashes.has(outputPath))) {
-    return false
-  }
-
-  const hashFile = options.hashFile ?? hashOutputFile
-  for (const outputPath of job.output_paths) {
-    if ((await hashFile(outputPath)) !== expectedHashes.get(outputPath)) {
       return false
     }
   }
@@ -539,9 +482,7 @@ export class PhotoshopExecutionEngine {
     this.accessFile = options.accessFile ?? access
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)))
     this.recorder = options.recorder ?? photoshopWorkflowStepRecorder
-    this.shouldSkipJob =
-      options.shouldSkipJob ??
-      ((job) => shouldSkipJob(job, { dbProvider: getDefaultWorkbenchDatabase }))
+    this.shouldSkipJob = options.shouldSkipJob ?? ((job) => shouldSkipJob(job))
     this.readDiagnosticWorkbenchRoot =
       options.readDiagnosticWorkbenchRoot ?? getConfiguredWorkbenchRoot
     this.writeTemplateBatchJsx =
@@ -551,6 +492,7 @@ export class PhotoshopExecutionEngine {
           task_id: groups[0]?.job.task_id ?? 'photoshop-batch',
           mockup_path: template.file_path,
           template_name: groups[0]?.template_name ?? pathBasename(template.file_path),
+          native_slices: template.native_slices,
           cancel_file_path: cancelFilePath,
           groups: groups.map((group) => ({
             group_index: group.group_index,
@@ -630,6 +572,7 @@ export class PhotoshopExecutionEngine {
     cancelled?: boolean
   }> {
     this.assertWindows()
+    const recordCompatibilityWorkflow = (template.native_slices?.length ?? 0) === 0
     const pendingGroups: PhotoshopTaskGroup[] = []
     const skippedGroups: Array<{
       group_index: number
@@ -660,8 +603,10 @@ export class PhotoshopExecutionEngine {
         }
       }
 
-      for (const group of pendingGroups) {
-        await this.recorder.recordRunning(group.job, 0)
+      if (recordCompatibilityWorkflow) {
+        for (const group of pendingGroups) {
+          await this.recorder.recordRunning(group.job, 0)
+        }
       }
 
       const cancelFilePath = options.cancelFilePath ?? ''
@@ -680,7 +625,7 @@ export class PhotoshopExecutionEngine {
         for (const groupResult of groupResults) {
           await this.verifyOutputs(groupResult.outputs)
           const group = pendingGroups.find((item) => item.group_index === groupResult.group_index)
-          if (group) {
+          if (group && recordCompatibilityWorkflow) {
             await this.recorder.recordCompleted(group.job, 0, groupResult.outputs)
           }
           for (const output of groupResult.outputs) {
@@ -701,6 +646,9 @@ export class PhotoshopExecutionEngine {
           const completedGroupIndexes = new Set(groupResults.map((group) => group.group_index))
           for (const group of pendingGroups) {
             if (!completedGroupIndexes.has(group.group_index)) {
+              if (!recordCompatibilityWorkflow) {
+                continue
+              }
               if (this.recorder.recordCancelled) {
                 await this.recorder.recordCancelled(group.job, 0)
               } else {
@@ -728,8 +676,10 @@ export class PhotoshopExecutionEngine {
         }
       } catch (error) {
         const appError = normalizeError(error)
-        for (const group of pendingGroups) {
-          await this.recorder.recordFailed(group.job, 0, appError)
+        if (recordCompatibilityWorkflow) {
+          for (const group of pendingGroups) {
+            await this.recorder.recordFailed(group.job, 0, appError)
+          }
         }
         await this.writePhotoshopDiagnostic({
           type: 'photoshop_template_batch_failed',

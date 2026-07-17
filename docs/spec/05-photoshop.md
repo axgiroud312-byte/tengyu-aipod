@@ -592,34 +592,19 @@ class PhotoshopAdapter {
 
 ```ts
 async function shouldSkipJob(job: PhotoshopJob): Promise<boolean> {
-  // 1. 数据库查 task + step 是否已完成
-  const existing = await db.workflow_steps.findFirst({
-    where: {
-      module: 'photoshop',
-      status: 'completed',
-      // metadata 里有 job_signature
-    },
-  })
-  if (!existing) return false
-  
-  // 2. 检查物理文件存在
-  const allExist = await Promise.all(
-    job.output_paths.map(p => fs.access(p).then(() => true).catch(() => false))
-  )
-  if (!allExist.every(Boolean)) return false
-  
-  // 3. 检查文件 hash（防止意外修改）
-  const expectedHashes = await db.artifacts.findMany({
-    where: { file_path: { in: job.output_paths }},
-  })
-  for (const hash of expectedHashes) {
-    const actual = await hashFile(hash.file_path)
-    if (actual !== hash.file_hash) return false
+  if (job.output_paths.length === 0) return false
+  for (const outputPath of job.output_paths) {
+    try {
+      await fs.access(outputPath)
+    } catch {
+      return false
+    }
   }
-  
   return true
 }
 ```
+
+快速路径不查询 workflow/artifact 记录，也不计算输出 hash。兼容回退路径可以继续保留旧任务记录，但不能参与跳过判断。
 
 UI 上 [跳过已完成] toggle，默认开。
 
@@ -735,6 +720,7 @@ CREATE TABLE psd_templates (
   smart_objects   TEXT NOT NULL,                   -- JSON
   guides          TEXT NOT NULL,                   -- JSON
   clip_areas      TEXT NOT NULL,                   -- JSON
+  native_slices   TEXT NOT NULL DEFAULT '[]',      -- JSON，仅 user / layer 切片
   mode            TEXT NOT NULL,                   -- 'single' | 'shared' | 'independent' | 'none'
   representative_so_count INTEGER NOT NULL,
   scanned_at      INTEGER NOT NULL,

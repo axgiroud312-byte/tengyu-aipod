@@ -263,6 +263,24 @@ export class PhotoshopMultiBatchRunner {
           template_name: templateName,
           message: `开始处理模板：${templateName}`,
         })
+        const sliceLog: PhotoshopProgressLogEntry =
+          template.native_slices.length > 0
+            ? {
+                ts: Date.now(),
+                level: 'info',
+                stage: 'native_slice_detected',
+                template_name: templateName,
+                message: `检测到 ${template.native_slices.length} 个 PS 原生切片`,
+              }
+            : {
+                ts: Date.now(),
+                level: 'warn',
+                stage: 'native_slice_fallback',
+                template_name: templateName,
+                message: '将使用旧模式裁切导出，速度会慢一些',
+              }
+        logger?.write(sliceLog)
+        await this.emitLog(sliceLog)
         let result: PhotoshopTemplateBatchRunResult
         try {
           result = await this.engine.runTemplateBatch(template, groups, config.maxRetries ?? 0, {

@@ -117,7 +117,8 @@ function buildJob(
       : options.outputLayout === 'sku_first'
         ? `${options.outputRoot}/${skuFolder}/${templateName}`
         : `${options.outputRoot}/${templateName}/${printAssets[0]?.id ?? 'group'}`
-  const outputPaths = clipAreas.map((_, clipIndex) =>
+  const outputCount = template.native_slices.length || clipAreas.length
+  const outputPaths = Array.from({ length: outputCount }, (_, clipIndex) =>
     options.outputLayout === 'sku_flat'
       ? `${outputFolder}/${templateName}-${String(clipIndex + 1).padStart(2, '0')}.${extension}`
       : `${outputFolder}/${String(clipIndex + 1).padStart(2, '0')}.${extension}`,

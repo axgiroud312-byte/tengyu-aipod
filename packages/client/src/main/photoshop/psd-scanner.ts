@@ -9,6 +9,7 @@ import {
   type PsdClipArea,
   type PsdGuides,
   type PsdLayerInfo,
+  type PsdNativeSlice,
   type PsdSmartObject,
   type PsdTemplate,
   type PsdTextLayer,
@@ -42,6 +43,7 @@ interface RawPsdScanResult {
   smart_objects?: unknown
   guides?: unknown
   clip_areas?: unknown
+  native_slices?: unknown
   layers?: unknown
   text_layers?: unknown
 }
@@ -350,6 +352,33 @@ function normalizeTextLayers(value: unknown): PsdTextLayer[] {
   })
 }
 
+function normalizeNativeSlices(value: unknown): PsdNativeSlice[] {
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap((item, index) => {
+    if (!item || typeof item !== 'object') {
+      return []
+    }
+    const slice = item as Record<string, unknown>
+    const kind = String(slice.kind ?? '').toLowerCase()
+    if (kind !== 'user' && kind !== 'layer') {
+      return []
+    }
+    const bounds = asBounds(slice.bounds, `native_slices[${index}].bounds`)
+    if (bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) {
+      return []
+    }
+    return [
+      {
+        name: String(slice.name ?? `slice-${index + 1}`),
+        kind,
+        bounds,
+      },
+    ]
+  })
+}
+
 export function buildPsdTemplateFromScanResult(
   raw: RawPsdScanResult,
   options: { psdPath: string; fileHash: string; scannedAt: number },
@@ -386,6 +415,7 @@ export function buildPsdTemplateFromScanResult(
     smart_objects: smartObjects,
     guides,
     clip_areas: clipAreas,
+    native_slices: normalizeNativeSlices(raw.native_slices),
     mode,
     representative_so_count: representativeSoCount(smartObjects),
     scanned_at: options.scannedAt,

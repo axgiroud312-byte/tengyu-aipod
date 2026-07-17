@@ -33,6 +33,7 @@ function createTemplate(overrides: Partial<PsdTemplate> = {}): PsdTemplate {
     ],
     guides: { horizontal: [], vertical: [] },
     clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+    native_slices: [],
     mode: 'independent',
     representative_so_count: 2,
     scanned_at: 123,

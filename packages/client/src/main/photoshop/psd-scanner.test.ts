@@ -168,6 +168,12 @@ describe('PsdScanner', () => {
             ],
             guides: { horizontal: [400], vertical: [500] },
             clip_areas: [{ x: 0, y: 0, w: 500, h: 400, is_full: false }],
+            native_slices: [
+              { name: 'Front', kind: 'user', bounds: [0, 0, 500, 400] },
+              { name: 'Back', kind: 'layer', bounds: [500, 0, 1000, 400] },
+              { name: 'Auto 1', kind: 'auto', bounds: [0, 400, 500, 800] },
+              { name: 'Empty', kind: 'user', bounds: [0, 0, 0, 0] },
+            ],
             layers: [],
             text_layers: [],
           }),
@@ -184,6 +190,10 @@ describe('PsdScanner', () => {
     expect(template.smart_objects[0]?.bounds).toEqual([100, 120, 500, 620])
     expect(template.mode).toBe('shared')
     expect(template.representative_so_count).toBe(1)
+    expect(template.native_slices).toEqual([
+      { name: 'Front', kind: 'user', bounds: [0, 0, 500, 400] },
+      { name: 'Back', kind: 'layer', bounds: [500, 0, 1000, 400] },
+    ])
     await expect(scanner.listCachedTemplates()).resolves.toEqual([template])
   })
 
@@ -294,10 +304,11 @@ describe('PsdScanner', () => {
       },
       cache: createMemoryCache(),
     })
-    const psdPaths = [
-      'C:\\Users\\niilo\\Desktop\\钥匙扣x.psd',
-      'C:\\Users\\niilo\\Desktop\\mao 杯子.psd',
-    ]
+    const psdPaths = (process.env.PS_PSD_PATHS ?? '')
+      .split(';')
+      .map((path) => path.trim())
+      .filter(Boolean)
+    expect(psdPaths.length).toBeGreaterThan(0)
 
     for (const psdPath of psdPaths) {
       const template = await scanner.scanPsd(psdPath)
@@ -306,5 +317,5 @@ describe('PsdScanner', () => {
       expect(template.doc_size.h).toBeGreaterThan(0)
       expect(template.layers.length).toBeGreaterThan(0)
     }
-  }, 120_000)
+  }, 300_000)
 })

@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from './sqlite'
 
-export const CURRENT_WORKBENCH_SCHEMA_VERSION = 1
+export const CURRENT_WORKBENCH_SCHEMA_VERSION = 2
 
 type MigrationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'>
 
@@ -209,6 +209,7 @@ CREATE TABLE IF NOT EXISTS psd_templates (
   smart_objects TEXT NOT NULL,
   guides TEXT NOT NULL,
   clip_areas TEXT NOT NULL,
+  native_slices TEXT NOT NULL DEFAULT '[]',
   mode TEXT NOT NULL,
   representative_so_count INTEGER NOT NULL,
   scanned_at INTEGER NOT NULL,
@@ -250,6 +251,11 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; definition: stri
   },
   { table: 'pipeline_runs', column: 'logs_json', definition: "logs_json TEXT DEFAULT '[]'" },
   { table: 'psd_templates', column: 'layers', definition: "layers TEXT NOT NULL DEFAULT '[]'" },
+  {
+    table: 'psd_templates',
+    column: 'native_slices',
+    definition: "native_slices TEXT NOT NULL DEFAULT '[]'",
+  },
   {
     table: 'psd_templates',
     column: 'text_layers',

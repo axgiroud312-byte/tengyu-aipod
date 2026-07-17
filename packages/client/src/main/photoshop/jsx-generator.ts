@@ -5,6 +5,7 @@ import {
   type PhotoshopJob,
   type PhotoshopJsxJobFile,
   type PhotoshopSmartObjectReplaceMode,
+  type PsdNativeSlice,
 } from '@tengyu-aipod/shared'
 import { type TempFileManager, tempFileManager } from '../lib/temp-file-manager'
 
@@ -31,6 +32,7 @@ export interface PhotoshopTemplateBatchJsxInput {
   mockup_path: string
   template_name: string
   smart_object_replace_mode?: PhotoshopSmartObjectReplaceMode
+  native_slices?: PsdNativeSlice[]
   groups: PhotoshopTemplateBatchJsxGroup[]
   result_file_path: string
   log_file_path: string
@@ -472,7 +474,18 @@ function validateTemplateBatch(input: PhotoshopTemplateBatchJsxInput): void {
   if (input.groups.length === 0) {
     throw new AppErrorClass('INVALID_INPUT', 'Photoshop batch JSX 至少需要一个任务组', false)
   }
+  const expectedOutputCount = input.native_slices?.length ?? 0
   for (const group of input.groups) {
+    if (expectedOutputCount > 0 && group.output_paths.length !== expectedOutputCount) {
+      throw new AppErrorClass(
+        'INVALID_INPUT',
+        'Photoshop 快速切片 JSX 的 output_paths 数量必须等于 native_slices 数量',
+        false,
+      )
+    }
+    if (expectedOutputCount > 0) {
+      continue
+    }
     validateJob({
       task_id: input.task_id,
       group_index: group.group_index,
@@ -493,11 +506,179 @@ function validateTemplateBatch(input: PhotoshopTemplateBatchJsxInput): void {
 export function generateTemplateBatchJsx(input: PhotoshopTemplateBatchJsxInput): string {
   validateTemplateBatch(input)
 
+  const useNativeSlices = (input.native_slices?.length ?? 0) > 0
+  const exportFunction = useNativeSlices
+    ? `function removeFolderTree(folder) {
+  if (!folder.exists) {
+    return;
+  }
+  var entries = folder.getFiles();
+  for (var i = 0; i < entries.length; i++) {
+    if (entries[i] instanceof Folder) {
+      removeFolderTree(entries[i]);
+    } else {
+      entries[i].remove();
+    }
+  }
+  folder.remove();
+}
+
+function collectExportedImages(folder, output) {
+  var entries = folder.getFiles();
+  for (var i = 0; i < entries.length; i++) {
+    if (entries[i] instanceof Folder) {
+      collectExportedImages(entries[i], output);
+    } else if (/\\.(jpe?g|png)$/i.test(entries[i].name)) {
+      output.push(entries[i]);
+    }
+  }
+}
+
+function normalizedExportKey(value) {
+  return String(value).toLowerCase().replace(/\\.[^.]+$/, '').replace(/[\\s_.-]+/g, '');
+}
+
+function naturalExportKey(file) {
+  return String(file.fsName).toLowerCase().replace(/\\d+/g, function(value) {
+    return ('0000000000' + value).slice(-10);
+  });
+}
+
+function orderExportedImages(files, slices) {
+  var remaining = files.slice(0);
+  var ordered = [];
+  for (var i = 0; i < slices.length; i++) {
+    var sliceKey = normalizedExportKey(slices[i].name);
+    var matchIndex = -1;
+    for (var j = 0; j < remaining.length; j++) {
+      if (sliceKey && normalizedExportKey(remaining[j].name).indexOf(sliceKey) >= 0) {
+        matchIndex = j;
+        break;
+      }
+    }
+    if (matchIndex >= 0) {
+      ordered.push(remaining[matchIndex]);
+      remaining.splice(matchIndex, 1);
+    }
+  }
+  remaining.sort(function(left, right) {
+    var leftKey = naturalExportKey(left);
+    var rightKey = naturalExportKey(right);
+    return leftKey < rightKey ? -1 : (leftKey > rightKey ? 1 : 0);
+  });
+  return ordered.concat(remaining);
+}
+
+function exportNativeSlices(doc, group, groupResult) {
+  var tempRoot = new File(RESULT_FILE_PATH).parent;
+  var exportFolder = new Folder(tempRoot.fsName + '/native-slices-' + group.group_index);
+  removeFolderTree(exportFolder);
+  createFolder(exportFolder);
+  var descriptor = new ActionDescriptor();
+  descriptor.putEnumerated(charIDToTypeID('Op  '), charIDToTypeID('SWOp'), charIDToTypeID('OpSa'));
+  descriptor.putEnumerated(
+    charIDToTypeID('Fmt '),
+    charIDToTypeID('IRFm'),
+    group.format === 'jpg' ? charIDToTypeID('JPEG') : charIDToTypeID('PN24')
+  );
+  descriptor.putBoolean(charIDToTypeID('Intr'), false);
+  descriptor.putInteger(charIDToTypeID('Qlty'), group.jpg_quality || 10);
+  descriptor.putBoolean(charIDToTypeID('SHTM'), false);
+  descriptor.putBoolean(charIDToTypeID('SImg'), true);
+  descriptor.putBoolean(charIDToTypeID('SSSO'), false);
+  descriptor.putEnumerated(charIDToTypeID('SWsl'), charIDToTypeID('STsl'), charIDToTypeID('SLUs'));
+  descriptor.putPath(charIDToTypeID('In  '), exportFolder);
+  executeAction(charIDToTypeID('Expr'), descriptor, DialogModes.NO);
+
+  var exported = [];
+  collectExportedImages(exportFolder, exported);
+  exported = orderExportedImages(exported, CONFIG.native_slices);
+  if (exported.length !== CONFIG.native_slices.length) {
+    throw new Error(
+      'Native slice export count mismatch: expected ' +
+      CONFIG.native_slices.length + ', got ' + exported.length
+    );
+  }
+  for (var i = 0; i < exported.length; i++) {
+    var outputPath = group.output_paths[i];
+    ensureParentFolder(outputPath);
+    var destination = new File(outputPath);
+    if (destination.exists) {
+      destination.remove();
+    }
+    if (!exported[i].copy(destination.fsName)) {
+      throw new Error('Failed to move native slice output: ' + exported[i].fsName);
+    }
+    groupResult.outputs.push(outputPath);
+  }
+  removeFolderTree(exportFolder);
+  appendLog({
+    level: 'info',
+    stage: 'native_slice_export',
+    message: 'PS 原生切片导出完成',
+    group: group.group_index,
+    sku_folder: group.sku_folder,
+    output_file: groupResult.outputs.join(',')
+  });
+}
+
+function exportOutputs(doc, group, groupResult) {
+  exportNativeSlices(doc, group, groupResult);
+}`
+    : `function exportOutputs(doc, group, groupResult) {
+  appendLog({
+    level: 'info',
+    stage: 'export_start',
+    message: '开始导出成品图',
+    group: group.group_index,
+    sku_folder: group.sku_folder
+  });
+  var startedAt = new Date().getTime();
+  for (var i = 0; i < group.clip_areas.length; i++) {
+    var area = group.clip_areas[i];
+    var outputPath = group.output_paths[i];
+    if (group.clip_areas.length === 1 && area.is_full) {
+      saveAs(doc, outputPath, group.format, group.jpg_quality);
+      groupResult.outputs.push(outputPath);
+      continue;
+    }
+
+    var duplicate = doc.duplicate();
+    try {
+      duplicate.crop([area.x, area.y, area.x + area.w, area.y + area.h]);
+      saveAs(duplicate, outputPath, group.format, group.jpg_quality);
+      groupResult.outputs.push(outputPath);
+    } finally {
+      try {
+        duplicate.close(SaveOptions.DONOTSAVECHANGES);
+      } catch (closeDuplicateError) {}
+    }
+  }
+  appendLog({
+    level: 'info',
+    stage: 'export_complete',
+    message: '导出成品图完成',
+    group: group.group_index,
+    sku_folder: group.sku_folder,
+    output_file: groupResult.outputs.join(','),
+    duration_ms: new Date().getTime() - startedAt
+  });
+}`
+  const workingDocumentStart = useNativeSlices
+    ? 'var workingDocument = baseDocument;'
+    : 'var workingDocument = baseDocument.duplicate();'
+  const workingDocumentClose = useNativeSlices
+    ? ''
+    : `try {
+          workingDocument.close(SaveOptions.DONOTSAVECHANGES);
+        } catch (closeWorkingError) {}`
+
   return `var CONFIG = ${jsonString({
     task_id: input.task_id,
     mockup_path: input.mockup_path,
     template_name: input.template_name,
     smart_object_replace_mode: input.smart_object_replace_mode,
+    native_slices: input.native_slices ?? [],
     groups: input.groups,
     result_file_path: input.result_file_path,
     log_file_path: input.log_file_path,
@@ -846,45 +1027,7 @@ function saveAs(doc, outputPath, format, jpgQuality) {
   throw new Error('Unsupported export format: ' + format);
 }
 
-function exportOutputs(doc, group, groupResult) {
-  appendLog({
-    level: 'info',
-    stage: 'export_start',
-    message: '开始导出成品图',
-    group: group.group_index,
-    sku_folder: group.sku_folder
-  });
-  var startedAt = new Date().getTime();
-  for (var i = 0; i < group.clip_areas.length; i++) {
-    var area = group.clip_areas[i];
-    var outputPath = group.output_paths[i];
-    if (group.clip_areas.length === 1 && area.is_full) {
-      saveAs(doc, outputPath, group.format, group.jpg_quality);
-      groupResult.outputs.push(outputPath);
-      continue;
-    }
-
-    var duplicate = doc.duplicate();
-    try {
-      duplicate.crop([area.x, area.y, area.x + area.w, area.y + area.h]);
-      saveAs(duplicate, outputPath, group.format, group.jpg_quality);
-      groupResult.outputs.push(outputPath);
-    } finally {
-      try {
-        duplicate.close(SaveOptions.DONOTSAVECHANGES);
-      } catch (closeDuplicateError) {}
-    }
-  }
-  appendLog({
-    level: 'info',
-    stage: 'export_complete',
-    message: '导出成品图完成',
-    group: group.group_index,
-    sku_folder: group.sku_folder,
-    output_file: groupResult.outputs.join(','),
-    duration_ms: new Date().getTime() - startedAt
-  });
-}
+${exportFunction}
 
 function runBatch() {
   var previousRulerUnits = app.preferences.rulerUnits;
@@ -914,7 +1057,7 @@ function runBatch() {
         break;
       }
 
-      var workingDocument = baseDocument.duplicate();
+      ${workingDocumentStart}
       var groupResult = {
         ok: false,
         group_index: group.group_index,
@@ -959,9 +1102,7 @@ function runBatch() {
         result.groups.push(groupResult);
         break;
       } finally {
-        try {
-          workingDocument.close(SaveOptions.DONOTSAVECHANGES);
-        } catch (closeWorkingError) {}
+        ${workingDocumentClose}
       }
       result.groups.push(groupResult);
     }

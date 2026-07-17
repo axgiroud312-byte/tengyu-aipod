@@ -247,7 +247,7 @@ describe('PhotoshopExecutionEngine', () => {
     expect(calls).toEqual(['com'])
   })
 
-  it('runs template-level batches through one JSX call and emits runtime logs', async () => {
+  it('runs native-slice batches through one JSX call without workflow or artifact recording', async () => {
     const resultPath = join(tempDir, 'batch-result.json')
     const logPath = join(tempDir, 'batch.log')
     const outputPath = join(tempDir, '01.jpg')
@@ -262,6 +262,7 @@ describe('PhotoshopExecutionEngine', () => {
       smart_objects: [],
       guides: { horizontal: [], vertical: [] },
       clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      native_slices: [{ name: 'Front', kind: 'user', bounds: [0, 0, 1000, 1000] }],
       mode: 'single',
       representative_so_count: 1,
       scanned_at: 123,
@@ -314,7 +315,17 @@ describe('PhotoshopExecutionEngine', () => {
           )
         },
       },
-      recorder: noopRecorder,
+      recorder: {
+        recordRunning: async () => {
+          throw new Error('fast path must not record workflow state')
+        },
+        recordCompleted: async () => {
+          throw new Error('fast path must not hash or record artifacts')
+        },
+        recordFailed: async () => {
+          throw new Error('successful fast path must not record failures')
+        },
+      },
       shouldSkipJob: async () => false,
     })
 
@@ -349,6 +360,7 @@ describe('PhotoshopExecutionEngine', () => {
       smart_objects: [],
       guides: { horizontal: [], vertical: [] },
       clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      native_slices: [],
       mode: 'single',
       representative_so_count: 1,
       scanned_at: 123,
@@ -510,80 +522,29 @@ describe('PhotoshopExecutionEngine', () => {
     })
   })
 
-  it('returns true from shouldSkipJob only when DB, files, and hashes match', async () => {
-    const db = openSqliteDatabase(':memory:')
-    const job = createJob({ output_paths: ['C:\\outputs\\01.jpg'] })
-    try {
-      runWorkbenchMigrations(db)
-      await new SqlitePhotoshopWorkflowStepRecorder({
-        db,
-        hashFile: async () => 'hash-01',
-      }).recordRunning(job, 0)
-      db.prepare(
-        `UPDATE workflow_steps
-         SET status = 'completed'
-         WHERE id = ?`,
-      ).run('task-1:photoshop:0')
-      db.prepare(
-        `INSERT INTO artifacts (
-          id,
-          task_id,
-          step,
-          provider,
-          model_or_workflow,
-          file_path,
-          file_hash,
-          params_snapshot,
-          created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      ).run(
-        'artifact-01',
-        job.task_id,
-        'mockup',
-        'photoshop',
-        'mockup.psd',
-        'C:\\outputs\\01.jpg',
-        'hash-01',
-        '{}',
-        Date.now(),
-      )
+  it('checks only target file existence when deciding whether to skip a completed job', async () => {
+    const job = createJob({ output_paths: ['C:\\outputs\\01.jpg', 'C:\\outputs\\02.jpg'] })
+    const checked: string[] = []
 
-      await expect(
-        shouldSkipJob(job, {
-          db,
-          accessFile: async () => undefined,
-          hashFile: async () => 'hash-01',
-        }),
-      ).resolves.toBe(true)
-      await expect(
-        shouldSkipJob(job, {
-          db,
-          accessFile: async () => undefined,
-          hashFile: async () => 'changed',
-        }),
-      ).resolves.toBe(false)
-      await expect(
-        shouldSkipJob(job, {
-          db,
-          accessFile: async () => {
+    await expect(
+      shouldSkipJob(job, {
+        accessFile: async (path) => {
+          checked.push(path)
+        },
+      }),
+    ).resolves.toBe(true)
+    expect(checked).toEqual(job.output_paths)
+
+    await expect(
+      shouldSkipJob(job, {
+        accessFile: async (path) => {
+          if (path.endsWith('02.jpg')) {
             throw new Error('missing')
-          },
-          hashFile: async () => 'hash-01',
-        }),
-      ).resolves.toBe(false)
-    } finally {
-      db.close()
-    }
-  })
-
-  it('returns false from shouldSkipJob when workflow tables have no completed jobs', async () => {
-    const db = openSqliteDatabase(':memory:')
-    try {
-      runWorkbenchMigrations(db)
-      await expect(shouldSkipJob(createJob(), { db })).resolves.toBe(false)
-    } finally {
-      db.close()
-    }
+          }
+        },
+      }),
+    ).resolves.toBe(false)
+    await expect(shouldSkipJob(createJob({ output_paths: [] }))).resolves.toBe(false)
   })
 
   it('records Photoshop artifacts into an existing shared artifacts table', async () => {
