@@ -1,13 +1,16 @@
 import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import type {
   PhotoshopPrintAsset,
   PhotoshopProgressInfo,
   PhotoshopProgressLogEntry,
   PsdTemplate,
 } from '@tengyu-aipod/shared'
+import { SLICE_8_LISTING_TEMPLATES } from '@tengyu-aipod/shared'
+import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { loadBatchAsListingItems } from '../lib/listing-batch-loader'
 import { TempFileManager } from '../lib/temp-file-manager'
 import { PhotoshopExecutionEngine } from './execution-engine'
 import { writePhotoshopJobJsx, writePhotoshopTemplateBatchJsx } from './jsx-generator'
@@ -707,5 +710,20 @@ describe('PhotoshopMultiBatchRunner', () => {
       legacy.result.outputs.map((path) => basename(path)),
     )
     expect(native.durationMs).toBeLessThan(legacy.durationMs)
+
+    const nativeBatchDir = dirname(dirname(native.result.outputs[0] ?? ''))
+    const workbook = new ExcelJS.Workbook()
+    const titleSheet = workbook.addWorksheet('Titles')
+    titleSheet.addRow(['货号', '标题'])
+    for (const group of native.result.result_groups) {
+      titleSheet.addRow([group.sku_folder, `Real native slice ${group.sku_folder}`])
+    }
+    await workbook.xlsx.writeFile(join(nativeBatchDir, '标题.xlsx'))
+    const listingBatch = await loadBatchAsListingItems(nativeBatchDir, {
+      template: SLICE_8_LISTING_TEMPLATES[0],
+    })
+    expect(listingBatch.listingItems.map((item) => item.sku)).toEqual(
+      native.result.result_groups.map((group) => group.sku_folder),
+    )
   }, 600_000)
 })
