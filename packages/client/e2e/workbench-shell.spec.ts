@@ -643,8 +643,11 @@ async function installVideoWorkspaceHarness(
   },
 ) {
   await app.evaluate(({ ipcMain }, fixture) => {
-    const state = globalThis as typeof globalThis & { __videoOpenPathCalls?: number }
-    state.__videoOpenPathCalls = 0
+    const state = globalThis as typeof globalThis & {
+      __advanceVideoRun?: () => void
+      __videoOpenPaths?: string[]
+    }
+    state.__videoOpenPaths = []
     ipcMain.removeHandler('video:choose-images')
     ipcMain.handle('video:choose-images', () => ({
       ok: true,
@@ -670,7 +673,7 @@ async function installVideoWorkspaceHarness(
             : {}),
         })
       }
-      setTimeout(() => {
+      state.__advanceVideoRun = () => {
         sendProgress('pending', '等待 HappyHorse 云端执行')
         event.sender.send('video:debug-log', {
           id: 'video-log-1',
@@ -681,30 +684,48 @@ async function installVideoWorkspaceHarness(
           taskId,
           details: { operation: 'submit', remoteTaskId: 'happyhorse-remote-1' },
         })
-      }, 50)
-      setTimeout(() => sendProgress('downloading', '正在下载并保存 MP4'), 150)
-      setTimeout(() => {
-        sendProgress('succeeded', '视频已保存到本地')
-        event.sender.send('video:completed', {
-          ok: true,
-          task_id: taskId,
-          mode: runInput.mode,
-          remoteTaskId: 'happyhorse-remote-1',
-          videoUrl: 'https://video.example/result.mp4',
-          outputPath: fixture.outputPath,
-          diagnosticsLogPath: fixture.diagnosticsPath,
-        })
-      }, 250)
+        state.__advanceVideoRun = () => {
+          sendProgress('downloading', '正在下载并保存 MP4')
+          state.__advanceVideoRun = () => {
+            sendProgress('succeeded', '视频已保存到本地')
+            event.sender.send('video:completed', {
+              ok: true,
+              task_id: taskId,
+              mode: runInput.mode,
+              remoteTaskId: 'happyhorse-remote-1',
+              videoUrl: 'https://video.example/result.mp4',
+              outputPath: fixture.outputPath,
+              diagnosticsLogPath: fixture.diagnosticsPath,
+            })
+            state.__advanceVideoRun = undefined
+          }
+        }
+      }
       return taskId
     })
     ipcMain.removeHandler('video:stop')
     ipcMain.handle('video:stop', () => ({ ok: true }))
     ipcMain.removeHandler('video:open-path')
-    ipcMain.handle('video:open-path', () => {
-      state.__videoOpenPathCalls = (state.__videoOpenPathCalls ?? 0) + 1
+    ipcMain.handle('video:open-path', (_event, input: { path: string }) => {
+      state.__videoOpenPaths?.push(input.path)
       return { ok: true }
     })
   }, input)
+}
+
+async function advanceVideoRun(app: ElectronApplication) {
+  await expect
+    .poll(() =>
+      app.evaluate(() => {
+        const state = globalThis as typeof globalThis & { __advanceVideoRun?: () => void }
+        return typeof state.__advanceVideoRun === 'function'
+      }),
+    )
+    .toBe(true)
+  await app.evaluate(() => {
+    const state = globalThis as typeof globalThis & { __advanceVideoRun?: () => void }
+    state.__advanceVideoRun?.()
+  })
 }
 
 async function resolveListingStatusResponse(app: ElectronApplication) {
@@ -2030,7 +2051,13 @@ test.describe('production-first Workbench shell', () => {
           .toFile(path),
       ),
     )
-    await writeFile(outputPath, Buffer.alloc(0))
+    await writeFile(
+      outputPath,
+      Buffer.from(
+        'AAAAIGZ0eXBpc29tAAACAGlzb21pc28yYXZjMW1wNDEAAAMUbW9vdgAAAGxtdmhkAAAAAAAAAAAAAAAAAAAD6AAAAMgAAQAAAQAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgAAAj90cmFrAAAAXHRraGQAAAADAAAAAAAAAAAAAAABAAAAAAAAAMgAAAAAAAAAAAAAAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAABAAAAAABAAAAAQAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAADIAAAAAAABAAAAAAG3bWRpYQAAACBtZGhkAAAAAAAAAAAAAAAAAAAoAAAACABVxAAAAAAALWhkbHIAAAAAAAAAAHZpZGUAAAAAAAAAAAAAAABWaWRlb0hhbmRsZXIAAAABYm1pbmYAAAAUdm1oZAAAAAEAAAAAAAAAAAAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAx1cmwgAAAAAQAAASJzdGJsAAAAvnN0c2QAAAAAAAAAAQAAAK5hdmMxAAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAABAAEABIAAAASAAAAAAAAAABFUxhdmM2Mi4xMS4xMDAgbGlieDI2NAAAAAAAAAAAAAAAGP//AAAANGF2Y0MBZAAK/+EAF2dkAAqs2V7ARAAAAwAEAAADACg8SJZYAQAGaOvjyyLA/fj4AAAAABBwYXNwAAAAAQAAAAEAAAAUYnRydAAAAAAAAG+QAAAAAAAAABhzdHRzAAAAAAAAAAEAAAABAAAIAAAAABxzdHNjAAAAAAAAAAEAAAABAAAAAQAAAAEAAAAUc3RzegAAAAAAAALKAAAAAQAAABRzdGNvAAAAAAAAAAEAAANEAAAAYXVkdGEAAABZbWV0YQAAAAAAAAAhaGRscgAAAAAAAAAAbWRpcmFwcGwAAAAAAAAAAAAAAAAsaWxzdAAAACSpdG9vAAAAHGRhdGEAAAABAAAAAExhdmY2Mi4zLjEwMAAAAAhmcmVlAAAC0m1kYXQAAAKtBgX//6ncRem95tlIt5Ys2CDZI+7veDI2NCAtIGNvcmUgMTY1IHIzMjIzIDA0ODBjYjAgLSBILjI2NC9NUEVHLTQgQVZDIGNvZGVjIC0gQ29weWxlZnQgMjAwMy0yMDI1IC0gaHR0cDovL3d3dy52aWRlb2xhbi5vcmcveDI2NC5odG1sIC0gb3B0aW9uczogY2FiYWM9MSByZWY9MyBkZWJsb2NrPTE6MDowIGFuYWx5c2U9MHgzOjB4MTEzIG1lPWhleCBzdWJtZT03IHBzeT0xIHBzeV9yZD0xLjAwOjAuMDAgbWl4ZWRfcmVmPTEgbWVfcmFuZ2U9MTYgY2hyb21hX21lPTEgdHJlbGxpcz0xIDh4OGRjdD0xIGNxbT0wIGRlYWR6b25lPTIxLDExIGZhc3RfcHNraXA9MSBjaHJvbWFfcXBfb2Zmc2V0PS0yIHRocmVhZHM9MSBsb29rYWhlYWRfdGhyZWFkcz0xIHNsaWNlZF90aHJlYWRzPTAgbnI9MCBkZWNpbWF0ZT0xIGludGVybGFjZWQ9MCBibHVyYXlfY29tcGF0PTAgY29uc3RyYWluZWRfaW50cmE9MCBiZnJhbWVzPTMgYl9weXJhbWlkPTIgYl9hZGFwdD0xIGJfYmlhcz0wIGRpcmVjdD0xIHdlaWdodGI9MSBvcGVuX2dvcD0wIHdlaWdodHA9MiBrZXlpbnQ9MjUwIGtleWludF9taW49NSBzY2VuZWN1dD00MCBpbnRyYV9yZWZyZXNoPTAgcmNfbG9va2FoZWFkPTQwIHJjPWNyZiBtYnRyZWU9MSBjcmY9MjMuMCBxY29tcD0wLjYwIHFwbWluPTAgcXBtYXg9NjkgcXBzdGVwPTQgaXBfcmF0aW89MS40MCBhcT0xOjEuMDAAgAAAABVliIQAP//+5nX4FNjyHpLEBiCpw4E=',
+        'base64',
+      ),
+    )
     await enterPreparedWorkbench(page, workbenchRoot, () =>
       installVideoWorkspaceHarness(videoApp, { diagnosticsPath, imagePaths, outputPath }),
     )
@@ -2092,9 +2119,15 @@ test.describe('production-first Workbench shell', () => {
     }
     await parameters.getByRole('button', { name: '开始生成' }).click()
 
+    await advanceVideoRun(videoApp)
     await expect(results.getByText('等待 HappyHorse 云端执行', { exact: true })).toBeVisible()
+    await advanceVideoRun(videoApp)
+    await expect(results.getByText('正在下载并保存 MP4', { exact: true })).toBeVisible()
+    await advanceVideoRun(videoApp)
     await expect(results.getByText('视频已保存到本地', { exact: true })).toBeVisible()
-    await expect(results.locator('video')).toBeVisible()
+    const video = results.locator('video')
+    await expect(video).toBeVisible()
+    await expect.poll(() => video.evaluate((element) => element.videoWidth)).toBeGreaterThan(0)
     await expect(results.getByText(outputPath, { exact: true })).toBeVisible()
     await expect(results.getByRole('button', { name: '打开目录' })).toBeVisible()
     await expect(results.getByRole('button', { name: '复制原始地址' })).toBeVisible()
@@ -2103,11 +2136,20 @@ test.describe('production-first Workbench shell', () => {
     await expect
       .poll(() =>
         videoApp.evaluate(() => {
-          const state = globalThis as typeof globalThis & { __videoOpenPathCalls?: number }
-          return state.__videoOpenPathCalls ?? 0
+          const state = globalThis as typeof globalThis & { __videoOpenPaths?: string[] }
+          return state.__videoOpenPaths ?? []
         }),
       )
-      .toBe(1)
+      .toEqual([outputDir])
+    await results.getByRole('button', { name: '打开诊断日志' }).click()
+    await expect
+      .poll(() =>
+        videoApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __videoOpenPaths?: string[] }
+          return state.__videoOpenPaths ?? []
+        }),
+      )
+      .toEqual([outputDir, diagnosticsPath])
     await workspace.getByRole('button', { name: /日志 1/ }).click()
     await expect(page.getByRole('dialog', { name: '视频生成日志' })).toContainText(
       'HappyHorse 任务已提交',

@@ -17,7 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { localImageUrl } from '@/lib/media'
 import { cn } from '@/lib/utils'
@@ -836,7 +836,7 @@ export function VideoGenerationPage() {
                   </div>
                   <div className="flex flex-wrap gap-2">
                     <Button
-                      onClick={() => void openPath(videoPath)}
+                      onClick={() => void openPath(videoPath.replace(/[\\/][^\\/]+$/, ''))}
                       type="button"
                       variant="secondary"
                     >
