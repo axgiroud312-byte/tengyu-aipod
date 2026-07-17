@@ -2579,6 +2579,27 @@ test.describe('production-first Workbench shell', () => {
       expect(regions.dockWidth).toBe(310)
       expect(regions.dockPosition).toBe(viewport.width < 1400 ? 'absolute' : 'static')
       expect(regions.hasHorizontalOverflow).toBe(false)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `shell-sidebar-collapsed-task-dock-expanded-${viewport.width}x${viewport.height}`,
+      )
+    }
+
+    await taskDock.getByRole('button', { name: '折叠任务坞' }).click()
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await expect(taskDock).toHaveCSS('width', '44px')
+      await expectNoHorizontalOverflow(page)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `shell-sidebar-collapsed-task-dock-collapsed-${viewport.width}x${viewport.height}`,
+      )
     }
   })
 })
