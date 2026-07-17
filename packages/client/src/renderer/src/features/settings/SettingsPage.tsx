@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Boxes, CheckCircle2, CloudCog, Loader2, RefreshCw, Settings2 } from 'lucide-react'
 import { AdvancedSettings } from './components/AdvancedSettings'
 import { BitBrowserSettingsCard } from './components/BitBrowserSettingsCard'
@@ -129,7 +129,7 @@ export function SettingsPage({
 
       <div className="min-w-0 space-y-5">
         <Tabs
-          className="min-w-0"
+          className="min-w-0 space-y-5"
           onValueChange={(value) => {
             if (value === 'general' || value === 'models' || value === 'chenyu') {
               setActiveSettingsTab(value)
@@ -154,21 +154,21 @@ export function SettingsPage({
               <span className="truncate">晨羽智云</span>
             </TabsTrigger>
           </TabsList>
-        </Tabs>
 
-        <div className="min-w-0 space-y-5">
-          {message ? (
-            <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
-              {message}
-            </div>
-          ) : null}
-          {error ? (
-            <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-              {error}
-            </div>
-          ) : null}
+          <div className="min-w-0 space-y-5">
+            {message ? (
+              <div className="rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+                {message}
+              </div>
+            ) : null}
+            {error ? (
+              <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {error}
+              </div>
+            ) : null}
+          </div>
 
-          {activeSettingsTab === 'general' ? (
+          <TabsContent className="mt-0 data-[state=inactive]:hidden" forceMount value="general">
             <section aria-label="常规设置" className="space-y-5">
               <div className="border-b pb-3">
                 <h2 className="text-lg font-semibold">常规</h2>
@@ -200,7 +200,9 @@ export function SettingsPage({
                 />
               </div>
             </section>
-          ) : activeSettingsTab === 'models' ? (
+          </TabsContent>
+
+          <TabsContent className="mt-0 data-[state=inactive]:hidden" forceMount value="models">
             <section aria-label="模型与工作流设置" className="space-y-5">
               <div className="border-b pb-3">
                 <h2 className="text-lg font-semibold">模型与工作流</h2>
@@ -238,7 +240,9 @@ export function SettingsPage({
                 />
               </div>
             </section>
-          ) : (
+          </TabsContent>
+
+          <TabsContent className="mt-0 data-[state=inactive]:hidden" forceMount value="chenyu">
             <section aria-label="晨羽智云设置" className="space-y-5">
               <div className="flex flex-wrap items-start justify-between gap-3 border-b pb-3">
                 <div>
@@ -325,8 +329,8 @@ export function SettingsPage({
                 />
               </div>
             </section>
-          )}
-        </div>
+          </TabsContent>
+        </Tabs>
       </div>
 
       <AlertDialog onOpenChange={setDeleteLogsOpen} open={deleteLogsOpen}>
