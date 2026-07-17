@@ -311,10 +311,15 @@ test.describe('customer auth and onboarding', () => {
     await expect(onboarding).toContainText('第 1 步，共 2 步')
     await expect(onboarding.locator('[style*="entrance-hero"]')).toHaveCount(0)
     await expect(onboarding.getByRole('button', { name: '测试连接' })).toHaveCount(0)
-    await expect(onboarding.getByRole('progressbar', { name: '设置进度' })).toHaveAttribute(
-      'aria-valuenow',
-      '50',
-    )
+    const onboardingProgress = onboarding.getByRole('progressbar', { name: '设置进度' })
+    await expect(onboardingProgress).toHaveAttribute('aria-valuenow', '50')
+    await expect
+      .poll(() =>
+        onboardingProgress
+          .locator(':scope > div')
+          .evaluate((element) => getComputedStyle(element).transitionProperty),
+      )
+      .toBe('none')
     await expect(onboarding.getByRole('button', { name: '跳过晨羽智云密钥' })).toBeVisible()
     await expect(onboarding.getByRole('button', { name: '跳过Grsai 密钥' })).toBeVisible()
     await expect(onboarding.getByRole('button', { name: '跳过阿里云百炼密钥' })).toBeVisible()
