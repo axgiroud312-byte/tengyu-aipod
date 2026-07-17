@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -632,6 +632,79 @@ async function resolveListingScanResponse(app: ElectronApplication) {
     const state = globalThis as typeof globalThis & { __resolveListingScan?: () => void }
     state.__resolveListingScan?.()
   })
+}
+
+async function installVideoWorkspaceHarness(
+  app: ElectronApplication,
+  input: {
+    diagnosticsPath: string
+    imagePaths: [string, string]
+    outputPath: string
+  },
+) {
+  await app.evaluate(({ ipcMain }, fixture) => {
+    const state = globalThis as typeof globalThis & { __videoOpenPathCalls?: number }
+    state.__videoOpenPathCalls = 0
+    ipcMain.removeHandler('video:choose-images')
+    ipcMain.handle('video:choose-images', () => ({
+      ok: true,
+      data: { paths: fixture.imagePaths },
+    }))
+    ipcMain.removeHandler('video:run')
+    ipcMain.handle('video:run', (event, runInput: { mode: string }) => {
+      const taskId = 'video-ui-run'
+      const sendProgress = (status: 'pending' | 'downloading' | 'succeeded', message: string) => {
+        event.sender.send('video:progress', {
+          task_id: taskId,
+          mode: runInput.mode,
+          status,
+          message,
+          remoteTaskId: 'happyhorse-remote-1',
+          diagnosticsLogPath: fixture.diagnosticsPath,
+          ...(status === 'pending' ? { taskStatus: 'PENDING' } : {}),
+          ...(status === 'succeeded'
+            ? {
+                outputPath: fixture.outputPath,
+                videoUrl: 'https://video.example/result.mp4',
+              }
+            : {}),
+        })
+      }
+      setTimeout(() => {
+        sendProgress('pending', '等待 HappyHorse 云端执行')
+        event.sender.send('video:debug-log', {
+          id: 'video-log-1',
+          timestamp: 1_700_000_000_000,
+          level: 'info',
+          mode: runInput.mode,
+          message: 'HappyHorse 任务已提交',
+          taskId,
+          details: { operation: 'submit', remoteTaskId: 'happyhorse-remote-1' },
+        })
+      }, 50)
+      setTimeout(() => sendProgress('downloading', '正在下载并保存 MP4'), 150)
+      setTimeout(() => {
+        sendProgress('succeeded', '视频已保存到本地')
+        event.sender.send('video:completed', {
+          ok: true,
+          task_id: taskId,
+          mode: runInput.mode,
+          remoteTaskId: 'happyhorse-remote-1',
+          videoUrl: 'https://video.example/result.mp4',
+          outputPath: fixture.outputPath,
+          diagnosticsLogPath: fixture.diagnosticsPath,
+        })
+      }, 250)
+      return taskId
+    })
+    ipcMain.removeHandler('video:stop')
+    ipcMain.handle('video:stop', () => ({ ok: true }))
+    ipcMain.removeHandler('video:open-path')
+    ipcMain.handle('video:open-path', () => {
+      state.__videoOpenPathCalls = (state.__videoOpenPathCalls ?? 0) + 1
+      return { ok: true }
+    })
+  }, input)
 }
 
 async function resolveListingStatusResponse(app: ElectronApplication) {
@@ -1914,6 +1987,165 @@ test.describe('production-first Workbench shell', () => {
           exact: true,
         }),
     ).toBeVisible()
+  })
+
+  test('runs Video from separated inputs through local MP4 results', async () => {
+    const testInfo = test.info()
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    const videoApp = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-video-workspace'),
+    })
+    app = videoApp
+    const page = await videoApp.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-video-workspace')
+    const imageDir = join(workbenchRoot, '02-印花工作区', '图生图', 'video-inputs')
+    const outputDir = join(workbenchRoot, '05-视频工作区', '参考生视频', 'video-e2e')
+    const imagePaths = [join(imageDir, 'model.png'), join(imageDir, 'garment.png')] as [
+      string,
+      string,
+    ]
+    const outputPath = join(outputDir, '0001.mp4')
+    const diagnosticsPath = join(
+      workbenchRoot,
+      '.workbench',
+      'logs',
+      'diagnostics',
+      'video',
+      'video-ui-run.jsonl',
+    )
+    await Promise.all([mkdir(imageDir, { recursive: true }), mkdir(outputDir, { recursive: true })])
+    await Promise.all(
+      imagePaths.map((path, index) =>
+        sharp({
+          create: {
+            width: 640,
+            height: 640,
+            channels: 3,
+            background: index === 0 ? '#2563eb' : '#e85d3f',
+          },
+        })
+          .png()
+          .toFile(path),
+      ),
+    )
+    await writeFile(outputPath, Buffer.alloc(0))
+    await enterPreparedWorkbench(page, workbenchRoot, () =>
+      installVideoWorkspaceHarness(videoApp, { diagnosticsPath, imagePaths, outputPath }),
+    )
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '视频生成', exact: true })
+      .click()
+
+    const workspace = page.getByRole('region', { name: '视频生成生产工作区' })
+    const inputs = workspace.getByRole('region', { name: '视频输入素材与提示词' })
+    const parameters = workspace.getByRole('complementary', { name: '视频参数与启动' })
+    const results = workspace.getByRole('region', { name: '视频运行与成果' })
+    await expect(inputs.getByRole('tab', { name: '图生视频' })).toBeVisible()
+    await inputs.getByRole('tab', { name: '参考生视频' }).click()
+    await inputs.getByRole('button', { name: '选择参考图' }).click()
+    await expect(inputs.getByRole('img', { name: 'model.png' })).toBeVisible()
+    await expect(inputs.getByRole('img', { name: 'garment.png' })).toBeVisible()
+    await expect
+      .poll(() =>
+        inputs.getByRole('img', { name: 'model.png' }).evaluate((image) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0)
+    await expect
+      .poll(() =>
+        inputs.getByRole('img', { name: 'garment.png' }).evaluate((image) => image.naturalWidth),
+      )
+      .toBeGreaterThan(0)
+    await expect(inputs.getByRole('button', { name: '[Image 1]' }).first()).toBeVisible()
+    await inputs.getByLabel('提示词').fill('[Image 1] 穿着 [Image 2] 的服装走向镜头')
+
+    await expect(parameters.getByLabel('模型版本')).toContainText('happyhorse-1.1')
+    await expect(parameters.getByLabel('清晰度')).toContainText('720P')
+    await expect(parameters.getByLabel('时长')).toContainText('5 秒')
+    await expect(parameters.getByLabel('比例')).toContainText('9:16')
+    await expect(parameters.getByLabel('添加水印')).not.toBeChecked()
+    await expect(
+      parameters.getByText('停止查询不会取消云端任务，云端可能继续运行并计费。', {
+        exact: false,
+      }),
+    ).toBeVisible()
+    await parameters.getByLabel('任务名').fill('video-e2e')
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await inputs.getByRole('heading', { name: '多图参考视频' }).scrollIntoViewIfNeeded()
+      await attachScreenshot(
+        page,
+        testInfo,
+        `video-inputs-${viewport.width}x${viewport.height}`,
+        true,
+      )
+      const horizontalOverflow = await page
+        .getByRole('main')
+        .evaluate((element) => element.scrollWidth - element.clientWidth)
+      expect(horizontalOverflow).toBeLessThanOrEqual(1)
+    }
+    await parameters.getByRole('button', { name: '开始生成' }).click()
+
+    await expect(results.getByText('等待 HappyHorse 云端执行', { exact: true })).toBeVisible()
+    await expect(results.getByText('视频已保存到本地', { exact: true })).toBeVisible()
+    await expect(results.locator('video')).toBeVisible()
+    await expect(results.getByText(outputPath, { exact: true })).toBeVisible()
+    await expect(results.getByRole('button', { name: '打开目录' })).toBeVisible()
+    await expect(results.getByRole('button', { name: '复制原始地址' })).toBeVisible()
+    await expect(results.getByRole('button', { name: '打开诊断日志' })).toBeVisible()
+    await results.getByRole('button', { name: '打开目录' }).click()
+    await expect
+      .poll(() =>
+        videoApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __videoOpenPathCalls?: number }
+          return state.__videoOpenPathCalls ?? 0
+        }),
+      )
+      .toBe(1)
+    await workspace.getByRole('button', { name: /日志 1/ }).click()
+    await expect(page.getByRole('dialog', { name: '视频生成日志' })).toContainText(
+      'HappyHorse 任务已提交',
+    )
+    await page.keyboard.press('Escape')
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await results.getByRole('heading', { name: '本地 MP4 成果' }).scrollIntoViewIfNeeded()
+      await attachScreenshot(
+        page,
+        testInfo,
+        `video-results-${viewport.width}x${viewport.height}`,
+        true,
+      )
+      const horizontalOverflow = await page
+        .getByRole('main')
+        .evaluate((element) => element.scrollWidth - element.clientWidth)
+      expect(horizontalOverflow).toBeLessThanOrEqual(1)
+    }
+
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '采集', exact: true })
+      .click()
+    const expandTaskDock = page.getByRole('button', { name: /展开任务坞/ })
+    if (await expandTaskDock.isVisible()) {
+      await expandTaskDock.click()
+    }
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const videoTask = taskDock.getByRole('button', { name: '打开轻量任务 参考生视频任务' })
+    await expect(videoTask.getByText('已完成', { exact: true })).toBeVisible()
+    await videoTask.click()
+    await expect(results.locator('video')).toBeVisible()
   })
 
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
