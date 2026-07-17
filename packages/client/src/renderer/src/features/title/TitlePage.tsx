@@ -20,6 +20,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { titleResultRows } from '@/features/title/title-result'
 import { progressPercent } from '@/lib/format'
 import { FolderOpen, Loader2, Play, Plus, RotateCcw, ScanLine, Square, Trash2 } from 'lucide-react'
 import type {
@@ -121,45 +122,6 @@ function statItems(state: TitlePageState, existingTitleCount: number, pendingCou
     { label: '已有', value: existingTitleCount },
     { label: '生成', value: pendingCount },
   ]
-}
-
-function titleFailureReason(error: string) {
-  return error === 'NO_IMAGE' ? '货号文件夹没有可用图片' : error
-}
-
-function titleResultRows(state: TitlePageState, isRunning: boolean) {
-  const scanResult = state.scanResult
-  if (!scanResult) {
-    return []
-  }
-
-  const resultBySku = new Map(state.result?.results.map((item) => [item.skuCode, item]) ?? [])
-  return scanResult.skuCodes.map((skuCode) => {
-    const result = resultBySku.get(skuCode)
-    if (result?.status === 'success') {
-      return { skuCode, title: result.title, status: '成功' }
-    }
-    if (result?.status === 'failed') {
-      return {
-        skuCode,
-        title: `${state.isRetryingFailed ? '正在重试' : '失败'}：${titleFailureReason(result.error)}`,
-        status: state.isRetryingFailed ? '重试中' : '失败',
-      }
-    }
-    if (result?.status === 'skipped') {
-      return { skuCode, title: result.title, status: '已有' }
-    }
-
-    const existingTitle = scanResult.existingTitles[skuCode]
-    if (existingTitle && state.existingStrategy === 'skip') {
-      return { skuCode, title: existingTitle, status: '已有' }
-    }
-    return {
-      skuCode,
-      title: existingTitle || '等待生成标题',
-      status: isRunning ? '处理中' : '待生成',
-    }
-  })
 }
 
 function normalizeKeywordGroups(groups: TitleKeywordGroup[]) {
@@ -286,15 +248,26 @@ export function TitlePage({
               <div className="flex flex-col gap-2 md:flex-row">
                 <Input
                   className="min-w-0 flex-1"
+                  disabled={isRunning}
                   onChange={(event) => onStateChange('batchDir', event.target.value)}
                   placeholder="选择货号文件夹所在的父目录"
                   value={state.batchDir}
                 />
-                <Button onClick={onChooseBatchDir} type="button" variant="secondary">
+                <Button
+                  disabled={isRunning}
+                  onClick={onChooseBatchDir}
+                  type="button"
+                  variant="secondary"
+                >
                   <FolderOpen className="mr-2 h-4 w-4" />
                   选择
                 </Button>
-                <Button onClick={onScanBatchDir} type="button" variant="secondary">
+                <Button
+                  disabled={isRunning}
+                  onClick={onScanBatchDir}
+                  type="button"
+                  variant="secondary"
+                >
                   <ScanLine className="mr-2 h-4 w-4" />
                   扫描
                 </Button>

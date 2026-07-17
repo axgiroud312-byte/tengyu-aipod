@@ -23,6 +23,7 @@ import {
   type TitlePageState,
   createTitleKeywordGroupDraft,
 } from '@/features/title/TitlePage'
+import { mergeTitleBatchResult } from '@/features/title/title-result'
 import { TutorialPage } from '@/features/tutorial/TutorialPage'
 import { VideoPage } from '@/features/video/VideoPage'
 import { Shell } from '@/layout/Shell'
@@ -93,35 +94,6 @@ function parsePositiveNumber(value: string, fallback: number) {
 function parseNonNegativeNumber(value: string, fallback: number) {
   const parsed = Number(value)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
-}
-
-function mergeTitleBatchResult(current: TitleBatchResult, retry: TitleBatchResult) {
-  const retryResults = new Map(retry.results.map((item) => [item.skuCode, item]))
-  const mergedResults = current.results.map((item) => retryResults.get(item.skuCode) ?? item)
-  const knownSkuCodes = new Set(mergedResults.map((item) => item.skuCode))
-  for (const item of retry.results) {
-    if (!knownSkuCodes.has(item.skuCode)) {
-      mergedResults.push(item)
-    }
-  }
-
-  let succeeded = 0
-  let failed = 0
-  let skipped = 0
-  for (const item of mergedResults) {
-    if (item.status === 'success') succeeded += 1
-    if (item.status === 'failed') failed += 1
-    if (item.status === 'skipped') skipped += 1
-  }
-
-  return {
-    ...retry,
-    total: mergedResults.length,
-    succeeded,
-    failed,
-    skipped,
-    results: mergedResults,
-  }
 }
 
 function nonNegativeInteger(value: number) {
@@ -663,6 +635,11 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
         titleFileName,
       })
       setScanResult(nextScan)
+      setProgress(null)
+      setTaskId(null)
+      setResult(null)
+      setIsRetryingFailed(false)
+      setOpenMessage(null)
       setTitleError(null)
     } catch (error) {
       setTitleError(error instanceof Error ? error.message : '扫描批次目录失败')

@@ -358,6 +358,40 @@ test.describe('title module E2E', () => {
       ['SKU002', 'Existing SKU002 Title'],
       ['SKU003', 'Mock Title 2 qwen3.6-flash'],
     ])
+
+    const nextBatchDir = join(workbenchRoot, '04-上架工作区', 'title-e2e-batch-next')
+    await createSku(nextBatchDir, 'SKU001')
+    await page.getByPlaceholder('选择货号文件夹所在的父目录').fill(nextBatchDir)
+    await page.getByRole('button', { name: '扫描' }).click()
+    await expect(titleRows.getByRole('row', { name: /SKU001.*待生成/ })).toBeVisible()
+    await expect(titleRows.getByText('Mock Title 1 qwen3.6-flash')).toHaveCount(0)
+  })
+
+  test('shows final SKU rows when a batch is launched without scanning first', async () => {
+    const state: MockState = { bailianCalls: 0, bailianDelayMs: 0, failFirstBailianCall: false }
+    const mockServer = await startMockServer(state)
+    closeMockServer = mockServer.close
+    const workbenchRoot = join(tempRoot, 'workbench')
+    const batchDir = await setupBatch(workbenchRoot)
+
+    app = await launchApp(mockServer.baseUrl, join(tempRoot, 'user-data'))
+    const page = await app.firstWindow()
+    await prepareApp(page, workbenchRoot)
+    await page.reload()
+    await openTitlePage(page)
+
+    await page.getByPlaceholder('选择货号文件夹所在的父目录').fill(batchDir)
+    await page.getByRole('button', { name: '开始生成标题' }).click()
+    await expect(page.getByText('成功 2 个，失败 0 个，跳过 1 个')).toBeVisible({
+      timeout: 30_000,
+    })
+    const titleRows = page.getByRole('region', { name: '货号标题结果' })
+    await expect(
+      titleRows.getByRole('row', { name: /SKU001.*Mock Title 1 qwen3.6-flash.*成功/ }),
+    ).toBeVisible()
+    await expect(
+      titleRows.getByRole('row', { name: /SKU002.*Existing SKU002 Title.*已有/ }),
+    ).toBeVisible()
   })
 })
 
