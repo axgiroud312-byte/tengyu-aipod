@@ -2,7 +2,24 @@ import { mkdtemp, rm } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { type ElectronApplication, _electron as electron, expect, test } from '@playwright/test'
+import {
+  type ElectronApplication,
+  type Page,
+  type TestInfo,
+  _electron as electron,
+  expect,
+  test,
+} from '@playwright/test'
+
+async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
+  const path = testInfo.outputPath(`${name}.png`)
+  await page.screenshot({ path, fullPage: true })
+  await testInfo.attach(name, { path, contentType: 'image/png' })
+  const horizontalOverflow = await page
+    .getByRole('main')
+    .evaluate((element) => element.scrollWidth - element.clientWidth)
+  expect(horizontalOverflow).toBeLessThanOrEqual(1)
+}
 
 function sendJson(response: ServerResponse, body: unknown, status = 200) {
   response.writeHead(status, { 'content-type': 'application/json' })
@@ -129,9 +146,13 @@ test.describe('tutorial page', () => {
     await expect(page.getByRole('button', { name: /生图常用三项/ })).toBeVisible()
     await expect(page.getByRole('button', { name: /PS 套版/ })).toBeVisible()
     await expect(page.getByRole('heading', { name: '请先选择工作区' })).toHaveCount(0)
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    await expect(taskDock).toContainText('暂无任务')
+    await expect(taskDock).not.toContainText('Error invoking remote method')
   })
 
   test('opens from onboarding and loads markdown images', async () => {
+    const testInfo = test.info()
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     const launched = await launchApp({
@@ -156,5 +177,17 @@ test.describe('tutorial page', () => {
         }),
       )
       .toBe(true)
+
+    const firstSection = page.getByRole('button', { name: /开始前准备/ })
+    await firstSection.focus()
+    await expect(firstSection).toBeFocused()
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await attachScreenshot(page, testInfo, `tutorial-${viewport.width}x${viewport.height}`)
+    }
   })
 })

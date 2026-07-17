@@ -14,7 +14,7 @@ import {
   lightweightTaskFromVideoProgress,
 } from '@/store/lightweight-task'
 import { useTaskDockStore } from '@/store/task-dock'
-import type { PipelineRunRecord } from '@tengyu-aipod/shared'
+import { type PipelineRunRecord, formatIpcError } from '@tengyu-aipod/shared'
 import {
   Activity,
   CheckCircle2,
@@ -120,7 +120,13 @@ export function TaskDock() {
       replaceRuns(await window.api.pipeline.listRuns())
       setLoadError(null)
     } catch (error) {
-      setLoadError(error instanceof Error ? error.message : '读取完整任务记录失败')
+      const message = formatIpcError(error)
+      if (message === '请先在设置里选择工作区' || message === 'AppError: 请先在设置里选择工作区') {
+        replaceRuns([])
+        setLoadError(null)
+        return
+      }
+      setLoadError(message)
     }
   }, [replaceRuns])
 

@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   type ElectronApplication,
+  type Locator,
   type Page,
   type TestInfo,
   _electron as electron,
@@ -23,6 +24,37 @@ async function attachScreenshot(page: Page, testInfo: TestInfo, name: string, fu
   const path = testInfo.outputPath(`${name}.png`)
   await page.screenshot({ path, fullPage })
   await testInfo.attach(name, { path, contentType: 'image/png' })
+}
+
+async function expectScreenshotContainsColor(
+  locator: Locator,
+  color: { red: number; green: number; blue: number },
+) {
+  const screenshot = await locator.screenshot()
+  const { data, info } = await sharp(screenshot).removeAlpha().raw().toBuffer({
+    resolveWithObject: true,
+  })
+  let matchingPixels = 0
+  for (let offset = 0; offset < data.length; offset += info.channels) {
+    const red = data[offset] ?? 0
+    const green = data[offset + 1] ?? 0
+    const blue = data[offset + 2] ?? 0
+    if (
+      Math.abs(red - color.red) <= 4 &&
+      Math.abs(green - color.green) <= 4 &&
+      Math.abs(blue - color.blue) <= 4
+    ) {
+      matchingPixels += 1
+    }
+  }
+  expect(matchingPixels).toBeGreaterThan(1_000)
+}
+
+async function expectNoHorizontalOverflow(page: Page) {
+  const hasOverflow = await page.evaluate(
+    () => document.documentElement.scrollWidth > document.documentElement.clientWidth,
+  )
+  expect(hasOverflow).toBe(false)
 }
 
 async function startMockServer() {
@@ -246,7 +278,10 @@ async function installPhotoshopWorkspaceHarness(
   },
 ) {
   await app.evaluate(({ ipcMain }, fixture) => {
-    let statusCheckCount = 0
+    const harnessState = globalThis as typeof globalThis & {
+      __photoshopWorkspaceConnected?: boolean
+    }
+    harnessState.__photoshopWorkspaceConnected = false
     const prints = fixture.printPaths.map((filePath, index) => ({
       id: `SKU-00${index + 1}`,
       file_path: filePath,
@@ -284,22 +319,21 @@ async function installPhotoshopWorkspaceHarness(
 
     ipcMain.removeHandler('photoshop:get-status')
     ipcMain.handle('photoshop:get-status', () => {
-      statusCheckCount += 1
-      return statusCheckCount === 1
+      return harnessState.__photoshopWorkspaceConnected
         ? {
+            installed: true,
+            running: true,
+            com_connected: true,
+            version: '2025',
+            last_check_at: Date.now(),
+          }
+        : {
             installed: true,
             running: false,
             com_connected: false,
             version: '2025',
             last_check_at: Date.now(),
             error_code: 'PS_NOT_RUNNING',
-          }
-        : {
-            installed: true,
-            running: true,
-            com_connected: true,
-            version: '2025',
-            last_check_at: Date.now(),
           }
     })
     ipcMain.removeHandler('photoshop:choose-templates')
@@ -427,6 +461,15 @@ async function emitPublicModuleEvent(app: ElectronApplication, channel: string, 
     },
     { channel, payload },
   )
+}
+
+async function connectPhotoshopWorkspaceHarness(app: ElectronApplication) {
+  await app.evaluate(() => {
+    const state = globalThis as typeof globalThis & {
+      __photoshopWorkspaceConnected?: boolean
+    }
+    state.__photoshopWorkspaceConnected = true
+  })
 }
 
 async function installListingWorkspaceHarness(app: ElectronApplication, batchDir: string) {
@@ -1098,6 +1141,7 @@ test.describe('production-first Workbench shell', () => {
     await page.keyboard.press('Enter')
     await expect(canvas.getByRole('img', { name: '印花 1' })).toBeVisible()
     await page.getByRole('button', { name: '查看 印花 1', exact: true }).focus()
+    await expectScreenshotContainsColor(canvas, { red: 37, green: 99, blue: 235 })
     for (const viewport of [
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
@@ -1171,8 +1215,19 @@ test.describe('production-first Workbench shell', () => {
 
     await expect(page.getByText('完成战报', { exact: true }).first()).toBeVisible()
     await expect(page.getByText(/部分配置加载失败/)).toHaveCount(0)
-    await page.setViewportSize({ width: 1440, height: 900 })
-    await attachScreenshot(page, testInfo, 'run-theater-completed-1440x900')
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await expectNoHorizontalOverflow(page)
+      await attachScreenshot(
+        page,
+        testInfo,
+        `run-theater-completed-${viewport.width}x${viewport.height}`,
+      )
+    }
     await page.getByRole('button', { name: '按此方案再建任务' }).click()
     await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '文生图' })).toHaveAttribute('data-state', 'active')
@@ -1186,8 +1241,20 @@ test.describe('production-first Workbench shell', () => {
         page.evaluate(() => sessionStorage.getItem('tengyu-aipod:full-task:currentRunId')),
       )
       .toBe('null')
-    await page.setViewportSize({ width: 1280, height: 720 })
-    await attachScreenshot(page, testInfo, 'run-theater-create-another-1280x720')
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await expectNoHorizontalOverflow(page)
+      await page.getByRole('button', { name: '启动完整任务' }).scrollIntoViewIfNeeded()
+      await attachScreenshot(
+        page,
+        testInfo,
+        `complete-task-config-${viewport.width}x${viewport.height}`,
+      )
+    }
 
     await page.getByRole('button', { name: '从中断处继续' }).click()
     await expect
@@ -1748,6 +1815,7 @@ test.describe('production-first Workbench shell', () => {
 
     await inputAndSettings.getByRole('button', { name: '选择模板' }).click()
     await expect(launch.getByRole('button', { name: '开始套版' })).toBeDisabled()
+    await connectPhotoshopWorkspaceHarness(photoshopApp)
     await readiness.getByRole('button', { name: '刷新' }).click()
     await expect(readiness.getByText('Photoshop 状态：已连接 · 版本 2025')).toBeVisible()
     await expect(launch.getByRole('button', { name: '开始套版' })).toBeEnabled()

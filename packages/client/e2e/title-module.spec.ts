@@ -5,12 +5,23 @@ import { join } from 'node:path'
 import {
   type ElectronApplication,
   type Page,
+  type TestInfo,
   _electron as electron,
   expect,
   test,
 } from '@playwright/test'
 import ExcelJS from 'exceljs'
 import sharp from 'sharp'
+
+async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
+  const path = testInfo.outputPath(`${name}.png`)
+  await page.screenshot({ path, fullPage: true })
+  await testInfo.attach(name, { path, contentType: 'image/png' })
+  const horizontalOverflow = await page
+    .getByRole('main')
+    .evaluate((element) => element.scrollWidth - element.clientWidth)
+  expect(horizontalOverflow).toBeLessThanOrEqual(1)
+}
 
 const titleSkill = {
   id: 'title-temu-en-e2e',
@@ -282,6 +293,7 @@ test.describe('title module E2E', () => {
   })
 
   test('retries failed rows from the result panel', async () => {
+    const testInfo = test.info()
     const state: MockState = { bailianCalls: 0, bailianDelayMs: 250, failFirstBailianCall: false }
     const mockServer = await startMockServer(state)
     closeMockServer = mockServer.close
@@ -358,6 +370,16 @@ test.describe('title module E2E', () => {
       ['SKU002', 'Existing SKU002 Title'],
       ['SKU003', 'Mock Title 2 qwen3.6-flash'],
     ])
+
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await titleRows.scrollIntoViewIfNeeded()
+      await attachScreenshot(page, testInfo, `title-results-${viewport.width}x${viewport.height}`)
+    }
 
     const nextBatchDir = join(workbenchRoot, '04-上架工作区', 'title-e2e-batch-next')
     await createSku(nextBatchDir, 'SKU001')
