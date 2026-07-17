@@ -9,7 +9,9 @@ import {
   sectionItemsForLightbox,
   selectedPipelineResultPreview,
 } from '@/features/pipeline/pipeline-result-preview'
+import { completedPipelineRunHasException } from '@/features/pipeline/pipeline-run-outcome'
 import { fileUrlLocalPath, localImageUrl } from '@/lib/media'
+import { t } from '@/locale/t'
 import type {
   PipelineItemRecord,
   PipelineProgress,
@@ -22,6 +24,7 @@ import {
   ChevronDown,
   ChevronLeft,
   ChevronRight,
+  Eye,
   Folder,
   FolderOpen,
   ImageIcon,
@@ -594,18 +597,27 @@ function itemStatusLabel(status: PipelineItemRecord['status']) {
 }
 
 function runStatusVariant(
-  status: PipelineRunRecord['status'],
+  run: PipelineRunRecord,
 ): 'default' | 'secondary' | 'destructive' | 'outline' {
-  if (status === 'failed') {
+  if (run.status === 'failed') {
     return 'destructive'
   }
-  if (status === 'completed') {
+  if (completedPipelineRunHasException(run)) {
+    return 'outline'
+  }
+  if (run.status === 'completed') {
     return 'default'
   }
-  if (status === 'running') {
+  if (run.status === 'running') {
     return 'secondary'
   }
   return 'outline'
+}
+
+function pipelineRunRecordStatusLabel(run: PipelineRunRecord) {
+  return completedPipelineRunHasException(run)
+    ? t('已完成，有异常')
+    : pipelineRunStatusLabel(run.status)
 }
 
 function runTimeLabel(value: number) {
@@ -617,6 +629,7 @@ export function PipelineRunHistoryPanel({
   loading,
   onRefresh,
   onResume,
+  onView,
   resumeLoading,
   runs,
 }: {
@@ -624,6 +637,7 @@ export function PipelineRunHistoryPanel({
   loading: boolean
   onRefresh: () => void
   onResume: (runId: string) => void
+  onView: (runId: string) => void
   resumeLoading: boolean
   runs: PipelineRunRecord[]
 }) {
@@ -633,7 +647,9 @@ export function PipelineRunHistoryPanel({
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <CardTitle className="text-base">历史记录</CardTitle>
-            <CardDescription>失败或已中断的完整任务可从中断处继续。</CardDescription>
+            <CardDescription>
+              {t('查看已保留的任务结果；失败或已中断的任务可从中断处继续。')}
+            </CardDescription>
           </div>
           <Button disabled={loading} onClick={onRefresh} variant="ghost">
             <RefreshCw className="mr-2 h-4 w-4" />
@@ -644,8 +660,10 @@ export function PipelineRunHistoryPanel({
       <CardContent>
         {runs.length ? (
           <div className="space-y-2">
-            {runs.slice(0, 12).map((run) => {
+            {runs.map((run) => {
               const canResume = run.status === 'failed' || run.status === 'interrupted'
+              const canView = run.status !== 'running'
+              const hasException = completedPipelineRunHasException(run)
               return (
                 <div
                   className="flex flex-wrap items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm"
@@ -654,8 +672,11 @@ export function PipelineRunHistoryPanel({
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="truncate font-medium">{run.name}</span>
-                      <Badge variant={runStatusVariant(run.status)}>
-                        {pipelineRunStatusLabel(run.status)}
+                      <Badge
+                        className={hasException ? 'border-amber-300 text-amber-700' : undefined}
+                        variant={runStatusVariant(run)}
+                      >
+                        {pipelineRunRecordStatusLabel(run)}
                       </Badge>
                       {run.id === currentRunId ? <Badge variant="outline">当前</Badge> : null}
                     </div>
@@ -664,15 +685,29 @@ export function PipelineRunHistoryPanel({
                       {run.error_summary ? ` · ${run.error_summary}` : ''}
                     </div>
                   </div>
-                  {canResume ? (
-                    <Button
-                      disabled={resumeLoading}
-                      onClick={() => onResume(run.id)}
-                      variant="outline"
-                    >
-                      <Play className="mr-2 h-4 w-4" />
-                      从中断处继续
-                    </Button>
+                  {canView || canResume ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      {canView ? (
+                        <Button
+                          aria-label={t('查看完整任务 {name} 结果').replace('{name}', run.name)}
+                          onClick={() => onView(run.id)}
+                          variant="outline"
+                        >
+                          <Eye className="mr-2 h-4 w-4" />
+                          {t('查看结果')}
+                        </Button>
+                      ) : null}
+                      {canResume ? (
+                        <Button
+                          disabled={resumeLoading}
+                          onClick={() => onResume(run.id)}
+                          variant="outline"
+                        >
+                          <Play className="mr-2 h-4 w-4" />
+                          从中断处继续
+                        </Button>
+                      ) : null}
+                    </div>
                   ) : null}
                 </div>
               )

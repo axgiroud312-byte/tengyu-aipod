@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import {
   AppErrorClass,
   type ListingConfig,
+  type ListingDistributionMode,
   type ListingErrorCode,
   type ListingFailure,
   type ListingItem,
@@ -59,6 +60,7 @@ export type ListingRunConfig = {
   platform: ListingPlatformKey
   template: ListingTemplateConfig
   workspaces: ListingWorkspace[]
+  distribution_mode?: ListingDistributionMode
   submit_mode?: ListingConfig['submitMode']
   max_attempts?: number
   timeout_ms?: number
@@ -75,6 +77,7 @@ export type BatchResult = {
   successCount: number
   failedCount: number
   skippedCount: number
+  cancelled: boolean
   workspaceResults: WorkspaceResult[]
   results: ListingResult[]
 }
@@ -143,6 +146,7 @@ export type ListingRunnerDependencies = {
   randomId?: () => string
   now?: () => number
   sleep?: (ms: number) => Promise<void>
+  isCancellationRequested?: (taskId: string) => boolean
 }
 
 export type ListingBackgroundRunDependencies = {
@@ -163,6 +167,7 @@ type ResolvedRunConfig = Required<
     | 'evidence_dir'
     | 'fail_streak_limit'
     | 'max_attempts'
+    | 'distribution_mode'
     | 'resume'
     | 'retry_failed_only'
     | 'submit_mode'
@@ -174,6 +179,7 @@ type ResolvedRunConfig = Required<
     | 'evidence_dir'
     | 'fail_streak_limit'
     | 'max_attempts'
+    | 'distribution_mode'
     | 'resume'
     | 'retry_failed_only'
     | 'submit_mode'
@@ -230,7 +236,9 @@ const DEFAULT_TIMEOUT_MS = 30_000
 const DEFAULT_FAIL_STREAK_LIMIT = 3
 const DEFAULT_STAGE: ListingStage = 'enter_page'
 const DEFAULT_SUBMIT_MODE: ListingConfig['submitMode'] = 'save-draft'
+const DEFAULT_DISTRIBUTION_MODE: ListingDistributionMode = 'round-robin'
 const activeListingRuns = new Set<string>()
+const cancelledListingRuns = new Set<string>()
 const activeListingRunContexts = new Map<
   string,
   { config: ListingRunConfig; dependencies: ListingBackgroundRunDependencies }
@@ -239,6 +247,7 @@ const listingPlatformKeySchema = z.enum(['temu-pop', 'shein'])
 const listingTemplateKeySchema = z.enum(['temu-clothing', 'temu-general', 'shein'])
 const listingSkuModeSchema = z.enum(['manual', 'one-click-generate'])
 const listingSubmitModeSchema = z.enum(['save-draft', 'publish'])
+const listingDistributionModeSchema = z.enum(['round-robin', 'all-workspaces'])
 const listingTaskStatusSchema = z.enum(['queued', 'running', 'paused', 'completed', 'failed'])
 const listingWorkspaceStatusSchema = z.enum(['idle', 'running', 'paused', 'failed', 'completed'])
 
@@ -298,6 +307,7 @@ const listingRunConfigSchema = z.object({
   platform: listingPlatformKeySchema,
   template: z.custom<ListingTemplateConfig>(isListingTemplateConfig),
   workspaces: z.array(listingWorkspaceRunSchema).min(1),
+  distribution_mode: listingDistributionModeSchema.optional(),
   submit_mode: listingSubmitModeSchema.optional(),
   max_attempts: z.number().int().min(1).max(5).optional(),
   timeout_ms: z.number().int().min(1_000).max(120_000).optional(),
@@ -310,6 +320,10 @@ const listingRunConfigSchema = z.object({
 const listingRunRequestSchema = z.object({
   config: listingRunConfigSchema,
   items: z.array(z.custom<ListingItem>(isListingItemLike)),
+})
+
+const listingCancelRequestSchema = z.object({
+  task_id: z.string().trim().min(1),
 })
 
 export async function runLocalListingBatch(
@@ -359,6 +373,7 @@ export class ListingRunner {
   private readonly randomId: () => string
   private readonly now: () => number
   private readonly sleep: (ms: number) => Promise<void>
+  private readonly isCancellationRequested: (taskId: string) => boolean
 
   constructor(dependencies: ListingRunnerDependencies = {}) {
     this.readConfig = dependencies.readConfig ?? readAppConfig
@@ -378,6 +393,7 @@ export class ListingRunner {
     this.randomId = dependencies.randomId ?? randomUUID
     this.now = dependencies.now ?? Date.now
     this.sleep = dependencies.sleep ?? sleep
+    this.isCancellationRequested = dependencies.isCancellationRequested ?? (() => false)
   }
 
   async runLocalListingBatch(config: ListingRunConfig, items: ListingItem[]): Promise<BatchResult> {
@@ -393,8 +409,9 @@ export class ListingRunner {
     const taskStore = hasTaskBindings(resolved.workspaces)
       ? this.openTaskStore(workbenchRoot)
       : undefined
-    const queues = assignItemsToWorkspaces(items, resolved.workspaces)
-    const progress = createProgressSnapshot(items.length, queues)
+    const queues = assignItemsToWorkspaces(items, resolved.workspaces, resolved.distribution_mode)
+    const totalCount = Array.from(queues.values()).reduce((total, queue) => total + queue.length, 0)
+    const progress = createProgressSnapshot(totalCount, queues)
 
     try {
       this.emitBatchProgress(resolved, progress, 'pending')
@@ -414,16 +431,26 @@ export class ListingRunner {
         workspaceResults.push(result.value)
       }
       const results = workspaceResults.flatMap((workspace) => workspace.results)
-      return {
+      const batchResult: BatchResult = {
         taskId: resolved.task_id,
         batchId: resolved.batch_id,
-        totalCount: items.length,
+        totalCount,
         successCount: results.filter((result) => result.status === 'success').length,
         failedCount: results.filter((result) => result.status === 'failed').length,
         skippedCount: results.filter((result) => result.status === 'skipped').length,
+        cancelled: workspaceResults.some((workspace) => workspace.cancelled),
         workspaceResults,
         results,
       }
+      const terminalStatus: ListingProgress['status'] = batchResult.cancelled
+        ? 'cancelled'
+        : batchResult.failedCount > 0
+          ? 'failed'
+          : batchResult.totalCount > 0 && batchResult.skippedCount === batchResult.totalCount
+            ? 'skipped'
+            : 'success'
+      this.emitBatchTerminalProgress(resolved, progress, terminalStatus)
+      return batchResult
     } finally {
       store.close?.()
       taskStore?.close?.()
@@ -526,6 +553,7 @@ export class ListingRunner {
     let page: PlaywrightPage | null = null
     const results: ListingResult[] = []
     let failStreak = 0
+    let cancelled = false
     const binding = workspaceBindingFor(config, profileId)
 
     try {
@@ -536,7 +564,26 @@ export class ListingRunner {
       page = await context.newPage()
       page.setDefaultTimeout(config.timeout_ms)
 
-      for (const item of queue) {
+      for (const [itemIndex, item] of queue.entries()) {
+        if (this.isCancellationRequested(config.task_id)) {
+          cancelled = true
+          for (const remaining of queue.slice(itemIndex)) {
+            const skipped = createSkippedResult(remaining, config, profileId, '用户已停止上架任务')
+            results.push(skipped)
+            markWorkspaceFinished(progress, profileId, skipped)
+            await store.upsert({
+              ...statusKeyFor(config, remaining, profileId),
+              status: 'skipped',
+              retryCount: 0,
+              lastAttemptedAt: this.now(),
+              lastErrorCode: null,
+              lastError: '用户已停止上架任务',
+              evidenceDir: evidenceDirFor(config, profileId, remaining),
+            })
+          }
+          this.emitBatchProgress(config, progress, 'cancelled')
+          break
+        }
         const statusKey = statusKeyFor(config, item, profileId)
         const existingStatus =
           config.resume || config.retry_failed_only ? await store.find(statusKey) : null
@@ -631,7 +678,7 @@ export class ListingRunner {
             error: pausedFailure,
             data: { failStreak },
           })
-          for (const remaining of queue.slice(queue.indexOf(item) + 1)) {
+          for (const remaining of queue.slice(itemIndex + 1)) {
             const skipped = createSkippedResult(remaining, config, profileId, pausedFailure.message)
             results.push(skipped)
             markWorkspaceFinished(progress, profileId, skipped)
@@ -668,7 +715,7 @@ export class ListingRunner {
     }
 
     const runtime = progress.byWorkspace.get(profileId)
-    const workspaceResult = {
+    const workspaceResult: WorkspaceResult = {
       profileId,
       platform: config.platform,
       templateKey: config.template.key,
@@ -679,9 +726,10 @@ export class ListingRunner {
         runtime?.failedCount ?? results.filter((result) => result.status === 'failed').length,
       skippedCount:
         runtime?.skippedCount ?? results.filter((result) => result.status === 'skipped').length,
+      cancelled,
       results,
     }
-    await markWorkspaceTaskFinished(taskStore, binding, config.task_id, workspaceResult)
+    await markWorkspaceTaskFinished(taskStore, binding, config.task_id, workspaceResult, cancelled)
     return workspaceResult
   }
 
@@ -699,7 +747,7 @@ export class ListingRunner {
   private emitBatchProgress(
     config: ResolvedRunConfig,
     progress: ProgressSnapshot,
-    status: ListingStatus,
+    status: ListingProgress['status'],
   ) {
     this.emitProgress?.({
       batchId: config.batch_id,
@@ -729,6 +777,21 @@ export class ListingRunner {
       lastError: failure,
     })
     return failure
+  }
+
+  private emitBatchTerminalProgress(
+    config: ResolvedRunConfig,
+    progress: ProgressSnapshot,
+    status: ListingProgress['status'],
+  ) {
+    this.emitProgress?.({
+      batchId: config.batch_id,
+      profileId: '',
+      status,
+      totalCount: progress.total,
+      finishedCount: progress.completed + progress.failed + progress.skipped,
+      ...(progress.lastError ? { lastError: progress.lastError } : {}),
+    })
   }
 
   private async closeBrowser(profileId: string, browser: PlaywrightBrowser | null) {
@@ -1000,12 +1063,32 @@ export function registerListingRunnerIpc() {
       randomId: randomUUID,
     })
   })
+  ipcMain.handle('listing:cancel', (_event, input: unknown) => {
+    const parsed = listingCancelRequestSchema.safeParse(input)
+    if (!parsed.success) {
+      throw new AppErrorClass('HTTP_4XX', '停止上架任务参数不正确', false, {
+        kind: 'validation',
+        issues: parsed.error.issues,
+      })
+    }
+    return { ok: cancelActiveListingRun(parsed.data.task_id) }
+  })
 }
 
-function assignItemsToWorkspaces(items: ListingItem[], workspaces: ListingWorkspace[]) {
+function assignItemsToWorkspaces(
+  items: ListingItem[],
+  workspaces: ListingWorkspace[],
+  mode: ListingDistributionMode,
+) {
   const queues = new Map<string, ListingItem[]>()
   for (const workspace of workspaces) {
     queues.set(workspace.profile_id, [])
+  }
+  if (mode === 'all-workspaces') {
+    for (const workspace of workspaces) {
+      queues.get(workspace.profile_id)?.push(...items)
+    }
+    return queues
   }
   for (const [index, item] of items.entries()) {
     const workspace = workspaces[index % workspaces.length]
@@ -1065,8 +1148,14 @@ async function markWorkspaceTaskFinished(
   binding: ReturnType<typeof workspaceBindingFor>,
   runTaskId: string,
   result: WorkspaceResult,
+  cancelled: boolean,
 ) {
   if (!store || !binding) {
+    return
+  }
+  if (cancelled) {
+    await store.updateTaskStatus(binding.taskId, 'paused', runTaskId)
+    await store.updateWorkspaceStatus(binding.workspaceId, 'paused', null)
     return
   }
   const hasFailedItems = result.failedCount > 0
@@ -1088,6 +1177,7 @@ function normalizeRunConfig(
     task_id: taskId,
     batch_id: config.batch_id ?? taskId,
     submit_mode: config.submit_mode ?? DEFAULT_SUBMIT_MODE,
+    distribution_mode: config.distribution_mode ?? DEFAULT_DISTRIBUTION_MODE,
     max_attempts: config.max_attempts ?? DEFAULT_MAX_ATTEMPTS,
     timeout_ms: config.timeout_ms ?? DEFAULT_TIMEOUT_MS,
     workbench_root: dependencies.workbenchRoot ?? config.batch_dir,
@@ -1144,12 +1234,21 @@ export function startListingRunInBackground(
     .finally(() => {
       activeListingRuns.delete(taskId)
       activeListingRunContexts.delete(taskId)
+      cancelledListingRuns.delete(taskId)
     })
   return taskId
 }
 
 export function getActiveListingRunCount() {
   return activeListingRuns.size
+}
+
+export function cancelActiveListingRun(taskId: string) {
+  if (!activeListingRuns.has(taskId)) {
+    return false
+  }
+  cancelledListingRuns.add(taskId)
+  return true
 }
 
 export async function markActiveListingRunsInterrupted() {
@@ -1160,6 +1259,7 @@ export async function markActiveListingRunsInterrupted() {
   )
   activeListingRuns.clear()
   activeListingRunContexts.clear()
+  cancelledListingRuns.clear()
 }
 
 async function markBoundListingTasksFailed(
@@ -1483,6 +1583,9 @@ function toListingRunConfig(config: z.infer<typeof listingRunConfigSchema>): Lis
     template: config.template,
     workspaces: config.workspaces.map(toListingWorkspace),
   }
+  if (config.distribution_mode !== undefined) {
+    result.distribution_mode = config.distribution_mode
+  }
   if (config.task_id !== undefined) {
     result.task_id = config.task_id
   }
@@ -1720,6 +1823,7 @@ function electronBrowserWindow(): ElectronBrowserWindowConstructor {
 
 export const listingRunner = new ListingRunner({
   emitProgress: emitListingProgress,
+  isCancellationRequested: (taskId) => cancelledListingRuns.has(taskId),
   workflows: {
     'temu-pop': temuPopWorkflow,
     shein: sheinWorkflow,

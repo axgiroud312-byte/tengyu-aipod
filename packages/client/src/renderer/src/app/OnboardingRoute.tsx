@@ -6,6 +6,7 @@ import {
   type OnboardingStep,
 } from '@/features/onboarding/OnboardingPage'
 import { getDefaultWorkbenchRoute } from '@/layout/navigation'
+import { t } from '@/locale/t'
 import { formatIpcError } from '@tengyu-aipod/shared'
 import { AlertTriangle, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
@@ -14,7 +15,7 @@ import { MainWorkbench } from './MainWorkbench'
 
 function parseOnboardingStep(value: string | undefined): OnboardingStep {
   const parsed = Number(value)
-  return parsed === 1 || parsed === 2 ? parsed : 1
+  return parsed === 1 || parsed === 2 || parsed === 3 ? parsed : 1
 }
 
 function onboardingPath(step: OnboardingStep) {
@@ -26,6 +27,8 @@ export function OnboardingRoute() {
   const params = useParams()
   const step = parseOnboardingStep(params.step)
   const requestedStep = params.step
+  const [workbenchRoot, setWorkbenchRoot] = useState('')
+  const [workbenchRootSaved, setWorkbenchRootSaved] = useState(false)
   const [apiKeys, setApiKeys] = useState<OnboardingApiKeys>({
     chenyu: '',
     grsai: '',
@@ -35,7 +38,11 @@ export function OnboardingRoute() {
   const [isStateLoaded, setIsStateLoaded] = useState(false)
   const [onboardingLoadError, setOnboardingLoadError] = useState<string | null>(null)
   const [onboardingActionError, setOnboardingActionError] = useState<string | null>(null)
+  const [choosingWorkbenchRoot, setChoosingWorkbenchRoot] = useState(false)
+  const [savingWorkbenchRoot, setSavingWorkbenchRoot] = useState(false)
   const [savingApiKeys, setSavingApiKeys] = useState(false)
+  const [testingBitBrowser, setTestingBitBrowser] = useState(false)
+  const [bitBrowserTestMessage, setBitBrowserTestMessage] = useState<string | null>(null)
   const [completing, setCompleting] = useState(false)
   const [ready, setReady] = useState(false)
 
@@ -47,7 +54,10 @@ export function OnboardingRoute() {
       if (!state.needs_onboarding) {
         setReady(true)
         navigate(getDefaultWorkbenchRoute(), { replace: true })
+        return
       }
+      setWorkbenchRoot(state.workbench_root ?? '')
+      setWorkbenchRootSaved(Boolean(state.workbench_root))
     } catch (error) {
       setOnboardingLoadError(formatIpcError(error))
     } finally {
@@ -65,7 +75,57 @@ export function OnboardingRoute() {
     }
   }, [navigate, requestedStep, step])
 
-  async function saveApiKeys(nextStep: OnboardingStep = 2) {
+  useEffect(() => {
+    if (isStateLoaded && step > 1 && !workbenchRootSaved) {
+      navigate(onboardingPath(1), { replace: true })
+    }
+  }, [isStateLoaded, navigate, step, workbenchRootSaved])
+
+  async function chooseWorkbenchRoot() {
+    if (choosingWorkbenchRoot || savingWorkbenchRoot) {
+      return
+    }
+    setChoosingWorkbenchRoot(true)
+    setOnboardingActionError(null)
+    try {
+      const result = await window.api.onboarding.chooseWorkbenchRoot()
+      if (!result.ok) {
+        setOnboardingActionError(result.error.message)
+        return
+      }
+      setWorkbenchRoot(result.data.path)
+      setWorkbenchRootSaved(false)
+    } catch (error) {
+      setOnboardingActionError(formatIpcError(error))
+    } finally {
+      setChoosingWorkbenchRoot(false)
+    }
+  }
+
+  async function saveWorkbenchRoot() {
+    if (savingWorkbenchRoot || choosingWorkbenchRoot) {
+      return
+    }
+    const nextRoot = workbenchRoot.trim()
+    if (!nextRoot) {
+      setOnboardingActionError(t('请先选择工作区'))
+      return
+    }
+    setSavingWorkbenchRoot(true)
+    setOnboardingActionError(null)
+    try {
+      const result = await window.api.onboarding.saveWorkbenchRoot(nextRoot)
+      setWorkbenchRoot(result.data.path)
+      setWorkbenchRootSaved(true)
+      navigate(onboardingPath(2))
+    } catch (error) {
+      setOnboardingActionError(formatIpcError(error))
+    } finally {
+      setSavingWorkbenchRoot(false)
+    }
+  }
+
+  async function saveApiKeys() {
     if (savingApiKeys) {
       return
     }
@@ -79,7 +139,7 @@ export function OnboardingRoute() {
     setOnboardingActionError(null)
     try {
       await window.api.onboarding.saveApiKeys(cleaned)
-      navigate(onboardingPath(nextStep))
+      navigate(onboardingPath(3))
     } catch (error) {
       setOnboardingActionError(formatIpcError(error))
     } finally {
@@ -89,6 +149,40 @@ export function OnboardingRoute() {
 
   function updateApiKey(key: OnboardingApiKey, value: string) {
     setApiKeys((current) => ({ ...current, [key]: value }))
+    if (key === 'bit_browser_url') {
+      setBitBrowserTestMessage(null)
+    }
+  }
+
+  async function testBitBrowser() {
+    const baseUrl = apiKeys.bit_browser_url.trim()
+    if (!baseUrl) {
+      setBitBrowserTestMessage(t('请先填写比特浏览器地址'))
+      return
+    }
+    setTestingBitBrowser(true)
+    setBitBrowserTestMessage(null)
+    try {
+      const result = await window.api.onboarding.testBitBrowser({ base_url: baseUrl })
+      setBitBrowserTestMessage(
+        t('连接成功，已读取 {count} 个浏览器档案').replace('{count}', String(result.profile_count)),
+      )
+    } catch (error) {
+      setBitBrowserTestMessage(formatIpcError(error))
+    } finally {
+      setTestingBitBrowser(false)
+    }
+  }
+
+  function skipApiKeys() {
+    setApiKeys({
+      chenyu: '',
+      grsai: '',
+      bailian: '',
+      bit_browser_url: '',
+    })
+    setOnboardingActionError(null)
+    navigate(onboardingPath(3))
   }
 
   async function complete() {
@@ -162,14 +256,24 @@ export function OnboardingRoute() {
   return (
     <OnboardingPage
       apiKeys={apiKeys}
+      bitBrowserTestMessage={bitBrowserTestMessage}
+      choosingWorkbenchRoot={choosingWorkbenchRoot}
       completing={completing}
       error={onboardingActionError}
       onApiKeyChange={updateApiKey}
+      onChooseWorkbenchRoot={() => void chooseWorkbenchRoot()}
       onComplete={() => void complete()}
       onOpenTutorial={() => void openTutorial()}
+      onPrevious={() => navigate(onboardingPath(1))}
       onSaveApiKeys={() => void saveApiKeys()}
+      onSaveWorkbenchRoot={() => void saveWorkbenchRoot()}
+      onSkipApiKeys={skipApiKeys}
+      onTestBitBrowser={() => void testBitBrowser()}
       saving={savingApiKeys}
+      savingWorkbenchRoot={savingWorkbenchRoot}
       step={step}
+      testingBitBrowser={testingBitBrowser}
+      workbenchRoot={workbenchRoot}
     />
   )
 }

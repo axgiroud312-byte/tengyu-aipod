@@ -28,7 +28,7 @@ function view(stages: RailStage[], mode: PipelineRailViewModel['mode']): Pipelin
     mode,
     stages,
     logTail: [],
-    summary: { status: '完整任务', warning: null },
+    summary: { status: '完整任务', warning: null, hasException: false },
   }
 }
 

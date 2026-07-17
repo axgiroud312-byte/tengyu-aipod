@@ -17,6 +17,7 @@ import {
   type ListingStatusRow,
   type ListingStatusStore,
   type ListingTaskStore,
+  cancelActiveListingRun,
   markActiveListingRunsInterrupted,
   runLocalListingBatch,
   startListingRunInBackground,
@@ -247,6 +248,125 @@ function successResult(item: ListingItem, config: ListingConfig, attemptCount = 
 }
 
 describe('listing runner', () => {
+  it('reports whether an active background run accepted cancellation', async () => {
+    let releaseRun: () => void = () => undefined
+    const runLocalListingBatch = vi.fn(
+      () =>
+        new Promise<BatchResult>((resolve) => {
+          releaseRun = () =>
+            resolve({
+              taskId: 'run-cancel',
+              batchId: 'batch-1',
+              totalCount: 0,
+              successCount: 0,
+              failedCount: 0,
+              skippedCount: 0,
+              cancelled: true,
+              workspaceResults: [],
+              results: [],
+            })
+        }),
+    )
+
+    startListingRunInBackground(createConfig({ task_id: 'run-cancel' }), [], {
+      runner: { runLocalListingBatch },
+    })
+
+    expect(cancelActiveListingRun('missing-run')).toBe(false)
+    expect(cancelActiveListingRun('run-cancel')).toBe(true)
+    releaseRun()
+    await vi.waitFor(() => expect(cancelActiveListingRun('run-cancel')).toBe(false))
+  })
+
+  it('can send every listing item to every selected workspace', async () => {
+    const store = new FakeStatusStore()
+    const locks = new BrowserProfileLockManager()
+    const { cdp } = createBrowserRuntime()
+    const calls: string[] = []
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) => {
+        calls.push(`${config.profileId}:${item.sku}`)
+        return successResult(item, config)
+      }),
+    }
+
+    const result = await runLocalListingBatch(
+      createConfig({ distribution_mode: 'all-workspaces' }),
+      [createItem('SKU-1'), createItem('SKU-2')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        cdp,
+        locks,
+        workflows: { 'temu-pop': workflow },
+      },
+    )
+
+    expect(calls.sort()).toEqual([
+      'profile-a:SKU-1',
+      'profile-a:SKU-2',
+      'profile-b:SKU-1',
+      'profile-b:SKU-2',
+    ])
+    expect(result.totalCount).toBe(4)
+    expect(result.successCount).toBe(4)
+  })
+
+  it('soft-cancels after the current item and does not start remaining items', async () => {
+    const store = new FakeStatusStore()
+    const taskStore = new FakeTaskStore()
+    const locks = new BrowserProfileLockManager()
+    const { cdp } = createBrowserRuntime()
+    const calls: string[] = []
+    const progress: ListingProgress[] = []
+    let cancellationRequested = false
+    const workflow = {
+      runListingItem: vi.fn(async (_page: unknown, item: ListingItem, config: ListingConfig) => {
+        calls.push(item.sku)
+        cancellationRequested = true
+        return successResult(item, config)
+      }),
+    }
+
+    const result = await runLocalListingBatch(
+      createConfig({
+        workspaces: [
+          {
+            profile_id: 'profile-a',
+            task_id: 'listing-task-a',
+            workspace_id: 'workspace-a',
+          },
+        ],
+      }),
+      [createItem('SKU-1'), createItem('SKU-2'), createItem('SKU-3')],
+      {
+        readConfig: vi.fn().mockResolvedValue({ workbench_root: '/tmp/workbench' }),
+        openStatusStore: () => store,
+        openTaskStore: () => taskStore,
+        cdp,
+        locks,
+        workflows: { 'temu-pop': workflow },
+        emitProgress: (item) => progress.push(item),
+        isCancellationRequested: () => cancellationRequested,
+      },
+    )
+
+    expect(calls).toEqual(['SKU-1'])
+    expect(result.cancelled).toBe(true)
+    expect(result.skippedCount).toBe(2)
+    expect(progress.at(-1)?.status).toBe('cancelled')
+    expect(taskStore.taskStatuses.at(-1)).toEqual({
+      taskId: 'listing-task-a',
+      status: 'paused',
+      lastRunTaskId: 'task-1',
+    })
+    expect(taskStore.workspaceStatuses.at(-1)).toEqual({
+      workspaceId: 'workspace-a',
+      status: 'paused',
+      currentTaskId: null,
+    })
+  })
+
   it('runs workspaces in parallel while keeping each workspace queue serial', async () => {
     const store = new FakeStatusStore()
     const locks = new BrowserProfileLockManager()
@@ -586,6 +706,14 @@ describe('listing runner', () => {
         }),
       ]),
     )
+    expect(progress.at(-1)).toMatchObject({
+      batchId: 'batch-1',
+      profileId: '',
+      status: 'success',
+      finishedCount: 1,
+      totalCount: 1,
+    })
+    expect(progress.at(-1)).not.toHaveProperty('currentSku')
   })
 
   it('runs platform workflows in production mutation mode', async () => {
@@ -673,6 +801,7 @@ describe('listing runner', () => {
               successCount: 0,
               failedCount: 0,
               skippedCount: 0,
+              cancelled: false,
               workspaceResults: [],
               results: [],
             })

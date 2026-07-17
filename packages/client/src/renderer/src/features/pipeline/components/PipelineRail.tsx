@@ -91,12 +91,12 @@ export function PipelineRail({
         </div>
         <Badge variant="outline">{railModeLabel(view.mode)}</Badge>
       </div>
-      <div className="grid gap-3 md:grid-cols-5">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-5">
         {view.stages.map((stage) => (
           <fieldset
             aria-label={`${stage.label}阶段`}
             className={cn(
-              'relative min-h-[116px] rounded-md border bg-background transition',
+              'relative min-h-[116px] min-w-0 rounded-md border bg-background transition',
               stage.enabled ? 'hover:border-primary/50' : 'opacity-60',
               stage.active ? 'border-primary bg-primary/5 shadow-sm' : null,
               stage.status === 'failed' ? 'border-destructive/60 bg-destructive/5' : null,
@@ -107,13 +107,16 @@ export function PipelineRail({
             <button
               aria-label={stage.key === 'photoshop' ? '编辑 PS 套版' : `编辑${stage.label}`}
               aria-pressed={selectedStage === stage.key}
-              className="h-full min-h-[114px] w-full px-3 py-3 text-left"
+              className="h-full min-h-[114px] w-full overflow-hidden px-3 py-3 text-left"
               onClick={() => onSelectStage(stage.key)}
               type="button"
             >
               <div className="flex items-center justify-between gap-2 pr-10">
-                <span className="text-sm font-medium">{stage.label}</span>
-                <Badge variant={stage.active ? 'default' : 'outline'}>
+                <span className="whitespace-nowrap text-sm font-medium">{stage.label}</span>
+                <Badge
+                  className="shrink-0 whitespace-nowrap"
+                  variant={stage.active ? 'default' : 'outline'}
+                >
                   {stage.issues > 0 ? `待配置 ${stage.issues}` : stageStatusLabel(stage.status)}
                 </Badge>
               </div>

@@ -46,8 +46,12 @@ export function mergeLightweightTaskSummary(
   }
   const counts = next.counts ?? current.counts
   const waitingReason =
-    next.waitingReason ??
-    (current.module === 'listing' && next.module === 'listing' ? current.waitingReason : undefined)
+    next.status === 'completed' || next.status === 'failed' || next.status === 'cancelled'
+      ? undefined
+      : (next.waitingReason ??
+        (current.module === 'listing' && next.module === 'listing'
+          ? current.waitingReason
+          : undefined))
   return {
     ...next,
     ...(current.hasException || next.hasException ? { hasException: true } : {}),
@@ -268,14 +272,16 @@ export function lightweightTaskFromListingProgress(
   const terminalFailure = progress.status === 'failed' && progress.currentSku === undefined
   const status = waitingReason
     ? 'waiting'
-    : progress.status === 'failed'
-      ? terminalFailure || progress.finishedCount >= progress.totalCount
-        ? 'failed'
-        : 'running'
-      : progress.finishedCount >= progress.totalCount &&
-          (progress.status === 'success' || progress.status === 'skipped')
-        ? 'completed'
-        : 'running'
+    : progress.status === 'cancelled'
+      ? 'cancelled'
+      : progress.status === 'failed'
+        ? terminalFailure || progress.finishedCount >= progress.totalCount
+          ? 'failed'
+          : 'running'
+        : progress.finishedCount >= progress.totalCount &&
+            (progress.status === 'success' || progress.status === 'skipped')
+          ? 'completed'
+          : 'running'
 
   return {
     id: `listing:${progress.batchId}`,

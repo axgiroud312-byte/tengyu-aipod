@@ -1,3 +1,4 @@
+import { t } from '@/locale/t'
 import type {
   PipelineItemRecord,
   PipelineProgress,
@@ -7,6 +8,7 @@ import type {
   PipelineStepKey,
   PipelineStepRecord,
 } from '@tengyu-aipod/shared'
+import { pipelineProgressHasException } from './pipeline-run-outcome'
 import type { PipelineConfigStage, PipelineValidationIssue } from './types'
 
 export type RailMode = 'config' | 'running' | 'done'
@@ -37,7 +39,7 @@ export type PipelineRailViewModel = {
   mode: RailMode
   stages: RailStage[]
   logTail: string[]
-  summary: { status: string; warning: string | null }
+  summary: { status: string; warning: string | null; hasException: boolean }
 }
 
 type StageEnabledMap = Record<PipelineConfigStage, boolean>
@@ -58,6 +60,7 @@ type ProgressSnapshot = {
   items: PipelineItemRecord[]
   resultSections: PipelineResultSection[]
   logs: string[]
+  hasException: boolean
 }
 
 const STAGE_ORDER: PipelineConfigStage[] = ['source', 'matting', 'detection', 'photoshop', 'title']
@@ -130,6 +133,7 @@ function toSnapshot(
       items: progress.items ?? [],
       resultSections: progress.result_sections ?? [],
       logs: (progress.logs ?? []).map((entry) => entry.message),
+      hasException: pipelineProgressHasException(progress),
     }
   }
   return {
@@ -140,6 +144,7 @@ function toSnapshot(
     items: progress.items ?? [],
     resultSections: progress.result_sections ?? [],
     logs: (progress.logs ?? []).map((entry) => entry.message),
+    hasException: pipelineProgressHasException(progress),
   }
 }
 
@@ -361,7 +366,9 @@ export function buildPipelineRailViewModel(
       ...(input.locked?.[stage] ? { locked: input.locked[stage] } : {}),
     }),
   )
-  const status = snapshot?.message ?? '等待配置完整任务'
+  const status = snapshot?.hasException
+    ? t('完整任务已完成，有异常')
+    : (snapshot?.message ?? '等待配置完整任务')
 
   return {
     mode: railMode(snapshot),
@@ -370,6 +377,7 @@ export function buildPipelineRailViewModel(
     summary: {
       status,
       warning: summaryWarning(stages, input.enabled, snapshot),
+      hasException: snapshot?.hasException ?? false,
     },
   }
 }

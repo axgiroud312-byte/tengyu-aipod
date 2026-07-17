@@ -1,6 +1,6 @@
-import { readdir } from 'node:fs/promises'
+import { readdir, stat } from 'node:fs/promises'
 import { basename, extname, join, resolve } from 'node:path'
-import type { PhotoshopPrintAsset } from '@tengyu-aipod/shared'
+import { AppErrorClass, type PhotoshopPrintAsset } from '@tengyu-aipod/shared'
 import { LOCAL_IMAGE_PROTOCOL } from '../lib/local-image-protocol'
 
 const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
@@ -58,6 +58,41 @@ export async function scanPhotoshopPrintFolder(
     .sort((left, right) => naturalCompare(basename(left), basename(right)))
   return {
     folder,
+    prints: files.map((filePath) => ({
+      id: basename(filePath, extname(filePath)),
+      file_path: filePath,
+      thumbnail_url: localImageUrl(filePath),
+    })),
+  }
+}
+
+export async function scanPhotoshopPrintPaths(paths: string[]): Promise<PhotoshopPrintFolderScan> {
+  const files = Array.from(
+    new Map(paths.map((filePath) => [pathKey(filePath), resolve(filePath)])).values(),
+  ).sort((left, right) => naturalCompare(basename(left), basename(right)))
+
+  for (const filePath of files) {
+    if (!IMAGE_EXTENSIONS.test(filePath)) {
+      throw new AppErrorClass('INVALID_INPUT', '套版候选不是受支持的图片文件', false, {
+        filePath,
+      })
+    }
+    try {
+      if (!(await stat(filePath)).isFile()) {
+        throw new AppErrorClass('INVALID_INPUT', '套版候选不是有效文件', false, {
+          filePath,
+        })
+      }
+    } catch (cause) {
+      if (cause instanceof AppErrorClass) {
+        throw cause
+      }
+      throw new AppErrorClass('INVALID_INPUT', '无法读取套版候选文件', false, { filePath }, cause)
+    }
+  }
+
+  return {
+    folder: '',
     prints: files.map((filePath) => ({
       id: basename(filePath, extname(filePath)),
       file_path: filePath,

@@ -18,7 +18,9 @@ import {
 import { Button } from '@/components/ui/button'
 import { progressPercent } from '@/lib/format'
 import { cn } from '@/lib/utils'
+import { t } from '@/locale/t'
 import type {
+  ListingDistributionMode,
   ListingItem,
   ListingPlatformKey,
   ListingProgress,
@@ -38,12 +40,14 @@ import {
   Play,
   RefreshCw,
   RotateCcw,
+  Square,
 } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { BitBrowserProfile } from '../../../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../../../main/lib/browser-profile-lock'
 import type { ListingBatchLoadResult } from '../../../main/lib/listing-batch-loader'
 import type { ListingStatusRow } from '../../../modules/listing/runner'
+import { createListingDistributionPreview } from './listing-workbench-distribution'
 import { reconcileSelectedListingProfileIds } from './listing-workbench-profile-selection'
 import { listingStartValidationIssues } from './listing-workbench-validation'
 
@@ -56,7 +60,7 @@ type WorkspaceProgress = {
   lastError?: string
 }
 
-type ListingStatusLabel = '等待' | '运行中' | '完成' | '失败' | '跳过'
+type ListingStatusLabel = string
 
 type ListingOperationalRow = {
   key: string
@@ -117,6 +121,7 @@ const listingStatusLabels: Record<ListingProgress['status'], ListingStatusLabel>
   success: '完成',
   failed: '失败',
   skipped: '跳过',
+  cancelled: t('已取消'),
 }
 
 function templateIdFromUrl(url: string) {
@@ -163,7 +168,9 @@ function warningTitleMissing(warning: string) {
 }
 
 function isTerminalListingStatus(status: ListingProgress['status']) {
-  return status === 'success' || status === 'failed' || status === 'skipped'
+  return (
+    status === 'success' || status === 'failed' || status === 'skipped' || status === 'cancelled'
+  )
 }
 
 export function ListingWorkbench() {
@@ -174,6 +181,8 @@ export function ListingWorkbench() {
   const [targetShopName, setTargetShopName] = useState('')
   const [skuMode, setSkuMode] = useState<ListingSkuMode>('one-click-generate')
   const [submitMode, setSubmitMode] = useState<ListingSubmitMode>('save-draft')
+  const [distributionMode, setDistributionMode] =
+    useState<ListingDistributionMode>('all-workspaces')
   const [maxAttempts, setMaxAttempts] = useState('2')
   const [failStreakLimit, setFailStreakLimit] = useState('3')
   const [resume, setResume] = useState(true)
@@ -195,9 +204,12 @@ export function ListingWorkbench() {
   const [statusLoading, setStatusLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
   const [starting, setStarting] = useState(false)
+  const [stopping, setStopping] = useState(false)
+  const [startConfirmationOpen, setStartConfirmationOpen] = useState(false)
   const [retryingSku, setRetryingSku] = useState<string | null>(null)
   const [openingEvidencePath, setOpeningEvidencePath] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
 
   useEffect(() => {
     let mounted = true
@@ -262,6 +274,14 @@ export function ListingWorkbench() {
   const itemCount = scanResult?.listingItems.length ?? 0
   const warningCount = scanResult?.warnings.length ?? 0
   const titleWarningCount = scanResult?.warnings.filter(warningTitleMissing).length ?? 0
+  const distributionPreview = createListingDistributionPreview(
+    itemCount,
+    selectedProfiles.map((profile) => profile.id),
+    distributionMode,
+  )
+  const allocationByProfileId = new Map(
+    distributionPreview.allocations.map((allocation) => [allocation.profileId, allocation.count]),
+  )
   const failedRows = useMemo(
     () => statusRows.filter((row) => row.status === 'failed'),
     [statusRows],
@@ -317,10 +337,6 @@ export function ListingWorkbench() {
     }
     return nextRows
   }, [profileById, statusRows, workspaceByProfileId, workspaceProgress])
-  const estimatedMinutes = Math.max(
-    0,
-    Math.ceil((itemCount * 4) / Math.max(1, selectedProfileIds.length)),
-  )
   const validationIssues = listingStartValidationIssues({
     batchDir,
     draftTemplateId,
@@ -328,7 +344,8 @@ export function ListingWorkbench() {
     selectedProfileCount: selectedProfileIds.length,
     targetShopName,
   })
-  const canStart = Boolean(selectedTemplate) && validationIssues.length === 0 && !starting
+  const canStart =
+    Boolean(selectedTemplate) && validationIssues.length === 0 && !starting && !runningTaskId
 
   const refreshStatusRows = useCallback(async () => {
     const requestId = statusRequestIdRef.current + 1
@@ -372,6 +389,17 @@ export function ListingWorkbench() {
     }
     setProgress(nextProgress)
     if (!nextProgress.profileId) {
+      if (isTerminalListingStatus(nextProgress.status)) {
+        activeBatchIdsRef.current.delete(nextProgress.batchId)
+        const remainingTaskIds = Array.from(activeBatchIdsRef.current)
+        setRunningTaskId(remainingTaskIds.length ? remainingTaskIds.join(', ') : null)
+        if (remainingTaskIds.length === 0) {
+          setStopping(false)
+        }
+        if (nextProgress.status === 'cancelled') {
+          setNotice(t('上架任务已停止，未启动的货号已跳过'))
+        }
+      }
       return
     }
     setWorkspaceProgress((current) => {
@@ -418,6 +446,9 @@ export function ListingWorkbench() {
     setWorkspaceProgress({})
     setProgress(null)
     setRunningTaskId(null)
+    setStopping(false)
+    setStartConfirmationOpen(false)
+    setNotice(null)
     setScanning(false)
     setStatusLoading(false)
   }
@@ -486,7 +517,9 @@ export function ListingWorkbench() {
       return
     }
     setStarting(true)
+    setStartConfirmationOpen(false)
     setError(null)
+    setNotice(null)
     setProgress(null)
     setWorkspaceProgress({})
     setStatusRows([])
@@ -537,6 +570,7 @@ export function ListingWorkbench() {
             task_id: task.id,
             workspace_id: workspace.id,
           })),
+          distribution_mode: distributionMode,
           submit_mode: submitMode,
           max_attempts: parseIntInput(maxAttempts, 2, 1, 5),
           fail_streak_limit: parseIntInput(failStreakLimit, 3, 1, 10),
@@ -552,6 +586,44 @@ export function ListingWorkbench() {
       setError(nextError instanceof Error ? nextError.message : String(nextError))
     } finally {
       setStarting(false)
+    }
+  }
+
+  function requestStartListing() {
+    if (!selectedTemplate || !scanResult || !canStart) {
+      setError(
+        validationIssues[0] ?? (runningTaskId ? t('当前上架任务尚未结束') : t('请先完成批次扫描')),
+      )
+      return
+    }
+    if (selectedProfiles.length > 1 || submitMode === 'publish') {
+      setStartConfirmationOpen(true)
+      return
+    }
+    void startListing()
+  }
+
+  async function stopListing() {
+    const taskIds = Array.from(activeBatchIdsRef.current)
+    if (taskIds.length === 0) {
+      setError(t('当前没有可停止的上架任务'))
+      return
+    }
+    setStopping(true)
+    setError(null)
+    try {
+      const results = await Promise.all(
+        taskIds.map((taskId) => window.api.listing.cancel({ task_id: taskId })),
+      )
+      if (!results.some((result) => result.ok)) {
+        setStopping(false)
+        setError(t('上架任务已结束，无需再停止'))
+        return
+      }
+      setNotice(t('已请求停止，当前货号完成后不再启动后续货号'))
+    } catch (nextError) {
+      setStopping(false)
+      setError(nextError instanceof Error ? nextError.message : String(nextError))
     }
   }
 
@@ -918,11 +990,59 @@ export function ListingWorkbench() {
                         onChange={() => setSubmitMode('publish')}
                         type="radio"
                       />
-                      发布
+                      {t('直接发布')}
                     </label>
                   </div>
                 </fieldset>
               </div>
+
+              <fieldset className="rounded-md border p-4">
+                <legend className="px-1 text-sm font-medium">{t('多店分配方式')}</legend>
+                <div className="mt-2 grid gap-2 md:grid-cols-2">
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-start gap-3 rounded-md border px-3 py-3 text-sm',
+                      distributionMode === 'all-workspaces'
+                        ? 'border-primary bg-muted'
+                        : 'bg-background',
+                    )}
+                  >
+                    <input
+                      checked={distributionMode === 'all-workspaces'}
+                      className="mt-0.5"
+                      onChange={() => setDistributionMode('all-workspaces')}
+                      type="radio"
+                    />
+                    <span>
+                      <span className="block font-medium">{t('每个店铺上架全部货号')}</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {t('适合同一批商品同时发布到多个店铺')}
+                      </span>
+                    </span>
+                  </label>
+                  <label
+                    className={cn(
+                      'flex cursor-pointer items-start gap-3 rounded-md border px-3 py-3 text-sm',
+                      distributionMode === 'round-robin'
+                        ? 'border-primary bg-muted'
+                        : 'bg-background',
+                    )}
+                  >
+                    <input
+                      checked={distributionMode === 'round-robin'}
+                      className="mt-0.5"
+                      onChange={() => setDistributionMode('round-robin')}
+                      type="radio"
+                    />
+                    <span>
+                      <span className="block font-medium">{t('货号平均分配到店铺')}</span>
+                      <span className="mt-1 block text-xs text-muted-foreground">
+                        {t('每个货号只进入一个店铺，按已选顺序轮询分配')}
+                      </span>
+                    </span>
+                  </label>
+                </div>
+              </fieldset>
 
               <Accordion collapsible type="single">
                 <AccordionItem value="advanced">
@@ -973,10 +1093,57 @@ export function ListingWorkbench() {
                 </AccordionItem>
               </Accordion>
 
+              <section aria-label={t('上架分配预览')} className="border-y bg-muted/40 px-1 py-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-semibold">{t('分配预览')}</h3>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {distributionMode === 'all-workspaces'
+                        ? t('所有已选店铺都会收到完整货号批次')
+                        : t('货号会尽量均匀地拆分到已选店铺')}
+                    </p>
+                  </div>
+                  <span className="text-sm font-medium tabular-nums">
+                    {t('共')} {distributionPreview.totalOperations} {t('次上架操作')}
+                  </span>
+                </div>
+                {selectedProfiles.length ? (
+                  <div className="mt-3 grid gap-x-6 gap-y-2 sm:grid-cols-2 xl:grid-cols-3">
+                    {selectedProfiles.map((profile) => (
+                      <div
+                        className="flex min-w-0 items-center justify-between gap-3"
+                        key={profile.id}
+                      >
+                        <span className="truncate text-sm">{profile.name || profile.id}</span>
+                        <span className="shrink-0 text-sm font-semibold tabular-nums">
+                          {allocationByProfileId.get(profile.id) ?? 0} {t('个货号')}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="mt-3 text-sm text-muted-foreground">
+                    {t('选择店铺环境后显示每店精确数量。')}
+                  </p>
+                )}
+              </section>
+
               {error ? (
-                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                <div
+                  className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800"
+                  role="alert"
+                >
                   {error}
                 </div>
+              ) : null}
+
+              {notice ? (
+                <output
+                  aria-live="polite"
+                  className="rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900"
+                >
+                  {notice}
+                </output>
               ) : null}
 
               {!error && validationIssues.length ? (
@@ -987,10 +1154,12 @@ export function ListingWorkbench() {
 
               <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-5">
                 <div className="text-sm text-muted-foreground">
-                  预估 {itemCount} 个货号，约{' '}
-                  <span className="tabular-nums">{estimatedMinutes}</span> 分钟
+                  {itemCount} {t('个货号')} · {distributionPreview.totalOperations} {t('次操作')} ·{' '}
+                  {t('约')}{' '}
+                  <span className="tabular-nums">{distributionPreview.estimatedMinutes}</span>{' '}
+                  {t('分钟')}
                 </div>
-                <Button disabled={!canStart} onClick={() => void startListing()} type="button">
+                <Button disabled={!canStart} onClick={requestStartListing} type="button">
                   {starting ? (
                     <Loader2 className="mr-2 size-4" />
                   ) : (
@@ -999,6 +1168,75 @@ export function ListingWorkbench() {
                   开始上架
                 </Button>
               </div>
+
+              <AlertDialog open={startConfirmationOpen} onOpenChange={setStartConfirmationOpen}>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>{t('确认启动上架')}</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      {t('请核对批次、店铺和提交方式。启动后会按下列分配执行。')}
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <dl className="divide-y rounded-md border text-sm">
+                    <div className="grid gap-1 px-3 py-2 sm:grid-cols-[100px_minmax(0,1fr)]">
+                      <dt className="text-muted-foreground">{t('批次')}</dt>
+                      <dd className="break-all font-medium">{batchDir}</dd>
+                    </div>
+                    <div className="grid gap-1 px-3 py-2 sm:grid-cols-[100px_minmax(0,1fr)]">
+                      <dt className="text-muted-foreground">{t('模板')}</dt>
+                      <dd className="font-medium">
+                        {selectedTemplate?.label ?? '—'} · {draftTemplateId.trim() || '—'}
+                      </dd>
+                    </div>
+                    <div className="grid gap-1 px-3 py-2 sm:grid-cols-[100px_minmax(0,1fr)]">
+                      <dt className="text-muted-foreground">{t('店铺分配')}</dt>
+                      <dd className="space-y-1">
+                        {selectedProfiles.map((profile) => (
+                          <div className="flex items-center justify-between gap-3" key={profile.id}>
+                            <span className="truncate font-medium">
+                              {profile.name || profile.id}
+                            </span>
+                            <span className="shrink-0 tabular-nums">
+                              {allocationByProfileId.get(profile.id) ?? 0} {t('个货号')}
+                            </span>
+                          </div>
+                        ))}
+                      </dd>
+                    </div>
+                    <div className="grid gap-1 px-3 py-2 sm:grid-cols-[100px_minmax(0,1fr)]">
+                      <dt className="text-muted-foreground">{t('总操作数')}</dt>
+                      <dd className="font-semibold tabular-nums">
+                        {distributionPreview.totalOperations} {t('次')}
+                      </dd>
+                    </div>
+                    <div className="grid gap-1 px-3 py-2 sm:grid-cols-[100px_minmax(0,1fr)]">
+                      <dt className="text-muted-foreground">{t('提交方式')}</dt>
+                      <dd className="font-semibold">
+                        {submitMode === 'publish' ? t('直接发布') : t('保存草稿')}
+                      </dd>
+                    </div>
+                  </dl>
+                  {submitMode === 'publish' ? (
+                    <div className="flex gap-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800">
+                      <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                      <span>{t('直接发布会将商品提交到目标店铺，不会停留在草稿箱。')}</span>
+                    </div>
+                  ) : null}
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>{t('返回检查')}</AlertDialogCancel>
+                    <AlertDialogAction
+                      className={
+                        submitMode === 'publish'
+                          ? 'bg-red-700 text-white hover:bg-red-800 focus-visible:ring-red-700'
+                          : undefined
+                      }
+                      onClick={() => void startListing()}
+                    >
+                      {submitMode === 'publish' ? t('确认直接发布') : t('确认开始')}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
             </div>
           </section>
 
@@ -1153,16 +1391,33 @@ export function ListingWorkbench() {
           </div>
 
           <div className="rounded-md border bg-background p-5 shadow-sm">
-            <div className="flex items-center justify-between gap-4">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-balance">执行中店铺环境</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {runningTaskId ? `任务 ${runningTaskId}` : '尚未开始'}
                 </p>
               </div>
-              <span className="text-sm tabular-nums text-muted-foreground">
-                {progressPercent(progress)}%
-              </span>
+              <div className="flex items-center gap-3">
+                <span className="text-sm tabular-nums text-muted-foreground">
+                  {progressPercent(progress)}%
+                </span>
+                {runningTaskId ? (
+                  <Button
+                    disabled={stopping}
+                    onClick={() => void stopListing()}
+                    type="button"
+                    variant="destructive"
+                  >
+                    {stopping ? (
+                      <Loader2 className="mr-2 size-4" />
+                    ) : (
+                      <Square className="mr-2 size-3.5 fill-current" />
+                    )}
+                    {stopping ? t('正在停止') : t('停止上架')}
+                  </Button>
+                ) : null}
+              </div>
             </div>
             <div className="mt-4 h-2 rounded-full bg-muted">
               <div

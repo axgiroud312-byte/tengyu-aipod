@@ -88,6 +88,7 @@ import {
 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { DetectionConfig } from '../../../../main/lib/detection-config'
 import type { TitleKeywordGroup } from '../../../../main/lib/title-service'
 import type { PipelineConfigStage } from './types'
@@ -707,6 +708,7 @@ export function FullTaskPage({
   onRunSelectionChange?: (selected: boolean) => void
   recordsOnly?: boolean
 }) {
+  const navigate = useNavigate()
   const sourceMode = usePipelineDraftStore((state) => state.sourceMode)
   const sourceDrafts = usePipelineDraftStore((state) => state.sourceDrafts)
   const switchSourceMode = usePipelineDraftStore((state) => state.switchSourceMode)
@@ -873,6 +875,13 @@ export function FullTaskPage({
       selectTaskDockRun(runId)
     },
     [selectTaskDockRun, setCurrentRunId],
+  )
+  const viewRunResult = useCallback(
+    (runId: string) => {
+      selectCurrentRun(runId)
+      navigate('/pipeline')
+    },
+    [navigate, selectCurrentRun],
   )
   const [runHistory, setRunHistory] = useState<PipelineRunRecord[]>([])
   const [runHistoryLoading, setRunHistoryLoading] = useState(false)
@@ -2102,6 +2111,7 @@ export function FullTaskPage({
         loading={runHistoryLoading}
         onRefresh={() => void refreshRunHistory()}
         onResume={(runId) => void resumePipeline(runId)}
+        onView={viewRunResult}
         resumeLoading={resumePipelineMutation.loading}
         runs={runHistory}
       />
@@ -2145,6 +2155,7 @@ export function FullTaskPage({
           loading={runHistoryLoading}
           onRefresh={() => void refreshRunHistory()}
           onResume={(runId) => void resumePipeline(runId)}
+          onView={viewRunResult}
           resumeLoading={resumePipelineMutation.loading}
           runs={runHistory}
         />
@@ -3474,6 +3485,7 @@ export function FullTaskPage({
         loading={runHistoryLoading}
         onRefresh={() => void refreshRunHistory()}
         onResume={(runId) => void resumePipeline(runId)}
+        onView={viewRunResult}
         resumeLoading={resumePipelineMutation.loading}
         runs={runHistory}
       />

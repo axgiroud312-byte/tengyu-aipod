@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { access, mkdtemp, rm } from 'node:fs/promises'
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -123,6 +123,18 @@ async function resolveWechatStart(app: ElectronApplication) {
   })
 }
 
+async function installOnboardingHarness(app: ElectronApplication, selectedRoot: string) {
+  await app.evaluate(({ ipcMain }, root) => {
+    ipcMain.removeHandler('onboarding:choose-workbench-root')
+    ipcMain.handle('onboarding:choose-workbench-root', () => ({
+      ok: true,
+      data: { path: root },
+    }))
+    ipcMain.removeHandler('onboarding:test-bit-browser')
+    ipcMain.handle('onboarding:test-bit-browser', () => ({ ok: true, profile_count: 2 }))
+  }, selectedRoot)
+}
+
 async function attachScreenshot(page: Page, testInfo: TestInfo, name: string) {
   const path = testInfo.outputPath(`${name}.png`)
   await page.screenshot({ path, fullPage: true })
@@ -222,7 +234,7 @@ test.describe('customer auth and onboarding', () => {
     await rm(tempRoot, { recursive: true, force: true })
   })
 
-  test('keeps login, pending authorization, and two-step onboarding accessible', async () => {
+  test('keeps login, pending authorization, and three-step onboarding accessible', async () => {
     const testInfo = test.info()
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
@@ -240,6 +252,8 @@ test.describe('customer auth and onboarding', () => {
       },
     })
     const page = await app.firstWindow()
+    const selectedWorkbenchRoot = join(tempRoot, 'selected-workbench')
+    await installOnboardingHarness(app, selectedWorkbenchRoot)
     await page.setViewportSize({ width: 1440, height: 900 })
     await page.emulateMedia({ reducedMotion: 'reduce' })
 
@@ -308,11 +322,11 @@ test.describe('customer auth and onboarding', () => {
     await expect(onboarding.getByRole('heading', { name: '首次设置' })).toBeVisible({
       timeout: 7_000,
     })
-    await expect(onboarding).toContainText('第 1 步，共 2 步')
+    await expect(onboarding).toContainText('第 1 步，共 3 步')
     await expect(onboarding.locator('[style*="entrance-hero"]')).toHaveCount(0)
     await expect(onboarding.getByRole('button', { name: '测试连接' })).toHaveCount(0)
     const onboardingProgress = onboarding.getByRole('progressbar', { name: '设置进度' })
-    await expect(onboardingProgress).toHaveAttribute('aria-valuenow', '50')
+    await expect(onboardingProgress).toHaveAttribute('aria-valuenow', '33')
     await expect
       .poll(() =>
         onboardingProgress
@@ -320,28 +334,73 @@ test.describe('customer auth and onboarding', () => {
           .evaluate((element) => getComputedStyle(element).transitionProperty),
       )
       .toBe('none')
+    const saveWorkspaceButton = onboarding.getByRole('button', { name: '保存并继续' })
+    await expect(saveWorkspaceButton).toBeDisabled()
+    await expect(onboarding.getByRole('button', { name: '选择工作区' })).toBeVisible()
+    await onboarding.getByRole('button', { name: '选择工作区' }).click()
+    await expect(onboarding.getByText(selectedWorkbenchRoot, { exact: true })).toBeVisible()
+    await expect(saveWorkspaceButton).toBeEnabled()
+    await expectNoHorizontalOverflow(page)
+    await attachScreenshot(page, testInfo, 'onboarding-step-one-workspace')
+    await saveWorkspaceButton.click()
+
+    await expect(onboarding).toContainText('第 2 步，共 3 步')
+    await expect(onboardingProgress).toHaveAttribute('aria-valuenow', '67')
     await expect(onboarding.getByRole('button', { name: '跳过晨羽智云密钥' })).toBeVisible()
     await expect(onboarding.getByRole('button', { name: '跳过Grsai 密钥' })).toBeVisible()
     await expect(onboarding.getByRole('button', { name: '跳过阿里云百炼密钥' })).toBeVisible()
     await expect(onboarding.getByRole('button', { name: '跳过比特浏览器地址' })).toBeVisible()
+    const bitBrowserUrl = onboarding.getByLabel('比特浏览器地址', { exact: true })
+    await bitBrowserUrl.fill('http://127.0.0.1:54345')
+    await onboarding.getByRole('button', { name: '测试连接' }).click()
+    await expect(
+      onboarding.getByText('连接成功，已读取 2 个浏览器档案', { exact: true }),
+    ).toBeVisible()
     const chenyuKey = onboarding.getByLabel('晨羽智云密钥', { exact: true })
+    await chenyuKey.fill('sk-must-be-discarded')
     await chenyuKey.focus()
     await expect(chenyuKey).toBeFocused()
     const currentStep = onboarding
       .getByRole('complementary', { name: '设置步骤' })
-      .getByText('第 1 步，共 2 步 · 接口密钥', { exact: true })
+      .getByText('第 2 步，共 3 步 · 接口密钥', { exact: true })
       .locator('../..')
     await expect
       .poll(() => currentStep.evaluate((element) => getComputedStyle(element).transitionProperty))
       .toBe('none')
     await expectReadableContrast(onboarding.getByRole('heading', { name: '首次设置' }))
     await expectNoHorizontalOverflow(page)
-    await attachScreenshot(page, testInfo, 'onboarding-step-one-neutral')
+    await attachScreenshot(page, testInfo, 'onboarding-step-two-neutral')
 
     await onboarding.getByRole('button', { name: '全部跳过' }).click()
-    await expect(onboarding).toContainText('第 2 步，共 2 步')
+    await expect(onboarding).toContainText('第 3 步，共 3 步')
     await expect(onboarding.getByRole('heading', { name: '设置已完成' })).toBeVisible()
     await expect(onboarding).toContainText('进入后默认打开完整任务')
+    await expect.poll(() => page.evaluate(() => window.api.keychain.has('chenyu'))).toBe(false)
+    await expect
+      .poll(() => page.evaluate(() => window.api.keychain.has('bit_browser_url')))
+      .toBe(false)
+
+    await page.goBack()
+    await expect(onboarding).toContainText('第 2 步，共 3 步')
+    await expect(onboarding.getByLabel('晨羽智云密钥', { exact: true })).toHaveValue('')
+    await expect(onboarding.getByLabel('比特浏览器地址', { exact: true })).toHaveValue('')
+    await onboarding.getByLabel('Grsai 密钥', { exact: true }).fill('sk-grsai-e2e')
+    await onboarding.getByRole('button', { name: '保存并继续' }).click()
+    await expect(onboarding).toContainText('第 3 步，共 3 步')
+    await expect.poll(() => page.evaluate(() => window.api.keychain.has('grsai'))).toBe(true)
+
+    const onboardingState = await page.evaluate(() => window.api.onboarding.getState())
+    expect(onboardingState.workbench_root).toBe(selectedWorkbenchRoot)
+    await Promise.all(
+      [
+        '01-采集工作区',
+        '02-印花工作区',
+        '03-检测工作区',
+        '04-上架工作区',
+        '05-视频工作区',
+        '.workbench',
+      ].map((directory) => access(join(selectedWorkbenchRoot, directory))),
+    )
     await onboarding.getByRole('button', { name: '开始使用' }).click()
     await expect(page).toHaveURL(/#\/pipeline$/)
     await expect(page.getByText('完整任务', { exact: true }).first()).toBeVisible()

@@ -10,6 +10,8 @@ export type ListingSubmitMode = 'save-draft' | 'publish'
 
 export type ListingSkuMode = 'manual' | 'one-click-generate'
 
+export type ListingDistributionMode = 'round-robin' | 'all-workspaces'
+
 export type ListingStatus = 'pending' | 'uploading' | 'success' | 'failed' | 'skipped'
 
 export type ListingWorkspaceStatus = 'idle' | 'running' | 'paused' | 'failed' | 'completed'
@@ -338,13 +340,16 @@ export interface WorkspaceResult {
   successCount: number
   failedCount: number
   skippedCount: number
+  cancelled?: boolean
   results: ListingResult[]
 }
+
+export type ListingProgressStatus = ListingStatus | 'cancelled'
 
 export interface ListingProgress {
   batchId: string
   profileId: string
-  status: ListingStatus
+  status: ListingProgressStatus
   totalCount: number
   finishedCount: number
   currentSku?: string

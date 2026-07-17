@@ -99,7 +99,16 @@ async function loginByPhone(page: Awaited<ReturnType<typeof launchApp>>['page'])
   await page.getByRole('button', { name: '发送验证码' }).click()
   await page.getByRole('textbox', { name: '验证码' }).fill('123456')
   await page.getByRole('button', { name: '验证登录' }).click()
-  await expect(page.getByRole('button', { name: '全部跳过' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '首次设置' })).toBeVisible()
+}
+
+async function advanceOnboardingToCompletion(page: Page, workbenchRoot: string) {
+  await page.evaluate(async (root) => {
+    await window.api.onboarding.saveWorkbenchRoot(root)
+  }, workbenchRoot)
+  await page.reload()
+  await page.getByRole('button', { name: '保存并继续' }).click()
+  await page.getByRole('button', { name: '全部跳过' }).click()
 }
 
 test.describe('tutorial page', () => {
@@ -123,7 +132,7 @@ test.describe('tutorial page', () => {
     await rm(tempRoot, { recursive: true, force: true })
   })
 
-  test('opens from the sidebar before a workspace is selected', async () => {
+  test('opens from the sidebar after the required workspace setup', async () => {
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     const launched = await launchApp({
@@ -134,9 +143,9 @@ test.describe('tutorial page', () => {
     const page = launched.page
 
     await loginByPhone(page)
-    await page.getByRole('button', { name: '全部跳过' }).click()
+    await advanceOnboardingToCompletion(page, join(tempRoot, 'workbench-sidebar'))
     await page.getByRole('button', { name: '开始使用' }).click()
-    await expect(page.getByRole('heading', { name: '请先选择工作区' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
 
     await page.getByRole('link', { name: '教程' }).click()
 
@@ -145,8 +154,11 @@ test.describe('tutorial page', () => {
     await expect(page.getByRole('button', { name: /Temu 采集/ })).toBeVisible()
     await expect(page.getByRole('button', { name: /生图常用三项/ })).toBeVisible()
     await expect(page.getByRole('button', { name: /PS 套版/ })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '请先选择工作区' })).toHaveCount(0)
     const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const expandTaskDock = taskDock.getByRole('button', { name: /展开任务坞/ })
+    if (await expandTaskDock.isVisible()) {
+      await expandTaskDock.click()
+    }
     await expect(taskDock).toContainText('暂无任务')
     await expect(taskDock).not.toContainText('Error invoking remote method')
   })
@@ -163,7 +175,7 @@ test.describe('tutorial page', () => {
     const page = launched.page
 
     await loginByPhone(page)
-    await page.getByRole('button', { name: '全部跳过' }).click()
+    await advanceOnboardingToCompletion(page, join(tempRoot, 'workbench-onboarding'))
     await page.getByRole('button', { name: '查看操作教程' }).click()
 
     await expect(page.getByRole('heading', { name: '教程' })).toBeVisible()

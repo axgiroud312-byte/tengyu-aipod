@@ -3,21 +3,31 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import { t } from '@/locale/t'
-import { CheckCircle2, KeyRound, PlayCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, FolderOpen, KeyRound, PlayCircle } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 
-export type OnboardingStep = 1 | 2
+export type OnboardingStep = 1 | 2 | 3
 export type OnboardingApiKey = 'chenyu' | 'grsai' | 'bailian' | 'bit_browser_url'
 export type OnboardingApiKeys = Record<OnboardingApiKey, string>
 
 interface OnboardingPageProps {
   step: OnboardingStep
+  workbenchRoot: string
   apiKeys: OnboardingApiKeys
   error?: string | null
+  bitBrowserTestMessage?: string | null
+  choosingWorkbenchRoot?: boolean
   completing?: boolean
+  savingWorkbenchRoot?: boolean
   saving?: boolean
+  testingBitBrowser?: boolean
+  onChooseWorkbenchRoot: () => void
+  onSaveWorkbenchRoot: () => void
   onApiKeyChange: (key: OnboardingApiKey, value: string) => void
   onSaveApiKeys: () => void
+  onTestBitBrowser: () => void
+  onSkipApiKeys: () => void
+  onPrevious: () => void
   onComplete: () => void
   onOpenTutorial: () => void
 }
@@ -33,13 +43,20 @@ interface StepMeta {
 const stepMetas: StepMeta[] = [
   {
     number: 1,
+    label: t('工作区'),
+    title: t('选择业务工作区'),
+    detail: t('业务文件只保存在您选择的本地目录'),
+    icon: FolderOpen,
+  },
+  {
+    number: 2,
     label: t('接口密钥'),
     title: t('保存本机密钥'),
     detail: t('密钥只进入系统加密存储'),
     icon: KeyRound,
   },
   {
-    number: 2,
+    number: 3,
     label: t('完成'),
     title: t('进入工作台'),
     detail: t('进入完整任务工作区'),
@@ -49,10 +66,10 @@ const stepMetas: StepMeta[] = [
 
 const defaultStepMeta: StepMeta = {
   number: 1,
-  label: t('接口密钥'),
-  title: t('保存本机密钥'),
-  detail: t('密钥只进入系统加密存储'),
-  icon: KeyRound,
+  label: t('工作区'),
+  title: t('选择业务工作区'),
+  detail: t('业务文件只保存在您选择的本地目录'),
+  icon: FolderOpen,
 }
 
 const apiKeyFields: Array<{
@@ -87,7 +104,7 @@ function currentStepMeta(step: OnboardingStep) {
 }
 
 function stepProgress(step: OnboardingStep) {
-  return Math.round((step / 2) * 100)
+  return Math.round((step / 3) * 100)
 }
 
 function StepRail({ step }: { step: OnboardingStep }) {
@@ -123,7 +140,7 @@ function StepRail({ step }: { step: OnboardingStep }) {
             </div>
             <div className="min-w-0">
               <p className="text-sm font-semibold">
-                {t('第 {step} 步，共 2 步 · {label}')
+                {t('第 {step} 步，共 3 步 · {label}')
                   .replace('{step}', String(item.number))
                   .replace('{label}', item.label)}
               </p>
@@ -138,12 +155,22 @@ function StepRail({ step }: { step: OnboardingStep }) {
 
 export function OnboardingPage({
   step,
+  workbenchRoot,
   apiKeys,
   error,
+  bitBrowserTestMessage,
+  choosingWorkbenchRoot = false,
   completing = false,
+  savingWorkbenchRoot = false,
   saving = false,
+  testingBitBrowser = false,
+  onChooseWorkbenchRoot,
+  onSaveWorkbenchRoot,
   onApiKeyChange,
   onSaveApiKeys,
+  onTestBitBrowser,
+  onSkipApiKeys,
+  onPrevious,
   onComplete,
   onOpenTutorial,
 }: OnboardingPageProps) {
@@ -166,7 +193,7 @@ export function OnboardingPage({
             <p className="text-sm font-medium text-muted-foreground">{t('腾域 aipod')}</p>
             <h1 className="mt-0.5 text-2xl font-semibold">{t('首次设置')}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              {t('保存本机连接信息后即可进入工作台；工作区可稍后在设置页选择。')}
+              {t('先选择业务文件保存位置，再按需填写本机连接信息。')}
             </p>
           </div>
         </header>
@@ -196,7 +223,7 @@ export function OnboardingPage({
           >
             <header className="border-b pb-4">
               <p className="text-sm font-medium text-primary">
-                {t('第 {step} 步，共 2 步 · {label}')
+                {t('第 {step} 步，共 3 步 · {label}')
                   .replace('{step}', String(step))
                   .replace('{label}', meta.label)}
               </p>
@@ -215,13 +242,60 @@ export function OnboardingPage({
 
             {step === 1 ? (
               <div className="mt-5 grid gap-5">
+                <div className="grid gap-3">
+                  <p className="text-sm text-muted-foreground">
+                    {t('系统将在所选目录下创建采集、印花、检测、上架和视频工作区。')}
+                  </p>
+                  <div className="rounded-md border bg-muted/40 p-4">
+                    <p className="text-xs font-medium text-muted-foreground">{t('当前选择')}</p>
+                    <p className="mt-2 break-all text-sm font-medium">
+                      {workbenchRoot || t('尚未选择工作区')}
+                    </p>
+                  </div>
+                  <Button
+                    className="w-fit"
+                    disabled={choosingWorkbenchRoot || savingWorkbenchRoot}
+                    onClick={onChooseWorkbenchRoot}
+                    type="button"
+                    variant="secondary"
+                  >
+                    <FolderOpen className="mr-2 h-4 w-4" />
+                    {choosingWorkbenchRoot
+                      ? t('正在选择...')
+                      : workbenchRoot
+                        ? t('重新选择工作区')
+                        : t('选择工作区')}
+                  </Button>
+                </div>
+
+                <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
+                  <Button
+                    disabled={!workbenchRoot.trim() || choosingWorkbenchRoot || savingWorkbenchRoot}
+                    onClick={onSaveWorkbenchRoot}
+                    type="button"
+                  >
+                    {savingWorkbenchRoot ? t('正在保存...') : t('保存并继续')}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+
+            {step === 2 ? (
+              <div className="mt-5 grid gap-5">
                 <div className="grid gap-4">
                   {apiKeyFields.map((field) => (
                     <div className="grid gap-2" key={field.key}>
                       <label className="text-sm font-medium" htmlFor={`onboarding-${field.key}`}>
                         {field.label}
                       </label>
-                      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <div
+                        className={cn(
+                          'grid gap-2',
+                          field.key === 'bit_browser_url'
+                            ? 'sm:grid-cols-[minmax(0,1fr)_auto_auto]'
+                            : 'sm:grid-cols-[minmax(0,1fr)_auto]',
+                        )}
+                      >
                         <Input
                           className="h-10 min-w-0"
                           id={`onboarding-${field.key}`}
@@ -231,6 +305,18 @@ export function OnboardingPage({
                           type={field.type}
                           value={apiKeys[field.key]}
                         />
+                        {field.key === 'bit_browser_url' ? (
+                          <Button
+                            disabled={
+                              saving || testingBitBrowser || !apiKeys.bit_browser_url.trim()
+                            }
+                            onClick={onTestBitBrowser}
+                            type="button"
+                            variant="secondary"
+                          >
+                            {testingBitBrowser ? t('正在测试...') : t('测试连接')}
+                          </Button>
+                        ) : null}
                         <Button
                           aria-label={t('跳过{name}').replace('{name}', field.label)}
                           className="h-10"
@@ -242,6 +328,11 @@ export function OnboardingPage({
                           {t('跳过')}
                         </Button>
                       </div>
+                      {field.key === 'bit_browser_url' && bitBrowserTestMessage ? (
+                        <output className="text-xs text-muted-foreground">
+                          {bitBrowserTestMessage}
+                        </output>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -250,23 +341,29 @@ export function OnboardingPage({
                   {t('可全部跳过并稍后在设置中补充。已填写的密钥只写入本机密钥存储。')}
                 </div>
 
-                <div className="flex flex-wrap justify-end gap-2 border-t pt-4">
-                  <Button
-                    disabled={saving}
-                    onClick={onSaveApiKeys}
-                    type="button"
-                    variant="secondary"
-                  >
-                    {t('全部跳过')}
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
+                  <Button disabled={saving} onClick={onPrevious} type="button" variant="ghost">
+                    <ArrowLeft className="mr-2 h-4 w-4" />
+                    {t('上一步')}
                   </Button>
-                  <Button disabled={saving} onClick={onSaveApiKeys} type="button">
-                    {saving ? t('正在保存...') : t('保存并继续')}
-                  </Button>
+                  <div className="flex flex-wrap justify-end gap-2">
+                    <Button
+                      disabled={saving}
+                      onClick={onSkipApiKeys}
+                      type="button"
+                      variant="secondary"
+                    >
+                      {t('全部跳过')}
+                    </Button>
+                    <Button disabled={saving} onClick={onSaveApiKeys} type="button">
+                      {saving ? t('正在保存...') : t('保存并继续')}
+                    </Button>
+                  </div>
                 </div>
               </div>
             ) : null}
 
-            {step === 2 ? (
+            {step === 3 ? (
               <div className="mt-5 grid gap-5">
                 <div className="flex items-start gap-3 rounded-md border border-emerald-200 bg-emerald-50 p-4 text-emerald-950">
                   <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0" />
@@ -274,7 +371,7 @@ export function OnboardingPage({
                     <h2 className="font-semibold">{t('设置已完成')}</h2>
                     <p className="mt-1 text-sm leading-6">
                       {t(
-                        '本机连接信息已保存。进入后默认打开完整任务；工作区和密钥可继续在设置中调整。',
+                        '工作区和本机连接信息已准备就绪。进入后默认打开完整任务；这些设置可随时调整。',
                       )}
                     </p>
                   </div>

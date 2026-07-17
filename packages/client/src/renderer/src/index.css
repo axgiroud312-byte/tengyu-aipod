@@ -116,11 +116,6 @@ button {
 }
 
 @media (max-width: 1399px) {
-  .workbench-shell:has(> [data-workbench-region="task-dock"][data-state="expanded"])
-    > [data-workbench-region="central"] {
-    padding-right: 310px;
-  }
-
   [data-workbench-region="task-dock"][data-state="expanded"] {
     position: absolute;
     top: 0;

@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { scanPhotoshopPrintFolder } from './print-folder'
+import { scanPhotoshopPrintFolder, scanPhotoshopPrintPaths } from './print-folder'
 
 describe('scanPhotoshopPrintFolder', () => {
   it('lists image files from the selected print folder as Photoshop print assets', async () => {
@@ -58,6 +58,37 @@ describe('scanPhotoshopPrintFolder', () => {
       const result = await scanPhotoshopPrintFolder(root)
 
       expect(result.prints.map((item) => item.id)).toEqual(['pri_print'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('uses only the frozen explicit print paths without scanning sibling images', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'photoshop-candidates-'))
+    try {
+      const selectedPath = join(root, 'approved.png')
+      await writeFile(selectedPath, 'png')
+      await writeFile(join(root, 'not-approved.png'), 'png')
+
+      const result = await scanPhotoshopPrintPaths([selectedPath])
+
+      expect(result.prints.map((item) => item.file_path)).toEqual([selectedPath])
+      expect(result.prints.map((item) => item.id)).toEqual(['approved'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('returns a structured validation error when a frozen candidate cannot be read', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'photoshop-candidates-'))
+    try {
+      const missingPath = join(root, 'missing.png')
+
+      await expect(scanPhotoshopPrintPaths([missingPath])).rejects.toMatchObject({
+        code: 'INVALID_INPUT',
+        details: { filePath: missingPath },
+        message: '无法读取套版候选文件',
+      })
     } finally {
       await rm(root, { recursive: true, force: true })
     }

@@ -57,6 +57,15 @@ async function expectNoHorizontalOverflow(page: Page) {
   expect(hasOverflow).toBe(false)
 }
 
+async function expandTaskDockIfCollapsed(page: Page) {
+  const taskDock = page.getByRole('complementary', { name: '任务坞' })
+  const expandTaskDock = taskDock.getByRole('button', { name: /展开任务坞/ })
+  if (await expandTaskDock.isVisible()) {
+    await expandTaskDock.click()
+  }
+  return taskDock
+}
+
 async function startMockServer() {
   const previewImages = await Promise.all([
     sharp({
@@ -150,11 +159,14 @@ async function enterPreparedWorkbench(
   await page.getByRole('button', { name: '发送验证码' }).click()
   await page.getByRole('textbox', { name: '验证码' }).fill('123456')
   await page.getByRole('button', { name: '验证登录' }).click()
-  await expect(page.getByRole('button', { name: '全部跳过' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '首次设置' })).toBeVisible()
   await page.evaluate(async (root) => {
     await window.api.onboarding.saveWorkbenchRoot(root)
-    await window.api.onboarding.complete()
   }, workbenchRoot)
+  await page.reload()
+  await page.getByRole('button', { name: '保存并继续' }).click()
+  await page.getByRole('button', { name: '全部跳过' }).click()
+  await page.getByRole('button', { name: '开始使用' }).click()
   await beforeReload?.()
   await page.reload()
   await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
@@ -185,6 +197,12 @@ async function installDetectionWorkspaceHarness(
 ) {
   await app.evaluate(
     ({ ipcMain }, input) => {
+      const harnessState = globalThis as typeof globalThis & {
+        __detectionPromoteArtifactIds?: string[]
+        __detectionPromoteCalls?: number
+      }
+      harnessState.__detectionPromoteArtifactIds = []
+      harnessState.__detectionPromoteCalls = 0
       const skill = {
         id: 'infringement-detection',
         module: 'detection',
@@ -258,7 +276,11 @@ async function installDetectionWorkspaceHarness(
       ipcMain.removeHandler('detection:promote-to-matting')
       ipcMain.handle(
         'detection:promote-to-matting',
-        (_event, value: { artifact_ids: string[] }) => value.artifact_ids.length,
+        (_event, value: { artifact_ids: string[] }) => {
+          harnessState.__detectionPromoteArtifactIds = [...value.artifact_ids]
+          harnessState.__detectionPromoteCalls = (harnessState.__detectionPromoteCalls ?? 0) + 1
+          return value.artifact_ids.length
+        },
       )
       ipcMain.removeHandler('detection:delete-result')
       ipcMain.handle('detection:delete-result', () => 1)
@@ -272,6 +294,7 @@ async function installDetectionWorkspaceHarness(
 async function installPhotoshopWorkspaceHarness(
   app: ElectronApplication,
   input: {
+    folderPrintPath: string
     printPaths: [string, string]
     outputPaths: [string, string, string]
     templatePaths: [string, string]
@@ -279,14 +302,25 @@ async function installPhotoshopWorkspaceHarness(
 ) {
   await app.evaluate(({ ipcMain }, fixture) => {
     const harnessState = globalThis as typeof globalThis & {
+      __photoshopMattingCandidateListCalls?: number
+      __photoshopRunBatchInput?: unknown
+      __photoshopScanPrintFolderCalls?: number
       __photoshopWorkspaceConnected?: boolean
     }
+    harnessState.__photoshopMattingCandidateListCalls = 0
+    harnessState.__photoshopRunBatchInput = undefined
+    harnessState.__photoshopScanPrintFolderCalls = 0
     harnessState.__photoshopWorkspaceConnected = false
     const prints = fixture.printPaths.map((filePath, index) => ({
       id: `SKU-00${index + 1}`,
       file_path: filePath,
       thumbnail_url: `tengyu-local-image://image/${encodeURIComponent(filePath)}`,
     }))
+    const folderPrint = {
+      id: 'SKU-FOLDER',
+      file_path: fixture.folderPrintPath,
+      thumbnail_url: `tengyu-local-image://image/${encodeURIComponent(fixture.folderPrintPath)}`,
+    }
     const resultGroups = [
       {
         template_id: 'template-front',
@@ -341,11 +375,29 @@ async function installPhotoshopWorkspaceHarness(
       ok: true,
       data: { paths: fixture.templatePaths },
     }))
+    ipcMain.removeHandler('detection:list-matting-candidates')
+    ipcMain.handle('detection:list-matting-candidates', () => {
+      harnessState.__photoshopMattingCandidateListCalls =
+        (harnessState.__photoshopMattingCandidateListCalls ?? 0) + 1
+      return prints.map((print, index) => ({
+        id: `candidate-${index + 1}`,
+        artifactId: `artifact-${index + 1}`,
+        taskId: 'detection-ui-run',
+        printId: `pri_candidate_${index + 1}`,
+        sourcePath: print.file_path,
+        thumbnailUrl: print.thumbnail_url,
+        createdAt: 1_700_000_000_000 + index,
+      }))
+    })
     ipcMain.removeHandler('photoshop:scan-print-folder')
-    ipcMain.handle('photoshop:scan-print-folder', () => ({
-      folder: fixture.printPaths[0].replace(/[\\/][^\\/]+$/, ''),
-      prints,
-    }))
+    ipcMain.handle('photoshop:scan-print-folder', () => {
+      harnessState.__photoshopScanPrintFolderCalls =
+        (harnessState.__photoshopScanPrintFolderCalls ?? 0) + 1
+      return {
+        folder: fixture.folderPrintPath.replace(/[\\/][^\\/]+$/, ''),
+        prints: [folderPrint],
+      }
+    })
     ipcMain.removeHandler('photoshop:scan-template')
     ipcMain.handle('photoshop:scan-template', (_event, value: { psd_path: string }) => ({
       id: value.psd_path.includes('front') ? 'template-front' : 'template-back',
@@ -371,7 +423,8 @@ async function installPhotoshopWorkspaceHarness(
       text_layers: [],
     }))
     ipcMain.removeHandler('photoshop:run-batch')
-    ipcMain.handle('photoshop:run-batch', (event) => {
+    ipcMain.handle('photoshop:run-batch', (event, value: unknown) => {
+      harnessState.__photoshopRunBatchInput = value
       const taskId = 'photoshop-ui-run'
       event.sender.send('photoshop:progress', {
         task_id: taskId,
@@ -476,12 +529,16 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
   await app.evaluate(
     ({ ipcMain }, fixture) => {
       const state = globalThis as typeof globalThis & {
+        __listingCancelTaskIds?: string[]
         __listingEvidenceOpenCalls?: number
+        __listingRunInput?: unknown
         __listingScanResult?: unknown
         __listingStatusRows?: unknown[]
         __listingTasks?: unknown[]
       }
       state.__listingEvidenceOpenCalls = 0
+      state.__listingCancelTaskIds = []
+      state.__listingRunInput = undefined
       state.__listingStatusRows = []
       state.__listingTasks = []
 
@@ -503,16 +560,17 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
         label: 'Shein',
         editUrl: 'https://www.dianxiaomi.com/web/shein/edit?id=654321',
       }
-      const workspace = {
-        id: 'workspace-profile-7',
-        profile_id: 'profile-7',
-        profile_name: 'Temu 主店',
+      const workspaces = [
+        { id: 'workspace-profile-7', profile_id: 'profile-7', profile_name: 'Temu 主店' },
+        { id: 'workspace-profile-8', profile_id: 'profile-8', profile_name: 'Temu 备用店' },
+      ].map((workspace) => ({
+        ...workspace,
         platform: 'temu-pop',
         status: 'idle',
         current_task_id: null,
         created_at: 1_700_000_000_000,
         updated_at: 1_700_000_000_000,
-      }
+      }))
       const imageGroups = {
         sku: [],
         carousel: [],
@@ -558,6 +616,7 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
       ipcMain.removeHandler('listing:list-profiles')
       ipcMain.handle('listing:list-profiles', () => [
         { id: 'profile-7', name: 'Temu 主店', seq: 7, status: 1 },
+        { id: 'profile-8', name: 'Temu 备用店', seq: 8, status: 1 },
         { id: 'profile-locked', name: '被占用店铺', seq: 8, status: 1 },
       ])
       ipcMain.removeHandler('browser-profile-lock:list')
@@ -570,16 +629,28 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
         },
       ])
       ipcMain.removeHandler('listing:list-saved-workspaces')
-      ipcMain.handle('listing:list-saved-workspaces', () => [workspace])
+      ipcMain.handle('listing:list-saved-workspaces', () => workspaces)
       ipcMain.removeHandler('listing:list-tasks')
       ipcMain.handle('listing:list-tasks', () => state.__listingTasks ?? [])
       ipcMain.removeHandler('listing:save-workspace')
-      ipcMain.handle('listing:save-workspace', () => workspace)
+      ipcMain.handle('listing:save-workspace', (_event, input: { profile_id: string }) => {
+        const workspace = workspaces.find((candidate) => candidate.profile_id === input.profile_id)
+        if (!workspace) {
+          throw new Error(`Unknown listing profile: ${input.profile_id}`)
+        }
+        return workspace
+      })
       ipcMain.removeHandler('listing:create-task')
       ipcMain.handle('listing:create-task', (_event, input) => {
+        const inputRecord =
+          typeof input === 'object' && input !== null
+            ? (input as { workspace_id?: string })
+            : { workspace_id: undefined }
+        const workspace =
+          workspaces.find((candidate) => candidate.id === inputRecord.workspace_id) ?? workspaces[0]
         const task = {
-          id: 'listing-plan-task-1',
-          workspace_id: workspace.id,
+          id: `listing-plan-task-${workspace?.profile_id ?? 'unknown'}`,
+          workspace_id: workspace?.id ?? 'workspace-unknown',
           platform: 'temu-pop',
           template_key: 'temu-general',
           draft_template_id: '123456',
@@ -596,7 +667,7 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
           updated_at: 1_700_000_000_000,
           ...(typeof input === 'object' && input !== null ? input : {}),
         }
-        state.__listingTasks = [task]
+        state.__listingTasks = [...(state.__listingTasks ?? []), task]
         return task
       })
       ipcMain.removeHandler('listing:scan-batch-dir')
@@ -604,7 +675,15 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
       ipcMain.removeHandler('listing:list-status')
       ipcMain.handle('listing:list-status', () => state.__listingStatusRows ?? [])
       ipcMain.removeHandler('listing:run')
-      ipcMain.handle('listing:run', () => 'listing-ui-run')
+      ipcMain.handle('listing:run', (_event, input) => {
+        state.__listingRunInput = input
+        return 'listing-ui-run'
+      })
+      ipcMain.removeHandler('listing:cancel')
+      ipcMain.handle('listing:cancel', (_event, input: { task_id: string }) => {
+        state.__listingCancelTaskIds = [...(state.__listingCancelTaskIds ?? []), input.task_id]
+        return { ok: true }
+      })
       ipcMain.removeHandler('listing:open-path')
       ipcMain.handle('listing:open-path', () => {
         state.__listingEvidenceOpenCalls = (state.__listingEvidenceOpenCalls ?? 0) + 1
@@ -960,6 +1039,70 @@ function seedRunningCompleteTasks(workbenchRoot: string) {
   }
 }
 
+function seedCompleteTaskHistory(workbenchRoot: string) {
+  const db = openWorkbenchDatabase(workbenchRoot)
+  try {
+    const insertRun = db.prepare(`
+      INSERT INTO pipeline_runs (
+        id, name, source_mode, status, config_json, stats_json,
+        result_sections_json, logs_json, error_summary, created_at, started_at, completed_at
+      ) VALUES (?, ?, 'txt2img', ?, ?, ?, ?, '[]', NULL, ?, ?, ?)
+    `)
+    for (let index = 1; index <= 14; index += 1) {
+      const exceptional = index === 1
+      const status = index === 2 ? 'cancelled' : 'completed'
+      const timestamp = 10_000 - index
+      insertRun.run(
+        `history-run-${index}`,
+        `History task ${index}`,
+        status,
+        JSON.stringify(completeTaskFixtureConfig(`History task ${index}`)),
+        JSON.stringify({ titleFailed: 0 }),
+        exceptional
+          ? JSON.stringify([
+              {
+                key: 'image_processing',
+                title: '印花产物',
+                total: 2,
+                completed: 1,
+                failed: 1,
+                collapsible: true,
+                paginated: false,
+                items: [],
+              },
+            ])
+          : '[]',
+        timestamp,
+        timestamp,
+        timestamp + 1,
+      )
+    }
+    db.prepare(`
+      INSERT INTO pipeline_steps (
+        id, run_id, step_key, module, label, status,
+        input_count, output_count, output_json, error_json,
+        started_at, completed_at, updated_at
+      ) VALUES (
+        'history-step-1', 'history-run-1', 'detection', 'detection', '侵权检测', 'completed',
+        2, 1, NULL, NULL, 1, 2, 2
+      )
+    `).run()
+    db.prepare(`
+      INSERT INTO pipeline_items (
+        id, run_id, item_key, step_key, status, source_path, output_path,
+        artifact_id, print_id, source_artifact_ids_json, error_message,
+        created_at, updated_at, completed_at
+      ) VALUES (
+        'history-item-1', 'history-run-1', 'print-failed', 'detection', 'failed',
+        'C:/prints/failed.png', NULL, NULL, 'pri_failed', NULL,
+        '检测服务拒绝了这张印花', 1, 2, 2
+      )
+    `).run()
+  } finally {
+    db.close()
+  }
+}
+
 test.describe('production-first Workbench shell', () => {
   let tempRoot = ''
   let app: ElectronApplication | null = null
@@ -1055,6 +1198,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(page.locator('[data-content-width="wide"]')).toBeVisible()
 
     const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    await expandTaskDockIfCollapsed(page)
     await expect(taskDock.getByText('Most recently updated task', { exact: true })).toBeVisible()
     await expect(taskDock.getByText('Later created task', { exact: true })).toBeVisible()
     await expect(
@@ -1153,6 +1297,7 @@ test.describe('production-first Workbench shell', () => {
 
     await page.getByRole('button', { name: '停止任务' }).click()
     await expect(page.getByText('已请求取消，当前步骤结束后停止', { exact: true })).toBeVisible()
+    await expandTaskDockIfCollapsed(page)
     const selectedDockTask = page
       .getByRole('complementary', { name: '任务坞' })
       .getByRole('button', { name: '打开完整任务 Most recently updated task' })
@@ -1213,7 +1358,7 @@ test.describe('production-first Workbench shell', () => {
 
     await expect(selectedDockTask.getByText('已完成', { exact: true })).toBeVisible()
 
-    await expect(page.getByText('完成战报', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('完成，有异常', { exact: true }).first()).toBeVisible()
     await expect(page.getByText(/部分配置加载失败/)).toHaveCount(0)
     for (const viewport of [
       { width: 1280, height: 720 },
@@ -1308,6 +1453,80 @@ test.describe('production-first Workbench shell', () => {
     for (const [label, path] of routes) {
       await navigation.getByRole('link', { name: label, exact: true }).click()
       await expect(page).toHaveURL(new RegExp(`#${path.replace('/', '\\/')}$`))
+    }
+  })
+
+  test('keeps complete-task history visible and opens preserved exceptional results', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-complete-task-history'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-complete-task-history')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedCompleteTaskHistory(workbenchRoot))
+
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const expandTaskDock = taskDock.getByRole('button', { name: /展开任务坞/ })
+    if (await expandTaskDock.isVisible()) {
+      await expandTaskDock.click()
+    }
+    await expect(
+      taskDock
+        .getByRole('button', { name: '打开完整任务 History task 1' })
+        .getByText('已完成，有异常', { exact: true }),
+    ).toBeVisible()
+    await expect(taskDock.getByRole('button', { name: '查看全部 14 条运行记录' })).toBeVisible()
+    await taskDock.getByRole('button', { name: '折叠任务坞' }).click()
+
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '运行记录', exact: true })
+      .click()
+    await expect(page.getByText('History task 14', { exact: true })).toBeVisible()
+    await page.getByRole('button', { name: '查看完整任务 History task 1 结果' }).click()
+
+    await expect(page).toHaveURL(/#\/pipeline$/)
+    await expect(page.getByRole('heading', { name: '成果剧场' })).toBeVisible()
+    await expect(page.getByText('完成，有异常', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('检测服务拒绝了这张印花', { exact: true })).toBeVisible()
+  })
+
+  test('defaults the task dock to collapsed and keeps the pipeline rail legible at 1280', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-narrow-default-shell'),
+    })
+    const page = await app.firstWindow()
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-narrow-default-shell'))
+    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.evaluate(() => window.localStorage.removeItem('tengyu-aipod:task-dock'))
+    await page.reload()
+
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const central = page.locator('[data-workbench-region="central"]')
+    await expect(taskDock.getByRole('button', { name: /展开任务坞/ })).toBeVisible()
+    const collapsedCentralWidth = (await central.boundingBox())?.width ?? 0
+    await taskDock.getByRole('button', { name: /展开任务坞/ }).click()
+    const expandedCentralWidth = (await central.boundingBox())?.width ?? 0
+    expect(expandedCentralWidth).toBeGreaterThanOrEqual(collapsedCentralWidth)
+
+    const stageGroups = page.getByRole('group', { name: /阶段$/ })
+    await expect(stageGroups).toHaveCount(5)
+    const stageBoxes = await Promise.all(
+      Array.from({ length: 5 }, (_, index) => stageGroups.nth(index).boundingBox()),
+    )
+    const rowTops = new Set(stageBoxes.map((box) => Math.round(box?.y ?? -1)))
+    expect(rowTops.size).toBe(2)
+    for (const label of ['任务起点', '抠图', '侵权检测', 'PS 套版', '标题生成']) {
+      const labelBox = await page
+        .getByRole('group', { name: `${label}阶段` })
+        .getByText(label, { exact: true })
+        .boundingBox()
+      expect(labelBox?.height ?? 100).toBeLessThan(30)
     }
   })
 
@@ -1425,6 +1644,7 @@ test.describe('production-first Workbench shell', () => {
       .getByRole('navigation', { name: 'Workbench 主导航' })
       .getByRole('link', { name: '设置', exact: true })
       .click()
+    await expandTaskDockIfCollapsed(page)
     await page
       .getByRole('complementary', { name: '任务坞' })
       .getByRole('button', { name: '打开轻量任务 采集任务' })
@@ -1704,7 +1924,29 @@ test.describe('production-first Workbench shell', () => {
     await expect(results.getByRole('button', { name: '预览 block.png' })).toBeVisible()
     await expect(results.getByText('重测后仍需人工判断')).toBeVisible()
     await results.getByRole('button', { name: '加入套版候选清单' }).click()
+    const promoteDialog = page.getByRole('alertdialog', { name: '确认加入套版候选清单' })
+    await expect(
+      promoteDialog.getByText('发现 1 张通过印花，将写入本地套版候选清单。'),
+    ).toBeVisible()
+    const promoteCallsBeforeConfirm = await app.evaluate(
+      () =>
+        (globalThis as typeof globalThis & { __detectionPromoteCalls?: number })
+          .__detectionPromoteCalls ?? 0,
+    )
+    expect(promoteCallsBeforeConfirm).toBe(0)
+    await promoteDialog.getByRole('button', { name: '确认加入' }).click()
     await expect(page.getByText('已加入 1 张无风险图片到套版候选清单')).toBeVisible()
+    const promotionAfterConfirm = await app.evaluate(() => {
+      const state = globalThis as typeof globalThis & {
+        __detectionPromoteArtifactIds?: string[]
+        __detectionPromoteCalls?: number
+      }
+      return {
+        artifactIds: state.__detectionPromoteArtifactIds ?? [],
+        calls: state.__detectionPromoteCalls ?? 0,
+      }
+    })
+    expect(promotionAfterConfirm).toEqual({ artifactIds: ['artifact-pass'], calls: 1 })
     await results.getByRole('button', { name: '删除 block.png' }).click()
     await expect(results.getByRole('region', { name: '高风险结果' }).getByText('0')).toBeVisible()
     const expandTaskDock = page.getByRole('button', { name: /展开任务坞/ })
@@ -1716,6 +1958,8 @@ test.describe('production-first Workbench shell', () => {
       .getByRole('button', { name: '打开轻量任务 侵权检测任务' })
     await expect(detectionTasks).toHaveCount(2)
     await expect(detectionTasks.first()).toBeVisible()
+    await page.getByRole('button', { name: '去 PS 套版' }).click()
+    await expect(page).toHaveURL(/#\/photoshop$/)
   })
 
   test('runs Photoshop from readiness through standalone batch and SKU results', async () => {
@@ -1730,11 +1974,13 @@ test.describe('production-first Workbench shell', () => {
     const page = await photoshopApp.firstWindow()
     const workbenchRoot = join(tempRoot, 'workbench-photoshop-workspace')
     const printDir = join(workbenchRoot, '02-印花工作区', '提取')
+    const candidateDir = join(workbenchRoot, '03-检测工作区', 'detection-e2e', '无风险')
     const batchDir = join(workbenchRoot, '04-上架工作区', '套版-e2e')
-    const printPaths = [join(printDir, 'SKU-001.png'), join(printDir, 'SKU-002.png')] as [
+    const printPaths = [join(candidateDir, 'SKU-001.png'), join(candidateDir, 'SKU-002.png')] as [
       string,
       string,
     ]
+    const folderPrintPath = join(printDir, 'SKU-FOLDER.png')
     const outputPaths = [
       join(batchDir, 'SKU-001', 'front-01.jpg'),
       join(batchDir, 'SKU-001', 'back-01.jpg'),
@@ -1746,11 +1992,12 @@ test.describe('production-first Workbench shell', () => {
     ] as [string, string]
     await Promise.all([
       mkdir(printDir, { recursive: true }),
+      mkdir(candidateDir, { recursive: true }),
       mkdir(join(batchDir, 'SKU-001'), { recursive: true }),
       mkdir(join(batchDir, 'SKU-002'), { recursive: true }),
     ])
     await Promise.all(
-      [...printPaths, ...outputPaths].map((path, index) =>
+      [...printPaths, folderPrintPath, ...outputPaths].map((path, index) =>
         sharp({
           create: {
             width: 480,
@@ -1765,6 +2012,7 @@ test.describe('production-first Workbench shell', () => {
     )
     await enterPreparedWorkbench(page, workbenchRoot, () =>
       installPhotoshopWorkspaceHarness(photoshopApp, {
+        folderPrintPath,
         printPaths,
         outputPaths,
         templatePaths,
@@ -1791,6 +2039,26 @@ test.describe('production-first Workbench shell', () => {
     await expect(inputAndSettings.getByLabel('导出格式')).toHaveValue('jpg')
     await expect(inputAndSettings.getByLabel('失败重试')).toHaveValue('1')
     await expect(inputAndSettings.getByLabel('跳过已完成')).toBeChecked()
+    await expect(inputAndSettings.getByRole('radio', { name: '检测通过候选' })).toBeChecked()
+    await expect(inputAndSettings.getByText('SKU-001', { exact: true })).toBeVisible()
+    await expect(inputAndSettings.getByText('SKU-002', { exact: true })).toBeVisible()
+    const initialInputCalls = await photoshopApp.evaluate(() => {
+      const state = globalThis as typeof globalThis & {
+        __photoshopMattingCandidateListCalls?: number
+        __photoshopScanPrintFolderCalls?: number
+      }
+      return {
+        candidateList: state.__photoshopMattingCandidateListCalls ?? 0,
+        folderScan: state.__photoshopScanPrintFolderCalls ?? 0,
+      }
+    })
+    expect(initialInputCalls.candidateList).toBeGreaterThan(0)
+    expect(initialInputCalls.folderScan).toBe(0)
+
+    await inputAndSettings.getByRole('radio', { name: '印花文件夹' }).click()
+    await expect(inputAndSettings.getByText('SKU-FOLDER', { exact: true })).toBeVisible()
+    await inputAndSettings.getByRole('radio', { name: '检测通过候选' }).click()
+    await expect(inputAndSettings.getByText('SKU-001', { exact: true })).toBeVisible()
 
     for (const viewport of [
       { width: 1280, height: 720 },
@@ -1822,6 +2090,14 @@ test.describe('production-first Workbench shell', () => {
     await launch.getByRole('button', { name: '扫描模板' }).click()
     await expect(launch.getByText('模板数')).toBeVisible()
     await launch.getByRole('button', { name: '开始套版' }).click()
+
+    const submittedInput = await photoshopApp.evaluate(
+      () =>
+        (globalThis as typeof globalThis & { __photoshopRunBatchInput?: unknown })
+          .__photoshopRunBatchInput,
+    )
+    expect(submittedInput).toMatchObject({ print_paths: printPaths })
+    expect(submittedInput).not.toHaveProperty('print_folder')
 
     const batch = results.getByRole('region', { name: '单次套版批次 套版-e2e' })
     await expect(batch).toBeVisible()
@@ -1905,7 +2181,50 @@ test.describe('production-first Workbench shell', () => {
     await settings.getByLabel('目标店铺名称').fill('Tengyu Shop')
     await settings.getByRole('button', { name: '扫描' }).click()
     await workspace.getByRole('checkbox', { name: /Temu 主店/ }).check()
+    await workspace.getByRole('checkbox', { name: /Temu 备用店/ }).check()
+    const distributionPreview = settings.getByRole('region', { name: '上架分配预览' })
+    await expect(distributionPreview.getByText('共 4 次上架操作', { exact: true })).toBeVisible()
+    await expect(distributionPreview.getByText('2 个货号', { exact: true })).toHaveCount(2)
+    await settings.getByLabel('直接发布').check()
     await settings.getByRole('button', { name: '开始上架' }).click()
+    const startDialog = page.getByRole('alertdialog', { name: '确认启动上架' })
+    await expect(startDialog.getByText('Temu 主店', { exact: true })).toBeVisible()
+    await expect(startDialog.getByText('Temu 备用店', { exact: true })).toBeVisible()
+    await expect(startDialog.getByText('直接发布', { exact: true })).toBeVisible()
+    await startDialog.getByRole('button', { name: '确认直接发布' }).click()
+
+    await expect
+      .poll(() =>
+        listingApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __listingRunInput?: unknown }
+          return state.__listingRunInput
+        }),
+      )
+      .toMatchObject({
+        config: {
+          distribution_mode: 'all-workspaces',
+          submit_mode: 'publish',
+          workspaces: [
+            { profile_id: 'profile-7', workspace_id: 'workspace-profile-7' },
+            { profile_id: 'profile-8', workspace_id: 'workspace-profile-8' },
+          ],
+        },
+        items: [{ sku: 'SKU001' }, { sku: 'SKU002' }],
+      })
+    await workspace.getByRole('button', { name: '停止上架' }).click()
+    await expect(
+      settings.getByText('已请求停止，当前货号完成后不再启动后续货号', { exact: true }),
+    ).toBeVisible()
+    await expect
+      .poll(() =>
+        listingApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & {
+            __listingCancelTaskIds?: string[]
+          }
+          return state.__listingCancelTaskIds ?? []
+        }),
+      )
+      .toEqual(['listing-ui-run'])
 
     await emitPublicModuleEvent(listingApp, 'listing:progress', {
       batchId: 'listing-ui-run',
@@ -2047,9 +2366,13 @@ test.describe('production-first Workbench shell', () => {
         stage: 'enter_page',
       },
     })
+    const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    const expandTaskDock = taskDock.getByRole('button', { name: /展开任务坞/ })
+    if (await expandTaskDock.isVisible()) {
+      await expandTaskDock.click()
+    }
     await expect(
-      page
-        .getByRole('complementary', { name: '任务坞' })
+      taskDock
         .getByRole('button', { name: '打开轻量任务 上架任务' })
         .getByText('比特浏览器环境 profile-locked 被占用，请先结束冲突的采集或上架任务', {
           exact: true,
@@ -2070,11 +2393,21 @@ test.describe('production-first Workbench shell', () => {
       },
     })
     await expect(
-      page
-        .getByRole('complementary', { name: '任务坞' })
-        .getByText('比特浏览器环境 profile-7 需要重新登录店小秘，请登录后重试上架', {
-          exact: true,
-        }),
+      taskDock.getByText('比特浏览器环境 profile-7 需要重新登录店小秘，请登录后重试上架', {
+        exact: true,
+      }),
+    ).toBeVisible()
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-run',
+      profileId: '',
+      status: 'cancelled',
+      totalCount: 2,
+      finishedCount: 2,
+    })
+    await expect(
+      taskDock
+        .getByRole('button', { name: '打开轻量任务 上架任务' })
+        .getByText('已取消', { exact: true }),
     ).toBeVisible()
   })
 
@@ -2278,6 +2611,7 @@ test.describe('production-first Workbench shell', () => {
       started_at: Date.now(),
     }
     const taskDock = page.getByRole('complementary', { name: '任务坞' })
+    await expandTaskDockIfCollapsed(page)
     const publicEvents = [
       {
         channel: 'collection:event',
@@ -2477,6 +2811,7 @@ test.describe('production-first Workbench shell', () => {
     const central = page.locator('[data-workbench-region="central"]')
     const completeTaskLink = navigation.getByRole('link', { name: '完整任务', exact: true })
     await page.setViewportSize({ width: 1440, height: 900 })
+    await expandTaskDockIfCollapsed(page)
     await expect(sidebar).toHaveCSS('width', '188px')
     await expect(taskDock).toHaveCSS('position', 'static')
     await expect(taskDock).toHaveCSS('width', '310px')
@@ -2490,15 +2825,11 @@ test.describe('production-first Workbench shell', () => {
     await expect(central).toHaveCSS('width', '1092px')
     const stopTaskButton = page.getByRole('button', { name: '停止任务' })
     await expect(stopTaskButton).toBeVisible()
-    const [stopTaskBox, narrowDockBox] = await Promise.all([
-      stopTaskButton.boundingBox(),
-      taskDock.boundingBox(),
-    ])
-    expect(stopTaskBox).not.toBeNull()
-    expect(narrowDockBox).not.toBeNull()
-    expect((stopTaskBox?.x ?? 0) + (stopTaskBox?.width ?? 0)).toBeLessThanOrEqual(
-      narrowDockBox?.x ?? 0,
+    const stageGroups = page.getByRole('group', { name: /阶段$/ })
+    const stageBoxes = await Promise.all(
+      Array.from({ length: 5 }, (_, index) => stageGroups.nth(index).boundingBox()),
     )
+    expect(new Set(stageBoxes.map((box) => Math.round(box?.y ?? -1))).size).toBe(2)
     await page.keyboard.press('Escape')
     const expandDockButton = taskDock.getByRole('button', {
       name: '展开任务坞，2 个运行中，1 个异常',
@@ -2558,6 +2889,10 @@ test.describe('production-first Workbench shell', () => {
       page.getByRole('navigation', { name: 'Workbench 主导航' }).locator('xpath=..'),
     ).toHaveCSS('width', '56px')
     await expect(page.getByRole('button', { name: '展开侧边栏' })).toBeVisible()
+    const reexpandTaskDock = taskDock.getByRole('button', { name: /展开任务坞/ })
+    if (await reexpandTaskDock.isVisible()) {
+      await reexpandTaskDock.click()
+    }
 
     for (const viewport of [
       { width: 1280, height: 720 },

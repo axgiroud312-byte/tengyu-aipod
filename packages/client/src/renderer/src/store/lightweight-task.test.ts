@@ -289,6 +289,23 @@ describe('lightweight task public event adapters', () => {
       ),
     ).toMatchObject({ status: 'running' })
 
+    expect(
+      lightweightTaskFromListingProgress(
+        {
+          batchId: progress.batchId,
+          profileId: '',
+          status: 'cancelled',
+          totalCount: progress.totalCount,
+          finishedCount: progress.totalCount,
+        },
+        3_500,
+      ),
+    ).toMatchObject({
+      id: 'listing:listing-1',
+      status: 'cancelled',
+      counts: { finished: 20, total: 20 },
+    })
+
     const failedItem = lightweightTaskFromListingProgress(
       {
         ...progress,
@@ -319,6 +336,22 @@ describe('lightweight task public event adapters', () => {
       status: 'running',
       waitingReason: '比特浏览器环境 profile-7 被占用，请先结束冲突的采集或上架任务',
     })
+
+    const cancelled = mergeLightweightTaskSummary(
+      lightweightTaskFromListingProgress(progress, 1_000),
+      lightweightTaskFromListingProgress(
+        {
+          batchId: progress.batchId,
+          profileId: '',
+          status: 'cancelled',
+          totalCount: progress.totalCount,
+          finishedCount: progress.totalCount,
+        },
+        5_500,
+      ),
+    )
+    expect(cancelled).toMatchObject({ status: 'cancelled' })
+    expect(cancelled).not.toHaveProperty('waitingReason')
 
     const restarted = lightweightTaskFromListingProgress(
       {

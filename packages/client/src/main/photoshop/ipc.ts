@@ -13,7 +13,7 @@ import { tempFileManager } from '../lib/temp-file-manager'
 import { assertPathInsideWorkbench } from '../lib/workbench-path-guard'
 import { readAppConfig } from '../onboarding'
 import { runBatch } from './multi-batch'
-import { scanPhotoshopPrintFolder } from './print-folder'
+import { scanPhotoshopPrintFolder, scanPhotoshopPrintPaths } from './print-folder'
 import { psdScanner } from './psd-scanner'
 import { photoshopStatusChecker } from './status-checker'
 
@@ -26,9 +26,7 @@ const scanPrintFolderInputSchema = z.object({
   excluded_file_paths: z.array(z.string().min(1)).default([]),
 })
 
-const runBatchInputSchema = z.object({
-  print_folder: z.string().min(1),
-  excluded_print_paths: z.array(z.string().min(1)).default([]),
+const runBatchOptionsSchema = z.object({
   templates: z.array(z.string().min(1)).min(1),
   replace_range: z.enum(['auto', 'topmost', 'top', 'all']).default('topmost'),
   smart_object_replace_mode: z
@@ -42,6 +40,18 @@ const runBatchInputSchema = z.object({
   max_retries: z.number().int().min(0).max(5).default(1),
   output_root: z.string().min(1),
 })
+
+const runBatchInputSchema = z.discriminatedUnion('input_mode', [
+  runBatchOptionsSchema.extend({
+    input_mode: z.literal('detection_candidates'),
+    print_paths: z.array(z.string().min(1)).min(1),
+  }),
+  runBatchOptionsSchema.extend({
+    input_mode: z.literal('print_folder'),
+    print_folder: z.string().min(1),
+    excluded_print_paths: z.array(z.string().min(1)).default([]),
+  }),
+])
 
 const cancelInputSchema = z.object({
   task_id: z.string().min(1),
@@ -161,20 +171,35 @@ export function registerPhotoshopIpc(): void {
     if (!config.workbench_root) {
       throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
     }
-    await assertPathInsideWorkbench(config.workbench_root, parsed.data.print_folder, {
-      domain: 'generation',
-      label: '印花文件夹',
-    })
-    await assertPathInsideWorkbench(config.workbench_root, parsed.data.output_root, {
+    const workbenchRoot = config.workbench_root
+    await assertPathInsideWorkbench(workbenchRoot, parsed.data.output_root, {
       domain: 'listing',
       label: '套版输出目录',
     })
-    const scan = await scanPhotoshopPrintFolder(parsed.data.print_folder, {
-      excludeFilePaths: parsed.data.excluded_print_paths,
-    })
+    const scan =
+      parsed.data.input_mode === 'detection_candidates'
+        ? await scanPhotoshopPrintPaths(
+            await Promise.all(
+              parsed.data.print_paths.map((path) =>
+                assertPathInsideWorkbench(workbenchRoot, path, {
+                  domain: 'detection',
+                  label: '检测通过候选',
+                }),
+              ),
+            ),
+          )
+        : await scanPhotoshopPrintFolder(
+            await assertPathInsideWorkbench(workbenchRoot, parsed.data.print_folder, {
+              domain: 'generation',
+              label: '印花文件夹',
+            }),
+            {
+              excludeFilePaths: parsed.data.excluded_print_paths,
+            },
+          )
     if (scan.prints.length === 0) {
-      throw new AppErrorClass('INVALID_INPUT', '印花文件夹内没有可套版图片', false, {
-        print_folder: parsed.data.print_folder,
+      throw new AppErrorClass('INVALID_INPUT', '当前输入没有可套版图片', false, {
+        input_mode: parsed.data.input_mode,
       })
     }
 

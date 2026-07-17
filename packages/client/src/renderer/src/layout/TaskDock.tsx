@@ -1,3 +1,5 @@
+import { completedPipelineRunHasException } from '@/features/pipeline/pipeline-run-outcome'
+import { t } from '@/locale/t'
 import {
   type LightweightTaskSummary,
   lightweightTaskFromCollectionEvent,
@@ -27,20 +29,23 @@ import {
 import { useCallback, useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 
-function runStatus(status: PipelineRunRecord['status'], softStopping: boolean) {
+function runStatus(run: PipelineRunRecord, softStopping: boolean) {
   if (softStopping) {
-    return { icon: CircleStop, label: '正在停止', tone: 'text-amber-700' }
+    return { icon: CircleStop, label: t('正在停止'), tone: 'text-amber-700' }
   }
-  if (status === 'running') {
+  if (run.status === 'running') {
     return { icon: Activity, label: '运行中', tone: 'text-primary' }
   }
-  if (status === 'completed') {
+  if (completedPipelineRunHasException(run)) {
+    return { icon: CircleAlert, label: t('已完成，有异常'), tone: 'text-amber-700' }
+  }
+  if (run.status === 'completed') {
     return { icon: CheckCircle2, label: '已完成', tone: 'text-emerald-700' }
   }
-  if (status === 'failed') {
+  if (run.status === 'failed') {
     return { icon: CircleAlert, label: '失败', tone: 'text-destructive' }
   }
-  if (status === 'interrupted') {
+  if (run.status === 'interrupted') {
     return { icon: CircleAlert, label: '已中断', tone: 'text-amber-700' }
   }
   return { icon: CircleStop, label: '已取消', tone: 'text-muted-foreground' }
@@ -234,7 +239,11 @@ export function TaskDock() {
   for (const run of runs) {
     if (run.status === 'running') {
       runningCount += 1
-    } else if (run.status === 'failed' || run.status === 'interrupted') {
+    } else if (
+      run.status === 'failed' ||
+      run.status === 'interrupted' ||
+      completedPipelineRunHasException(run)
+    ) {
       exceptionCount += 1
     }
   }
@@ -322,7 +331,7 @@ export function TaskDock() {
                 </h3>
                 <div className="space-y-1">
                   {runs.slice(0, 12).map((run) => {
-                    const status = runStatus(run.status, softStoppingRunIds.includes(run.id))
+                    const status = runStatus(run, softStoppingRunIds.includes(run.id))
                     const StatusIcon = status.icon
                     const selected = run.id === selectedRunId
                     return (
@@ -350,6 +359,15 @@ export function TaskDock() {
                     )
                   })}
                 </div>
+                {runs.length > 12 ? (
+                  <button
+                    className="mt-2 w-full rounded-md px-3 py-2 text-left text-xs font-medium text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
+                    onClick={() => navigate('/pipeline/runs')}
+                    type="button"
+                  >
+                    {t('查看全部 {count} 条运行记录').replace('{count}', String(runs.length))}
+                  </button>
+                ) : null}
               </section>
             ) : null}
             {sortedLightweightTasks.length > 0 ? (

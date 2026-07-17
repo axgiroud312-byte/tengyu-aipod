@@ -18,11 +18,19 @@ type TaskDockState = {
   upsertLightweightTask: (task: LightweightTaskSummary) => void
 }
 
+function defaultTaskDockExpanded() {
+  return (
+    typeof window === 'undefined' ||
+    typeof window.matchMedia !== 'function' ||
+    window.matchMedia('(min-width: 1400px)').matches
+  )
+}
+
 export const useTaskDockStore = create<TaskDockState>()(
   persist(
     (set) => ({
       completeTaskRuns: [],
-      expanded: true,
+      expanded: defaultTaskDockExpanded(),
       lightweightTasks: [],
       selectedRunId: null,
       softStoppingRunIds: [],

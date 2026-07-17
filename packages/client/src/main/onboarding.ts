@@ -1,6 +1,7 @@
 import { AppErrorClass } from '@tengyu-aipod/shared'
 import { dialog, ipcMain } from 'electron'
 import { z } from 'zod'
+import { BitBrowserClient } from './lib/bit-browser-client'
 import { getSecret, hasSecret, setSecret } from './lib/keychain'
 import { markOnboardingComplete, readOnboardingStateFile } from './lib/onboarding-state'
 import {
@@ -24,6 +25,9 @@ const onboardingApiKeysInputSchema = z.object({
 })
 const keychainHasInputSchema = z.object({
   key: z.string().min(1),
+})
+const bitBrowserTestInputSchema = z.object({
+  base_url: z.string().trim().min(1),
 })
 
 function parseOnboardingIpcInput<T>(schema: z.ZodType<T>, input: unknown, message: string): T {
@@ -136,6 +140,16 @@ export function registerOnboardingIpc() {
     }
 
     return { ok: true }
+  })
+
+  ipcMain.handle('onboarding:test-bit-browser', async (_event, input: unknown) => {
+    const { base_url: baseUrl } = parseOnboardingIpcInput(
+      bitBrowserTestInputSchema,
+      input,
+      '比特浏览器连接测试参数不正确',
+    )
+    const profiles = await new BitBrowserClient({ baseUrl }).listProfiles()
+    return { ok: true, profile_count: profiles.length }
   })
 
   ipcMain.handle('onboarding:complete', async () => {

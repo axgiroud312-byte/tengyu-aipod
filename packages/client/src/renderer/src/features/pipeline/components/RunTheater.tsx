@@ -1,5 +1,6 @@
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { t } from '@/locale/t'
 import type { PipelineProgress, PipelineRunConfig } from '@tengyu-aipod/shared'
 import { CopyPlus, ScrollText, Square } from 'lucide-react'
 import type { PipelineRailViewModel } from '../pipeline-progress-view-model'
@@ -15,9 +16,12 @@ const STAGE_LABELS: Record<PipelineConfigStage, string> = {
   title: '标题生成',
 }
 
-function theaterStatusLabel(status: PipelineProgress['status'] | undefined) {
+function theaterStatusLabel(status: PipelineProgress['status'] | undefined, hasException: boolean) {
+  if (status === 'completed' && hasException) {
+    return t('完成，有异常')
+  }
   if (status === 'completed') {
-    return '完成战报'
+    return t('完成战报')
   }
   if (status === 'failed') {
     return '运行失败'
@@ -125,7 +129,7 @@ export function RunTheater({
   validationIssues: PipelineValidationIssue[]
 }) {
   const status = progress?.status
-  const statusLabel = theaterStatusLabel(status)
+  const statusLabel = theaterStatusLabel(status, railView.summary.hasException)
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
@@ -134,7 +138,16 @@ export function RunTheater({
             <h1 className="text-xl font-semibold">成果剧场</h1>
             <Badge
               variant={
-                status === 'failed' ? 'destructive' : status === 'running' ? 'default' : 'secondary'
+                status === 'failed'
+                  ? 'destructive'
+                  : status === 'running'
+                    ? 'default'
+                    : railView.summary.hasException
+                      ? 'outline'
+                      : 'secondary'
+              }
+              className={
+                railView.summary.hasException ? 'border-amber-300 text-amber-700' : undefined
               }
             >
               {statusLabel}

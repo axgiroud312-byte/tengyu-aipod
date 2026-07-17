@@ -1,7 +1,18 @@
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { progressPercent } from '@/lib/format'
 import { detectionImageSrc } from '@/lib/media'
+import { t } from '@/locale/t'
 import type { RiskLevel, Skill, SkillSummary, SkillVariable } from '@tengyu-aipod/shared'
 import {
   CheckCircle2,
@@ -23,6 +34,7 @@ import {
   X,
 } from 'lucide-react'
 import { type DragEvent as ReactDragEvent, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import type { DetectionConfig, DetectionThresholdConfig } from '../../../main/lib/detection-config'
 import type {
   DetectionImageInfo,
@@ -1031,6 +1043,7 @@ function FailedResults({
 }
 
 export function DetectionWorkbench() {
+  const navigate = useNavigate()
   const [sourcePaths, setSourcePaths] = useState<string[]>([])
   const [inputSources, setInputSources] = useState<DetectionInputSource[]>([])
   const [sourceImages, setSourceImages] = useState<DetectionImageInfo[]>([])
@@ -1054,6 +1067,9 @@ export function DetectionWorkbench() {
   const [results, setResults] = useState<DetectionImageResult[]>([])
   const [pendingArtifactId, setPendingArtifactId] = useState<string | null>(null)
   const [promoting, setPromoting] = useState(false)
+  const [promoteDialogOpen, setPromoteDialogOpen] = useState(false)
+  const [pendingPromotionArtifactIds, setPendingPromotionArtifactIds] = useState<string[]>([])
+  const [promotedCandidateCount, setPromotedCandidateCount] = useState(0)
   const [activeDetectionPreviewIndex, setActiveDetectionPreviewIndex] = useState<number | null>(
     null,
   )
@@ -1324,21 +1340,24 @@ export function DetectionWorkbench() {
     }
   }
 
-  async function promotePassResults() {
-    if (!passArtifactIds.length) {
-      setError('没有可加入套版候选清单的无风险图片')
+  async function promotePassResults(artifactIds: string[]) {
+    if (!artifactIds.length) {
+      setError(t('没有可加入套版候选清单的无风险图片'))
       return
     }
     setPromoting(true)
     setError(null)
     try {
       const promoted = await window.api.detection.promoteToMatting({
-        artifact_ids: passArtifactIds,
+        artifact_ids: artifactIds,
         mode: 'copy',
       })
-      setMessage(`已加入 ${promoted} 张无风险图片到套版候选清单`)
+      setPromotedCandidateCount(promoted)
+      setMessage(
+        t('已加入 {count} 张无风险图片到套版候选清单').replace('{count}', String(promoted)),
+      )
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : '加入套版候选清单失败')
+      setError(nextError instanceof Error ? nextError.message : t('加入套版候选清单失败'))
     } finally {
       setPromoting(false)
     }
@@ -1521,6 +1540,16 @@ export function DetectionWorkbench() {
           {message}
         </div>
       ) : null}
+      {promotedCandidateCount > 0 ? (
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-900">
+          <span>
+            {t('已写入 {count} 张套版候选。').replace('{count}', String(promotedCandidateCount))}
+          </span>
+          <Button onClick={() => navigate('/photoshop')} type="button" variant="secondary">
+            {t('去 PS 套版')}
+          </Button>
+        </div>
+      ) : null}
 
       <div className="grid min-w-0 gap-5 min-[1400px]:grid-cols-[minmax(0,1fr)_340px]">
         <section aria-label="检测输入与规则" className="min-w-0 space-y-5">
@@ -1605,7 +1634,10 @@ export function DetectionWorkbench() {
           </div>
           <Button
             disabled={!passArtifactIds.length || promoting}
-            onClick={() => void promotePassResults()}
+            onClick={() => {
+              setPendingPromotionArtifactIds([...passArtifactIds])
+              setPromoteDialogOpen(true)
+            }}
             type="button"
             variant="secondary"
           >
@@ -1639,6 +1671,25 @@ export function DetectionWorkbench() {
         title="侵权检测预览"
         onActiveIndexChange={setActiveDetectionPreviewIndex}
       />
+      <AlertDialog open={promoteDialogOpen} onOpenChange={setPromoteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t('确认加入套版候选清单')}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t('发现 {count} 张通过印花，将写入本地套版候选清单。').replace(
+                '{count}',
+                String(pendingPromotionArtifactIds.length),
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t('取消')}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void promotePassResults(pendingPromotionArtifactIds)}>
+              {t('确认加入')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </section>
   )
 }

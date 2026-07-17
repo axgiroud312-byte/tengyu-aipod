@@ -122,7 +122,16 @@ async function loginByPhone(page: Page) {
   await page.getByRole('button', { name: '发送验证码' }).click()
   await page.getByRole('textbox', { name: '验证码' }).fill('123456')
   await page.getByRole('button', { name: '验证登录' }).click()
-  await expect(page.getByRole('button', { name: '全部跳过' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: '首次设置' })).toBeVisible()
+}
+
+async function advanceOnboardingToCompletion(page: Page, workbenchRoot: string) {
+  await page.evaluate(async (root) => {
+    await window.api.onboarding.saveWorkbenchRoot(root)
+  }, workbenchRoot)
+  await page.reload()
+  await page.getByRole('button', { name: '保存并继续' }).click()
+  await page.getByRole('button', { name: '全部跳过' }).click()
 }
 
 test.describe('workspace settings', () => {
@@ -179,10 +188,9 @@ test.describe('workspace settings', () => {
     await page.setViewportSize({ width: 1440, height: 900 })
 
     await loginByPhone(page)
-    await page.getByRole('button', { name: '全部跳过' }).click()
+    await advanceOnboardingToCompletion(page, workspaceRoot)
     await page.getByRole('button', { name: '开始使用' }).click()
-    await expect(page.getByRole('heading', { name: '请先选择工作区' })).toBeVisible()
-    await page.getByRole('button', { name: '去设置页选择工作区' }).click()
+    await page.getByRole('link', { name: '设置', exact: true }).click()
     const settings = page.getByRole('region', { name: '本机设置' })
     const settingsNavigation = settings.getByRole('tablist', { name: '设置分类' })
     const generalTab = settingsNavigation.getByRole('tab', { name: '常规' })

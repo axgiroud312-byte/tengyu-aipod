@@ -133,6 +133,29 @@ type PreloadApiContract = Omit<Partial<ClientApi>, 'listing'> &
     listing: ClientApi['listing'] & Record<string, unknown>
   }
 
+type PhotoshopRunBatchInput = (
+  | {
+      input_mode: 'detection_candidates'
+      print_paths: string[]
+    }
+  | {
+      input_mode: 'print_folder'
+      print_folder: string
+      excluded_print_paths?: string[]
+    }
+) & {
+  templates: string[]
+  replace_range: 'auto' | 'topmost' | 'top' | 'all'
+  smart_object_replace_mode: 'replaceContents' | 'editSmartObject'
+  smart_object_inner_fit_mode: 'fit' | 'fill'
+  output_layout: PhotoshopOutputLayout
+  format: PhotoshopExportFormat
+  clip_mode: PhotoshopClipMode
+  skip_completed: boolean
+  max_retries: number
+  output_root: string
+}
+
 export const api = {
   ping: () => ipcRenderer.invoke('app:ping') as Promise<string>,
   logs: {
@@ -171,6 +194,11 @@ export const api = {
       }>,
     saveApiKeys: (apiKeys: Record<string, string>) =>
       ipcRenderer.invoke('onboarding:save-api-keys', apiKeys) as Promise<{ ok: true }>,
+    testBitBrowser: (input: { base_url: string }) =>
+      ipcRenderer.invoke('onboarding:test-bit-browser', input) as Promise<{
+        ok: true
+        profile_count: number
+      }>,
     complete: () => ipcRenderer.invoke('onboarding:complete') as Promise<{ ok: true }>,
   },
   workspace: {
@@ -743,6 +771,8 @@ export const api = {
         config: input.config as ListingRunConfig,
         items: input.items,
       }) as Promise<string>,
+    cancel: (input: { task_id: string }) =>
+      ipcRenderer.invoke('listing:cancel', input) as Promise<{ ok: boolean }>,
     onProgress: (callback: (progress: ListingProgress) => void) => {
       const listener = (_event: Electron.IpcRendererEvent, progress: ListingProgress) => {
         callback(progress)
@@ -777,20 +807,8 @@ export const api = {
       ipcRenderer.invoke('photoshop:scan-print-folder', input) as Promise<PhotoshopPrintFolderScan>,
     scanTemplate: (input: PhotoshopScanTemplateRequest) =>
       ipcRenderer.invoke('photoshop:scan-template', input) as Promise<PsdTemplate>,
-    runBatch: (input: {
-      print_folder: string
-      excluded_print_paths?: string[]
-      templates: string[]
-      replace_range: 'auto' | 'topmost' | 'top' | 'all'
-      smart_object_replace_mode: 'replaceContents' | 'editSmartObject'
-      smart_object_inner_fit_mode: 'fit' | 'fill'
-      output_layout: PhotoshopOutputLayout
-      format: PhotoshopExportFormat
-      clip_mode: PhotoshopClipMode
-      skip_completed: boolean
-      max_retries: number
-      output_root: string
-    }) => ipcRenderer.invoke('photoshop:run-batch', input) as Promise<PhotoshopBatchResult>,
+    runBatch: (input: PhotoshopRunBatchInput) =>
+      ipcRenderer.invoke('photoshop:run-batch', input) as Promise<PhotoshopBatchResult>,
     cancel: (input: { task_id: string }) =>
       ipcRenderer.invoke('photoshop:cancel', input) as Promise<{ ok: boolean }>,
     listCachedTemplates: () =>

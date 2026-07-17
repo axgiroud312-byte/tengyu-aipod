@@ -62,5 +62,6 @@ export type ClientApi = {
     createTask: (input: ListingTaskInput) => Promise<ListingTaskRecord>
     onProgress: (callback: (progress: ListingProgress) => void) => () => void
     run: (input: { config: unknown; items: ListingItem[] }) => Promise<string>
+    cancel: (input: { task_id: string }) => Promise<{ ok: boolean }>
   }
 }

@@ -1,8 +1,10 @@
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { progressPercent } from '@/lib/format'
 import { localImageUrl } from '@/lib/media'
+import { t } from '@/locale/t'
 import type {
   PhotoshopBatchOutputGroup,
   PhotoshopBatchResult,
@@ -111,6 +113,14 @@ const resultFilters = [
   { key: 'skipped', label: '跳过' },
 ] as const satisfies Array<{ key: PhotoshopResultFilter; label: string }>
 
+type PhotoshopInputMode = 'detection_candidates' | 'print_folder'
+
+function candidatePrintId(sourcePath: string) {
+  const name = templateLabel(sourcePath)
+  const extensionIndex = name.lastIndexOf('.')
+  return extensionIndex > 0 ? name.slice(0, extensionIndex) : name
+}
+
 function PhotoshopStatusBar({
   onStatusChange,
 }: {
@@ -184,6 +194,7 @@ function PhotoshopStatusBar({
 export function PhotoshopPage() {
   const [skipCompleted, setSkipCompleted] = useState(true)
   const outputLayout: PhotoshopOutputLayout = 'sku_flat'
+  const [inputMode, setInputMode] = useState<PhotoshopInputMode>('detection_candidates')
   const [printFolder, setPrintFolder] = useState('02-印花工作区')
   const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
   const [printScan, setPrintScan] = useState<PhotoshopPrintFolderScan | null>(null)
@@ -291,10 +302,32 @@ export function PhotoshopPage() {
         setOutputDir(
           joinLocalPath(workspace.root, '04-上架工作区', `套版-${timestampSlug(Date.now())}`),
         )
-        void loadPrintFolder(nextPrintFolder)
+        void loadDetectionCandidates()
       })
       .catch(() => null)
   }, [])
+
+  async function loadDetectionCandidates() {
+    setLoadingPrints(true)
+    try {
+      const candidates = await window.api.detection.listMattingCandidates()
+      setExcludedPrintPaths([])
+      setPrintScan({
+        folder: '',
+        prints: candidates.map((candidate) => ({
+          id: candidatePrintId(candidate.sourcePath),
+          file_path: candidate.sourcePath,
+          thumbnail_url: localImageUrl(candidate.sourcePath),
+        })),
+      })
+      setMessage(t('已读取 {count} 张检测通过候选').replace('{count}', String(candidates.length)))
+    } catch (error) {
+      setPrintScan(null)
+      setMessage(error instanceof Error ? error.message : String(error))
+    } finally {
+      setLoadingPrints(false)
+    }
+  }
 
   async function loadPrintFolder(folder = printFolder, excludedPaths = excludedPrintPaths) {
     if (!folder.trim()) {
@@ -308,7 +341,7 @@ export function PhotoshopPage() {
         folder,
       })
       setPrintScan(scan)
-      setMessage(`已检索到 ${scan.prints.length} 张印花`)
+      setMessage(t('已检索到 {count} 张印花').replace('{count}', String(scan.prints.length)))
     } catch (error) {
       setPrintScan(null)
       setMessage(error instanceof Error ? error.message : String(error))
@@ -320,16 +353,38 @@ export function PhotoshopPage() {
   async function choosePrintFolder() {
     const result = await window.api.photoshop.choosePrintFolder()
     if (result.ok) {
+      setInputMode('print_folder')
       setExcludedPrintPaths([])
       setPrintFolder(result.data.path)
       await loadPrintFolder(result.data.path, [])
     }
   }
 
+  async function selectInputMode(nextMode: PhotoshopInputMode) {
+    setInputMode(nextMode)
+    setPrintScan(null)
+    setExcludedPrintPaths([])
+    if (nextMode === 'detection_candidates') {
+      await loadDetectionCandidates()
+      return
+    }
+    await loadPrintFolder(printFolder, [])
+  }
+
+  async function refreshInput() {
+    if (inputMode === 'detection_candidates') {
+      await loadDetectionCandidates()
+      return
+    }
+    await loadPrintFolder()
+  }
+
   function removePrintCandidate(candidate: PhotoshopPrintFolderScan['prints'][number]) {
-    setExcludedPrintPaths((current) =>
-      current.includes(candidate.file_path) ? current : [...current, candidate.file_path],
-    )
+    if (inputMode === 'print_folder') {
+      setExcludedPrintPaths((current) =>
+        current.includes(candidate.file_path) ? current : [...current, candidate.file_path],
+      )
+    }
     setPrintScan((current) =>
       current
         ? {
@@ -395,17 +450,33 @@ export function PhotoshopPage() {
       verified_outputs: 0,
     })
     try {
-      const scan = await window.api.photoshop.scanPrintFolder({
-        excluded_file_paths: excludedPrintPaths,
-        folder: printFolder,
-      })
-      setPrintScan(scan)
-      if (scan.prints.length === 0) {
-        throw new Error('印花文件夹内没有可套版图片')
+      const frozenCandidatePaths = printAssets.map((print) => print.file_path)
+      if (inputMode === 'detection_candidates' && frozenCandidatePaths.length === 0) {
+        throw new Error(t('检测通过候选清单为空'))
+      }
+      const input =
+        inputMode === 'detection_candidates'
+          ? {
+              input_mode: 'detection_candidates' as const,
+              print_paths: frozenCandidatePaths,
+            }
+          : {
+              input_mode: 'print_folder' as const,
+              print_folder: printFolder,
+              excluded_print_paths: excludedPrintPaths,
+            }
+      if (inputMode === 'print_folder') {
+        const scan = await window.api.photoshop.scanPrintFolder({
+          excluded_file_paths: excludedPrintPaths,
+          folder: printFolder,
+        })
+        setPrintScan(scan)
+        if (scan.prints.length === 0) {
+          throw new Error(t('印花文件夹内没有可套版图片'))
+        }
       }
       const result = await window.api.photoshop.runBatch({
-        print_folder: printFolder,
-        excluded_print_paths: excludedPrintPaths,
+        ...input,
         templates: templatePaths,
         replace_range: replaceRange,
         smart_object_replace_mode: smartObjectReplaceMode,
@@ -495,40 +566,79 @@ export function PhotoshopPage() {
           className="grid min-w-0 gap-5 min-[1800px]:grid-cols-2"
         >
           <div className="rounded-md border bg-background p-5 shadow-sm">
-            <p className="text-sm font-medium text-muted-foreground">印花文件夹</p>
-            <h2 className="mt-1 text-lg font-semibold">套版输入图片</h2>
-            <label className="mt-4 block space-y-2 text-sm font-medium">
-              <span className="flex items-center gap-2">
-                <ImageIcon className="h-4 w-4" />
-                输入目录
-              </span>
-              <div className="flex gap-2">
-                <input
-                  className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                  onChange={(event) => setPrintFolder(event.target.value)}
-                  value={printFolder}
+            <p className="text-sm font-medium text-muted-foreground">{t('输入来源')}</p>
+            <h2 className="mt-1 text-lg font-semibold">{t('选择套版印花')}</h2>
+            <RadioGroup
+              aria-label={t('套版输入来源')}
+              className="mt-4 grid-cols-2 gap-2"
+              onValueChange={(value) => void selectInputMode(value as PhotoshopInputMode)}
+              value={inputMode}
+            >
+              <label
+                className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2.5 text-sm font-medium ${
+                  inputMode === 'detection_candidates' ? 'border-primary bg-primary/5' : ''
+                }`}
+                htmlFor="photoshop-input-detection-candidates"
+              >
+                <RadioGroupItem
+                  id="photoshop-input-detection-candidates"
+                  value="detection_candidates"
                 />
-                <Button
-                  className="h-10 px-3"
-                  onClick={() => void choosePrintFolder()}
-                  type="button"
-                  variant="secondary"
-                >
-                  <FolderOpen className="h-4 w-4" />
-                </Button>
-              </div>
-            </label>
+                {t('检测通过候选')}
+              </label>
+              <label
+                className={`flex cursor-pointer items-center gap-2 rounded-md border px-3 py-2.5 text-sm font-medium ${
+                  inputMode === 'print_folder' ? 'border-primary bg-primary/5' : ''
+                }`}
+                htmlFor="photoshop-input-print-folder"
+              >
+                <RadioGroupItem id="photoshop-input-print-folder" value="print_folder" />
+                {t('印花文件夹')}
+              </label>
+            </RadioGroup>
+            {inputMode === 'print_folder' ? (
+              <label className="mt-4 block space-y-2 text-sm font-medium">
+                <span className="flex items-center gap-2">
+                  <ImageIcon className="h-4 w-4" />
+                  {t('输入目录')}
+                </span>
+                <div className="flex gap-2">
+                  <input
+                    className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    onChange={(event) => setPrintFolder(event.target.value)}
+                    value={printFolder}
+                  />
+                  <Button
+                    aria-label={t('选择印花文件夹')}
+                    className="h-10 px-3"
+                    onClick={() => void choosePrintFolder()}
+                    type="button"
+                    variant="secondary"
+                  >
+                    <FolderOpen className="h-4 w-4" />
+                  </Button>
+                </div>
+              </label>
+            ) : (
+              <p className="mt-4 rounded-md bg-muted px-3 py-2.5 text-sm text-muted-foreground">
+                {t('当前清单')} {printAssets.length} {t('张')}
+              </p>
+            )}
           </div>
 
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">套版候选清单</p>
-                <h2 className="mt-1 text-lg font-semibold">输入目录印花</h2>
+                <p className="text-sm font-medium text-muted-foreground">
+                  {inputMode === 'detection_candidates' ? t('检测通过候选') : t('印花文件夹')}
+                </p>
+                <h2 className="mt-1 text-lg font-semibold">
+                  {inputMode === 'detection_candidates' ? t('候选印花') : t('目录印花')}
+                </h2>
               </div>
               <Button
                 disabled={loadingPrints}
-                onClick={() => void loadPrintFolder()}
+                onClick={() => void refreshInput()}
                 type="button"
                 variant="secondary"
               >
@@ -569,7 +679,9 @@ export function PhotoshopPage() {
                 ))
               ) : (
                 <div className="rounded-md bg-muted px-3 py-8 text-center text-sm text-muted-foreground">
-                  当前输入目录未找到图片
+                  {inputMode === 'detection_candidates'
+                    ? t('当前没有检测通过候选')
+                    : t('当前输入目录未找到图片')}
                 </div>
               )}
               {printAssets.length > 6 ? (
@@ -770,7 +882,7 @@ export function PhotoshopPage() {
                 batchRunning ||
                 !photoshopReady ||
                 templatePaths.length === 0 ||
-                !printFolder.trim()
+                printAssets.length === 0
               }
               onClick={() => void runPhotoshopBatch()}
               type="button"

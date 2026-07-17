@@ -305,6 +305,22 @@ describe('buildPipelineRailViewModel', () => {
     expect(view.logTail).toEqual(['套版完成 3 个货号', '标题完成 2 个货号'])
   })
 
+  it('labels a completed run with isolated item failures as completed with exceptions', () => {
+    const view = buildPipelineRailViewModel({
+      progress: runDetail({
+        status: 'completed',
+        items: [item({ key: 'detection', status: 'failed', id: 'failed-detection' })],
+      }),
+      issues: [],
+      enabled,
+    })
+
+    expect(view.summary).toMatchObject({
+      hasException: true,
+      status: '完整任务已完成，有异常',
+    })
+  })
+
   it('carries locked stage reasons for the rail to display', () => {
     const view = buildPipelineRailViewModel({
       progress: null,
