@@ -1764,6 +1764,16 @@ test.describe('production-first Workbench shell', () => {
     await settings.getByLabel('货号批次目录').fill(`${batchDir}-next`)
     await expect(failedRow).toBeHidden()
     await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-run',
+      profileId: 'profile-7',
+      status: 'uploading',
+      totalCount: 2,
+      finishedCount: 1,
+      currentSku: 'SKU001',
+      currentStage: 'upload_material_images',
+    })
+    await expect(status.getByText('SKU001', { exact: true })).toHaveCount(0)
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
       batchId: 'listing-ui-lock',
       profileId: 'profile-locked',
       status: 'failed',

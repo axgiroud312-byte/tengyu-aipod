@@ -39,7 +39,7 @@ import {
   RefreshCw,
   RotateCcw,
 } from 'lucide-react'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { BitBrowserProfile } from '../../../main/lib/bit-browser-client'
 import type { BrowserProfileHolder } from '../../../main/lib/browser-profile-lock'
 import type { ListingBatchLoadResult } from '../../../main/lib/listing-batch-loader'
@@ -188,6 +188,7 @@ export function ListingWorkbench() {
   const [progress, setProgress] = useState<ListingProgress | null>(null)
   const [workspaceProgress, setWorkspaceProgress] = useState<Record<string, WorkspaceProgress>>({})
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null)
+  const activeBatchIdsRef = useRef<Set<string>>(new Set())
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -355,6 +356,9 @@ export function ListingWorkbench() {
   }, [progress, refreshStatusRows])
 
   function handleProgress(nextProgress: ListingProgress) {
+    if (!activeBatchIdsRef.current.has(nextProgress.batchId)) {
+      return
+    }
     setProgress(nextProgress)
     if (!nextProgress.profileId) {
       return
@@ -395,6 +399,7 @@ export function ListingWorkbench() {
   }
 
   function resetOperationalState() {
+    activeBatchIdsRef.current.clear()
     setScanResult(null)
     setStatusRows([])
     setWorkspaceProgress({})
@@ -461,6 +466,7 @@ export function ListingWorkbench() {
     setProgress(null)
     setWorkspaceProgress({})
     setStatusRows([])
+    activeBatchIdsRef.current.clear()
     try {
       const editUrl = editUrlFromTemplate(selectedTemplate, draftTemplateId)
       const template: ListingTemplateConfig = {
@@ -515,6 +521,7 @@ export function ListingWorkbench() {
         },
         items,
       })
+      activeBatchIdsRef.current.add(taskId)
       setRunningTaskId(taskId)
       await refreshListingPlanRecords()
     } catch (nextError) {
@@ -568,6 +575,7 @@ export function ListingWorkbench() {
     setError(null)
     setProgress(null)
     setWorkspaceProgress({})
+    activeBatchIdsRef.current.clear()
     try {
       setSelectedProfileIds((current) => Array.from(new Set([...current, ...retryWorkspaceIds])))
       const template: ListingTemplateConfig = {
@@ -602,6 +610,7 @@ export function ListingWorkbench() {
           },
           items: retryItems,
         })
+        activeBatchIdsRef.current.add(taskId)
         taskIds.push(taskId)
       }
       setRunningTaskId(taskIds.join(', '))
