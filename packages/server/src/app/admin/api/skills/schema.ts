@@ -1,13 +1,20 @@
 import { parsePhpUidAllowlistInput } from '@/lib/targeting'
 import { z } from 'zod'
 
+const skillCacheSegmentSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/, '只能包含字母、数字、点、下划线、加号和连字符')
+
 export const skillInputSchema = z.object({
-  id: z.string().min(1),
+  id: skillCacheSegmentSchema,
   module: z.enum(['generation', 'detection', 'title']),
   category: z.string().nullable().optional(),
   platform: z.string().nullable().optional(),
   language: z.string().nullable().optional(),
-  version: z.string().min(1),
+  version: skillCacheSegmentSchema,
   enabled: z.boolean(),
   system_prompt: z.string().min(1),
   variables_json: z.string().min(2),

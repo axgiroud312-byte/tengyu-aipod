@@ -1,5 +1,5 @@
+import { authorizeCustomerRequest } from '@/lib/customer-request-auth'
 import { listSkills } from '@/lib/skills'
-import { parseOptionalPhpUid } from '@/lib/targeting'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -15,6 +15,11 @@ function errorResponse(code: string, message: string, status: number) {
 }
 
 export async function GET(request: Request) {
+  const authorization = await authorizeCustomerRequest(request)
+  if (!authorization.ok) {
+    return errorResponse(authorization.code, authorization.message, authorization.status)
+  }
+
   const url = new URL(request.url)
   const parsed = skillListQuerySchema.safeParse({
     module: url.searchParams.get('module') ?? undefined,
@@ -31,7 +36,7 @@ export async function GET(request: Request) {
     ...(parsed.data.category ? { category: parsed.data.category } : {}),
     ...(parsed.data.platform ? { platform: parsed.data.platform } : {}),
     ...(parsed.data.language ? { language: parsed.data.language } : {}),
-    uid: parseOptionalPhpUid(url.searchParams.get('uid')),
+    uid: authorization.phpUid,
   })
   return NextResponse.json({ ok: true, data })
 }

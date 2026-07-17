@@ -24,8 +24,10 @@ import {
   nextVisibleImageName,
   normalizedVisibleImageNaming,
 } from '../user-visible-filename'
+import { readyMicroBatches } from './ready-micro-batches'
 
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
+const MAX_READY_PHOTOSHOP_BATCH_SIZE = 16
 
 type PromiseMutexLike = {
   runExclusive<T>(fn: () => Promise<T>): Promise<T>
@@ -237,6 +239,8 @@ export function createPhotoshopStage(
           .filter((path): path is string => Boolean(path)),
       ).size
       let waitingFolderPath: string | null = null
+      const replaceRange = config.replaceRange ?? 'auto'
+      const microBatchEnabled = replaceRange === 'auto' || replaceRange === 'topmost'
 
       insertRunningStep(dependencies.db, context.runId, 0, 0)
       dependencies.appendLog(context.runId, {
@@ -246,7 +250,7 @@ export function createPhotoshopStage(
         details: {
           templates: config.templates,
           outputRoot: outputRootPath,
-          replaceRange: config.replaceRange ?? 'auto',
+          replaceRange,
           smartObjectReplaceMode: config.smartObjectReplaceMode ?? 'replaceContents',
           smartObjectInnerFitMode: config.smartObjectInnerFitMode ?? 'fill',
           format: config.format ?? 'jpg',
@@ -254,104 +258,175 @@ export function createPhotoshopStage(
         },
       })
 
-      for await (const item of input) {
-        dependencies.assertNotCancelled()
-        queued += 1
-        insertRunningStep(dependencies.db, context.runId, queued, completed)
-        dependencies.emitRunningProgress(context.runId, 'PS 套版流处理中')
-        try {
-          const resumeItemForTemplate = (templatePath: string) =>
-            context.resume?.getItem(
-              'photoshop',
-              `${item.itemKey}:${safePathSegment(templatePath)}`,
-            ) ?? null
-          const resumeWaitingPath =
-            config.templates
-              .map((templatePath) => resumeItemForTemplate(templatePath)?.source_path)
-              .find((path): path is string => Boolean(path)) ?? null
-          const prepared = resumeWaitingPath
-            ? {
-                waitingFolder: dirname(resumeWaitingPath),
-                path: resumeWaitingPath,
-                skuCode: basename(resumeWaitingPath, extname(resumeWaitingPath)),
-              }
-            : await prepareWaitingPrint({
-                workbenchRoot: dependencies.workbenchRoot,
-                runId: context.runId,
-                sourcePath: item.path,
-                printSkuCode: context.config.printSkuCode,
-                filenameSeparator: context.config.filenameSeparator,
-                sequence: nextSequence,
-              })
-          if (!resumeWaitingPath) {
-            nextSequence += 1
-          }
-          waitingFolderPath = prepared.waitingFolder
+      for await (const items of readyMicroBatches(
+        input,
+        microBatchEnabled ? MAX_READY_PHOTOSHOP_BATCH_SIZE : 1,
+      )) {
+        const preparedItems: Array<{
+          item: PipelinePrintStreamItem
+          prepared: Awaited<ReturnType<typeof prepareWaitingPrint>>
+        }> = []
 
-          for (const templatePath of config.templates) {
-            const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
-            const resumeItem = resumeItemForTemplate(templatePath)
-            if (resumeItem?.status === 'completed') {
-              continue
+        for (const item of items) {
+          dependencies.assertNotCancelled()
+          queued += 1
+          insertRunningStep(dependencies.db, context.runId, queued, completed)
+          dependencies.emitRunningProgress(context.runId, 'PS 套版流处理中')
+          try {
+            const resumeItemForTemplate = (templatePath: string) =>
+              context.resume?.getItem(
+                'photoshop',
+                `${item.itemKey}:${safePathSegment(templatePath)}`,
+              ) ?? null
+            const resumeWaitingPath =
+              config.templates
+                .map((templatePath) => resumeItemForTemplate(templatePath)?.source_path)
+                .find((path): path is string => Boolean(path)) ?? null
+            const prepared = resumeWaitingPath
+              ? {
+                  waitingFolder: dirname(resumeWaitingPath),
+                  path: resumeWaitingPath,
+                  skuCode: basename(resumeWaitingPath, extname(resumeWaitingPath)),
+                }
+              : await prepareWaitingPrint({
+                  workbenchRoot: dependencies.workbenchRoot,
+                  runId: context.runId,
+                  sourcePath: item.path,
+                  printSkuCode: context.config.printSkuCode,
+                  filenameSeparator: context.config.filenameSeparator,
+                  sequence: nextSequence,
+                })
+            if (!resumeWaitingPath) {
+              nextSequence += 1
             }
-            const taskId = `${context.runId}-photoshop-${prepared.skuCode}-${safePathSegment(templatePath)}`
-            const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
-            const cancelFilePath = join(taskDir, 'cancel.flag')
+            waitingFolderPath = prepared.waitingFolder
+            preparedItems.push({ item, prepared })
+          } catch (error) {
+            failed += 1
             dependencies.upsertPipelineItem({
               runId: context.runId,
-              itemKey: stageItemKey,
+              itemKey: item.itemKey,
               stepKey: 'photoshop',
-              status: 'running',
-              sourcePath: prepared.path,
+              status: 'failed',
+              sourcePath: item.path,
               artifactId: item.artifactId,
               printId: item.printId,
               sourceArtifactIds: item.sourceArtifactIds,
+              errorMessage: error instanceof Error ? error.message : String(error),
+              completed: true,
             })
+            dependencies.appendLog(context.runId, {
+              level: 'warn',
+              step_key: 'photoshop',
+              message: '等待套版准备失败，已跳过当前印花',
+              details: {
+                itemKey: item.itemKey,
+                error: error instanceof Error ? error.message : String(error),
+              },
+            })
+          }
+        }
+
+        for (const templatePath of config.templates) {
+          const pending = preparedItems.filter(({ item }) => {
+            const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
+            return context.resume?.getItem('photoshop', stageItemKey)?.status !== 'completed'
+          })
+          if (pending.length === 0) {
+            continue
+          }
+
+          const firstPrepared = pending[0]?.prepared
+          if (!firstPrepared) {
+            continue
+          }
+          const taskId = `${context.runId}-photoshop-${firstPrepared.skuCode}-${safePathSegment(templatePath)}`
+          let taskDirCreated = false
+          let keepTempOnFailure = false
+          try {
+            const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
+            taskDirCreated = true
+            const cancelFilePath = join(taskDir, 'cancel.flag')
+            for (const { item, prepared } of pending) {
+              dependencies.upsertPipelineItem({
+                runId: context.runId,
+                itemKey: `${item.itemKey}:${safePathSegment(templatePath)}`,
+                stepKey: 'photoshop',
+                status: 'running',
+                sourcePath: prepared.path,
+                artifactId: item.artifactId,
+                printId: item.printId,
+                sourceArtifactIds: item.sourceArtifactIds,
+              })
+            }
             dependencies.setCurrentCancel(() =>
               writeFile(cancelFilePath, String(Date.now()), 'utf8'),
             )
+            const result = await dependencies.photoshopMutex.runExclusive(async () => {
+              dependencies.assertNotCancelled()
+              return dependencies.runBatch(
+                pending.map(({ prepared }) => ({
+                  id: prepared.skuCode,
+                  file_path: prepared.path,
+                })),
+                [templatePath],
+                {
+                  taskId,
+                  outputRoot: outputRootPath,
+                  outputLayout: 'template_first',
+                  replaceRange,
+                  smartObjectReplaceMode: config.smartObjectReplaceMode ?? 'replaceContents',
+                  smartObjectInnerFitMode: config.smartObjectInnerFitMode ?? 'fill',
+                  format: config.format ?? 'jpg',
+                  clipMode: config.clipMode ?? 'auto',
+                  skipCompleted: config.skipCompleted ?? true,
+                  maxRetries: config.maxRetries ?? 1,
+                  cancelFilePath,
+                },
+              )
+            })
+            const groupsBySku = new Map(
+              result.result_groups.map((group) => [group.sku_folder, group]),
+            )
 
-            let keepTempOnFailure = true
-            try {
-              const result = await dependencies.photoshopMutex.runExclusive(async () => {
-                dependencies.assertNotCancelled()
-                return dependencies.runBatch(
-                  [{ id: prepared.skuCode, file_path: prepared.path }],
-                  [templatePath],
-                  {
-                    taskId,
-                    outputRoot: outputRootPath,
-                    outputLayout: 'template_first',
-                    replaceRange: config.replaceRange ?? 'auto',
-                    smartObjectReplaceMode: config.smartObjectReplaceMode ?? 'replaceContents',
-                    smartObjectInnerFitMode: config.smartObjectInnerFitMode ?? 'fill',
-                    format: config.format ?? 'jpg',
-                    clipMode: config.clipMode ?? 'auto',
-                    skipCompleted: config.skipCompleted ?? true,
-                    maxRetries: config.maxRetries ?? 1,
-                    cancelFilePath,
+            for (const { item, prepared } of pending) {
+              const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
+              const group = groupsBySku.get(prepared.skuCode)
+              const firstOutputPath = group?.outputs[0]
+              if (!group || !firstOutputPath) {
+                keepTempOnFailure = true
+                failed += 1
+                const error = new AppErrorClass('HTTP_5XX', 'PS 套版未返回输出结果', true, {
+                  taskId,
+                  templatePath,
+                  skuCode: prepared.skuCode,
+                })
+                dependencies.upsertPipelineItem({
+                  runId: context.runId,
+                  itemKey: stageItemKey,
+                  stepKey: 'photoshop',
+                  status: 'failed',
+                  sourcePath: prepared.path,
+                  artifactId: item.artifactId,
+                  printId: item.printId,
+                  sourceArtifactIds: item.sourceArtifactIds,
+                  errorMessage: error.message,
+                  completed: true,
+                })
+                dependencies.appendLog(context.runId, {
+                  level: 'warn',
+                  step_key: 'photoshop',
+                  message: '单货号套版失败，已跳过',
+                  details: {
+                    itemKey: stageItemKey,
+                    templatePath,
+                    skuCode: prepared.skuCode,
+                    error: error.message,
                   },
-                )
-              })
-              const group = result.result_groups[0]
-              if (!group || group.outputs.length === 0) {
-                throw new AppErrorClass('HTTP_5XX', 'PS 套版未返回输出结果', true, {
-                  taskId,
-                  templatePath,
-                  skuCode: prepared.skuCode,
                 })
+                continue
               }
 
-              const firstOutputPath = group.outputs[0]
-              if (!firstOutputPath) {
-                throw new AppErrorClass('HTTP_5XX', 'PS 套版未返回首张输出路径', true, {
-                  taskId,
-                  templatePath,
-                  skuCode: prepared.skuCode,
-                })
-              }
-
-              keepTempOnFailure = false
               completed += 1
               dependencies.stats.photoshopGroups = completed
               dependencies.upsertPipelineItem({
@@ -384,7 +459,11 @@ export function createPhotoshopStage(
                 ...(item.printId ? { printId: item.printId } : {}),
                 ...(item.prompt ? { prompt: item.prompt } : {}),
               })
-            } catch (error) {
+            }
+          } catch (error) {
+            keepTempOnFailure = true
+            for (const { item, prepared } of pending) {
+              const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
               failed += 1
               dependencies.upsertPipelineItem({
                 runId: context.runId,
@@ -409,38 +488,30 @@ export function createPhotoshopStage(
                   error: error instanceof Error ? error.message : String(error),
                 },
               })
-            } finally {
-              dependencies.setCurrentCancel(null)
-              if (keepTempOnFailure) {
-                await tempFileManager.cleanupTask('photoshop', taskId, { keepIfFailed: true })
-              } else {
-                await tempFileManager.cleanupTask('photoshop', taskId)
+            }
+          } finally {
+            dependencies.setCurrentCancel(null)
+            if (taskDirCreated) {
+              try {
+                if (keepTempOnFailure) {
+                  await tempFileManager.cleanupTask('photoshop', taskId, { keepIfFailed: true })
+                } else {
+                  await tempFileManager.cleanupTask('photoshop', taskId)
+                }
+              } catch (error) {
+                dependencies.appendLog(context.runId, {
+                  level: 'warn',
+                  step_key: 'photoshop',
+                  message: 'PS 临时文件清理失败，已忽略',
+                  details: {
+                    taskId,
+                    templatePath,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                })
               }
             }
           }
-        } catch (error) {
-          failed += 1
-          dependencies.upsertPipelineItem({
-            runId: context.runId,
-            itemKey: item.itemKey,
-            stepKey: 'photoshop',
-            status: 'failed',
-            sourcePath: item.path,
-            artifactId: item.artifactId,
-            printId: item.printId,
-            sourceArtifactIds: item.sourceArtifactIds,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            completed: true,
-          })
-          dependencies.appendLog(context.runId, {
-            level: 'warn',
-            step_key: 'photoshop',
-            message: '等待套版准备失败，已跳过当前印花',
-            details: {
-              itemKey: item.itemKey,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          })
         }
       }
 

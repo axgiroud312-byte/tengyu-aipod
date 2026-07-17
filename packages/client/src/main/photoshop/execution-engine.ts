@@ -603,98 +603,116 @@ export class PhotoshopExecutionEngine {
         }
       }
 
-      if (recordCompatibilityWorkflow) {
-        for (const group of pendingGroups) {
-          await this.recorder.recordRunning(group.job, 0)
-        }
-      }
-
       const cancelFilePath = options.cancelFilePath ?? ''
-      const jobFile = await this.writeTemplateBatchJsx(template, pendingGroups, cancelFilePath)
-      try {
-        await this.runJsxFileWithLogTail(jobFile.jsx_path, jobFile.log_file_path, options.onLog)
-        const raw = JSON.parse(
-          await this.readTextFile(jobFile.result_file_path, 'utf8'),
-        ) as RawTemplateBatchResult
-        const batchError = classifyTemplateBatchResult(raw, template)
-        if (batchError) {
-          throw batchError
-        }
+      const attempts = Math.min(Math.max(maxRetries, 0), MAX_RETRIES) + 1
+      let lastError: AppErrorClass | null = null
 
-        const groupResults = normalizeTemplateBatchGroups(raw, pendingGroups)
-        for (const groupResult of groupResults) {
-          await this.verifyOutputs(groupResult.outputs)
-          const group = pendingGroups.find((item) => item.group_index === groupResult.group_index)
-          if (group && recordCompatibilityWorkflow) {
-            await this.recorder.recordCompleted(group.job, 0, groupResult.outputs)
-          }
-          for (const output of groupResult.outputs) {
-            await options.onLog?.({
-              ts: Date.now(),
-              level: 'info',
-              stage: 'output_verify',
-              template_name: groups[0]?.template_name ?? pathBasename(template.file_path),
-              group: groupResult.group_index,
-              sku_folder: groupResult.sku_folder,
-              output_file: output,
-              message: '主进程已验证输出文件',
-            })
-          }
-        }
-
-        if (raw.cancelled === true) {
-          const completedGroupIndexes = new Set(groupResults.map((group) => group.group_index))
+      for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (recordCompatibilityWorkflow) {
           for (const group of pendingGroups) {
-            if (!completedGroupIndexes.has(group.group_index)) {
-              if (!recordCompatibilityWorkflow) {
-                continue
-              }
-              if (this.recorder.recordCancelled) {
-                await this.recorder.recordCancelled(group.job, 0)
-              } else {
-                await this.recorder.recordFailed(
-                  group.job,
-                  0,
-                  new AppErrorClass('JSX_EXEC_FAILED', '用户取消 PS 套版任务', false, {
-                    cancelled: true,
-                  }),
-                )
+            await this.recorder.recordRunning(group.job, attempt)
+          }
+        }
+
+        try {
+          const jobFile = await this.writeTemplateBatchJsx(template, pendingGroups, cancelFilePath)
+          await this.runJsxFileWithLogTail(jobFile.jsx_path, jobFile.log_file_path, options.onLog)
+          const raw = JSON.parse(
+            await this.readTextFile(jobFile.result_file_path, 'utf8'),
+          ) as RawTemplateBatchResult
+          const batchError = classifyTemplateBatchResult(raw, template)
+          if (batchError) {
+            throw batchError
+          }
+
+          const groupResults = normalizeTemplateBatchGroups(raw, pendingGroups)
+          for (const groupResult of groupResults) {
+            await this.verifyOutputs(groupResult.outputs)
+            for (const output of groupResult.outputs) {
+              await options.onLog?.({
+                ts: Date.now(),
+                level: 'info',
+                stage: 'output_verify',
+                template_name: groups[0]?.template_name ?? pathBasename(template.file_path),
+                group: groupResult.group_index,
+                sku_folder: groupResult.sku_folder,
+                output_file: output,
+                message: '主进程已验证输出文件',
+              })
+            }
+          }
+
+          if (recordCompatibilityWorkflow) {
+            for (const groupResult of groupResults) {
+              const group = pendingGroups.find(
+                (item) => item.group_index === groupResult.group_index,
+              )
+              if (group) {
+                await this.recorder.recordCompleted(group.job, attempt, groupResult.outputs)
               }
             }
           }
-        }
 
-        const outputs = [
-          ...skippedGroups.flatMap((group) => group.outputs),
-          ...groupResults.flatMap((group) => group.outputs),
-        ]
-        return {
-          ok: raw.ok === true && raw.cancelled !== true,
-          outputs,
-          groups: [...skippedGroups, ...groupResults],
-          ...(raw.cancelled === true ? { cancelled: true } : {}),
-        }
-      } catch (error) {
-        const appError = normalizeError(error)
-        if (recordCompatibilityWorkflow) {
-          for (const group of pendingGroups) {
-            await this.recorder.recordFailed(group.job, 0, appError)
+          if (raw.cancelled === true) {
+            const completedGroupIndexes = new Set(groupResults.map((group) => group.group_index))
+            for (const group of pendingGroups) {
+              if (!completedGroupIndexes.has(group.group_index)) {
+                if (!recordCompatibilityWorkflow) {
+                  continue
+                }
+                if (this.recorder.recordCancelled) {
+                  await this.recorder.recordCancelled(group.job, attempt)
+                } else {
+                  await this.recorder.recordFailed(
+                    group.job,
+                    attempt,
+                    new AppErrorClass('JSX_EXEC_FAILED', '用户取消 PS 套版任务', false, {
+                      cancelled: true,
+                    }),
+                  )
+                }
+              }
+            }
           }
+
+          const outputs = [
+            ...skippedGroups.flatMap((group) => group.outputs),
+            ...groupResults.flatMap((group) => group.outputs),
+          ]
+          return {
+            ok: raw.ok === true && raw.cancelled !== true,
+            outputs,
+            groups: [...skippedGroups, ...groupResults],
+            ...(raw.cancelled === true ? { cancelled: true } : {}),
+          }
+        } catch (error) {
+          const appError = normalizeError(error)
+          lastError = appError
+          if (recordCompatibilityWorkflow) {
+            for (const group of pendingGroups) {
+              await this.recorder.recordFailed(group.job, attempt, appError)
+            }
+          }
+          if (!isRetryable(appError) || attempt === attempts - 1) {
+            await this.writePhotoshopDiagnostic({
+              type: 'photoshop_template_batch_failed',
+              operation: 'runTemplateBatch',
+              job: pendingGroups[0]?.job,
+              attempt,
+              error: appError,
+              data: {
+                templateId: template.id,
+                templateName: pathBasename(template.file_path),
+                groups: pendingGroups.length,
+              },
+            })
+            throw appError
+          }
+          await this.sleep(retryDelayMs(attempt))
         }
-        await this.writePhotoshopDiagnostic({
-          type: 'photoshop_template_batch_failed',
-          operation: 'runTemplateBatch',
-          job: pendingGroups[0]?.job,
-          attempt: 0,
-          error: appError,
-          data: {
-            templateId: template.id,
-            templateName: pathBasename(template.file_path),
-            groups: pendingGroups.length,
-          },
-        })
-        throw appError
       }
+
+      throw lastError ?? new AppErrorClass('JSX_EXEC_FAILED', 'Photoshop 批处理失败', false)
     })
   }
 

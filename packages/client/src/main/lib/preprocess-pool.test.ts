@@ -1,6 +1,8 @@
+import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { Worker } from 'node:worker_threads'
 import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
@@ -131,6 +133,95 @@ describe('SharpPreprocessPool', () => {
         },
       ]),
     ).resolves.toHaveLength(2)
+  })
+
+  it('replaces a crashed worker so later jobs can continue', async () => {
+    let workerNumber = 0
+    let terminatedWorkers = 0
+    class FakeWorker extends EventEmitter {
+      async terminate() {
+        terminatedWorkers += 1
+        return 0
+      }
+
+      postMessage(message: { id: number }) {
+        if (workerNumber === 1) {
+          queueMicrotask(() => this.emit('exit', 1))
+          return
+        }
+        queueMicrotask(() =>
+          this.emit('message', {
+            id: message.id,
+            ok: true,
+            result: {
+              outputPath: join(workbenchRoot, 'recovered.jpg'),
+              mimeType: 'image/jpeg',
+              sizeBytes: 1,
+              dataUrl: 'data:image/jpeg;base64,AA==',
+            },
+          }),
+        )
+      }
+    }
+    const pool = new SharpPreprocessPool(1, () => {
+      workerNumber += 1
+      return new FakeWorker() as unknown as Worker
+    })
+    pools.push(pool)
+    const input = {
+      module: 'detection' as const,
+      taskId: 'worker-recovery',
+      workbenchRoot,
+      input: Buffer.from('input'),
+    }
+
+    await expect(pool.process(input)).rejects.toMatchObject({
+      code: 'HTTP_5XX',
+      retryable: false,
+    })
+    await expect(pool.process(input)).resolves.toMatchObject({
+      outputPath: join(workbenchRoot, 'recovered.jpg'),
+    })
+    expect(workerNumber).toBe(2)
+    expect(terminatedWorkers).toBe(1)
+  })
+
+  it('closes the pool when a crashed worker cannot be replaced', async () => {
+    let workerNumber = 0
+    let terminatedWorkers = 0
+    class FakeWorker extends EventEmitter {
+      async terminate() {
+        terminatedWorkers += 1
+        return 0
+      }
+
+      postMessage() {
+        queueMicrotask(() => this.emit('exit', 1))
+      }
+    }
+    const pool = new SharpPreprocessPool(1, () => {
+      workerNumber += 1
+      if (workerNumber > 1) {
+        throw new Error('worker capacity exhausted')
+      }
+      return new FakeWorker() as unknown as Worker
+    })
+    pools.push(pool)
+    const input = {
+      module: 'detection' as const,
+      taskId: 'worker-replacement-failed',
+      workbenchRoot,
+      input: Buffer.from('input'),
+    }
+
+    const crashedJob = pool.process(input)
+    const queuedJob = pool.process(input)
+    await expect(crashedJob).rejects.toMatchObject({ retryable: false })
+    await expect(queuedJob).rejects.toMatchObject({
+      code: 'HTTP_5XX',
+      retryable: false,
+    })
+    expect(terminatedWorkers).toBe(1)
   })
 
   it('classifies missing file input', async () => {

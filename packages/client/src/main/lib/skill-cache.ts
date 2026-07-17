@@ -11,11 +11,13 @@ import {
 import { app, ipcMain } from 'electron'
 import { z } from 'zod'
 import { readAppConfig } from '../onboarding'
+import { CustomerAuthService } from './customer-auth'
 import { serverUrl } from './server-base-url'
 
 const REFRESH_INTERVAL_MS = CACHE_REFRESH_INTERVAL_MINUTES * 60 * 1000
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
 const SKILL_INDEX_FILE_NAME = 'index.json'
+const SKILL_CACHE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._+-]{0,127}$/
 
 export type SkillListFilter = {
   module?: SkillModule | undefined
@@ -81,7 +83,18 @@ async function skillCacheDir() {
 }
 
 function skillFilePath(root: string, id: string, version: string) {
-  return join(root, id, `${version}.json`)
+  return join(
+    root,
+    validateSkillCacheSegment(id, 'Skill 标识'),
+    `${validateSkillCacheSegment(version, 'Skill 版本')}.json`,
+  )
+}
+
+function validateSkillCacheSegment(value: string, label: string) {
+  if (!SKILL_CACHE_SEGMENT_PATTERN.test(value)) {
+    throw new AppErrorClass('INVALID_INPUT', `${label}不正确`, false, { value })
+  }
+  return value
 }
 
 function indexFilePath(root: string) {
@@ -140,6 +153,18 @@ async function writeJson(path: string, value: unknown) {
 
 export class SkillCacheManager {
   private intervalId: NodeJS.Timeout | null = null
+  private readonly customerAuth: Pick<CustomerAuthService, 'getAuthorizedServerRequestHeaders'>
+  private readonly fetcher: typeof fetch
+
+  constructor(
+    options: {
+      customerAuth?: Pick<CustomerAuthService, 'getAuthorizedServerRequestHeaders'>
+      fetcher?: typeof fetch
+    } = {},
+  ) {
+    this.customerAuth = options.customerAuth ?? new CustomerAuthService()
+    this.fetcher = options.fetcher ?? fetch
+  }
 
   start() {
     if (this.intervalId) {
@@ -176,6 +201,11 @@ export class SkillCacheManager {
   }
 
   async getSkill(id: string, version?: string): Promise<Skill> {
+    validateSkillCacheSegment(id, 'Skill 标识')
+    if (version) {
+      validateSkillCacheSegment(version, 'Skill 版本')
+    }
+
     if (version) {
       const cached = await this.readCachedSkill(id, version)
       if (cached) {
@@ -227,6 +257,11 @@ export class SkillCacheManager {
   }
 
   private async fetchSkill(id: string, version?: string) {
+    validateSkillCacheSegment(id, 'Skill 标识')
+    if (version) {
+      validateSkillCacheSegment(version, 'Skill 版本')
+    }
+
     const searchParams = new URLSearchParams()
     if (version) {
       searchParams.set('version', version)
@@ -238,7 +273,8 @@ export class SkillCacheManager {
   }
 
   private async fetchJson<T>(url: string) {
-    const response = await fetch(url)
+    const headers = await this.customerAuth.getAuthorizedServerRequestHeaders()
+    const response = await this.fetcher(url, { headers })
     if (!response.ok) {
       throw new Error(`skill request failed: ${response.status}`)
     }

@@ -16,13 +16,21 @@ afterEach(async () => {
 
 function createAdapter(options: {
   platform?: NodeJS.Platform
-  execFile?: (file: string, args: string[]) => Promise<{ stdout: string; stderr: string }>
+  execFile?: (
+    file: string,
+    args: string[],
+    options?: { timeoutMs: number },
+  ) => Promise<{ stdout: string; stderr: string }>
+  jsxTimeoutMs?: number
 }) {
   const adapterOptions: ConstructorParameters<typeof PhotoshopComAdapter>[0] = {
     platform: options.platform ?? 'win32',
   }
   if (options.execFile) {
     adapterOptions.execFile = options.execFile
+  }
+  if (options.jsxTimeoutMs !== undefined) {
+    Object.assign(adapterOptions, { jsxTimeoutMs: options.jsxTimeoutMs })
   }
   return new PhotoshopComAdapter(adapterOptions)
 }
@@ -77,6 +85,44 @@ describe('PhotoshopComAdapter', () => {
       code: 'JSX_EXEC_FAILED',
       retryable: false,
     })
+  })
+
+  it('keeps JSX COM connection failures retryable', async () => {
+    const jsxPath = join(tempDir, 'com-disconnected.jsx')
+    await writeFile(jsxPath, 'alert("ok")', 'utf8')
+    const adapter = createAdapter({
+      execFile: async () => {
+        throw new Error('Invalid class string: Photoshop.Application')
+      },
+    })
+
+    await expect(adapter.runJsxFile(jsxPath)).rejects.toMatchObject({
+      code: 'PS_COM_FAILED',
+      retryable: true,
+    })
+  })
+
+  it('applies a JSX watchdog and classifies timeouts as retryable', async () => {
+    const jsxPath = join(tempDir, 'slow.jsx')
+    await writeFile(jsxPath, 'while (true) {}', 'utf8')
+    let timeoutMs: number | undefined
+    const adapter = createAdapter({
+      jsxTimeoutMs: 25,
+      execFile: async (_file, _args, options) => {
+        timeoutMs = options?.timeoutMs
+        throw Object.assign(new Error('operation timed out'), {
+          code: 'ETIMEDOUT',
+          killed: true,
+        })
+      },
+    })
+
+    await expect(adapter.runJsxFile(jsxPath)).rejects.toMatchObject({
+      code: 'JSX_EXEC_FAILED',
+      retryable: true,
+      details: { timeout_ms: 25 },
+    })
+    expect(timeoutMs).toBe(25)
   })
 
   it('requires mutation guard before closing documents', async () => {

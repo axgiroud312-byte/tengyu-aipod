@@ -345,6 +345,86 @@ describe('PhotoshopExecutionEngine', () => {
     expect(logs).toContain('group_start:0')
   })
 
+  it('retries retryable template-batch output verification failures', async () => {
+    const resultPath = join(tempDir, 'batch-retry-result.json')
+    const logPath = join(tempDir, 'batch-retry.log')
+    const outputPath = join(tempDir, 'retry-01.jpg')
+    const calls: string[] = []
+    const sleeps: number[] = []
+    let outputChecks = 0
+    const template: PsdTemplate = {
+      id: 'tpl-retry',
+      file_path: 'C:\\templates\\retry.psd',
+      file_hash: 'retry-hash',
+      doc_size: { w: 1000, h: 1000 },
+      smart_objects: [],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      native_slices: [{ name: 'Front', kind: 'user', bounds: [0, 0, 1000, 1000] }],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: 123,
+      layers: [],
+      text_layers: [],
+    }
+    const group = {
+      group_index: 0,
+      sku_folder: 'retry-print',
+      template_name: 'retry',
+      print_assets: [{ id: 'retry-print', file_path: 'C:\\prints\\retry.png' }],
+      job: createJob({ output_paths: [outputPath], mockup_path: template.file_path }),
+    }
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      writeTemplateBatchJsx: async () => ({
+        jsx_path: join(tempDir, 'batch-retry.jsx'),
+        result_file_path: resultPath,
+        log_file_path: logPath,
+        cancel_file_path: join(tempDir, 'cancel.flag'),
+        content: '',
+      }),
+      comAdapter: {
+        runJsxFile: async (path) => {
+          calls.push(path)
+          await writeFile(
+            resultPath,
+            JSON.stringify({
+              ok: true,
+              outputs: [outputPath],
+              groups: [
+                {
+                  ok: true,
+                  group_index: 0,
+                  sku_folder: 'retry-print',
+                  outputs: [outputPath],
+                },
+              ],
+            }),
+            'utf8',
+          )
+        },
+      },
+      accessFile: async () => {
+        outputChecks += 1
+        if (outputChecks === 1) {
+          throw new Error('output not ready')
+        }
+      },
+      recorder: noopRecorder,
+      shouldSkipJob: async () => false,
+      sleep: async (ms) => {
+        sleeps.push(ms)
+      },
+    })
+
+    await expect(engine.runTemplateBatch(template, [group], 1)).resolves.toMatchObject({
+      ok: true,
+      outputs: [outputPath],
+    })
+    expect(calls).toHaveLength(2)
+    expect(sleeps).toEqual([1000])
+  })
+
   it('returns cancelled template batches without marking unprocessed groups completed', async () => {
     const resultPath = join(tempDir, 'batch-result.json')
     const logPath = join(tempDir, 'batch.log')

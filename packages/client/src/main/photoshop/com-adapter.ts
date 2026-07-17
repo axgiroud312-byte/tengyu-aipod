@@ -5,11 +5,21 @@ import { promisify } from 'node:util'
 import { AppErrorClass } from '@tengyu-aipod/shared'
 
 type ExecFileResult = { stdout: string; stderr: string }
-type ExecFileFn = (file: string, args: string[]) => Promise<ExecFileResult>
+type ExecFileOptions = { timeoutMs: number }
+type ExecFileFn = (
+  file: string,
+  args: string[],
+  options: ExecFileOptions,
+) => Promise<ExecFileResult>
+
+const DEFAULT_COM_COMMAND_TIMEOUT_MS = 30_000
+const DEFAULT_JSX_TIMEOUT_MS = 20 * 60 * 1000
 
 interface PhotoshopComAdapterOptions {
   platform?: NodeJS.Platform
   execFile?: ExecFileFn
+  commandTimeoutMs?: number
+  jsxTimeoutMs?: number
 }
 
 interface RunPowerShellOptions {
@@ -17,6 +27,7 @@ interface RunPowerShellOptions {
   errorCode?: 'PS_COM_FAILED' | 'JSX_EXEC_FAILED'
   retryable?: boolean
   details?: Record<string, unknown>
+  timeoutMs?: number
 }
 
 const execFileAsync = promisify(nodeExecFile)
@@ -55,6 +66,16 @@ function classifyPowerShellError(
   }
 }
 
+function isTimeoutError(error: unknown) {
+  if (typeof error === 'object' && error !== null) {
+    const candidate = error as { code?: unknown; killed?: unknown }
+    if (candidate.code === 'ETIMEDOUT' || candidate.killed === true) {
+      return true
+    }
+  }
+  return /timed?\s*out|timeout/i.test(getErrorMessage(error))
+}
+
 class PromiseMutex {
   private current = Promise.resolve()
 
@@ -78,13 +99,20 @@ const photoshopMutex = new PromiseMutex()
 export class PhotoshopComAdapter {
   private readonly platform: NodeJS.Platform
   private readonly execFile: ExecFileFn
+  private readonly commandTimeoutMs: number
+  private readonly jsxTimeoutMs: number
 
   constructor(options: PhotoshopComAdapterOptions = {}) {
     this.platform = options.platform ?? process.platform
+    this.commandTimeoutMs = options.commandTimeoutMs ?? DEFAULT_COM_COMMAND_TIMEOUT_MS
+    this.jsxTimeoutMs = options.jsxTimeoutMs ?? DEFAULT_JSX_TIMEOUT_MS
     this.execFile =
       options.execFile ??
-      (async (file, args) => {
-        const result = await execFileAsync(file, args, { windowsHide: true })
+      (async (file, args, execOptions) => {
+        const result = await execFileAsync(file, args, {
+          timeout: execOptions.timeoutMs,
+          windowsHide: true,
+        })
         return { stdout: result.stdout, stderr: result.stderr }
       })
   }
@@ -122,6 +150,7 @@ export class PhotoshopComAdapter {
         errorCode: 'JSX_EXEC_FAILED',
         retryable: false,
         details: { jsx_file: filePath },
+        timeoutMs: this.jsxTimeoutMs,
       }),
     )
   }
@@ -190,23 +219,31 @@ export class PhotoshopComAdapter {
   }
 
   private async runPowerShell(options: RunPowerShellOptions): Promise<string> {
+    const timeoutMs = options.timeoutMs ?? this.commandTimeoutMs
     try {
-      const result = await this.execFile('powershell.exe', [
-        '-NoProfile',
-        '-NonInteractive',
-        '-ExecutionPolicy',
-        'Bypass',
-        '-Command',
-        options.script,
-      ])
+      const result = await this.execFile(
+        'powershell.exe',
+        ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', options.script],
+        { timeoutMs },
+      )
       return result.stdout
     } catch (error) {
       const classified = classifyPowerShellError(error, options.errorCode ?? 'PS_COM_FAILED')
-      throw new AppErrorClass(classified.code, classified.message, classified.retryable, {
-        ...options.details,
-        command: basename('powershell.exe'),
-        cause_message: getErrorMessage(error),
-      })
+      const timedOut = isTimeoutError(error)
+      const message = timedOut
+        ? `Photoshop 执行超时（${Math.ceil(timeoutMs / 1000)} 秒），请检查 Photoshop 是否无响应或存在阻塞弹窗`
+        : classified.message
+      throw new AppErrorClass(
+        classified.code,
+        message,
+        timedOut || classified.retryable || options.retryable === true,
+        {
+          ...options.details,
+          command: basename('powershell.exe'),
+          cause_message: getErrorMessage(error),
+          ...(timedOut ? { timeout_ms: timeoutMs } : {}),
+        },
+      )
     }
   }
 }

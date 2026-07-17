@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { arch, hostname, platform } from 'node:os'
 import { dirname, join } from 'node:path'
-import { API_PATHS, DEFAULT_PHP_AUTH_BASE_URL } from '@tengyu-aipod/shared'
+import { API_PATHS, AppErrorClass, DEFAULT_PHP_AUTH_BASE_URL } from '@tengyu-aipod/shared'
 import { app, ipcMain, shell } from 'electron'
 import { z } from 'zod'
 import { deleteSecret, deleteSecrets, getSecret, setSecret, setSecrets } from './keychain'
@@ -253,6 +253,31 @@ export class CustomerAuthService {
       customer: snapshot?.customer ?? null,
       message: snapshot?.message ?? null,
       status: snapshot?.status ?? 'anonymous',
+    }
+  }
+
+  async getAuthorizedServerRequestHeaders(): Promise<Record<string, string>> {
+    const [credentialsResult, snapshot] = await Promise.all([
+      this.readCredentials(),
+      this.readStateFile(),
+    ])
+    const credentials = credentialsResult.credentials
+    if (
+      !credentials ||
+      snapshot?.status !== 'active' ||
+      snapshot.customer?.php_uid !== credentials.uid
+    ) {
+      throw new AppErrorClass('LOGIN_REQUIRED', '客户授权未生效，无法同步 Skill', false)
+    }
+
+    const finger = await this.getOrCreateFinger()
+    const basicCredentials = Buffer.from(
+      `${credentials.uid}:${credentials.secret}`,
+      'utf8',
+    ).toString('base64')
+    return {
+      authorization: `Basic ${basicCredentials}`,
+      'x-tengyu-finger': finger,
     }
   }
 

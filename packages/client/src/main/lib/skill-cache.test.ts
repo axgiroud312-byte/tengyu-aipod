@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
+import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
@@ -6,6 +6,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 let userDataDir = ''
 let workbenchRoot = ''
+const customerAuthMocks = vi.hoisted(() => ({
+  getAuthorizedServerRequestHeaders: vi.fn(async () => ({
+    authorization: 'Basic verified-customer',
+    'x-tengyu-finger': 'device-fingerprint',
+  })),
+}))
 
 vi.mock('electron', () => ({
   app: {
@@ -23,6 +29,12 @@ vi.mock('electron', () => ({
 
 vi.mock('../onboarding', () => ({
   readAppConfig: () => ({ workbench_root: workbenchRoot }),
+}))
+
+vi.mock('./customer-auth', () => ({
+  CustomerAuthService: class {
+    getAuthorizedServerRequestHeaders = customerAuthMocks.getAuthorizedServerRequestHeaders
+  },
 }))
 
 const { SkillCacheManager } = await import('./skill-cache')
@@ -60,6 +72,7 @@ beforeEach(async () => {
   workbenchRoot = await mkdtemp(join(tmpdir(), 'tengyu-workbench-'))
   vi.useRealTimers()
   vi.stubGlobal('fetch', vi.fn())
+  customerAuthMocks.getAuthorizedServerRequestHeaders.mockClear()
 })
 
 afterEach(async () => {
@@ -75,7 +88,12 @@ describe('SkillCacheManager', () => {
     const manager = new SkillCacheManager()
 
     await expect(manager.listSkills({ module: 'title' })).resolves.toEqual([summary()])
-    expect(fetch).toHaveBeenCalledWith('https://wechat.tengyuai.com/api/skills?module=title')
+    expect(fetch).toHaveBeenCalledWith('https://wechat.tengyuai.com/api/skills?module=title', {
+      headers: {
+        authorization: 'Basic verified-customer',
+        'x-tengyu-finger': 'device-fingerprint',
+      },
+    })
   })
 
   it('falls back to local cached summaries while cache is fresh enough', async () => {
@@ -150,6 +168,15 @@ describe('SkillCacheManager', () => {
       id: 'title-temu-en',
       version: '3.0.1',
     })
+  })
+
+  it('rejects unsafe skill cache paths before requesting or writing files', async () => {
+    const manager = new SkillCacheManager()
+    const escapedPath = join(workbenchRoot, '.workbench', 'cache', 'escaped-skill', '1.0.0.json')
+
+    await expect(manager.getSkill('../escaped-skill', '1.0.0')).rejects.toThrow('Skill 标识不正确')
+    expect(fetch).not.toHaveBeenCalled()
+    await expect(access(escapedPath)).rejects.toThrow()
   })
 
   it('refreshes generation skills and fetches uncached generation skill details', async () => {

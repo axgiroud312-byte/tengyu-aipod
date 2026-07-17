@@ -15,6 +15,7 @@ import type {
 } from '../pipeline-stage-types'
 import * as pipelineStore from '../pipeline/store'
 import type { SqliteDatabase } from '../sqlite'
+import { readyMicroBatches } from './ready-micro-batches'
 
 type DetectionStageDependencies = {
   db: Pick<SqliteDatabase, 'prepare'>
@@ -152,98 +153,154 @@ export function createDetectionStage(
         },
       })
 
-      for await (const item of input) {
-        dependencies.assertNotCancelled()
-        queued += 1
-        insertRunningStep(dependencies.db, context.runId, queued, pass + review)
-        dependencies.emitRunningProgress(context.runId, '侵权检测流处理中')
+      const concurrency = Math.max(1, Math.min(20, Math.floor(config.concurrency ?? 20)))
+      let batchIndex = 0
+      const markFailed = (
+        item: PipelinePrintStreamItem,
+        error: string,
+        errorCode?: string | undefined,
+      ) => {
+        failed += 1
         dependencies.upsertPipelineItem({
           runId: context.runId,
           itemKey: item.itemKey,
           stepKey: 'detection',
-          status: 'running',
+          status: 'failed',
           sourcePath: item.path,
           artifactId: item.artifactId,
           printId: item.printId,
           sourceArtifactIds: item.sourceArtifactIds,
+          errorMessage: error,
+          completed: true,
         })
+        dependencies.appendLog(context.runId, {
+          level: 'warn',
+          step_key: 'detection',
+          message: '单张侵权检测失败，已跳过',
+          details: {
+            itemKey: item.itemKey,
+            error,
+            ...(errorCode ? { errorCode } : {}),
+          },
+        })
+      }
 
-        const taskId = `${context.runId}-detection-${safeTaskSegment(item.itemKey)}`
+      for await (const items of readyMicroBatches(input, concurrency)) {
+        dependencies.assertNotCancelled()
+        const indexedItems = items.map((item) => {
+          const displayIndex = queued
+          queued += 1
+          insertRunningStep(dependencies.db, context.runId, queued, pass + review)
+          dependencies.upsertPipelineItem({
+            runId: context.runId,
+            itemKey: item.itemKey,
+            stepKey: 'detection',
+            status: 'running',
+            sourcePath: item.path,
+            artifactId: item.artifactId,
+            printId: item.printId,
+            sourceArtifactIds: item.sourceArtifactIds,
+          })
+          return { displayIndex, item }
+        })
+        dependencies.emitRunningProgress(context.runId, '侵权检测流处理中')
+
+        const taskId = `${context.runId}-detection-${batchIndex}-${safeTaskSegment(items[0]?.itemKey ?? 'batch')}`
+        batchIndex += 1
         dependencies.setCurrentCancel(() => {
           detectionService.cancelTask(taskId)
         })
+
+        let batchResult: Awaited<ReturnType<typeof detectionService.runDetectionBatch>> | null =
+          null
         try {
-          const result = await detectionService.runDetectionBatch({
-            imagePaths: [item.path],
-            imageInputs: [
-              {
-                path: item.path,
-                ...(item.artifactId ? { artifactId: item.artifactId } : {}),
-                ...(item.printId ? { printId: item.printId } : {}),
-              },
-            ],
+          batchResult = await detectionService.runDetectionBatch({
+            imagePaths: items.map((item) => item.path),
+            imageInputs: items.map((item) => ({
+              path: item.path,
+              ...(item.artifactId ? { artifactId: item.artifactId } : {}),
+              ...(item.printId ? { printId: item.printId } : {}),
+            })),
             skillId,
             model,
             taskId,
+            concurrency,
             ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
             ...(config.variables ? { variables: config.variables } : {}),
             ...(config.threshold ? { threshold: config.threshold } : {}),
             ...(config.preprocess ? { preprocess: config.preprocess } : {}),
-            ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
             ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
           })
-          const detectionItem = result.results[0]
-          if (!detectionItem) {
-            throw new AppErrorClass('HTTP_5XX', '侵权检测未返回结果', true, {
-              taskId,
-              itemKey: item.itemKey,
-            })
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          for (const { item } of indexedItems) {
+            markFailed(item, message)
           }
-          if (detectionItem.status === 'failed') {
-            failed += 1
-            dependencies.upsertPipelineItem({
-              runId: context.runId,
-              itemKey: item.itemKey,
-              stepKey: 'detection',
-              status: 'failed',
-              sourcePath: item.path,
-              artifactId: item.artifactId,
-              printId: item.printId,
-              sourceArtifactIds: item.sourceArtifactIds,
-              errorMessage: detectionItem.error,
-              completed: true,
-            })
-            dependencies.appendLog(context.runId, {
-              level: 'warn',
-              step_key: 'detection',
-              message: '单张侵权检测失败，已跳过',
-              details: {
-                itemKey: item.itemKey,
-                error: detectionItem.error,
-                errorCode: detectionItem.errorCode,
-              },
-            })
-            continue
-          }
+        } finally {
+          dependencies.setCurrentCancel(null)
+        }
 
-          const allowed = shouldPipelineDetectionAllow(detectionItem.riskLevel, allowReview)
-          const image = {
-            ...resultImageFromDetection(detectionItem, allowed, queued - 1),
-            ...(item.prompt ? { prompt: item.prompt } : {}),
-          }
-          if (allowed) {
-            if (detectionItem.riskLevel === 'review') {
-              review += 1
-            } else {
-              pass += 1
+        if (batchResult) {
+          const remainingResults = [...batchResult.results]
+          for (const { displayIndex, item } of indexedItems) {
+            const resultIndex = remainingResults.findIndex(
+              (detectionItem) => detectionItem.imagePath === item.path,
+            )
+            const detectionItem =
+              resultIndex >= 0 ? remainingResults.splice(resultIndex, 1)[0] : null
+            if (!detectionItem) {
+              markFailed(item, '侵权检测未返回结果')
+              continue
             }
-            passed.push(image)
-            dependencies.stats.prints = pass + review
+            if (detectionItem.status === 'failed') {
+              markFailed(item, detectionItem.error, detectionItem.errorCode)
+              continue
+            }
+
+            const allowed = shouldPipelineDetectionAllow(detectionItem.riskLevel, allowReview)
+            const image = {
+              ...resultImageFromDetection(detectionItem, allowed, displayIndex),
+              ...(item.prompt ? { prompt: item.prompt } : {}),
+            }
+            if (allowed) {
+              if (detectionItem.riskLevel === 'review') {
+                review += 1
+              } else {
+                pass += 1
+              }
+              passed.push(image)
+              dependencies.stats.prints = pass + review
+              dependencies.upsertPipelineItem({
+                runId: context.runId,
+                itemKey: item.itemKey,
+                stepKey: 'detection',
+                status: 'completed',
+                sourcePath: item.path,
+                outputPath: detectionItem.outputPath,
+                artifactId: detectionItem.artifactId,
+                printId: detectionItem.printId,
+                sourceArtifactIds: item.sourceArtifactIds,
+                completed: true,
+              })
+              refreshSections()
+              yield {
+                itemKey: item.itemKey,
+                path: detectionItem.outputPath,
+                artifactId: detectionItem.artifactId,
+                printId: detectionItem.printId,
+                prompt: item.prompt,
+                sourceArtifactIds: item.sourceArtifactIds,
+              } satisfies PipelinePrintStreamItem
+              continue
+            }
+
+            block += 1
+            blocked.push(image)
             dependencies.upsertPipelineItem({
               runId: context.runId,
               itemKey: item.itemKey,
               stepKey: 'detection',
-              status: 'completed',
+              status: 'filtered',
               sourcePath: item.path,
               outputPath: detectionItem.outputPath,
               artifactId: detectionItem.artifactId,
@@ -252,62 +309,13 @@ export function createDetectionStage(
               completed: true,
             })
             refreshSections()
-            yield {
-              itemKey: item.itemKey,
-              path: detectionItem.outputPath,
-              artifactId: detectionItem.artifactId,
-              printId: detectionItem.printId,
-              prompt: item.prompt,
-              sourceArtifactIds: item.sourceArtifactIds,
-            } satisfies PipelinePrintStreamItem
-            continue
           }
-
-          block += 1
-          blocked.push(image)
-          dependencies.upsertPipelineItem({
-            runId: context.runId,
-            itemKey: item.itemKey,
-            stepKey: 'detection',
-            status: 'filtered',
-            sourcePath: item.path,
-            outputPath: detectionItem.outputPath,
-            artifactId: detectionItem.artifactId,
-            printId: detectionItem.printId,
-            sourceArtifactIds: item.sourceArtifactIds,
-            completed: true,
-          })
-          refreshSections()
-        } catch (error) {
-          failed += 1
-          dependencies.upsertPipelineItem({
-            runId: context.runId,
-            itemKey: item.itemKey,
-            stepKey: 'detection',
-            status: 'failed',
-            sourcePath: item.path,
-            artifactId: item.artifactId,
-            printId: item.printId,
-            sourceArtifactIds: item.sourceArtifactIds,
-            errorMessage: error instanceof Error ? error.message : String(error),
-            completed: true,
-          })
-          dependencies.appendLog(context.runId, {
-            level: 'warn',
-            step_key: 'detection',
-            message: '单张侵权检测失败，已跳过',
-            details: {
-              itemKey: item.itemKey,
-              error: error instanceof Error ? error.message : String(error),
-            },
-          })
-        } finally {
-          dependencies.setCurrentCancel(null)
-          dependencies.stats.detectionPass = pass
-          dependencies.stats.detectionReview = review
-          dependencies.stats.detectionBlock = block
-          dependencies.emitRunningProgress(context.runId, '侵权检测流处理中')
         }
+
+        dependencies.stats.detectionPass = pass
+        dependencies.stats.detectionReview = review
+        dependencies.stats.detectionBlock = block
+        dependencies.emitRunningProgress(context.runId, '侵权检测流处理中')
       }
 
       refreshSections()

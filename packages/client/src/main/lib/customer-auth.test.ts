@@ -247,6 +247,10 @@ describe('CustomerAuthService', () => {
       },
       url: 'https://wechat.tengyuai.com/api/customer-auth/verify',
     })
+    await expect(service.getAuthorizedServerRequestHeaders()).resolves.toEqual({
+      authorization: 'Basic MTIzOndlY2hhdC1zZWNyZXQ=',
+      'x-tengyu-finger': (wechatRequest?.body as { finger: string }).finger,
+    })
   })
 
   it('sends SMS with demo-compatible request body and starts countdown', async () => {

@@ -190,6 +190,17 @@ POST /api/customer-auth/verify
 
 客户端所有客户侧云端请求都必须从主进程统一封装，调用前确认当前授权状态为 `active`。v1 不新增客户端 JWT；`secret` 只在授权校验请求中短暂发送到 Next，不落库。
 
+Skill 列表和详情请求继续使用 GET，但必须由主进程通过 HTTPS 携带客户凭证：
+
+```http
+Authorization: Basic base64(uid:secret)
+X-Tengyu-Finger: device-fingerprint
+```
+
+服务端收到请求后重新调用 PHP 校验 `uid + secret + finger`，并确认 `CustomerAccount` 当前仍为
+`active` 且未到期。Skill 定向过滤只使用校验结果中的 `php_uid`，忽略 URL 中的 `uid`；Next 不记录、
+不缓存、不落库保存 `secret`。缺少或无效凭证返回 `401`，未授权、禁用或过期返回 `403`。
+
 ### 5.2 Skill 列表
 
 ```http
@@ -206,6 +217,7 @@ GET /api/skills?module=generation&category=txt2img-local-print
 ComfyUI 提取都从这里选择；这个 category 名称是历史兼容名，不表示只给付费模型使用。
 
 Skill 同步必须在客户授权通过后启动。
+匿名请求不能读取 Skill 摘要。
 
 ### 5.3 Skill 详情
 
@@ -214,6 +226,7 @@ GET /api/skills/:id?version=1.0.0
 ```
 
 返回单个 Skill 的完整系统提示词。未传 `version` 时返回最新启用版本。
+匿名请求不能读取 Skill 详情或系统提示词全文。
 
 ### 5.4 公告和版本
 

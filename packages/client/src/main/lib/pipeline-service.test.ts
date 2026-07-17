@@ -873,6 +873,49 @@ describe('PipelineService', () => {
     )
   })
 
+  it('isolates Photoshop temp directory creation failures to the affected print', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    mocks.createTaskDir.mockRejectedValueOnce(new Error('temp directory denied'))
+
+    const service = new PipelineService()
+    const result = await service.runPipeline(
+      'run-photoshop-temp-create-failed',
+      baseConfig(printFolder),
+    )
+
+    expect(result.run.status).toBe('completed')
+    expect(result.steps.find((step) => step.step_key === 'photoshop')).toMatchObject({
+      status: 'completed',
+      output_count: 0,
+    })
+    expect(result.logs?.find((entry) => entry.message === '单货号套版失败，已跳过')).toMatchObject({
+      level: 'warn',
+    })
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+  })
+
+  it('does not fail the pipeline when Photoshop temp cleanup fails', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
+    await createPrint(join(printFolder, 'existing.png'))
+    mocks.cleanupTask.mockRejectedValueOnce(new Error('temp cleanup denied'))
+
+    const service = new PipelineService()
+    const result = await service.runPipeline(
+      'run-photoshop-temp-cleanup-failed',
+      baseConfig(printFolder),
+    )
+
+    expect(result.run.status).toBe('completed')
+    expect(result.steps.find((step) => step.step_key === 'photoshop')).toMatchObject({
+      status: 'completed',
+      output_count: 1,
+    })
+    expect(
+      result.logs?.find((entry) => entry.message === 'PS 临时文件清理失败，已忽略'),
+    ).toMatchObject({ level: 'warn' })
+  })
+
   it('keeps a custom Photoshop output root when the user explicitly selects one', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     const outputRoot = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.listing, '自定义批次根')
@@ -1046,11 +1089,114 @@ describe('PipelineService', () => {
     )
     await expect(readFile(firstWaitingPrintPath, 'utf8')).resolves.toBe('image')
     await expect(readFile(secondWaitingPrintPath, 'utf8')).resolves.toBe('image')
-    expect(mocks.runBatch).toHaveBeenCalledTimes(2)
-    expect(mocks.runBatch.mock.calls.map((call) => call[0])).toEqual([
-      [{ id: 'GYX_0001', file_path: firstWaitingPrintPath }],
-      [{ id: 'GYX_0002', file_path: secondWaitingPrintPath }],
+    expect(mocks.runBatch).toHaveBeenCalledOnce()
+    expect(mocks.runBatch.mock.calls[0]?.[0]).toEqual([
+      { id: 'GYX_0001', file_path: firstWaitingPrintPath },
+      { id: 'GYX_0002', file_path: secondWaitingPrintPath },
     ])
+  })
+
+  it('micro-batches already queued topmost Photoshop prints into one template execution', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'queued')
+    await createPrint(join(printFolder, 'existing-1.png'))
+    await createPrint(join(printFolder, 'existing-2.png'))
+    await createPrint(join(printFolder, 'existing-3.png'))
+    const previousImplementation = mocks.runBatch.getMockImplementation()
+    mocks.runBatch.mockImplementation(async (prints, _templates, config) => {
+      const resultGroups = prints.map((print, groupIndex) => ({
+        template_id: 'tpl-shirt',
+        template_name: 'shirt',
+        group_index: groupIndex,
+        sku_folder: print.id,
+        print_ids: [print.id],
+        outputs: [join(config.outputRoot, 'shirt', print.id, '01.jpg')],
+      }))
+      return {
+        ok: true,
+        task_id: config.taskId,
+        output_layout: config.outputLayout,
+        templates_total: 1,
+        groups_total: resultGroups.length,
+        groups_completed: resultGroups.length,
+        outputs: resultGroups.flatMap((group) => group.outputs),
+        templates: [
+          {
+            template_id: 'tpl-shirt',
+            template_name: 'shirt',
+            groups_total: resultGroups.length,
+            groups_completed: resultGroups.length,
+            outputs: resultGroups.flatMap((group) => group.outputs),
+          },
+        ],
+        result_groups: resultGroups,
+      }
+    })
+
+    try {
+      const service = new PipelineService()
+      await service.runPipeline('run-photoshop-micro-batch', {
+        ...baseConfig(printFolder),
+        title: { ...baseConfig(printFolder).title, enabled: false },
+      })
+
+      expect(mocks.runBatch).toHaveBeenCalledTimes(1)
+      expect(mocks.runBatch.mock.calls[0]?.[0]).toHaveLength(3)
+    } finally {
+      if (previousImplementation) {
+        mocks.runBatch.mockImplementation(previousImplementation)
+      }
+    }
+  })
+
+  it('uses complete-task detection concurrency for already queued prints', async () => {
+    const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'detect-queued')
+    await createPrint(join(printFolder, 'existing-1.png'))
+    await createPrint(join(printFolder, 'existing-2.png'))
+    await createPrint(join(printFolder, 'existing-3.png'))
+    mocks.runDetectionBatch.mockImplementation(async (input) => ({
+      taskId: input.taskId ?? 'detection-batch',
+      total: input.imagePaths.length,
+      succeeded: input.imagePaths.length,
+      failed: 0,
+      skipped: 0,
+      results: input.imagePaths.map((imagePath: string, index: number) => ({
+        imagePath,
+        thumbnailUrl: '',
+        artifactId: input.imageInputs?.[index]?.artifactId ?? `art-${index}`,
+        printId: input.imageInputs?.[index]?.printId ?? `pri-${index}`,
+        status: 'success' as const,
+        riskScore: 5,
+        riskLevel: 'pass' as const,
+        reason: '低风险',
+        outputPath: imagePath,
+        cached: false,
+      })),
+    }))
+
+    const service = new PipelineService()
+    await service.runPipeline('run-detection-concurrency', {
+      ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
+      detection: {
+        enabled: true,
+        allowReview: true,
+        skillId: 'infringement-detection',
+        model: 'qwen3-vl-flash',
+        concurrency: 3,
+      },
+      photoshop: { ...baseConfig(printFolder).photoshop, enabled: false },
+      title: { ...baseConfig(printFolder).title, enabled: false },
+    })
+
+    expect(mocks.runDetectionBatch).toHaveBeenCalledOnce()
+    expect(mocks.runDetectionBatch.mock.calls[0]?.[0]).toMatchObject({
+      concurrency: 3,
+      imagePaths: expect.arrayContaining([
+        join(printFolder, 'existing-1.png'),
+        join(printFolder, 'existing-2.png'),
+        join(printFolder, 'existing-3.png'),
+      ]),
+    })
   })
 
   it('rejects Photoshop runs without a print sku code before starting work', async () => {
@@ -3197,53 +3343,46 @@ describe('PipelineService', () => {
       })
     })
     mocks.runDetectionBatch.mockImplementation(async (input) => {
-      const imagePath = input.imagePaths[0] ?? ''
-      detectionCalls.push(imagePath)
-      if (imagePath.endsWith('matted-1.png')) {
+      detectionCalls.push(...input.imagePaths)
+      if (input.imagePaths.some((imagePath: string) => imagePath.endsWith('matted-1.png'))) {
         firstDetectionFinished.resolve()
-        return {
-          taskId: 'run-stream-detection-detection-1',
-          total: 1,
-          succeeded: 1,
-          failed: 0,
-          skipped: 0,
-          results: [
-            {
-              imagePath,
-              thumbnailUrl: '',
-              artifactId: 'art-stream-detect-matted-1',
-              printId: 'pri-stream-detect-matted-1',
-              status: 'success' as const,
-              riskScore: 88,
-              riskLevel: 'block' as const,
-              reason: '高风险',
-              outputPath: join(mocks.workbenchRoot, 'detected-block-1.png'),
-              cached: false,
-            },
-          ],
-        }
       }
-      await secondDetectionGate.promise
+      if (input.imagePaths.some((imagePath: string) => imagePath.endsWith('matted-2.png'))) {
+        await secondDetectionGate.promise
+      }
       return {
-        taskId: 'run-stream-detection-detection-2',
-        total: 1,
-        succeeded: 1,
+        taskId: input.taskId ?? 'run-stream-detection-detection',
+        total: input.imagePaths.length,
+        succeeded: input.imagePaths.length,
         failed: 0,
         skipped: 0,
-        results: [
-          {
-            imagePath,
-            thumbnailUrl: '',
-            artifactId: 'art-stream-detect-matted-2',
-            printId: 'pri-stream-detect-matted-2',
-            status: 'success' as const,
-            riskScore: 12,
-            riskLevel: 'pass' as const,
-            reason: '低风险',
-            outputPath: join(mocks.workbenchRoot, 'detected-pass-2.png'),
-            cached: false,
-          },
-        ],
+        results: input.imagePaths.map((imagePath: string) =>
+          imagePath.endsWith('matted-1.png')
+            ? {
+                imagePath,
+                thumbnailUrl: '',
+                artifactId: 'art-stream-detect-matted-1',
+                printId: 'pri-stream-detect-matted-1',
+                status: 'success' as const,
+                riskScore: 88,
+                riskLevel: 'block' as const,
+                reason: '高风险',
+                outputPath: join(mocks.workbenchRoot, 'detected-block-1.png'),
+                cached: false,
+              }
+            : {
+                imagePath,
+                thumbnailUrl: '',
+                artifactId: 'art-stream-detect-matted-2',
+                printId: 'pri-stream-detect-matted-2',
+                status: 'success' as const,
+                riskScore: 12,
+                riskLevel: 'pass' as const,
+                reason: '低风险',
+                outputPath: join(mocks.workbenchRoot, 'detected-pass-2.png'),
+                cached: false,
+              },
+        ),
       }
     })
 
@@ -3292,8 +3431,7 @@ describe('PipelineService', () => {
       join(mocks.workbenchRoot, 'stream-detect-matted-2.png'),
     ])
     expect(mocks.runDetectionBatch.mock.calls.map((call) => call[0]?.taskId)).toEqual([
-      'run-stream-matting-detection-detection-pri-stream-detect-source-1',
-      'run-stream-matting-detection-detection-pri-stream-detect-source-2',
+      expect.stringMatching(/^run-stream-matting-detection-detection-\d+-/),
     ])
     expect(
       detail.result_sections?.find((section) => section.key === 'detection_blocked'),
@@ -3906,63 +4044,52 @@ describe('PipelineService', () => {
         imagePaths: string[]
         imageInputs?: Array<{ path: string; artifactId?: string; printId?: string }>
       }) => {
-        expect(input.imagePaths).toHaveLength(1)
-        expect(input.imageInputs).toHaveLength(1)
-        const imagePath = input.imagePaths[0] ?? ''
-        const inputItem = input.imageInputs?.[0]
-        if (imagePath.endsWith('img2img-pass.png')) {
-          expect(inputItem).toMatchObject({
+        expect(input.imagePaths).toHaveLength(2)
+        expect(input.imageInputs).toEqual([
+          expect.objectContaining({
             path: generatedImages[0]?.localPath,
             artifactId: 'art-img2img-pass',
             printId: 'pri-img2img-pass',
-          })
-          return {
-            taskId: 'run-img2img-detection-detection-pass',
-            total: 1,
-            succeeded: 1,
-            failed: 0,
-            skipped: 0,
-            results: [
-              {
-                imagePath: generatedImages[0]?.localPath ?? '',
-                thumbnailUrl: '',
-                artifactId: 'art-img2img-pass',
-                printId: 'pri-img2img-pass',
-                status: 'success' as const,
-                riskScore: 12,
-                riskLevel: 'pass' as const,
-                reason: '低风险',
-                outputPath: join(mocks.workbenchRoot, 'detected-pass.png'),
-                cached: false,
-              },
-            ],
-          }
-        }
-        expect(inputItem).toMatchObject({
-          path: generatedImages[1]?.localPath,
-          artifactId: 'art-img2img-block',
-          printId: 'pri-img2img-block',
-        })
+          }),
+          expect.objectContaining({
+            path: generatedImages[1]?.localPath,
+            artifactId: 'art-img2img-block',
+            printId: 'pri-img2img-block',
+          }),
+        ])
         return {
-          taskId: 'run-img2img-detection-detection-block',
-          total: 1,
-          succeeded: 1,
+          taskId: 'run-img2img-detection-detection-batch',
+          total: input.imagePaths.length,
+          succeeded: input.imagePaths.length,
           failed: 0,
           skipped: 0,
-          results: [
-            {
-              imagePath: generatedImages[1]?.localPath ?? '',
-              thumbnailUrl: '',
-              artifactId: 'art-img2img-block',
-              printId: 'pri-img2img-block',
-              status: 'success' as const,
-              riskScore: 92,
-              riskLevel: 'block' as const,
-              reason: '高风险',
-              outputPath: join(mocks.workbenchRoot, 'detected-block.png'),
-              cached: false,
-            },
-          ],
+          results: input.imagePaths.map((imagePath: string) =>
+            imagePath.endsWith('img2img-pass.png')
+              ? {
+                  imagePath: generatedImages[0]?.localPath ?? '',
+                  thumbnailUrl: '',
+                  artifactId: 'art-img2img-pass',
+                  printId: 'pri-img2img-pass',
+                  status: 'success' as const,
+                  riskScore: 12,
+                  riskLevel: 'pass' as const,
+                  reason: '低风险',
+                  outputPath: join(mocks.workbenchRoot, 'detected-pass.png'),
+                  cached: false,
+                }
+              : {
+                  imagePath: generatedImages[1]?.localPath ?? '',
+                  thumbnailUrl: '',
+                  artifactId: 'art-img2img-block',
+                  printId: 'pri-img2img-block',
+                  status: 'success' as const,
+                  riskScore: 92,
+                  riskLevel: 'block' as const,
+                  reason: '高风险',
+                  outputPath: join(mocks.workbenchRoot, 'detected-block.png'),
+                  cached: false,
+                },
+          ),
         }
       },
     )
@@ -4032,73 +4159,55 @@ describe('PipelineService', () => {
     await createPrint(join(printFolder, 'review.png'))
     await createPrint(join(printFolder, 'block.png'))
     mocks.runDetectionBatch.mockImplementation(async (input) => {
-      const imagePath = input.imagePaths[0] ?? ''
-      if (imagePath.endsWith('pass.png')) {
-        return {
-          taskId: 'run-detection-sections-detection-pass',
-          total: 1,
-          succeeded: 1,
-          failed: 0,
-          skipped: 0,
-          results: [
-            {
-              imagePath,
-              thumbnailUrl: '',
-              artifactId: 'art-pass',
-              printId: 'pri-pass',
-              status: 'success' as const,
-              riskScore: 10,
-              riskLevel: 'pass' as const,
-              reason: '低风险',
-              outputPath: join(mocks.workbenchRoot, 'pass-output.png'),
-              cached: false,
-            },
-          ],
-        }
-      }
-      if (imagePath.endsWith('review.png')) {
-        return {
-          taskId: 'run-detection-sections-detection-review',
-          total: 1,
-          succeeded: 1,
-          failed: 0,
-          skipped: 0,
-          results: [
-            {
-              imagePath,
-              thumbnailUrl: '',
-              artifactId: 'art-review',
-              printId: 'pri-review',
-              status: 'success' as const,
-              riskScore: 55,
-              riskLevel: 'review' as const,
-              reason: '疑似',
-              outputPath: join(mocks.workbenchRoot, 'review-output.png'),
-              cached: false,
-            },
-          ],
-        }
-      }
-      return {
-        taskId: 'run-detection-sections-detection-block',
-        total: 1,
-        succeeded: 1,
-        failed: 0,
-        skipped: 0,
-        results: [
-          {
+      const results = input.imagePaths.map((imagePath: string) => {
+        if (imagePath.endsWith('pass.png')) {
+          return {
             imagePath,
             thumbnailUrl: '',
-            artifactId: 'art-block',
-            printId: 'pri-block',
+            artifactId: 'art-pass',
+            printId: 'pri-pass',
             status: 'success' as const,
-            riskScore: 90,
-            riskLevel: 'block' as const,
-            reason: '高风险',
-            outputPath: join(mocks.workbenchRoot, 'block-output.png'),
+            riskScore: 10,
+            riskLevel: 'pass' as const,
+            reason: '低风险',
+            outputPath: join(mocks.workbenchRoot, 'pass-output.png'),
             cached: false,
-          },
-        ],
+          }
+        }
+        if (imagePath.endsWith('review.png')) {
+          return {
+            imagePath,
+            thumbnailUrl: '',
+            artifactId: 'art-review',
+            printId: 'pri-review',
+            status: 'success' as const,
+            riskScore: 55,
+            riskLevel: 'review' as const,
+            reason: '疑似',
+            outputPath: join(mocks.workbenchRoot, 'review-output.png'),
+            cached: false,
+          }
+        }
+        return {
+          imagePath,
+          thumbnailUrl: '',
+          artifactId: 'art-block',
+          printId: 'pri-block',
+          status: 'success' as const,
+          riskScore: 90,
+          riskLevel: 'block' as const,
+          reason: '高风险',
+          outputPath: join(mocks.workbenchRoot, 'block-output.png'),
+          cached: false,
+        }
+      })
+      return {
+        taskId: 'run-detection-sections-detection-batch',
+        total: results.length,
+        succeeded: results.length,
+        failed: 0,
+        skipped: 0,
+        results,
       }
     })
 

@@ -109,14 +109,30 @@ export class SharpPreprocessPool {
   readonly size: number
   private nextId = 1
   private readonly workers: PoolWorker[]
+  private readonly workerFactory: () => Worker
   private readonly queue: QueuedJob[] = []
+  private closing = false
 
-  constructor(workerCount = defaultPreprocessWorkerCount()) {
+  constructor(workerCount = defaultPreprocessWorkerCount(), workerFactory?: () => Worker) {
     this.size = clamp(Math.floor(workerCount), 1, 8)
+    this.workerFactory =
+      workerFactory ??
+      (() =>
+        new Worker(PREPROCESS_WORKER_SOURCE, {
+          eval: true,
+          workerData: {
+            sharpModulePath: nodeRequire.resolve('sharp'),
+          },
+        }))
     this.workers = Array.from({ length: this.size }, () => this.createWorker())
   }
 
   process(options: PreprocessOptions): Promise<PreprocessResult> {
+    if (this.closing) {
+      return Promise.reject(
+        new AppErrorClass('HTTP_5XX', '图片预处理池已关闭，无法接收新任务', false),
+      )
+    }
     return new Promise((resolve, reject) => {
       this.queue.push({
         id: this.nextId,
@@ -134,22 +150,35 @@ export class SharpPreprocessPool {
   }
 
   async close() {
+    if (this.closing) {
+      return
+    }
+    this.closing = true
+    const error = new AppErrorClass('HTTP_5XX', '图片预处理池已关闭', false)
+    for (const job of this.queue.splice(0)) {
+      job.reject(error)
+    }
+    for (const poolWorker of this.workers) {
+      poolWorker.job?.reject(error)
+      poolWorker.job = null
+    }
     await Promise.all(this.workers.map(({ worker }) => worker.terminate()))
-    this.queue.splice(0)
   }
 
   private createWorker(): PoolWorker {
     const poolWorker: PoolWorker = {
-      worker: new Worker(PREPROCESS_WORKER_SOURCE, {
-        eval: true,
-        workerData: {
-          sharpModulePath: nodeRequire.resolve('sharp'),
-        },
-      }),
+      worker: this.workerFactory(),
       job: null,
     }
+    this.bindWorker(poolWorker, poolWorker.worker)
+    return poolWorker
+  }
 
-    poolWorker.worker.on('message', (message: WorkerResponse) => {
+  private bindWorker(poolWorker: PoolWorker, worker: Worker) {
+    worker.on('message', (message: WorkerResponse) => {
+      if (poolWorker.worker !== worker) {
+        return
+      }
       const job = poolWorker.job
       if (!job || job.id !== message.id) {
         return
@@ -170,14 +199,68 @@ export class SharpPreprocessPool {
       this.schedule()
     })
 
-    poolWorker.worker.on('error', (error) => {
-      const job = poolWorker.job
-      poolWorker.job = null
-      job?.reject(error)
-      this.schedule()
+    worker.on('error', (error) => {
+      this.replaceFailedWorker(poolWorker, worker, error)
     })
 
-    return poolWorker
+    worker.on('exit', (code) => {
+      this.replaceFailedWorker(
+        poolWorker,
+        worker,
+        new Error(`图片预处理 Worker 异常退出，退出码 ${code}`),
+      )
+    })
+  }
+
+  private replaceFailedWorker(poolWorker: PoolWorker, worker: Worker, cause: unknown) {
+    if (this.closing || poolWorker.worker !== worker) {
+      return
+    }
+    const job = poolWorker.job
+    poolWorker.job = null
+    job?.reject(
+      new AppErrorClass(
+        'HTTP_5XX',
+        '图片预处理 Worker 异常退出，当前图片处理失败',
+        false,
+        {
+          worker_job_id: job.id,
+        },
+        cause,
+      ),
+    )
+
+    let replacement: Worker
+    try {
+      replacement = this.workerFactory()
+    } catch (error) {
+      this.closeAfterWorkerReplacementFailure(error)
+      return
+    }
+
+    void worker.terminate().catch(() => undefined)
+    poolWorker.worker = replacement
+    this.bindWorker(poolWorker, poolWorker.worker)
+    this.schedule()
+  }
+
+  private closeAfterWorkerReplacementFailure(cause: unknown) {
+    this.closing = true
+    const error = new AppErrorClass(
+      'HTTP_5XX',
+      '图片预处理 Worker 补位失败，预处理池已关闭',
+      false,
+      undefined,
+      cause,
+    )
+    for (const job of this.queue.splice(0)) {
+      job.reject(error)
+    }
+    for (const poolWorker of this.workers) {
+      poolWorker.job?.reject(error)
+      poolWorker.job = null
+      void poolWorker.worker.terminate().catch(() => undefined)
+    }
   }
 
   private schedule() {
@@ -192,7 +275,11 @@ export class SharpPreprocessPool {
       }
 
       poolWorker.job = job
-      poolWorker.worker.postMessage({ id: job.id, options: job.options } satisfies WorkerRequest)
+      try {
+        poolWorker.worker.postMessage({ id: job.id, options: job.options } satisfies WorkerRequest)
+      } catch (error) {
+        this.replaceFailedWorker(poolWorker, poolWorker.worker, error)
+      }
     }
   }
 }

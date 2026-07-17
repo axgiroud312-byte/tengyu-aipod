@@ -1,5 +1,5 @@
+import { authorizeCustomerRequest } from '@/lib/customer-request-auth'
 import { getSkill } from '@/lib/skills'
-import { parseOptionalPhpUid } from '@/lib/targeting'
 import { NextResponse } from 'next/server'
 import { z } from 'zod'
 
@@ -12,6 +12,11 @@ function errorResponse(code: string, message: string, status: number) {
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const authorization = await authorizeCustomerRequest(request)
+  if (!authorization.ok) {
+    return errorResponse(authorization.code, authorization.message, authorization.status)
+  }
+
   const { id } = await params
   const url = new URL(request.url)
   const parsed = skillDetailQuerySchema.safeParse({
@@ -21,11 +26,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     return errorResponse('INVALID_SKILL_QUERY', 'Skill 查询参数不正确', 400)
   }
 
-  const data = await getSkill(
-    id,
-    parsed.data.version,
-    parseOptionalPhpUid(url.searchParams.get('uid')),
-  )
+  const data = await getSkill(id, parsed.data.version, authorization.phpUid)
   if (!data) {
     return errorResponse('SKILL_NOT_FOUND', 'Skill 不存在', 404)
   }
