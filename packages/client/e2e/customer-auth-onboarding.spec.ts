@@ -21,6 +21,7 @@ function sendJson(response: ServerResponse, body: unknown, status = 200) {
 
 async function startMockServer() {
   let authorizationStatus: AuthorizationStatus = 'pending'
+  let verificationDelayMs = 0
   const server = createServer((request: IncomingMessage, response: ServerResponse) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/user/public/send_login_sms') {
@@ -36,21 +37,29 @@ async function startMockServer() {
       return
     }
     if (url.pathname === '/api/customer-auth/verify') {
-      sendJson(response, {
-        ok: true,
-        data: {
-          customer: {
-            account: 'e2e',
-            avatar_url: null,
-            expires_at: '2099-12-31T00:00:00.000Z',
-            id: 'cus_auth_e2e',
-            nickname: 'E2E 客户',
-            phone: '13800000000',
-            php_uid: 10001,
+      const delay = verificationDelayMs
+      verificationDelayMs = 0
+      const sendVerification = () =>
+        sendJson(response, {
+          ok: true,
+          data: {
+            customer: {
+              account: 'e2e',
+              avatar_url: null,
+              expires_at: '2099-12-31T00:00:00.000Z',
+              id: 'cus_auth_e2e',
+              nickname: 'E2E 客户',
+              phone: '13800000000',
+              php_uid: 10001,
+            },
+            status: authorizationStatus,
           },
-          status: authorizationStatus,
-        },
-      })
+        })
+      if (delay > 0) {
+        setTimeout(sendVerification, delay)
+      } else {
+        sendVerification()
+      }
       return
     }
     if (url.pathname === '/api/skills') {
@@ -73,6 +82,9 @@ async function startMockServer() {
       ),
     authorize: () => {
       authorizationStatus = 'active'
+    },
+    delayNextVerification: (delayMs: number) => {
+      verificationDelayMs = delayMs
     },
   }
 }
@@ -128,6 +140,29 @@ async function expectReadableContrast(locator: Locator) {
   const ratio = await locator.evaluate((element) => {
     function rgba(value: string) {
       const parts = value.match(/[\d.]+/g)?.map(Number) ?? []
+      if (value.startsWith('oklch')) {
+        const [lightness = 0, chroma = 0, hue = 0, alpha = 1] = parts
+        const hueRadians = (hue * Math.PI) / 180
+        const a = chroma * Math.cos(hueRadians)
+        const b = chroma * Math.sin(hueRadians)
+        const lRoot = lightness + 0.3963377774 * a + 0.2158037573 * b
+        const mRoot = lightness - 0.1055613458 * a - 0.0638541728 * b
+        const sRoot = lightness - 0.0894841775 * a - 1.291485548 * b
+        const l = lRoot ** 3
+        const m = mRoot ** 3
+        const s = sRoot ** 3
+        const linear = [
+          4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+          -1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+          -0.0041960863 * l - 0.7034186147 * m + 1.707614701 * s,
+        ]
+        const srgb = linear.map((channel) => {
+          const encoded =
+            channel <= 0.0031308 ? 12.92 * channel : 1.055 * channel ** (1 / 2.4) - 0.055
+          return Math.min(1, Math.max(0, encoded)) * 255
+        })
+        return { r: srgb[0] ?? 0, g: srgb[1] ?? 0, b: srgb[2] ?? 0, a: alpha }
+      }
       return {
         r: parts[0] ?? 0,
         g: parts[1] ?? 0,
@@ -247,7 +282,21 @@ test.describe('customer auth and onboarding', () => {
     const authorization = login.getByRole('status', { name: '账号授权状态' })
     await expect(authorization.getByText('等待开通', { exact: true })).toBeVisible()
     await expect(authorization).toContainText('页面会自动检查')
-    await expect(login.getByRole('button', { name: '退出登录' })).toBeVisible()
+    await expectReadableContrast(authorization)
+    const retryButton = login.getByRole('button', { name: '重新校验' })
+    const logoutButton = login.getByRole('button', { name: '退出登录' })
+    await retryButton.focus()
+    await expect(retryButton).toBeFocused()
+    await page.keyboard.press('Tab')
+    await expect(logoutButton).toBeFocused()
+    mockServer.delayNextVerification(250)
+    await retryButton.click()
+    const pendingSpinner = authorization.locator('.animate-spin')
+    await expect(pendingSpinner).toBeVisible()
+    await expect
+      .poll(() => pendingSpinner.evaluate((element) => getComputedStyle(element).animationName))
+      .toBe('none')
+    await expect(pendingSpinner).toBeHidden()
     await expect(page.locator('body')).not.toContainText('php-secret-must-stay-in-main')
     const rendererState = await page.evaluate(() => window.api.customerAuth.getState())
     expect(JSON.stringify(rendererState)).not.toContain('php-secret-must-stay-in-main')
@@ -262,9 +311,24 @@ test.describe('customer auth and onboarding', () => {
     await expect(onboarding).toContainText('第 1 步，共 2 步')
     await expect(onboarding.locator('[style*="entrance-hero"]')).toHaveCount(0)
     await expect(onboarding.getByRole('button', { name: '测试连接' })).toHaveCount(0)
-    const chenyuKey = onboarding.getByLabel('晨羽智云密钥')
+    await expect(onboarding.getByRole('progressbar', { name: '设置进度' })).toHaveAttribute(
+      'aria-valuenow',
+      '50',
+    )
+    await expect(onboarding.getByRole('button', { name: '跳过晨羽智云密钥' })).toBeVisible()
+    await expect(onboarding.getByRole('button', { name: '跳过Grsai 密钥' })).toBeVisible()
+    await expect(onboarding.getByRole('button', { name: '跳过阿里云百炼密钥' })).toBeVisible()
+    await expect(onboarding.getByRole('button', { name: '跳过比特浏览器地址' })).toBeVisible()
+    const chenyuKey = onboarding.getByLabel('晨羽智云密钥', { exact: true })
     await chenyuKey.focus()
     await expect(chenyuKey).toBeFocused()
+    const currentStep = onboarding
+      .getByRole('complementary', { name: '设置步骤' })
+      .getByText('第 1 步，共 2 步 · 接口密钥', { exact: true })
+      .locator('../..')
+    await expect
+      .poll(() => currentStep.evaluate((element) => getComputedStyle(element).transitionProperty))
+      .toBe('none')
     await expectReadableContrast(onboarding.getByRole('heading', { name: '首次设置' }))
     await expectNoHorizontalOverflow(page)
     await attachScreenshot(page, testInfo, 'onboarding-step-one-neutral')

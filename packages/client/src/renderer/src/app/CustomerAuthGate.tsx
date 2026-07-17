@@ -1,4 +1,5 @@
 import { CustomerLoginPage } from '@/features/customer-auth/CustomerLoginPage'
+import { t } from '@/locale/t'
 import { Loader2 } from 'lucide-react'
 import { type ReactNode, useCallback, useEffect, useState } from 'react'
 import type { CustomerAuthState } from '../../../main/lib/customer-auth'
@@ -17,7 +18,7 @@ function EnteringWorkbench() {
     <main className="grid min-h-screen place-items-center bg-background text-foreground">
       <div className="flex items-center gap-3 text-sm text-muted-foreground">
         <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-        正在进入工作台...
+        {t('正在进入工作台...')}
       </div>
     </main>
   )
@@ -36,7 +37,7 @@ export function CustomerAuthGate({ children }: { children: ReactNode }) {
     } catch (error) {
       setAuthState({
         customer: null,
-        message: error instanceof Error ? error.message : '客户授权校验失败',
+        message: error instanceof Error ? error.message : t('客户授权校验失败'),
         status: 'anonymous',
       })
     } finally {
@@ -81,7 +82,7 @@ export function CustomerAuthGate({ children }: { children: ReactNode }) {
         .catch((error) => {
           setAuthState({
             customer: null,
-            message: error instanceof Error ? error.message : '客户授权校验失败',
+            message: error instanceof Error ? error.message : t('客户授权校验失败'),
             status: 'anonymous',
           })
         })
@@ -107,7 +108,7 @@ export function CustomerAuthGate({ children }: { children: ReactNode }) {
             current.status === 'pending' && nextState.status === 'anonymous'
               ? {
                   ...current,
-                  message: nextState.message ?? '客户授权校验失败',
+                  message: nextState.message ?? t('客户授权校验失败'),
                 }
               : nextState,
           )
@@ -117,7 +118,7 @@ export function CustomerAuthGate({ children }: { children: ReactNode }) {
             current.status === 'pending'
               ? {
                   ...current,
-                  message: error instanceof Error ? error.message : '客户授权校验失败',
+                  message: error instanceof Error ? error.message : t('客户授权校验失败'),
                 }
               : current,
           )

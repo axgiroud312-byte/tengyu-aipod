@@ -1,6 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { t } from '@/locale/t'
 import { CircleAlert, Loader2, LogOut, MessageCircle, RefreshCcw, Smartphone } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import type {
@@ -24,20 +25,20 @@ const AUTH_DATE_FORMAT = new Intl.DateTimeFormat('zh-CN', {
 })
 
 const STATUS_TEXT: Record<CustomerAuthStatus, { label: string; message: string }> = {
-  active: { label: '已授权', message: '账号已授权，可以进入工作台。' },
-  anonymous: { label: '未登录', message: '请使用微信或手机号登录。' },
+  active: { label: t('已授权'), message: t('账号已授权，可以进入工作台。') },
+  anonymous: { label: t('未登录'), message: t('请使用微信或手机号登录。') },
   disabled: {
-    label: '账号当前不可用',
-    message: '此账号当前不可进入工作台。请联系管理员确认授权状态。',
+    label: t('账号当前不可用'),
+    message: t('此账号当前不可进入工作台。请联系管理员确认授权状态。'),
   },
   expired: {
-    label: '授权已到期',
-    message: '账号授权已到期。请联系管理员续期，然后重新校验。',
+    label: t('授权已到期'),
+    message: t('账号授权已到期。请联系管理员续期，然后重新校验。'),
   },
-  nologin: { label: '登录失效', message: '本机登录状态已失效。请重新登录。' },
+  nologin: { label: t('登录失效'), message: t('本机登录状态已失效。请重新登录。') },
   pending: {
-    label: '等待开通',
-    message: '账号已登录，授权尚未开通。页面会自动检查，开通后将直接进入工作台。',
+    label: t('等待开通'),
+    message: t('账号已登录，授权尚未开通。页面会自动检查，开通后将直接进入工作台。'),
   },
 }
 
@@ -62,7 +63,9 @@ function authDisplayName(state: CustomerAuthState) {
     state.customer?.nickname ||
     state.customer?.account ||
     state.customer?.phone ||
-    (state.customer?.php_uid ? `UID ${state.customer.php_uid}` : null)
+    (state.customer?.php_uid
+      ? t('UID {uid}').replace('{uid}', String(state.customer.php_uid))
+      : null)
   )
 }
 
@@ -142,7 +145,7 @@ export function CustomerLoginPage({
     try {
       const nextState = await window.api.customerAuth.checkWechatLogin({ token: qrcode.token })
       if (nextState.status === 'active') {
-        setWechatMessage('登录成功，正在进入工作台...')
+        setWechatMessage(t('登录成功，正在进入工作台...'))
       } else {
         setWechatMessage(nextState.message ?? STATUS_TEXT[nextState.status].message)
       }
@@ -156,7 +159,7 @@ export function CustomerLoginPage({
       }
       applyLoginState(nextState)
     } catch (error) {
-      setWechatMessage(error instanceof Error ? error.message : '微信登录状态查询失败')
+      setWechatMessage(error instanceof Error ? error.message : t('微信登录状态查询失败'))
     } finally {
       pollingRef.current = false
     }
@@ -182,10 +185,10 @@ export function CustomerLoginPage({
       const nextQrcode = await window.api.customerAuth.startWechatLogin()
       setQrcode(nextQrcode)
       setPolling(true)
-      setWechatMessage('微信登录页已打开，请在微信中确认。')
+      setWechatMessage(t('微信登录页已打开，请在微信中确认。'))
     } catch (error) {
       setQrcode(null)
-      setWechatMessage(error instanceof Error ? error.message : '微信登录页打开失败')
+      setWechatMessage(error instanceof Error ? error.message : t('微信登录页打开失败'))
     } finally {
       setWechatBusy(false)
     }
@@ -199,7 +202,7 @@ export function CustomerLoginPage({
       setSmsRemaining(result.remaining_seconds)
       setPhoneMessage(result.message)
     } catch (error) {
-      setPhoneMessage(error instanceof Error ? error.message : '验证码发送失败')
+      setPhoneMessage(error instanceof Error ? error.message : t('验证码发送失败'))
     } finally {
       setPhoneBusy(false)
     }
@@ -213,12 +216,12 @@ export function CustomerLoginPage({
       const nextState = await window.api.customerAuth.loginByPhone({ code, invite: '', phone })
       setPhoneMessage(
         nextState.status === 'active'
-          ? '登录成功，正在进入工作台...'
+          ? t('登录成功，正在进入工作台...')
           : (nextState.message ?? STATUS_TEXT[nextState.status].message),
       )
       applyLoginState(nextState)
     } catch (error) {
-      setPhoneMessage(error instanceof Error ? error.message : '手机号登录失败')
+      setPhoneMessage(error instanceof Error ? error.message : t('手机号登录失败'))
     } finally {
       setPhoneBusy(false)
     }
@@ -235,29 +238,29 @@ export function CustomerLoginPage({
 
   return (
     <main
-      aria-label="客户登录"
+      aria-label={t('客户登录')}
       className="min-h-dvh bg-muted/30 px-4 py-6 text-foreground sm:px-8 sm:py-8"
     >
       <div className="mx-auto flex min-h-[calc(100dvh-64px)] w-full max-w-5xl flex-col justify-center gap-6">
         <header className="flex items-center gap-4 border-b pb-5">
           <img
-            alt="腾域 aipod"
+            alt={t('腾域 aipod')}
             className="size-12 rounded-md border bg-background object-contain"
             loading="lazy"
             src="brand/brand-logo.svg"
           />
           <div className="min-w-0">
-            <p className="text-sm font-medium text-muted-foreground">腾域 aipod</p>
-            <h1 className="mt-0.5 text-2xl font-semibold">客户登录</h1>
+            <p className="text-sm font-medium text-muted-foreground">{t('腾域 aipod')}</p>
+            <h1 className="mt-0.5 text-2xl font-semibold">{t('客户登录')}</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              登录后系统会检查账号授权；已授权账号将进入首次设置或完整任务。
+              {t('登录后系统会检查账号授权；已授权账号将进入首次设置或完整任务。')}
             </p>
           </div>
         </header>
 
         {showAuthNotice ? (
           <output
-            aria-label="账号授权状态"
+            aria-label={t('账号授权状态')}
             aria-live="polite"
             className={noticeClassName(state.status)}
           >
@@ -269,15 +272,20 @@ export function CustomerLoginPage({
               )}
               <div>
                 <p className="font-medium">
-                  {checking ? '正在检查本机登录状态' : statusMeta.label}
+                  {checking ? t('正在检查本机登录状态') : statusMeta.label}
                 </p>
                 <p>{state.message ?? statusMeta.message}</p>
                 {authName ? (
-                  <p className="mt-1 text-xs tabular-nums">当前账号：{authName}</p>
+                  <p className="mt-1 text-xs tabular-nums">
+                    {t('当前账号：{name}').replace('{name}', authName)}
+                  </p>
                 ) : null}
                 {state.customer?.expires_at ? (
                   <p className="text-xs tabular-nums">
-                    到期时间：{formatAuthDate(state.customer.expires_at)}
+                    {t('到期时间：{time}').replace(
+                      '{time}',
+                      formatAuthDate(state.customer.expires_at),
+                    )}
                   </p>
                 ) : null}
               </div>
@@ -286,15 +294,15 @@ export function CustomerLoginPage({
         ) : null}
 
         <div className="grid gap-5 lg:grid-cols-2">
-          <section aria-label="微信登录" className="rounded-md border bg-background p-6">
+          <section aria-label={t('微信登录')} className="rounded-md border bg-background p-6">
             <div className="flex items-start gap-3">
               <div className="grid size-9 shrink-0 place-items-center rounded-sm border bg-muted text-primary">
                 <MessageCircle className="size-4" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold">微信登录</h2>
+                <h2 className="text-lg font-semibold">{t('微信登录')}</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  在默认浏览器打开微信登录页，当前窗口会继续等待确认结果。
+                  {t('在默认浏览器打开微信登录页，当前窗口会继续等待确认结果。')}
                 </p>
               </div>
             </div>
@@ -308,15 +316,15 @@ export function CustomerLoginPage({
               ) : (
                 <MessageCircle className="mr-2 size-4" />
               )}
-              {hasWechatSession ? '重新打开微信登录页' : '打开微信登录页'}
+              {hasWechatSession ? t('重新打开微信登录页') : t('打开微信登录页')}
             </Button>
             <p aria-live="polite" className="mt-3 min-h-6 text-sm leading-6 text-muted-foreground">
-              {wechatMessage ?? (polling ? '正在等待微信确认。' : '尚未打开微信登录页。')}
+              {wechatMessage ?? (polling ? t('正在等待微信确认。') : t('尚未打开微信登录页。'))}
             </p>
           </section>
 
           <form
-            aria-label="手机号登录"
+            aria-label={t('手机号登录')}
             className="rounded-md border bg-background p-6"
             onSubmit={(event) => void handlePhoneLogin(event)}
           >
@@ -325,19 +333,19 @@ export function CustomerLoginPage({
                 <Smartphone className="size-4" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold">手机号登录</h2>
+                <h2 className="text-lg font-semibold">{t('手机号登录')}</h2>
                 <p className="mt-1 text-sm leading-6 text-muted-foreground">
-                  使用已绑定手机号接收验证码并登录。
+                  {t('使用已绑定手机号接收验证码并登录。')}
                 </p>
               </div>
             </div>
             <div className="mt-6 grid gap-3 sm:grid-cols-[minmax(0,1fr)_136px]">
               <Input
-                aria-label="手机号"
+                aria-label={t('手机号')}
                 autoComplete="tel"
                 inputMode="tel"
                 onChange={(event) => setPhone(event.target.value)}
-                placeholder="手机号"
+                placeholder={t('手机号')}
                 value={phone}
               />
               <Button
@@ -349,24 +357,26 @@ export function CustomerLoginPage({
                 {phoneBusy ? (
                   <Loader2 className="mr-2 size-4 animate-spin motion-reduce:animate-none" />
                 ) : null}
-                {smsRemaining > 0 ? `${smsRemaining}s` : '发送验证码'}
+                {smsRemaining > 0
+                  ? t('{seconds}s').replace('{seconds}', String(smsRemaining))
+                  : t('发送验证码')}
               </Button>
             </div>
             <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_136px]">
               <Input
-                aria-label="验证码"
+                aria-label={t('验证码')}
                 autoComplete="one-time-code"
                 inputMode="numeric"
                 onChange={(event) => setCode(event.target.value)}
-                placeholder="验证码"
+                placeholder={t('验证码')}
                 value={code}
               />
               <Button disabled={phoneBusy} type="submit" variant="secondary">
-                验证登录
+                {t('验证登录')}
               </Button>
             </div>
             <p aria-live="polite" className="mt-3 min-h-5 text-sm text-muted-foreground">
-              {phoneMessage ?? '请输入手机号并获取验证码。'}
+              {phoneMessage ?? t('请输入手机号并获取验证码。')}
             </p>
           </form>
         </div>
@@ -375,13 +385,13 @@ export function CustomerLoginPage({
           {canRetryAuthorization ? (
             <Button disabled={checking} onClick={() => void onRetryVerify()} variant="outline">
               <RefreshCcw className="mr-2 size-4" />
-              重新校验
+              {t('重新校验')}
             </Button>
           ) : null}
           {state.status !== 'anonymous' ? (
             <Button onClick={() => void handleLogout()} variant="ghost">
               <LogOut className="mr-2 size-4" />
-              退出登录
+              {t('退出登录')}
             </Button>
           ) : null}
         </footer>
