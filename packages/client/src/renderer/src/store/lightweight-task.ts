@@ -258,8 +258,15 @@ export function lightweightTaskFromListingProgress(
 ): LightweightTaskSummary {
   const profileLocked =
     progress.status === 'failed' && progress.lastError?.code === 'PROFILE_LOCKED'
+  const loginRequired =
+    progress.status === 'failed' && progress.lastError?.code === 'LOGIN_REQUIRED'
+  const waitingReason = profileLocked
+    ? `比特浏览器环境 ${progress.profileId} 被占用，请先结束冲突的采集或上架任务`
+    : loginRequired
+      ? `比特浏览器环境 ${progress.profileId} 需要重新登录店小秘，请登录后重试上架`
+      : undefined
   const terminalFailure = progress.status === 'failed' && progress.currentSku === undefined
-  const status = profileLocked
+  const status = waitingReason
     ? 'waiting'
     : progress.status === 'failed'
       ? terminalFailure || progress.finishedCount >= progress.totalCount
@@ -278,12 +285,8 @@ export function lightweightTaskFromListingProgress(
     title: '上架任务',
     updatedAt,
     ...(progress.status === 'pending' ? { startsNewRun: true } : {}),
-    ...(progress.status === 'failed' && !profileLocked ? { hasException: true } : {}),
-    ...(profileLocked
-      ? {
-          waitingReason: `比特浏览器环境 ${progress.profileId} 被占用，请先结束冲突的采集或上架任务`,
-        }
-      : {}),
+    ...(progress.status === 'failed' && !waitingReason ? { hasException: true } : {}),
+    ...(waitingReason ? { waitingReason } : {}),
     counts: {
       finished: progress.finishedCount,
       total: progress.totalCount,

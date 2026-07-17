@@ -1761,6 +1761,8 @@ test.describe('production-first Workbench shell', () => {
         }),
       )
       .toBe(1)
+    await settings.getByLabel('货号批次目录').fill(`${batchDir}-next`)
+    await expect(failedRow).toBeHidden()
     await emitPublicModuleEvent(listingApp, 'listing:progress', {
       batchId: 'listing-ui-lock',
       profileId: 'profile-locked',
@@ -1780,6 +1782,27 @@ test.describe('production-first Workbench shell', () => {
         .getByRole('complementary', { name: '任务坞' })
         .getByRole('button', { name: '打开轻量任务 上架任务' })
         .getByText('比特浏览器环境 profile-locked 被占用，请先结束冲突的采集或上架任务', {
+          exact: true,
+        }),
+    ).toBeVisible()
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-login',
+      profileId: 'profile-7',
+      status: 'failed',
+      totalCount: 2,
+      finishedCount: 0,
+      lastError: {
+        code: 'LOGIN_REQUIRED',
+        appErrorCode: 'LOGIN_REQUIRED',
+        message: 'login required',
+        retryable: false,
+        stage: 'enter_page',
+      },
+    })
+    await expect(
+      page
+        .getByRole('complementary', { name: '任务坞' })
+        .getByText('比特浏览器环境 profile-7 需要重新登录店小秘，请登录后重试上架', {
           exact: true,
         }),
     ).toBeVisible()

@@ -23,6 +23,7 @@ import type {
   ListingPlatformKey,
   ListingProgress,
   ListingSkuMode,
+  ListingStage,
   ListingSubmitMode,
   ListingTaskRecord,
   ListingTemplateConfig,
@@ -73,18 +74,25 @@ const platformLabels: Record<ListingPlatformKey, string> = {
   shein: 'Shein',
 }
 
-const stageLabels: Record<string, string> = {
+const stageLabels: Record<ListingStage, string> = {
   enter_page: '打开编辑页',
   page_ready: '等待页面可编辑',
   confirm_shop_context: '替换店铺名称',
   fill_title_and_sku: '替换标题',
   upload_material_images: '替换图片',
-  replace_images: '替换图片',
   upload_video: '一键上传视频',
+  process_color_skc: '处理颜色与 SKC',
+  reuse_size_chart: '复用尺码表',
   generate_sku_code: '一键生成货号',
   process_description: '处理描述',
   submit_publish: '保存草稿',
   publish_result: '验证结果',
+  replace_shop_name: '替换店铺名称',
+  replace_title: '替换标题',
+  replace_images: '替换图片',
+  generate_sku: '生成货号',
+  save_or_publish: '保存或发布',
+  verify_result: '验证结果',
 }
 
 const workspaceStatusLabels: Record<ListingWorkspaceRecord['status'], string> = {
@@ -265,15 +273,16 @@ export function ListingWorkbench() {
   )
   const unsavedProfiles = profiles.filter((profile) => !workspaceByProfileId.has(profile.id))
   const operationalRows = useMemo(() => {
+    const environmentName = (profileId: string) =>
+      workspaceByProfileId.get(profileId)?.profile_name ??
+      profileById.get(profileId)?.name ??
+      profileId
     const nextRows: ListingOperationalRow[] = statusRows.map((row) => {
       const runtime = workspaceProgress[row.workspace_id]
       const isCurrentSku = runtime?.currentSku === row.sku_code
       return {
         key: `${row.workspace_id}-${row.sku_code}`,
-        environment:
-          workspaceByProfileId.get(row.workspace_id)?.profile_name ??
-          profileById.get(row.workspace_id)?.name ??
-          row.workspace_id,
+        environment: environmentName(row.workspace_id),
         profileId: row.workspace_id,
         sku: row.sku_code,
         stage:
@@ -292,10 +301,7 @@ export function ListingWorkbench() {
       }
       nextRows.unshift({
         key: `live-${profileId}-${runtime.currentSku}`,
-        environment:
-          workspaceByProfileId.get(profileId)?.profile_name ??
-          profileById.get(profileId)?.name ??
-          profileId,
+        environment: environmentName(profileId),
         profileId,
         sku: runtime.currentSku,
         stage: runtime.currentStage
@@ -388,12 +394,19 @@ export function ListingWorkbench() {
     }
   }
 
+  function resetOperationalState() {
+    setScanResult(null)
+    setStatusRows([])
+    setWorkspaceProgress({})
+    setProgress(null)
+    setRunningTaskId(null)
+  }
+
   async function chooseBatchDir() {
     const result = await window.api.listing.chooseBatchDir()
     if (result.ok) {
       setBatchDir(result.data.path)
-      setScanResult(null)
-      setStatusRows([])
+      resetOperationalState()
     }
   }
 
@@ -615,8 +628,7 @@ export function ListingWorkbench() {
       setSelectedProfileIds([workspace.profile_id])
       setActiveWorkspaceId(workspace.id)
     }
-    setScanResult(null)
-    setStatusRows([])
+    resetOperationalState()
   }
 
   async function deleteTask(task: ListingTaskRecord) {
@@ -637,8 +649,7 @@ export function ListingWorkbench() {
     setBatchDir(nextTemplate.materialRootDir)
     setDraftTemplateId(templateIdFromUrl(nextTemplate.editUrl))
     setSkuMode(nextTemplate.skuMode)
-    setScanResult(null)
-    setStatusRows([])
+    resetOperationalState()
   }
 
   function selectTemplate(nextTemplateKey: ListingTemplateKey) {
@@ -650,8 +661,7 @@ export function ListingWorkbench() {
     setBatchDir(nextTemplate.materialRootDir)
     setDraftTemplateId(templateIdFromUrl(nextTemplate.editUrl))
     setSkuMode(nextTemplate.skuMode)
-    setScanResult(null)
-    setStatusRows([])
+    resetOperationalState()
   }
 
   function toggleProfile(profileId: string) {
@@ -765,8 +775,7 @@ export function ListingWorkbench() {
                     className="h-10 min-w-0 flex-1 rounded-md border px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     onChange={(event) => {
                       setBatchDir(event.target.value)
-                      setScanResult(null)
-                      setStatusRows([])
+                      resetOperationalState()
                     }}
                     placeholder="/Users/.../04-上架工作区/套版-20260531-120000"
                     value={batchDir}
@@ -1142,7 +1151,7 @@ export function ListingWorkbench() {
                         {row?.currentSku ? (
                           <span className="truncate">
                             {row.currentSku} ·{' '}
-                            {stageLabels[row.currentStage ?? ''] ?? row.currentStage}
+                            {row.currentStage ? stageLabels[row.currentStage] : '—'}
                           </span>
                         ) : (
                           <span>等待任务</span>
