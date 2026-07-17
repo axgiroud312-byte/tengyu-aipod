@@ -147,12 +147,14 @@ test.describe('tutorial page', () => {
 
     await expect(page.getByRole('heading', { name: '教程' })).toBeVisible()
     await expect(page.getByRole('heading', { level: 1, name: '开始前准备' })).toBeVisible()
-    const imageLoaded = await page
-      .getByRole('img', { name: '工作区与模块入口概览' })
-      .evaluate((node) => {
-        const image = node as HTMLImageElement
-        return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
-      })
-    expect(imageLoaded).toBe(true)
+    const tutorialImage = page.getByRole('img', { name: '工作区与模块入口概览' })
+    await expect
+      .poll(() =>
+        tutorialImage.evaluate((node) => {
+          const image = node as HTMLImageElement
+          return image.complete && image.naturalWidth > 0 && image.naturalHeight > 0
+        }),
+      )
+      .toBe(true)
   })
 })

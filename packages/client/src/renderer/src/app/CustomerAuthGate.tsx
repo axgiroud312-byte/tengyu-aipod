@@ -16,7 +16,7 @@ function EnteringWorkbench() {
   return (
     <main className="grid min-h-screen place-items-center bg-background text-foreground">
       <div className="flex items-center gap-3 text-sm text-muted-foreground">
-        <Loader2 className="size-4 animate-spin" />
+        <Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
         正在进入工作台...
       </div>
     </main>

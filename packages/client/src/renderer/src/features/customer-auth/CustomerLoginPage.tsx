@@ -1,16 +1,7 @@
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
-import {
-  CircleAlert,
-  ExternalLink,
-  Loader2,
-  LogOut,
-  MessageCircle,
-  RefreshCcw,
-  Smartphone,
-} from 'lucide-react'
+import { CircleAlert, Loader2, LogOut, MessageCircle, RefreshCcw, Smartphone } from 'lucide-react'
 import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react'
 import type {
   CustomerAuthQrcode,
@@ -25,37 +16,34 @@ type CustomerLoginPageProps = {
   state: CustomerAuthState
 }
 
-type PlatformLogo = {
-  alt: string
-  src: string
-}
-
-const PLATFORM_LOGOS: PlatformLogo[] = [
-  { alt: 'Temu', src: 'brand/platforms/temu.svg' },
-  { alt: 'Shein', src: 'brand/platforms/shein.svg' },
-  { alt: 'TikTok Shop', src: 'brand/platforms/tiktok-shop.svg' },
-  { alt: 'Amazon Global Selling', src: 'brand/platforms/amazon-global-selling.svg' },
-  { alt: 'eBay', src: 'brand/platforms/ebay.svg' },
-  { alt: 'Shopee', src: 'brand/platforms/shopee.svg' },
-  { alt: 'AliExpress', src: 'brand/platforms/aliexpress.svg' },
-  { alt: 'Lazada', src: 'brand/platforms/lazada.svg' },
-]
-
-const FLOW_STEPS = ['采集', '生图', '检测', '套版', '标题', '上架']
 const WECHAT_POLL_INTERVAL_MS = 1500
+const AUTH_DATE_FORMAT = new Intl.DateTimeFormat('zh-CN', {
+  dateStyle: 'medium',
+  hour12: false,
+  timeStyle: 'short',
+})
 
 const STATUS_TEXT: Record<CustomerAuthStatus, { label: string; message: string }> = {
   active: { label: '已授权', message: '账号已授权，可以进入工作台。' },
   anonymous: { label: '未登录', message: '请使用微信或手机号登录。' },
-  disabled: { label: '账号已禁用', message: '账号已被后台禁用，请联系管理员处理。' },
-  expired: { label: '授权已到期', message: '账号授权已到期，请联系管理员续期。' },
-  nologin: { label: '登录失效', message: '登录状态已失效，请重新登录。' },
-  pending: { label: '等待开通', message: '账号已登录，正在等待管理员开通使用权限。' },
+  disabled: {
+    label: '账号当前不可用',
+    message: '此账号当前不可进入工作台。请联系管理员确认授权状态。',
+  },
+  expired: {
+    label: '授权已到期',
+    message: '账号授权已到期。请联系管理员续期，然后重新校验。',
+  },
+  nologin: { label: '登录失效', message: '本机登录状态已失效。请重新登录。' },
+  pending: {
+    label: '等待开通',
+    message: '账号已登录，授权尚未开通。页面会自动检查，开通后将直接进入工作台。',
+  },
 }
 
 function noticeClassName(status: CustomerAuthStatus) {
   return cn(
-    'rounded-md border px-4 py-3 text-sm leading-6 text-pretty',
+    'block rounded-md border px-4 py-3 text-sm leading-6 text-pretty',
     status === 'active' && 'border-emerald-200 bg-emerald-50 text-emerald-800',
     status === 'pending' && 'border-amber-200 bg-amber-50 text-amber-800',
     status === 'expired' && 'border-orange-200 bg-orange-50 text-orange-800',
@@ -80,6 +68,11 @@ function authDisplayName(state: CustomerAuthState) {
 
 function shouldShowAuthNotice(state: CustomerAuthState, checking: boolean) {
   return checking || state.status !== 'anonymous' || Boolean(state.message)
+}
+
+function formatAuthDate(value: string) {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime()) ? value : AUTH_DATE_FORMAT.format(date)
 }
 
 export function CustomerLoginPage({
@@ -189,7 +182,7 @@ export function CustomerLoginPage({
       const nextQrcode = await window.api.customerAuth.startWechatLogin()
       setQrcode(nextQrcode)
       setPolling(true)
-      setWechatMessage('已打开微信官方登录页，请在微信客户端确认。')
+      setWechatMessage('微信登录页已打开，请在微信中确认。')
     } catch (error) {
       setQrcode(null)
       setWechatMessage(error instanceof Error ? error.message : '微信登录页打开失败')
@@ -241,198 +234,157 @@ export function CustomerLoginPage({
   }
 
   return (
-    <main className="auth-brand-surface min-h-dvh text-foreground">
-      <div className="grid min-h-dvh lg:grid-cols-[minmax(420px,0.95fr)_minmax(0,1.05fr)]">
-        <section className="relative z-10 flex flex-col justify-between border-r border-white/70 bg-white/90 px-6 py-8 shadow-[14px_0_48px_rgba(30,64,175,0.08)] backdrop-blur-xl sm:px-10 lg:min-h-dvh lg:px-12 lg:py-10">
-          <div className="space-y-10">
-            <div className="flex items-center gap-4">
-              <img
-                alt="腾域 aipod"
-                className="size-14 rounded-md border border-white/70 bg-white object-contain shadow-[0_14px_28px_rgba(37,99,235,0.14)]"
-                loading="lazy"
-                src="brand/brand-logo.svg"
-              />
+    <main
+      aria-label="客户登录"
+      className="min-h-dvh bg-muted/30 px-4 py-6 text-foreground sm:px-8 sm:py-8"
+    >
+      <div className="mx-auto flex min-h-[calc(100dvh-64px)] w-full max-w-5xl flex-col justify-center gap-6">
+        <header className="flex items-center gap-4 border-b pb-5">
+          <img
+            alt="腾域 aipod"
+            className="size-12 rounded-md border bg-background object-contain"
+            loading="lazy"
+            src="brand/brand-logo.svg"
+          />
+          <div className="min-w-0">
+            <p className="text-sm font-medium text-muted-foreground">腾域 aipod</p>
+            <h1 className="mt-0.5 text-2xl font-semibold">客户登录</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
+              登录后系统会检查账号授权；已授权账号将进入首次设置或完整任务。
+            </p>
+          </div>
+        </header>
+
+        {showAuthNotice ? (
+          <output
+            aria-label="账号授权状态"
+            aria-live="polite"
+            className={noticeClassName(state.status)}
+          >
+            <div className="flex items-start gap-2">
+              {checking ? (
+                <Loader2 className="mt-1 size-4 shrink-0 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <CircleAlert className="mt-1 size-4 shrink-0" />
+              )}
               <div>
-                <p className="brand-wordmark bg-clip-text text-2xl font-black leading-7">腾域Ai</p>
-                <p className="mt-1 text-sm text-muted-foreground">跨境 POD 生产工作台</p>
-              </div>
-            </div>
-
-            <div className="max-w-xl space-y-5">
-              <Badge className="border-primary/20 bg-primary/10 text-primary" variant="outline">
-                云端授权登录
-              </Badge>
-              <div className="space-y-4">
-                <h1 className="bg-gradient-to-r from-slate-950 via-blue-950 to-blue-700 bg-clip-text text-4xl font-semibold leading-tight text-transparent text-balance sm:text-5xl">
-                  从素材到上架
-                </h1>
-                <p className="text-base leading-8 text-muted-foreground text-pretty">
-                  腾域 aipod 把采集、生图、检测、套版、标题和上架收进同一个桌面工作台。
+                <p className="font-medium">
+                  {checking ? '正在检查本机登录状态' : statusMeta.label}
                 </p>
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {FLOW_STEPS.map((step) => (
-                  <span
-                    className="rounded-sm border border-white/70 bg-white/75 px-3 py-1.5 text-sm text-muted-foreground shadow-xs"
-                    key={step}
-                  >
-                    {step}
-                  </span>
-                ))}
-              </div>
-            </div>
-
-            <section className="max-w-xl space-y-4">
-              <Button
-                className="h-12 w-full justify-center text-base"
-                disabled={wechatBusy}
-                onClick={() => void handleStartWechatLogin()}
-              >
-                {wechatBusy ? (
-                  <Loader2 className="mr-2 size-4 animate-spin" />
-                ) : (
-                  <MessageCircle className="mr-2 size-4" />
-                )}
-                {hasWechatSession ? '重新打开微信登录页' : '微信登录，开始使用'}
-              </Button>
-
-              <div className="min-h-6 text-sm leading-6 text-muted-foreground text-pretty">
-                {wechatMessage ??
-                  (polling
-                    ? '正在等待微信确认。'
-                    : '登录页会在默认浏览器中打开，当前窗口会自动等待结果。')}
-              </div>
-
-              {showAuthNotice ? (
-                <div className={noticeClassName(state.status)}>
-                  <div className="flex items-start gap-2">
-                    {checking ? (
-                      <Loader2 className="mt-1 size-4 shrink-0 animate-spin" />
-                    ) : (
-                      <CircleAlert className="mt-1 size-4 shrink-0" />
-                    )}
-                    <div>
-                      <p className="font-medium">
-                        {checking ? '正在检查本机登录状态' : statusMeta.label}
-                      </p>
-                      <p>{state.message ?? statusMeta.message}</p>
-                      {authName ? (
-                        <p className="mt-1 text-xs tabular-nums">当前账号：{authName}</p>
-                      ) : null}
-                      {state.customer?.expires_at ? (
-                        <p className="text-xs tabular-nums">
-                          到期时间：{state.customer.expires_at}
-                        </p>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-              ) : null}
-
-              <form
-                className="rounded-md border border-white/70 bg-white/80 p-4 shadow-[0_18px_42px_rgba(30,64,175,0.08)] backdrop-blur"
-                onSubmit={(event) => void handlePhoneLogin(event)}
-              >
-                <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                  <Smartphone className="size-4 text-primary" />
-                  手机号验证码登录
-                </div>
-                <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_136px]">
-                  <Input
-                    aria-label="手机号"
-                    autoComplete="tel"
-                    inputMode="tel"
-                    onChange={(event) => setPhone(event.target.value)}
-                    placeholder="手机号"
-                    value={phone}
-                  />
-                  <Button
-                    disabled={phoneBusy || smsRemaining > 0}
-                    onClick={() => void handleSendSms()}
-                    type="button"
-                    variant="outline"
-                  >
-                    {phoneBusy ? <Loader2 className="mr-2 size-4 animate-spin" /> : null}
-                    {smsRemaining > 0 ? `${smsRemaining}s` : '发送验证码'}
-                  </Button>
-                </div>
-                <div className="mt-3 grid gap-3 md:grid-cols-[minmax(0,1fr)_136px]">
-                  <Input
-                    aria-label="验证码"
-                    autoComplete="one-time-code"
-                    inputMode="numeric"
-                    onChange={(event) => setCode(event.target.value)}
-                    placeholder="验证码"
-                    value={code}
-                  />
-                  <Button disabled={phoneBusy} type="submit" variant="secondary">
-                    验证登录
-                  </Button>
-                </div>
-                <p className="mt-3 min-h-5 text-sm text-muted-foreground text-pretty">
-                  {phoneMessage ?? '微信不可用时，可使用旧登录系统绑定手机号。'}
-                </p>
-              </form>
-            </section>
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            {canRetryAuthorization ? (
-              <Button disabled={checking} onClick={() => void onRetryVerify()} variant="outline">
-                <RefreshCcw className="mr-2 size-4" />
-                重新校验
-              </Button>
-            ) : null}
-            {state.status !== 'anonymous' ? (
-              <Button onClick={() => void handleLogout()} variant="ghost">
-                <LogOut className="mr-2 size-4" />
-                退出登录
-              </Button>
-            ) : null}
-          </div>
-        </section>
-
-        <section className="relative flex items-center overflow-hidden px-6 py-8 sm:px-10 sm:py-10 lg:min-h-dvh">
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 bg-cover bg-center"
-            style={{ backgroundImage: 'url("brand/visuals/entrance-hero.png")' }}
-          />
-          <div
-            aria-hidden="true"
-            className="absolute inset-0 bg-[linear-gradient(90deg,_rgba(248,251,255,0.44),_rgba(248,251,255,0.08)_42%,_rgba(248,251,255,0.7))]"
-          />
-          <div className="relative w-full space-y-5">
-            <div aria-hidden="true" className="min-h-[min(46vh,420px)]" />
-
-            <div className="rounded-md border border-white/70 bg-white/75 p-5 shadow-[0_18px_42px_rgba(30,64,175,0.1)] backdrop-blur-xl">
-              <div className="mb-4 flex items-center justify-between gap-4">
-                <div>
-                  <p className="font-medium">跨境平台场景</p>
-                  <p className="text-sm text-muted-foreground">
-                    围绕主流跨境平台准备图片、标题和上架素材。
+                <p>{state.message ?? statusMeta.message}</p>
+                {authName ? (
+                  <p className="mt-1 text-xs tabular-nums">当前账号：{authName}</p>
+                ) : null}
+                {state.customer?.expires_at ? (
+                  <p className="text-xs tabular-nums">
+                    到期时间：{formatAuthDate(state.customer.expires_at)}
                   </p>
-                </div>
-                <ExternalLink className="size-4 text-muted-foreground" />
-              </div>
-              <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-                {PLATFORM_LOGOS.map((logo) => (
-                  <div
-                    className="flex h-12 items-center justify-center rounded-sm border border-white/70 bg-white/80 px-3 shadow-xs"
-                    key={logo.src}
-                  >
-                    <img
-                      alt={logo.alt}
-                      className="max-h-7 max-w-full object-contain"
-                      loading="lazy"
-                      src={logo.src}
-                    />
-                  </div>
-                ))}
+                ) : null}
               </div>
             </div>
-          </div>
-        </section>
+          </output>
+        ) : null}
+
+        <div className="grid gap-5 lg:grid-cols-2">
+          <section aria-label="微信登录" className="rounded-md border bg-background p-6">
+            <div className="flex items-start gap-3">
+              <div className="grid size-9 shrink-0 place-items-center rounded-sm border bg-muted text-primary">
+                <MessageCircle className="size-4" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">微信登录</h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  在默认浏览器打开微信登录页，当前窗口会继续等待确认结果。
+                </p>
+              </div>
+            </div>
+            <Button
+              className="mt-6 h-11 w-full"
+              disabled={wechatBusy}
+              onClick={() => void handleStartWechatLogin()}
+            >
+              {wechatBusy ? (
+                <Loader2 className="mr-2 size-4 animate-spin motion-reduce:animate-none" />
+              ) : (
+                <MessageCircle className="mr-2 size-4" />
+              )}
+              {hasWechatSession ? '重新打开微信登录页' : '打开微信登录页'}
+            </Button>
+            <p aria-live="polite" className="mt-3 min-h-6 text-sm leading-6 text-muted-foreground">
+              {wechatMessage ?? (polling ? '正在等待微信确认。' : '尚未打开微信登录页。')}
+            </p>
+          </section>
+
+          <form
+            aria-label="手机号登录"
+            className="rounded-md border bg-background p-6"
+            onSubmit={(event) => void handlePhoneLogin(event)}
+          >
+            <div className="flex items-start gap-3">
+              <div className="grid size-9 shrink-0 place-items-center rounded-sm border bg-muted text-primary">
+                <Smartphone className="size-4" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold">手机号登录</h2>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">
+                  使用已绑定手机号接收验证码并登录。
+                </p>
+              </div>
+            </div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-[minmax(0,1fr)_136px]">
+              <Input
+                aria-label="手机号"
+                autoComplete="tel"
+                inputMode="tel"
+                onChange={(event) => setPhone(event.target.value)}
+                placeholder="手机号"
+                value={phone}
+              />
+              <Button
+                disabled={phoneBusy || smsRemaining > 0}
+                onClick={() => void handleSendSms()}
+                type="button"
+                variant="outline"
+              >
+                {phoneBusy ? (
+                  <Loader2 className="mr-2 size-4 animate-spin motion-reduce:animate-none" />
+                ) : null}
+                {smsRemaining > 0 ? `${smsRemaining}s` : '发送验证码'}
+              </Button>
+            </div>
+            <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_136px]">
+              <Input
+                aria-label="验证码"
+                autoComplete="one-time-code"
+                inputMode="numeric"
+                onChange={(event) => setCode(event.target.value)}
+                placeholder="验证码"
+                value={code}
+              />
+              <Button disabled={phoneBusy} type="submit" variant="secondary">
+                验证登录
+              </Button>
+            </div>
+            <p aria-live="polite" className="mt-3 min-h-5 text-sm text-muted-foreground">
+              {phoneMessage ?? '请输入手机号并获取验证码。'}
+            </p>
+          </form>
+        </div>
+
+        <footer className="flex flex-wrap justify-end gap-2 border-t pt-4">
+          {canRetryAuthorization ? (
+            <Button disabled={checking} onClick={() => void onRetryVerify()} variant="outline">
+              <RefreshCcw className="mr-2 size-4" />
+              重新校验
+            </Button>
+          ) : null}
+          {state.status !== 'anonymous' ? (
+            <Button onClick={() => void handleLogout()} variant="ghost">
+              <LogOut className="mr-2 size-4" />
+              退出登录
+            </Button>
+          ) : null}
+        </footer>
       </div>
     </main>
   )
