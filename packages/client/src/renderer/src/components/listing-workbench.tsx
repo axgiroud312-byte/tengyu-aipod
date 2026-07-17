@@ -49,10 +49,23 @@ import { listingStartValidationIssues } from './listing-workbench-validation'
 type WorkspaceProgress = {
   status: ListingProgress['status']
   currentSku?: string
-  currentStage?: string
+  currentStage?: NonNullable<ListingProgress['currentStage']>
   finishedCount: number
   totalCount: number
   lastError?: string
+}
+
+type ListingStatusLabel = '等待' | '运行中' | '完成' | '失败' | '跳过'
+
+type ListingOperationalRow = {
+  key: string
+  environment: string
+  profileId: string
+  sku: string
+  stage: string
+  status: ListingStatusLabel
+  reason: string | null
+  source: ListingStatusRow | null
 }
 
 const platformLabels: Record<ListingPlatformKey, string> = {
@@ -90,7 +103,7 @@ const taskStatusLabels: Record<ListingTaskRecord['status'], string> = {
   failed: '失败',
 }
 
-const listingStatusLabels: Record<string, string> = {
+const listingStatusLabels: Record<ListingProgress['status'], ListingStatusLabel> = {
   pending: '等待',
   uploading: '运行中',
   success: '完成',
@@ -242,6 +255,59 @@ export function ListingWorkbench() {
     () => statusRows.filter((row) => row.status === 'failed'),
     [statusRows],
   )
+  const workspaceByProfileId = useMemo(
+    () => new Map(savedWorkspaces.map((workspace) => [workspace.profile_id, workspace])),
+    [savedWorkspaces],
+  )
+  const profileById = useMemo(
+    () => new Map(profiles.map((profile) => [profile.id, profile])),
+    [profiles],
+  )
+  const unsavedProfiles = profiles.filter((profile) => !workspaceByProfileId.has(profile.id))
+  const operationalRows = useMemo(() => {
+    const nextRows: ListingOperationalRow[] = statusRows.map((row) => {
+      const runtime = workspaceProgress[row.workspace_id]
+      const isCurrentSku = runtime?.currentSku === row.sku_code
+      return {
+        key: `${row.workspace_id}-${row.sku_code}`,
+        environment:
+          workspaceByProfileId.get(row.workspace_id)?.profile_name ??
+          profileById.get(row.workspace_id)?.name ??
+          row.workspace_id,
+        profileId: row.workspace_id,
+        sku: row.sku_code,
+        stage:
+          isCurrentSku && runtime.currentStage
+            ? (stageLabels[runtime.currentStage] ?? runtime.currentStage)
+            : '—',
+        status: listingStatusLabels[row.status],
+        reason: row.last_error ?? (isCurrentSku ? (runtime.lastError ?? null) : null),
+        source: row,
+      }
+    })
+    const persistedKeys = new Set(nextRows.map((row) => `${row.profileId}-${row.sku}`))
+    for (const [profileId, runtime] of Object.entries(workspaceProgress)) {
+      if (!runtime.currentSku || persistedKeys.has(`${profileId}-${runtime.currentSku}`)) {
+        continue
+      }
+      nextRows.unshift({
+        key: `live-${profileId}-${runtime.currentSku}`,
+        environment:
+          workspaceByProfileId.get(profileId)?.profile_name ??
+          profileById.get(profileId)?.name ??
+          profileId,
+        profileId,
+        sku: runtime.currentSku,
+        stage: runtime.currentStage
+          ? (stageLabels[runtime.currentStage] ?? runtime.currentStage)
+          : '—',
+        status: listingStatusLabels[runtime.status],
+        reason: runtime.lastError ?? null,
+        source: null,
+      })
+    }
+    return nextRows
+  }, [profileById, statusRows, workspaceByProfileId, workspaceProgress])
   const estimatedMinutes = Math.max(
     0,
     Math.ceil((itemCount * 4) / Math.max(1, selectedProfileIds.length)),
@@ -597,8 +663,8 @@ export function ListingWorkbench() {
   }
 
   return (
-    <div className="space-y-6">
-      <section className="rounded-md border bg-background p-4 shadow-sm">
+    <section aria-label="上架生产工作区" className="space-y-6">
+      <section aria-label="店铺环境状态" className="rounded-md border bg-background p-4 shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-balance">店铺环境</h2>
@@ -614,24 +680,52 @@ export function ListingWorkbench() {
             刷新编排
           </Button>
         </div>
-        <div className="mt-4 flex gap-2 overflow-x-auto">
-          {savedWorkspaces.length ? (
-            savedWorkspaces.map((workspace) => (
-              <button
-                className={cn(
-                  'min-w-48 rounded-md border px-3 py-2 text-left text-sm',
-                  activeWorkspaceId === workspace.id ? 'border-primary bg-muted' : 'bg-background',
-                )}
-                key={workspace.id}
-                onClick={() => setActiveWorkspaceId(workspace.id)}
-                type="button"
-              >
-                <span className="block truncate font-medium">{workspace.profile_name}</span>
-                <span className="mt-1 block truncate text-xs text-muted-foreground">
-                  {platformLabels[workspace.platform]} · {workspaceStatusLabels[workspace.status]}
-                </span>
-              </button>
-            ))
+        <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
+          {savedWorkspaces.length || unsavedProfiles.length ? (
+            <>
+              {savedWorkspaces.map((workspace) => {
+                const profile = profileById.get(workspace.profile_id)
+                const profileStatus = profile
+                  ? profileStatusLabel(profile, lockByProfileId.get(profile.id))
+                  : '档案未载入'
+                return (
+                  <button
+                    className={cn(
+                      'min-w-52 rounded-md border px-3 py-2 text-left text-sm',
+                      activeWorkspaceId === workspace.id
+                        ? 'border-primary bg-muted'
+                        : 'bg-background',
+                    )}
+                    key={workspace.id}
+                    onClick={() => setActiveWorkspaceId(workspace.id)}
+                    type="button"
+                  >
+                    <span className="block truncate font-medium">{workspace.profile_name}</span>
+                    <span className="mt-1 block truncate text-xs text-muted-foreground">
+                      {platformLabels[workspace.platform]} ·{' '}
+                      {workspaceStatusLabels[workspace.status]}
+                    </span>
+                    <span className="mt-2 inline-flex rounded-md border px-2 py-0.5 text-xs">
+                      {profileStatus}
+                    </span>
+                  </button>
+                )
+              })}
+              {unsavedProfiles.map((profile) => (
+                <div
+                  className="min-w-52 rounded-md border bg-background px-3 py-2 text-sm"
+                  key={profile.id}
+                >
+                  <span className="block truncate font-medium">{profile.name}</span>
+                  <span className="mt-1 block truncate text-xs text-muted-foreground">
+                    尚未创建上架任务 · {profile.id}
+                  </span>
+                  <span className="mt-2 inline-flex rounded-md border px-2 py-0.5 text-xs">
+                    {profileStatusLabel(profile, lockByProfileId.get(profile.id))}
+                  </span>
+                </div>
+              ))}
+            </>
           ) : (
             <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
               还没有保存的店铺环境。选择浏览器档案并开始上架后会自动保存。
@@ -640,9 +734,12 @@ export function ListingWorkbench() {
         </div>
       </section>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="space-y-6">
-          <div className="rounded-md border bg-background p-5 shadow-sm">
+      <div className="grid gap-6 min-[1800px]:grid-cols-[minmax(0,1fr)_340px]">
+        <section className="flex min-w-0 flex-col gap-6">
+          <section
+            aria-label="上架批次与设置"
+            className="rounded-md border bg-background p-5 shadow-sm"
+          >
             <div className="flex items-start justify-between gap-4">
               <div>
                 <h2 className="text-lg font-semibold text-balance">上架任务配置</h2>
@@ -861,7 +958,7 @@ export function ListingWorkbench() {
                 </Button>
               </div>
             </div>
-          </div>
+          </section>
 
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <div className="flex flex-wrap items-start justify-between gap-3">
@@ -1068,14 +1165,17 @@ export function ListingWorkbench() {
             </div>
           </div>
 
-          <div className="rounded-md border bg-background p-5 shadow-sm">
+          <section
+            aria-label="上架运行状态"
+            className="order-first rounded-md border bg-background p-5 shadow-sm"
+          >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h2 className="text-lg font-semibold text-balance">任务运行明细</h2>
+                <h2 className="text-lg font-semibold text-balance">店铺环境与货号状态</h2>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  {statusRows.length
-                    ? `当前批次记录 ${statusRows.length} 个货号，失败 ${failedRows.length} 个`
-                    : '扫描或执行后显示每个货号的运行结果'}
+                  {operationalRows.length
+                    ? `当前显示 ${operationalRows.length} 条状态，失败 ${failedRows.length} 条`
+                    : '运行开始后按店铺环境逐行显示当前阶段和结果'}
                 </p>
               </div>
               <div className="flex gap-2">
@@ -1108,75 +1208,107 @@ export function ListingWorkbench() {
               </div>
             </div>
 
-            <div className="mt-4 max-h-72 overflow-auto rounded-md border">
-              {statusRows.length ? (
-                <div className="divide-y">
-                  {statusRows.map((row) => (
-                    <div
-                      className="grid gap-3 p-3 text-sm lg:grid-cols-[120px_140px_minmax(0,1fr)_190px]"
-                      key={`${row.workspace_id}-${row.sku_code}`}
-                    >
-                      <div className="min-w-0">
-                        <div className="truncate font-mono text-xs text-muted-foreground">
-                          {row.sku_code}
-                        </div>
-                        <div className="mt-1 truncate text-xs text-muted-foreground">
-                          {row.workspace_id}
-                        </div>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        <span className="rounded-full border px-2 py-0.5">
-                          {listingStatusLabels[row.status] ?? row.status}
-                        </span>
-                        {row.last_error_code ? (
-                          <p className="mt-2 font-mono text-red-700">{row.last_error_code}</p>
-                        ) : null}
-                      </div>
-                      <div className="min-w-0 text-muted-foreground">
-                        <p className="line-clamp-2 text-pretty">
-                          {row.last_error ??
-                            stageLabels[progress?.currentStage ?? ''] ??
-                            '暂无错误'}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap justify-start gap-2 lg:justify-end">
-                        <Button
-                          className="h-8 px-2"
-                          disabled={!row.evidence_dir || openingEvidencePath === row.evidence_dir}
-                          onClick={() => void openEvidence(row)}
-                          type="button"
-                          variant="secondary"
-                        >
-                          查看证据
-                        </Button>
-                        <Button
-                          className="h-8 px-2"
-                          disabled={row.status !== 'failed' || starting || retryingSku !== null}
-                          onClick={() => void retryFailedRows([row], row.sku_code)}
-                          type="button"
-                          variant="secondary"
-                        >
-                          {retryingSku === row.sku_code ? (
-                            <Loader2 className="mr-2 size-3.5" />
-                          ) : (
-                            <RotateCcw className="mr-2 size-3.5" />
-                          )}
-                          重试该货号
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div className="px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无运行明细。
-                </div>
-              )}
+            <div className="mt-4 max-h-[520px] overflow-auto rounded-md border">
+              <table className="w-full min-w-[820px] table-fixed text-left text-sm">
+                <thead className="sticky top-0 z-10 bg-muted text-xs text-muted-foreground">
+                  <tr>
+                    <th className="w-40 px-3 py-2 font-medium">店铺环境</th>
+                    <th className="w-28 px-3 py-2 font-medium">货号</th>
+                    <th className="w-32 px-3 py-2 font-medium">当前阶段</th>
+                    <th className="w-20 px-3 py-2 font-medium">状态</th>
+                    <th className="px-3 py-2 font-medium">失败原因</th>
+                    <th className="w-52 px-3 py-2 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {operationalRows.length ? (
+                    operationalRows.map((row) => (
+                      <tr className="border-t align-top" key={row.key}>
+                        <td className="px-3 py-3">
+                          <div className="truncate font-medium">{row.environment}</div>
+                          <div className="mt-1 truncate font-mono text-xs text-muted-foreground">
+                            {row.profileId}
+                          </div>
+                        </td>
+                        <td className="px-3 py-3 font-mono text-xs">{row.sku}</td>
+                        <td className="px-3 py-3 text-muted-foreground">{row.stage}</td>
+                        <td className="px-3 py-3">
+                          <span className="inline-flex whitespace-nowrap rounded-md border px-2 py-0.5 text-xs">
+                            {row.status}
+                          </span>
+                        </td>
+                        <td className="px-3 py-3">
+                          <div
+                            className={cn(
+                              'max-h-16 overflow-y-auto break-words text-muted-foreground',
+                              row.reason ? 'text-red-700' : null,
+                            )}
+                          >
+                            {row.reason ?? '—'}
+                          </div>
+                          {row.source?.last_error_code ? (
+                            <div className="mt-1 font-mono text-xs text-red-700">
+                              {row.source.last_error_code}
+                            </div>
+                          ) : null}
+                        </td>
+                        <td className="px-3 py-3">
+                          <div className="flex justify-end gap-2">
+                            <Button
+                              className="h-8 whitespace-nowrap px-2"
+                              disabled={
+                                !row.source?.evidence_dir ||
+                                openingEvidencePath === row.source.evidence_dir
+                              }
+                              onClick={() => {
+                                if (row.source) void openEvidence(row.source)
+                              }}
+                              type="button"
+                              variant="secondary"
+                            >
+                              查看证据
+                            </Button>
+                            <Button
+                              className="h-8 whitespace-nowrap px-2"
+                              disabled={
+                                row.source?.status !== 'failed' || starting || retryingSku !== null
+                              }
+                              onClick={() => {
+                                if (row.source) {
+                                  void retryFailedRows([row.source], row.sku)
+                                }
+                              }}
+                              type="button"
+                              variant="secondary"
+                            >
+                              {retryingSku === row.sku ? (
+                                <Loader2 className="mr-2 size-3.5" />
+                              ) : (
+                                <RotateCcw className="mr-2 size-3.5" />
+                              )}
+                              重试该货号
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td
+                        className="px-3 py-10 text-center text-sm text-muted-foreground"
+                        colSpan={6}
+                      >
+                        暂无运行明细。
+                      </td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-          </div>
+          </section>
         </section>
 
-        <aside className="space-y-6 lg:sticky lg:top-24 lg:self-start">
+        <aside className="space-y-6 min-[1800px]:sticky min-[1800px]:top-24 min-[1800px]:self-start">
           <div className="rounded-md border bg-background p-5 shadow-sm">
             <h2 className="text-lg font-semibold text-balance">当前运行</h2>
             {runningTasks.length ? (
@@ -1290,6 +1422,6 @@ export function ListingWorkbench() {
           </div>
         </aside>
       </div>
-    </div>
+    </section>
   )
 }

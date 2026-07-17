@@ -429,6 +429,154 @@ async function emitPublicModuleEvent(app: ElectronApplication, channel: string, 
   )
 }
 
+async function installListingWorkspaceHarness(app: ElectronApplication, batchDir: string) {
+  await app.evaluate(
+    ({ ipcMain }, fixture) => {
+      const state = globalThis as typeof globalThis & {
+        __listingEvidenceOpenCalls?: number
+        __listingStatusRows?: unknown[]
+        __listingTasks?: unknown[]
+      }
+      state.__listingEvidenceOpenCalls = 0
+      state.__listingStatusRows = []
+      state.__listingTasks = []
+
+      const template = {
+        key: 'temu-general',
+        platform: 'temu-pop',
+        label: 'Temu 百货',
+        editUrl: 'https://www.dianxiaomi.com/web/popTemu/edit?id=123456',
+        materialRootDir: fixture.batchDir,
+        excludedFolderNames: [],
+        skuMode: 'one-click-generate',
+        uploadVideo: true,
+        requiredImageGroups: ['preview'],
+      }
+      const sheinTemplate = {
+        ...template,
+        key: 'shein',
+        platform: 'shein',
+        label: 'Shein',
+        editUrl: 'https://www.dianxiaomi.com/web/shein/edit?id=654321',
+      }
+      const workspace = {
+        id: 'workspace-profile-7',
+        profile_id: 'profile-7',
+        profile_name: 'Temu 主店',
+        platform: 'temu-pop',
+        status: 'idle',
+        current_task_id: null,
+        created_at: 1_700_000_000_000,
+        updated_at: 1_700_000_000_000,
+      }
+      const imageGroups = {
+        sku: [],
+        carousel: [],
+        material: [],
+        preview: ['C:\\fixtures\\preview.png'],
+        description: [],
+      }
+      const listingItems = ['SKU001', 'SKU002'].map((sku) => ({
+        id: `item-${sku}`,
+        sku,
+        title: `Title ${sku}`,
+        platform: 'temu-pop',
+        templateKey: 'temu-general',
+        editUrl: template.editUrl,
+        materialRootDir: fixture.batchDir,
+        targetShopName: '',
+        imageGroups,
+        variantGroups: [],
+        videoPaths: [],
+      }))
+
+      ipcMain.removeHandler('listing:list-templates')
+      ipcMain.handle('listing:list-templates', () => [template, sheinTemplate])
+      ipcMain.removeHandler('listing:list-profiles')
+      ipcMain.handle('listing:list-profiles', () => [
+        { id: 'profile-7', name: 'Temu 主店', seq: 7, status: 1 },
+        { id: 'profile-locked', name: '被占用店铺', seq: 8, status: 1 },
+      ])
+      ipcMain.removeHandler('browser-profile-lock:list')
+      ipcMain.handle('browser-profile-lock:list', () => [
+        {
+          profileId: 'profile-locked',
+          module: 'collection',
+          taskId: 'collection-lock-1',
+          acquiredAt: 1_700_000_000_000,
+        },
+      ])
+      ipcMain.removeHandler('listing:list-saved-workspaces')
+      ipcMain.handle('listing:list-saved-workspaces', () => [workspace])
+      ipcMain.removeHandler('listing:list-tasks')
+      ipcMain.handle('listing:list-tasks', () => state.__listingTasks ?? [])
+      ipcMain.removeHandler('listing:save-workspace')
+      ipcMain.handle('listing:save-workspace', () => workspace)
+      ipcMain.removeHandler('listing:create-task')
+      ipcMain.handle('listing:create-task', (_event, input) => {
+        const task = {
+          id: 'listing-plan-task-1',
+          workspace_id: workspace.id,
+          platform: 'temu-pop',
+          template_key: 'temu-general',
+          draft_template_id: '123456',
+          shop_name: 'Tengyu Shop',
+          batch_dir: fixture.batchDir,
+          sku_mode: 'one-click-generate',
+          submit_mode: 'save-draft',
+          max_attempts: 2,
+          fail_streak_limit: 3,
+          resume: true,
+          status: 'running',
+          last_run_task_id: 'listing-ui-run',
+          created_at: 1_700_000_000_000,
+          updated_at: 1_700_000_000_000,
+          ...(typeof input === 'object' && input !== null ? input : {}),
+        }
+        state.__listingTasks = [task]
+        return task
+      })
+      ipcMain.removeHandler('listing:scan-batch-dir')
+      ipcMain.handle('listing:scan-batch-dir', () => ({
+        rootDir: fixture.batchDir,
+        templateKey: 'temu-general',
+        items: listingItems.map((item) => ({
+          id: item.id,
+          sku: item.sku,
+          title: item.title,
+          folderName: item.sku,
+          folderPath: `${fixture.batchDir}\\${item.sku}`,
+          templateKey: 'temu-general',
+          imageGroups,
+          variantGroups: [],
+          videoPaths: [],
+        })),
+        warnings: [],
+        listingItems,
+        skuFolderCount: 2,
+        titledSkuCount: 2,
+      }))
+      ipcMain.removeHandler('listing:list-status')
+      ipcMain.handle('listing:list-status', () => state.__listingStatusRows ?? [])
+      ipcMain.removeHandler('listing:run')
+      ipcMain.handle('listing:run', () => 'listing-ui-run')
+      ipcMain.removeHandler('listing:open-path')
+      ipcMain.handle('listing:open-path', () => {
+        state.__listingEvidenceOpenCalls = (state.__listingEvidenceOpenCalls ?? 0) + 1
+        return { ok: true }
+      })
+    },
+    { batchDir },
+  )
+}
+
+async function setListingStatusRows(app: ElectronApplication, rows: unknown[]) {
+  await app.evaluate((_electron, nextRows) => {
+    const state = globalThis as typeof globalThis & { __listingStatusRows?: unknown[] }
+    state.__listingStatusRows = nextRows
+  }, rows)
+}
+
 function theaterProgress(input: {
   baseUrl: string
   imageCount: number
@@ -1493,6 +1641,148 @@ test.describe('production-first Workbench shell', () => {
         .evaluate((element) => element.scrollWidth - element.clientWidth)
       expect(horizontalOverflow).toBeLessThanOrEqual(1)
     }
+  })
+
+  test('runs Listing as a dense shop environment and SKU status workspace', async () => {
+    const testInfo = test.info()
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    const listingApp = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-listing-workspace'),
+    })
+    app = listingApp
+    const page = await listingApp.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-listing-workspace')
+    const batchDir = join(workbenchRoot, '04-上架工作区', 'listing-e2e')
+    await mkdir(batchDir, { recursive: true })
+    await enterPreparedWorkbench(page, workbenchRoot, () =>
+      installListingWorkspaceHarness(listingApp, batchDir),
+    )
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '上架', exact: true })
+      .click()
+
+    const workspace = page.getByRole('region', { name: '上架生产工作区' })
+    const environments = workspace.getByRole('region', { name: '店铺环境状态' })
+    const settings = workspace.getByRole('region', { name: '上架批次与设置' })
+    const status = workspace.getByRole('region', { name: '上架运行状态' })
+    await expect(environments.getByText('Temu 主店', { exact: true })).toBeVisible()
+    await expect(environments.getByText('被采集占用', { exact: true })).toBeVisible()
+    await expect(settings).toBeVisible()
+    await expect(status.getByRole('table')).toBeVisible()
+    await expect(settings.getByLabel('平台').locator('option')).toHaveText(['Temu', 'Shein'])
+    await settings.getByRole('button', { name: '高级配置' }).click()
+    await expect(settings.getByLabel('断点续传')).toBeChecked()
+
+    await settings.getByLabel('目标店铺名称').fill('Tengyu Shop')
+    await settings.getByRole('button', { name: '扫描' }).click()
+    await workspace.getByRole('checkbox', { name: /Temu 主店/ }).check()
+    await settings.getByRole('button', { name: '开始上架' }).click()
+
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-run',
+      profileId: 'profile-7',
+      status: 'uploading',
+      totalCount: 2,
+      finishedCount: 0,
+      currentSku: 'SKU001',
+      currentStage: 'upload_material_images',
+    })
+    await expect(
+      status.getByRole('row', { name: /Temu 主店.*SKU001.*替换图片.*运行中/ }),
+    ).toBeVisible()
+
+    await setListingStatusRows(listingApp, [
+      {
+        id: 'listing-status-1',
+        batch_path: batchDir,
+        sku_code: 'SKU001',
+        platform: 'temu-pop',
+        workspace_id: 'profile-7',
+        status: 'failed',
+        draft_template_id: '123456',
+        retry_count: 2,
+        last_attempted_at: 1_700_000_000_000,
+        last_error_code: 'UPLOAD_COUNT_MISMATCH',
+        last_error: '上传图片数量不一致，请检查素材分组',
+        evidence_dir: join(batchDir, '.evidence', 'SKU001'),
+        created_at: 1_700_000_000_000,
+      },
+    ])
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-run',
+      profileId: 'profile-7',
+      status: 'failed',
+      totalCount: 2,
+      finishedCount: 1,
+      currentSku: 'SKU001',
+      currentStage: 'upload_material_images',
+      lastError: {
+        code: 'UPLOAD_COUNT_MISMATCH',
+        appErrorCode: 'PAGE_NOT_READY',
+        message: '上传图片数量不一致，请检查素材分组',
+        retryable: true,
+        stage: 'upload_material_images',
+      },
+    })
+
+    const failedRow = status.getByRole('row', {
+      name: /Temu 主店.*SKU001.*替换图片.*失败.*上传图片数量不一致，请检查素材分组/,
+    })
+    await expect(failedRow).toBeVisible()
+    await expect(failedRow.getByRole('button', { name: '查看证据' })).toBeEnabled()
+    await expect(failedRow.getByRole('button', { name: '重试该货号' })).toBeEnabled()
+    for (const viewport of [
+      { width: 1280, height: 720 },
+      { width: 1440, height: 900 },
+      { width: 1920, height: 1080 },
+    ]) {
+      await page.setViewportSize(viewport)
+      await status.getByRole('heading', { name: '店铺环境与货号状态' }).scrollIntoViewIfNeeded()
+      await attachScreenshot(
+        page,
+        testInfo,
+        `listing-status-${viewport.width}x${viewport.height}`,
+        true,
+      )
+      const horizontalOverflow = await page
+        .getByRole('main')
+        .evaluate((element) => element.scrollWidth - element.clientWidth)
+      expect(horizontalOverflow).toBeLessThanOrEqual(1)
+    }
+    await failedRow.getByRole('button', { name: '查看证据' }).click()
+    await expect
+      .poll(() =>
+        listingApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __listingEvidenceOpenCalls?: number }
+          return state.__listingEvidenceOpenCalls ?? 0
+        }),
+      )
+      .toBe(1)
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-lock',
+      profileId: 'profile-locked',
+      status: 'failed',
+      totalCount: 2,
+      finishedCount: 0,
+      lastError: {
+        code: 'PROFILE_LOCKED',
+        appErrorCode: 'PROFILE_LOCKED',
+        message: 'profile occupied',
+        retryable: false,
+        stage: 'enter_page',
+      },
+    })
+    await expect(
+      page
+        .getByRole('complementary', { name: '任务坞' })
+        .getByRole('button', { name: '打开轻量任务 上架任务' })
+        .getByText('比特浏览器环境 profile-locked 被占用，请先结束冲突的采集或上架任务', {
+          exact: true,
+        }),
+    ).toBeVisible()
   })
 
   test('aggregates current-session lightweight tasks and returns to their preserved module state', async () => {
