@@ -28,6 +28,7 @@ const titleSkill = {
 
 type MockState = {
   bailianCalls: number
+  bailianDelayMs: number
   failFirstBailianCall: boolean
 }
 
@@ -89,6 +90,9 @@ async function startMockServer(state: MockState) {
     if (url.pathname === '/compatible-mode/v1/chat/completions') {
       state.bailianCalls += 1
       const body = await jsonBody(request)
+      if (state.bailianDelayMs > 0) {
+        await new Promise((resolve) => setTimeout(resolve, state.bailianDelayMs))
+      }
       if (state.failFirstBailianCall && state.bailianCalls === 1) {
         sendJson(response, { error: { message: 'temporary bailian failure' } }, 500)
         return
@@ -230,7 +234,7 @@ test.describe('title module E2E', () => {
   })
 
   test('generates titles, skips existing rows, emits progress, and writes xlsx', async () => {
-    const state: MockState = { bailianCalls: 0, failFirstBailianCall: true }
+    const state: MockState = { bailianCalls: 0, bailianDelayMs: 0, failFirstBailianCall: true }
     const mockServer = await startMockServer(state)
     closeMockServer = mockServer.close
     const workbenchRoot = join(tempRoot, 'workbench')
@@ -278,7 +282,7 @@ test.describe('title module E2E', () => {
   })
 
   test('retries failed rows from the result panel', async () => {
-    const state: MockState = { bailianCalls: 0, failFirstBailianCall: false }
+    const state: MockState = { bailianCalls: 0, bailianDelayMs: 250, failFirstBailianCall: false }
     const mockServer = await startMockServer(state)
     closeMockServer = mockServer.close
     const workbenchRoot = join(tempRoot, 'workbench')
@@ -294,17 +298,58 @@ test.describe('title module E2E', () => {
     await page.getByPlaceholder('选择货号文件夹所在的父目录').fill(batchDir)
     await page.getByRole('button', { name: '高级参数' }).click()
     await page.getByRole('button', { name: '扫描' }).click()
+
+    const titleWorkspace = page.getByRole('region', { name: '标题生成生产工作区' })
+    const titleRows = page.getByRole('region', { name: '货号标题结果' })
+    await expect(titleWorkspace.getByRole('region', { name: '标题批次与设置' })).toBeVisible()
+    await expect(titleRows.getByRole('row', { name: /SKU001.*待生成/ })).toBeVisible()
+    await expect(
+      titleRows.getByRole('row', { name: /SKU002.*Existing SKU002 Title.*已有/ }),
+    ).toBeVisible()
+    await expect(titleRows.getByRole('row', { name: /SKU003.*待生成/ })).toBeVisible()
+
+    await page.setViewportSize({ width: 1440, height: 900 })
+    const configBounds = await titleWorkspace
+      .getByRole('region', { name: '标题批次与设置' })
+      .boundingBox()
+    const resultBounds = await titleRows.boundingBox()
+    expect(configBounds).not.toBeNull()
+    expect(resultBounds).not.toBeNull()
+    expect(resultBounds?.x ?? 0).toBeGreaterThan(configBounds?.x ?? 0)
+    expect(
+      await titleRows.getByRole('table').evaluate((table) => {
+        const container = table.parentElement
+        return container ? table.scrollWidth <= container.clientWidth : false
+      }),
+    ).toBe(true)
+
     await page.getByRole('button', { name: '开始生成标题' }).click()
+    await expect(titleRows.getByRole('row', { name: /SKU001.*处理中/ })).toBeVisible()
     await expect(page.getByText('成功 1 个，失败 1 个，跳过 1 个')).toBeVisible({
       timeout: 30_000,
     })
+    await expect(
+      titleRows.getByRole('row', { name: /SKU001.*Mock Title 1 qwen3.6-flash.*成功/ }),
+    ).toBeVisible()
+    await expect(
+      titleRows.getByRole('row', { name: /SKU003.*失败.*货号文件夹没有可用图片/ }),
+    ).toBeVisible()
 
     await createSku(batchDir, 'SKU003')
     await page.getByRole('button', { name: '重试失败' }).click()
     await expect(page.getByText('失败重试中')).toBeVisible()
-    await expect(page.getByText('成功 1 个，失败 0 个，跳过 0 个')).toBeVisible({
+    await expect(page.getByText('成功 2 个，失败 0 个，跳过 1 个')).toBeVisible({
       timeout: 30_000,
     })
+    await expect(
+      titleRows.getByRole('row', { name: /SKU001.*Mock Title 1 qwen3.6-flash.*成功/ }),
+    ).toBeVisible()
+    await expect(
+      titleRows.getByRole('row', { name: /SKU002.*Existing SKU002 Title.*已有/ }),
+    ).toBeVisible()
+    await expect(
+      titleRows.getByRole('row', { name: /SKU003.*Mock Title 2 qwen3.6-flash.*成功/ }),
+    ).toBeVisible()
 
     const rows = await readWorkbookRows(join(batchDir, '标题.xlsx'))
     expect(rows).toEqual([

@@ -123,6 +123,45 @@ function statItems(state: TitlePageState, existingTitleCount: number, pendingCou
   ]
 }
 
+function titleFailureReason(error: string) {
+  return error === 'NO_IMAGE' ? '货号文件夹没有可用图片' : error
+}
+
+function titleResultRows(state: TitlePageState, isRunning: boolean) {
+  const scanResult = state.scanResult
+  if (!scanResult) {
+    return []
+  }
+
+  const resultBySku = new Map(state.result?.results.map((item) => [item.skuCode, item]) ?? [])
+  return scanResult.skuCodes.map((skuCode) => {
+    const result = resultBySku.get(skuCode)
+    if (result?.status === 'success') {
+      return { skuCode, title: result.title, status: '成功' }
+    }
+    if (result?.status === 'failed') {
+      return {
+        skuCode,
+        title: `${state.isRetryingFailed ? '正在重试' : '失败'}：${titleFailureReason(result.error)}`,
+        status: state.isRetryingFailed ? '重试中' : '失败',
+      }
+    }
+    if (result?.status === 'skipped') {
+      return { skuCode, title: result.title, status: '已有' }
+    }
+
+    const existingTitle = scanResult.existingTitles[skuCode]
+    if (existingTitle && state.existingStrategy === 'skip') {
+      return { skuCode, title: existingTitle, status: '已有' }
+    }
+    return {
+      skuCode,
+      title: existingTitle || '等待生成标题',
+      status: isRunning ? '处理中' : '待生成',
+    }
+  })
+}
+
 function normalizeKeywordGroups(groups: TitleKeywordGroup[]) {
   const normalized: TitleKeywordGroup[] = []
   for (const group of groups) {
@@ -193,14 +232,14 @@ export function TitlePage({
   const isRunning = Boolean(
     state.progress &&
       state.progress.processed < state.progress.total &&
-      !state.result &&
+      (!state.result || state.isRetryingFailed) &&
       state.progress.status !== 'cancelled',
   )
   const canRun = Boolean(state.batchDir.trim()) && !isRunning
-  const successRows = state.result?.results.filter((item) => item.status === 'success') ?? []
-  const failedRows = state.result?.results.filter((item) => item.status === 'failed') ?? []
   const progressStatusText = titleProgressText(state, isRunning)
   const batchResult = state.result
+  const resultRows = titleResultRows(state, isRunning)
+  const failedCount = batchResult?.failed ?? 0
   const keywordGroupPreview = state.scanResult
     ? buildKeywordGroupPreview(state.scanResult.skuCodes, state.keywordGroups)
     : []
@@ -226,9 +265,9 @@ export function TitlePage({
   }
 
   return (
-    <div className="space-y-6">
-      <div className="space-y-5">
-        <div className="space-y-5">
+    <section aria-label="标题生成生产工作区" className="space-y-5">
+      <div className="grid min-w-0 gap-5 min-[1440px]:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
+        <section aria-label="标题批次与设置" className="min-w-0 space-y-5">
           <Card>
             <CardHeader className="p-5 pb-3">
               <div className="flex items-center justify-between gap-3">
@@ -238,7 +277,9 @@ export function TitlePage({
                     选择货号文件夹所在的父目录，标题表默认写在同一层。
                   </p>
                 </div>
-                <Badge variant="secondary">{state.scanResult ? '已扫描' : '待扫描'}</Badge>
+                <Badge className="shrink-0 whitespace-nowrap" variant="secondary">
+                  {state.scanResult ? '已扫描' : '待扫描'}
+                </Badge>
               </div>
             </CardHeader>
             <CardContent className="space-y-3 p-5 pt-0">
@@ -271,7 +312,7 @@ export function TitlePage({
               <CardTitle className="text-lg">生成参数</CardTitle>
             </CardHeader>
             <CardContent className="space-y-5 p-5 pt-0">
-              <div className="grid gap-4 md:grid-cols-3">
+              <div className="grid gap-4 sm:grid-cols-2 min-[1800px]:grid-cols-3">
                 <div className="space-y-2">
                   <label className="text-sm font-medium" htmlFor="title-platform">
                     平台
@@ -352,7 +393,7 @@ export function TitlePage({
                 <AccordionItem className="rounded-md border px-4" value="advanced">
                   <AccordionTrigger>高级参数</AccordionTrigger>
                   <AccordionContent>
-                    <div className="grid gap-4 md:grid-cols-4">
+                    <div className="grid gap-4 sm:grid-cols-2">
                       <div className="space-y-2">
                         <label className="text-sm font-medium" htmlFor="title-file-name">
                           标题名称
@@ -413,7 +454,12 @@ export function TitlePage({
                             有效组会按货号顺序平均分配，空行不会参与分组。
                           </p>
                         </div>
-                        <Button onClick={addKeywordGroup} type="button" variant="secondary">
+                        <Button
+                          className="shrink-0 whitespace-nowrap"
+                          onClick={addKeywordGroup}
+                          type="button"
+                          variant="secondary"
+                        >
                           <Plus className="mr-2 h-4 w-4" />
                           新增组
                         </Button>
@@ -422,7 +468,7 @@ export function TitlePage({
                       <div className="mt-4 space-y-2">
                         {state.keywordGroups.map((group, index) => (
                           <div
-                            className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
+                            className="grid gap-2 rounded-md border bg-background p-3 min-[1800px]:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
                             key={group.id}
                           >
                             <div className="flex items-center text-sm font-medium text-muted-foreground">
@@ -554,154 +600,161 @@ export function TitlePage({
               </Accordion>
             </CardContent>
           </Card>
-        </div>
+        </section>
 
-        <Card>
-          <CardHeader className="p-5 pb-3">
-            <div className="flex items-center justify-between gap-3">
-              <CardTitle className="text-lg">执行进度</CardTitle>
-              <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
-            </div>
-          </CardHeader>
-          <CardContent className="space-y-4 p-5 pt-0">
-            <dl className="grid gap-3 text-sm sm:grid-cols-5">
-              {statItems(state, existingTitleCount, pendingEstimateCount).map((item) => (
-                <div className="rounded-md bg-muted p-3" key={item.label}>
-                  <dt className="text-muted-foreground">{item.label}</dt>
-                  <dd className="mt-1 text-xl font-semibold tabular-nums">{item.value}</dd>
+        <div className="min-w-0 space-y-5">
+          <section aria-label="标题启动与运行">
+            <Card>
+              <CardHeader className="p-5 pb-3">
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle className="text-lg">执行进度</CardTitle>
+                  <span className="text-sm tabular-nums text-muted-foreground">{percent}%</span>
                 </div>
-              ))}
-              <div className="rounded-md bg-muted p-3">
-                <dt className="text-muted-foreground">成功</dt>
-                <dd className="mt-1 text-xl font-semibold tabular-nums">
-                  {state.progress?.succeeded ?? 0}
-                </dd>
-              </div>
-              <div className="rounded-md bg-muted p-3">
-                <dt className="text-muted-foreground">失败</dt>
-                <dd className="mt-1 text-xl font-semibold tabular-nums">
-                  {state.progress?.failed ?? 0}
-                </dd>
-              </div>
-            </dl>
-            <Progress value={percent} />
-            <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
-                {progressStatusText}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                {isRunning ? (
-                  <Button onClick={onCancelBatch} type="button" variant="secondary">
-                    <Square className="mr-2 h-4 w-4" />
-                    取消任务
-                  </Button>
-                ) : null}
-                <Button disabled={!canRun} onClick={onRunBatch} type="button">
-                  {isRunning ? (
-                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  ) : (
-                    <Play className="mr-2 h-4 w-4" />
-                  )}
-                  开始生成标题
-                </Button>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+              </CardHeader>
+              <CardContent className="space-y-4 p-5 pt-0">
+                <dl className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-5">
+                  {statItems(state, existingTitleCount, pendingEstimateCount).map((item) => (
+                    <div className="rounded-md bg-muted p-3" key={item.label}>
+                      <dt className="text-muted-foreground">{item.label}</dt>
+                      <dd className="mt-1 text-xl font-semibold tabular-nums">{item.value}</dd>
+                    </div>
+                  ))}
+                  <div className="rounded-md bg-muted p-3">
+                    <dt className="text-muted-foreground">成功</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {state.progress?.succeeded ?? 0}
+                    </dd>
+                  </div>
+                  <div className="rounded-md bg-muted p-3">
+                    <dt className="text-muted-foreground">失败</dt>
+                    <dd className="mt-1 text-xl font-semibold tabular-nums">
+                      {state.progress?.failed ?? 0}
+                    </dd>
+                  </div>
+                </dl>
+                <Progress value={percent} />
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div className="rounded-md bg-muted px-3 py-2 text-sm text-muted-foreground">
+                    {progressStatusText}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {isRunning ? (
+                      <Button onClick={onCancelBatch} type="button" variant="secondary">
+                        <Square className="mr-2 h-4 w-4" />
+                        取消任务
+                      </Button>
+                    ) : null}
+                    <Button disabled={!canRun} onClick={onRunBatch} type="button">
+                      {isRunning ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Play className="mr-2 h-4 w-4" />
+                      )}
+                      开始生成标题
+                    </Button>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </section>
 
-      {batchResult ? (
-        <Card>
-          <CardHeader className="p-5 pb-3">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div>
-                <CardTitle className="text-lg">生成结果</CardTitle>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  成功 {batchResult.succeeded} 个，失败 {batchResult.failed} 个，跳过{' '}
-                  {batchResult.skipped} 个
-                </p>
-                {batchResult.diagnosticsLogPath ? (
-                  <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
-                    诊断日志：{batchResult.diagnosticsLogPath}
-                  </p>
-                ) : null}
-              </div>
-              <div className="flex flex-wrap gap-2">
-                <Button
-                  onClick={() => onOpenPath(batchResult.xlsxPath)}
-                  type="button"
-                  variant="secondary"
-                >
-                  打开表格
-                </Button>
-                <Button
-                  onClick={() => onOpenPath(state.batchDir)}
-                  type="button"
-                  variant="secondary"
-                >
-                  打开批次目录
-                </Button>
-              </div>
-            </div>
-            {openMessage ? <p className="mt-3 text-sm text-red-700">{openMessage}</p> : null}
-          </CardHeader>
-          <CardContent className="grid gap-4 p-5 pt-0 lg:grid-cols-2">
-            <div className="rounded-md border">
-              <div className="border-b px-3 py-2 text-sm font-medium">
-                成功列表（{successRows.length}）
-              </div>
-              <div className="max-h-60 overflow-auto p-2">
-                {successRows.length ? (
-                  successRows.map((item) => (
-                    <div
-                      className="grid grid-cols-[120px_minmax(0,1fr)] gap-3 rounded-md px-2 py-2 text-sm"
-                      key={item.skuCode}
+          <section aria-label="货号标题结果">
+            <Card>
+              <CardHeader className="p-5 pb-3">
+                <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+                  <div>
+                    <CardTitle className="text-lg">货号标题结果</CardTitle>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {batchResult
+                        ? `成功 ${batchResult.succeeded} 个，失败 ${batchResult.failed} 个，跳过 ${batchResult.skipped} 个`
+                        : state.scanResult
+                          ? `已扫描 ${state.scanResult.skuCount} 个货号`
+                          : '扫描批次后在此逐行显示标题状态'}
+                    </p>
+                    {batchResult?.diagnosticsLogPath ? (
+                      <p className="mt-2 break-all font-mono text-xs text-muted-foreground">
+                        诊断日志：{batchResult.diagnosticsLogPath}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {batchResult ? (
+                      <Button
+                        onClick={() => onOpenPath(batchResult.xlsxPath)}
+                        type="button"
+                        variant="secondary"
+                      >
+                        打开表格
+                      </Button>
+                    ) : null}
+                    <Button
+                      disabled={!state.batchDir.trim()}
+                      onClick={() => onOpenPath(state.batchDir)}
+                      type="button"
+                      variant="secondary"
                     >
-                      <span className="font-mono text-xs text-muted-foreground">
-                        {item.skuCode}
-                      </span>
-                      <span className="truncate">{item.title}</span>
-                    </div>
-                  ))
+                      打开批次目录
+                    </Button>
+                    <Button
+                      disabled={!failedCount || state.isRetryingFailed}
+                      onClick={onRetryFailed}
+                      type="button"
+                      variant="secondary"
+                    >
+                      <RotateCcw className="mr-2 h-3.5 w-3.5" />
+                      重试失败
+                    </Button>
+                  </div>
+                </div>
+                {openMessage ? <p className="mt-3 text-sm text-red-700">{openMessage}</p> : null}
+              </CardHeader>
+              <CardContent className="p-5 pt-0">
+                {resultRows.length ? (
+                  <div className="max-h-[560px] overflow-auto rounded-md border">
+                    <table className="w-full table-fixed text-left text-sm">
+                      <thead className="sticky top-0 z-10 bg-muted text-xs text-muted-foreground">
+                        <tr>
+                          <th className="w-28 px-3 py-2 font-medium">货号</th>
+                          <th className="px-3 py-2 font-medium">标题 / 原因</th>
+                          <th className="w-24 px-3 py-2 font-medium">状态</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {resultRows.map((row) => (
+                          <tr className="border-t align-top" key={row.skuCode}>
+                            <td className="px-3 py-3 font-mono text-xs text-muted-foreground">
+                              {row.skuCode}
+                            </td>
+                            <td
+                              className={`break-words px-3 py-3 ${
+                                row.status === '失败' ? 'text-red-700' : ''
+                              }`}
+                            >
+                              <div className="max-h-20 overflow-y-auto">{row.title}</div>
+                            </td>
+                            <td className="px-3 py-3">
+                              <Badge
+                                className="whitespace-nowrap"
+                                variant={row.status === '失败' ? 'destructive' : 'secondary'}
+                              >
+                                {row.status}
+                              </Badge>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 ) : (
-                  <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                    暂无成功项
+                  <div className="rounded-md border border-dashed bg-muted/30 px-4 py-12 text-center text-sm text-muted-foreground">
+                    尚未扫描标题批次
                   </div>
                 )}
-              </div>
-            </div>
-            <div className="rounded-md border">
-              <div className="flex items-center justify-between border-b px-3 py-2 text-sm font-medium">
-                <span>失败列表（{failedRows.length}）</span>
-                <Button
-                  className="h-8 px-2"
-                  disabled={!failedRows.length}
-                  onClick={onRetryFailed}
-                  type="button"
-                  variant="secondary"
-                >
-                  <RotateCcw className="mr-2 h-3.5 w-3.5" />
-                  重试失败
-                </Button>
-              </div>
-              <div className="max-h-60 overflow-auto p-2">
-                {failedRows.length ? (
-                  failedRows.map((item) => (
-                    <div className="rounded-md px-2 py-2 text-sm" key={item.skuCode}>
-                      <div className="font-mono text-xs text-muted-foreground">{item.skuCode}</div>
-                      <div className="mt-1 text-red-700">{item.error}</div>
-                    </div>
-                  ))
-                ) : (
-                  <div className="px-2 py-6 text-center text-sm text-muted-foreground">
-                    没有失败项
-                  </div>
-                )}
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      ) : null}
-    </div>
+              </CardContent>
+            </Card>
+          </section>
+        </div>
+      </div>
+    </section>
   )
 }

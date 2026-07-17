@@ -95,6 +95,35 @@ function parseNonNegativeNumber(value: string, fallback: number) {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
+function mergeTitleBatchResult(current: TitleBatchResult, retry: TitleBatchResult) {
+  const retryResults = new Map(retry.results.map((item) => [item.skuCode, item]))
+  const mergedResults = current.results.map((item) => retryResults.get(item.skuCode) ?? item)
+  const knownSkuCodes = new Set(mergedResults.map((item) => item.skuCode))
+  for (const item of retry.results) {
+    if (!knownSkuCodes.has(item.skuCode)) {
+      mergedResults.push(item)
+    }
+  }
+
+  let succeeded = 0
+  let failed = 0
+  let skipped = 0
+  for (const item of mergedResults) {
+    if (item.status === 'success') succeeded += 1
+    if (item.status === 'failed') failed += 1
+    if (item.status === 'skipped') skipped += 1
+  }
+
+  return {
+    ...retry,
+    total: mergedResults.length,
+    succeeded,
+    failed,
+    skipped,
+    results: mergedResults,
+  }
+}
+
 function nonNegativeInteger(value: number) {
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0
 }
@@ -210,6 +239,7 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
   const selectCompleteTaskRun = useTaskDockStore((state) => state.selectCompleteTaskRun)
   const contentWidth =
     activeModule === 'listing' ||
+    activeModule === 'title' ||
     location.pathname === '/pipeline/runs' ||
     (activeModule === 'pipeline' && hasSelectedPipelineRun)
       ? 'wide'
@@ -513,7 +543,9 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
     })
     const offCompleted = window.api.title.onCompleted((event: TitleTaskEvent) => {
       if (event.ok) {
-        setResult(event.result)
+        setResult((current) =>
+          current ? mergeTitleBatchResult(current, event.result) : event.result,
+        )
         setIsRetryingFailed(false)
         setProgress((current) => ({
           task_id: event.result.taskId,
@@ -698,7 +730,6 @@ export function MainWorkbench({ initialPipelineRunId }: { initialPipelineRunId: 
       setTitleError('没有可重试的任务')
       return
     }
-    setResult(null)
     setIsRetryingFailed(true)
     setTitleError(null)
     const failedCount = result?.results.filter((item) => item.status === 'failed').length ?? 0
