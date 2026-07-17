@@ -577,6 +577,35 @@ async function setListingStatusRows(app: ElectronApplication, rows: unknown[]) {
   }, rows)
 }
 
+async function delayListingStatusResponse(app: ElectronApplication) {
+  await app.evaluate(({ ipcMain }) => {
+    const state = globalThis as typeof globalThis & {
+      __listingStatusPending?: boolean
+      __listingStatusRows?: unknown[]
+      __resolveListingStatus?: () => void
+    }
+    ipcMain.removeHandler('listing:list-status')
+    ipcMain.handle(
+      'listing:list-status',
+      () =>
+        new Promise((resolve) => {
+          state.__listingStatusPending = true
+          state.__resolveListingStatus = () => {
+            state.__listingStatusPending = false
+            resolve(state.__listingStatusRows ?? [])
+          }
+        }),
+    )
+  })
+}
+
+async function resolveListingStatusResponse(app: ElectronApplication) {
+  await app.evaluate(() => {
+    const state = globalThis as typeof globalThis & { __resolveListingStatus?: () => void }
+    state.__resolveListingStatus?.()
+  })
+}
+
 function theaterProgress(input: {
   baseUrl: string
   imageCount: number
@@ -1761,7 +1790,26 @@ test.describe('production-first Workbench shell', () => {
         }),
       )
       .toBe(1)
+    await delayListingStatusResponse(listingApp)
+    await emitPublicModuleEvent(listingApp, 'listing:progress', {
+      batchId: 'listing-ui-run',
+      profileId: 'profile-7',
+      status: 'failed',
+      totalCount: 2,
+      finishedCount: 1,
+      currentSku: 'SKU001',
+      currentStage: 'upload_material_images',
+    })
+    await expect
+      .poll(() =>
+        listingApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __listingStatusPending?: boolean }
+          return state.__listingStatusPending ?? false
+        }),
+      )
+      .toBe(true)
     await settings.getByLabel('货号批次目录').fill(`${batchDir}-next`)
+    await resolveListingStatusResponse(listingApp)
     await expect(failedRow).toBeHidden()
     await emitPublicModuleEvent(listingApp, 'listing:progress', {
       batchId: 'listing-ui-run',
@@ -1769,10 +1817,11 @@ test.describe('production-first Workbench shell', () => {
       status: 'uploading',
       totalCount: 2,
       finishedCount: 1,
-      currentSku: 'SKU001',
+      currentSku: 'SKU-OLD-PROGRESS',
       currentStage: 'upload_material_images',
     })
     await expect(status.getByText('SKU001', { exact: true })).toHaveCount(0)
+    await expect(status.getByText('SKU-OLD-PROGRESS', { exact: true })).toHaveCount(0)
     await emitPublicModuleEvent(listingApp, 'listing:progress', {
       batchId: 'listing-ui-lock',
       profileId: 'profile-locked',

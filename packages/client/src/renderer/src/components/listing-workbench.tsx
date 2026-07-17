@@ -189,6 +189,7 @@ export function ListingWorkbench() {
   const [workspaceProgress, setWorkspaceProgress] = useState<Record<string, WorkspaceProgress>>({})
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null)
   const activeBatchIdsRef = useRef<Set<string>>(new Set())
+  const statusRequestIdRef = useRef(0)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
   const [scanning, setScanning] = useState(false)
@@ -329,6 +330,8 @@ export function ListingWorkbench() {
   const canStart = Boolean(selectedTemplate) && validationIssues.length === 0 && !starting
 
   const refreshStatusRows = useCallback(async () => {
+    const requestId = statusRequestIdRef.current + 1
+    statusRequestIdRef.current = requestId
     if (!batchDir.trim()) {
       setStatusRows([])
       return
@@ -339,12 +342,19 @@ export function ListingWorkbench() {
         batchDir: batchDir.trim(),
         platform: selectedPlatform,
       })
+      if (statusRequestIdRef.current !== requestId) {
+        return
+      }
       setStatusRows(rows)
       setError(null)
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError))
+      if (statusRequestIdRef.current === requestId) {
+        setError(nextError instanceof Error ? nextError.message : String(nextError))
+      }
     } finally {
-      setStatusLoading(false)
+      if (statusRequestIdRef.current === requestId) {
+        setStatusLoading(false)
+      }
     }
   }, [batchDir, selectedPlatform])
 
@@ -400,11 +410,13 @@ export function ListingWorkbench() {
 
   function resetOperationalState() {
     activeBatchIdsRef.current.clear()
+    statusRequestIdRef.current += 1
     setScanResult(null)
     setStatusRows([])
     setWorkspaceProgress({})
     setProgress(null)
     setRunningTaskId(null)
+    setStatusLoading(false)
   }
 
   async function chooseBatchDir() {
