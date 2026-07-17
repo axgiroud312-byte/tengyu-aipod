@@ -434,6 +434,7 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
     ({ ipcMain }, fixture) => {
       const state = globalThis as typeof globalThis & {
         __listingEvidenceOpenCalls?: number
+        __listingScanResult?: unknown
         __listingStatusRows?: unknown[]
         __listingTasks?: unknown[]
       }
@@ -489,6 +490,25 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
         variantGroups: [],
         videoPaths: [],
       }))
+      state.__listingScanResult = {
+        rootDir: fixture.batchDir,
+        templateKey: 'temu-general',
+        items: listingItems.map((item) => ({
+          id: item.id,
+          sku: item.sku,
+          title: item.title,
+          folderName: item.sku,
+          folderPath: `${fixture.batchDir}\\${item.sku}`,
+          templateKey: 'temu-general',
+          imageGroups,
+          variantGroups: [],
+          videoPaths: [],
+        })),
+        warnings: [],
+        listingItems,
+        skuFolderCount: 2,
+        titledSkuCount: 2,
+      }
 
       ipcMain.removeHandler('listing:list-templates')
       ipcMain.handle('listing:list-templates', () => [template, sheinTemplate])
@@ -537,25 +557,7 @@ async function installListingWorkspaceHarness(app: ElectronApplication, batchDir
         return task
       })
       ipcMain.removeHandler('listing:scan-batch-dir')
-      ipcMain.handle('listing:scan-batch-dir', () => ({
-        rootDir: fixture.batchDir,
-        templateKey: 'temu-general',
-        items: listingItems.map((item) => ({
-          id: item.id,
-          sku: item.sku,
-          title: item.title,
-          folderName: item.sku,
-          folderPath: `${fixture.batchDir}\\${item.sku}`,
-          templateKey: 'temu-general',
-          imageGroups,
-          variantGroups: [],
-          videoPaths: [],
-        })),
-        warnings: [],
-        listingItems,
-        skuFolderCount: 2,
-        titledSkuCount: 2,
-      }))
+      ipcMain.handle('listing:scan-batch-dir', () => state.__listingScanResult)
       ipcMain.removeHandler('listing:list-status')
       ipcMain.handle('listing:list-status', () => state.__listingStatusRows ?? [])
       ipcMain.removeHandler('listing:run')
@@ -592,10 +594,43 @@ async function delayListingStatusResponse(app: ElectronApplication) {
           state.__listingStatusPending = true
           state.__resolveListingStatus = () => {
             state.__listingStatusPending = false
+            ipcMain.removeHandler('listing:list-status')
+            ipcMain.handle('listing:list-status', () => state.__listingStatusRows ?? [])
             resolve(state.__listingStatusRows ?? [])
           }
         }),
     )
+  })
+}
+
+async function delayListingScanResponse(app: ElectronApplication) {
+  await app.evaluate(({ ipcMain }) => {
+    const state = globalThis as typeof globalThis & {
+      __listingScanPending?: boolean
+      __listingScanResult?: unknown
+      __resolveListingScan?: () => void
+    }
+    ipcMain.removeHandler('listing:scan-batch-dir')
+    ipcMain.handle(
+      'listing:scan-batch-dir',
+      () =>
+        new Promise((resolve) => {
+          state.__listingScanPending = true
+          state.__resolveListingScan = () => {
+            state.__listingScanPending = false
+            ipcMain.removeHandler('listing:scan-batch-dir')
+            ipcMain.handle('listing:scan-batch-dir', () => state.__listingScanResult)
+            resolve(state.__listingScanResult)
+          }
+        }),
+    )
+  })
+}
+
+async function resolveListingScanResponse(app: ElectronApplication) {
+  await app.evaluate(() => {
+    const state = globalThis as typeof globalThis & { __resolveListingScan?: () => void }
+    state.__resolveListingScan?.()
   })
 }
 
@@ -1822,6 +1857,20 @@ test.describe('production-first Workbench shell', () => {
     })
     await expect(status.getByText('SKU001', { exact: true })).toHaveCount(0)
     await expect(status.getByText('SKU-OLD-PROGRESS', { exact: true })).toHaveCount(0)
+    await delayListingScanResponse(listingApp)
+    await settings.getByRole('button', { name: '扫描' }).click()
+    await expect
+      .poll(() =>
+        listingApp.evaluate(() => {
+          const state = globalThis as typeof globalThis & { __listingScanPending?: boolean }
+          return state.__listingScanPending ?? false
+        }),
+      )
+      .toBe(true)
+    await settings.getByLabel('货号批次目录').fill(`${batchDir}-final`)
+    await resolveListingScanResponse(listingApp)
+    await expect(settings.getByRole('button', { name: '扫描' })).toBeEnabled()
+    await expect(settings.getByRole('button', { name: '开始上架' })).toBeDisabled()
     await emitPublicModuleEvent(listingApp, 'listing:progress', {
       batchId: 'listing-ui-lock',
       profileId: 'profile-locked',

@@ -189,6 +189,7 @@ export function ListingWorkbench() {
   const [workspaceProgress, setWorkspaceProgress] = useState<Record<string, WorkspaceProgress>>({})
   const [runningTaskId, setRunningTaskId] = useState<string | null>(null)
   const activeBatchIdsRef = useRef<Set<string>>(new Set())
+  const scanRequestIdRef = useRef(0)
   const statusRequestIdRef = useRef(0)
   const [loadingProfiles, setLoadingProfiles] = useState(false)
   const [statusLoading, setStatusLoading] = useState(false)
@@ -410,12 +411,14 @@ export function ListingWorkbench() {
 
   function resetOperationalState() {
     activeBatchIdsRef.current.clear()
+    scanRequestIdRef.current += 1
     statusRequestIdRef.current += 1
     setScanResult(null)
     setStatusRows([])
     setWorkspaceProgress({})
     setProgress(null)
     setRunningTaskId(null)
+    setScanning(false)
     setStatusLoading(false)
   }
 
@@ -432,6 +435,8 @@ export function ListingWorkbench() {
       setError('请选择素材目录')
       return
     }
+    const requestId = scanRequestIdRef.current + 1
+    scanRequestIdRef.current = requestId
     setScanning(true)
     setError(null)
     try {
@@ -439,12 +444,19 @@ export function ListingWorkbench() {
         batchDir: batchDir.trim(),
         templateKey,
       })
+      if (scanRequestIdRef.current !== requestId) {
+        return
+      }
       setScanResult(result)
       await refreshStatusRows()
     } catch (nextError) {
-      setError(nextError instanceof Error ? nextError.message : String(nextError))
+      if (scanRequestIdRef.current === requestId) {
+        setError(nextError instanceof Error ? nextError.message : String(nextError))
+      }
     } finally {
-      setScanning(false)
+      if (scanRequestIdRef.current === requestId) {
+        setScanning(false)
+      }
     }
   }
 
