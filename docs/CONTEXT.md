@@ -233,6 +233,10 @@ _Avoid_: SO 数量
 模板自动识别或由参考线推导出的导出区域。一个模板可能输出多张裁切图。
 _Avoid_: 切片、Crop Region
 
+**PS 原生切片 / Photoshop Native Slice**：
+PSD 中由用户或图层创建的 Photoshop 切片，可由 Photoshop 的 Web 导出流程一次性导出；不同于腾域根据参考线推导的 **裁切区域**。自动切片不算有效 PS 原生切片。
+_Avoid_: 裁切区域、自动切片
+
 ### 检测
 
 **风险值 / Risk Score**：
