@@ -10,7 +10,7 @@
 |---|---|
 | 运行时 | Electron 42.x（双端 Windows + macOS）|
 | 渲染层 | React 18+ + TypeScript 5+ |
-| 构建 | electron-vite + Vite 5 |
+| 构建 | electron-vite 5 + Vite 7 |
 | UI 库 | shadcn/ui + Tailwind CSS |
 | 状态管理 | Zustand（轻量）|
 | 路由 | React Router |
