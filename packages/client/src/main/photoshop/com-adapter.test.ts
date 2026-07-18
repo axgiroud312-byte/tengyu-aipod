@@ -95,6 +95,44 @@ describe('PhotoshopComAdapter', () => {
     expect(immediateDisposals).toBe(1)
   })
 
+  it('does not recreate the bridge for requests queued before disposal', async () => {
+    let rejectActiveRequest: ((error: Error) => void) | undefined
+    let bridgeCreations = 0
+    const adapter = createAdapter({
+      bridgeFactory: () => {
+        bridgeCreations += 1
+        if (bridgeCreations > 1) {
+          return {
+            request: async () => ({ version: '27.8.0' }),
+            dispose: () => undefined,
+          }
+        }
+        return {
+          request: () =>
+            new Promise((_resolve, reject) => {
+              rejectActiveRequest = reject
+            }),
+          dispose: () => {
+            rejectActiveRequest?.(new Error('bridge stopped'))
+          },
+        }
+      },
+    })
+    const activeRequest = adapter.getVersion()
+    const activeExpectation = expect(activeRequest).rejects.toThrow('bridge stopped')
+    await vi.waitFor(() => expect(rejectActiveRequest).toBeTypeOf('function'))
+    const queuedRequest = adapter.getVersion()
+
+    adapter.dispose()
+
+    await activeExpectation
+    await expect(queuedRequest).rejects.toMatchObject({
+      code: 'PS_COM_FAILED',
+      retryable: false,
+    })
+    expect(bridgeCreations).toBe(1)
+  })
+
   it('requires three successful JSX probes before reporting Photoshop ready', async () => {
     const requests: string[] = []
     const adapter = createAdapter({

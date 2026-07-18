@@ -111,6 +111,7 @@ export class PhotoshopComAdapter {
   private readonly commandTimeoutMs: number
   private readonly jsxTimeoutMs: number
   private bridge: PhotoshopComBridge | null = null
+  private disposed = false
 
   constructor(options: PhotoshopComAdapterOptions = {}) {
     this.platform = options.platform ?? process.platform
@@ -233,6 +234,10 @@ export class PhotoshopComAdapter {
   }
 
   dispose(): void {
+    if (this.disposed) {
+      return
+    }
+    this.disposed = true
     const bridge = this.bridge
     this.bridge = null
     bridge?.dispose()
@@ -248,7 +253,11 @@ export class PhotoshopComAdapter {
 
   private async runSerialized<T>(fn: () => Promise<T>): Promise<T> {
     this.assertWindows()
-    return photoshopMutex.runExclusive(fn)
+    this.assertOpen()
+    return photoshopMutex.runExclusive(async () => {
+      this.assertOpen()
+      return fn()
+    })
   }
 
   private assertWindows(): void {
@@ -258,6 +267,16 @@ export class PhotoshopComAdapter {
         'PS 套版仅支持 Windows，请在 Windows 电脑使用 Photoshop COM 功能',
         false,
         { platform: this.platform },
+      )
+    }
+  }
+
+  private assertOpen(): void {
+    if (this.disposed) {
+      throw new AppErrorClass(
+        'PS_COM_FAILED',
+        'Photoshop COM bridge 已关闭，无法继续执行请求',
+        false,
       )
     }
   }
