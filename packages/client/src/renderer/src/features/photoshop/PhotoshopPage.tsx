@@ -512,10 +512,16 @@ export function PhotoshopPage() {
       setBatchResult(result)
       setResultGroups(result.result_groups)
       setCurrentTaskId(result.task_id)
+      const failedGroups = result.result_groups.filter((group) => group.status === 'failed').length
+      const completedGroups = result.result_groups.filter(
+        (group) => group.status === 'completed',
+      ).length
       setMessage(
         result.cancelled
           ? `套版已取消：已输出 ${result.outputs.length} 张成品图`
-          : `套版完成：输出 ${result.outputs.length} 张成品图`,
+          : failedGroups > 0
+            ? `套版部分完成：成功 ${completedGroups} 组，失败 ${failedGroups} 组，输出 ${result.outputs.length} 张成品图`
+            : `套版完成：输出 ${result.outputs.length} 张成品图`,
       )
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))

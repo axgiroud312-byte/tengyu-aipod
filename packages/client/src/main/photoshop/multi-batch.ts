@@ -59,6 +59,7 @@ export interface PhotoshopTemplateBatchRunResult {
     sku_folder: string
     outputs: string[]
     skipped?: boolean
+    error?: string
   }>
   cancelled?: boolean
 }
@@ -273,10 +274,11 @@ export class PhotoshopMultiBatchRunner {
       const templateOutputs: string[] = []
       if (this.engine.runTemplateBatch) {
         const realtimeCompletedGroupIndexes = new Set<number>()
+        const realtimeFailedGroupIndexes = new Set<number>()
         await this.emitProgress({
           task_id: config.taskId,
           total_groups: groupsTotal,
-          completed: groupsCompleted - skipped,
+          completed: groupsCompleted - skipped - failed,
           failed,
           skipped,
           current_group: null,
@@ -321,24 +323,40 @@ export class PhotoshopMultiBatchRunner {
             onLog: async (entry) => {
               logger?.write(entry)
               await this.emitLog(entry)
-              if (
-                entry.stage !== 'group_complete' ||
-                entry.level !== 'info' ||
-                entry.group === undefined ||
-                realtimeCompletedGroupIndexes.has(entry.group)
-              ) {
+              if (entry.stage !== 'group_complete' || entry.group === undefined) {
                 return
               }
               const group = groups.find((item) => item.group_index === entry.group)
               if (!group) {
                 return
               }
-              realtimeCompletedGroupIndexes.add(entry.group)
+              const isCompleted = entry.level === 'info'
+              const isFailed = entry.level === 'error'
+              if (
+                (!isCompleted && !isFailed) ||
+                realtimeCompletedGroupIndexes.has(entry.group) ||
+                realtimeFailedGroupIndexes.has(entry.group)
+              ) {
+                return
+              }
+              if (isFailed) {
+                realtimeFailedGroupIndexes.add(entry.group)
+                failed += 1
+              } else {
+                realtimeCompletedGroupIndexes.add(entry.group)
+              }
               groupsCompleted += 1
+              const resultGroup = batchOutputGroup(
+                template,
+                group,
+                isFailed ? [] : group.job.output_paths,
+                isFailed ? 'failed' : 'completed',
+                isFailed ? (entry.error ?? entry.message ?? '套版组失败') : undefined,
+              )
               await this.emitProgress({
                 task_id: config.taskId,
                 total_groups: groupsTotal,
-                completed: groupsCompleted - skipped,
+                completed: groupsCompleted - skipped - failed,
                 failed,
                 skipped,
                 current_group: group.group_index,
@@ -350,12 +368,7 @@ export class PhotoshopMultiBatchRunner {
                 group_index: group.group_index,
                 group_total: groups.length,
                 groups_completed: groupsCompleted,
-                result_group: batchOutputGroup(
-                  template,
-                  group,
-                  group.job.output_paths,
-                  'completed',
-                ),
+                result_group: resultGroup,
               })
             },
           })
@@ -372,26 +385,32 @@ export class PhotoshopMultiBatchRunner {
           if (!group) {
             continue
           }
-          const alreadyEmitted = realtimeCompletedGroupIndexes.has(groupResult.group_index)
+          const alreadyEmitted =
+            realtimeCompletedGroupIndexes.has(groupResult.group_index) ||
+            realtimeFailedGroupIndexes.has(groupResult.group_index)
           if (!alreadyEmitted) {
             groupsCompleted += 1
           }
           if (groupResult.skipped) {
             skipped += 1
           }
+          if (groupResult.error && !realtimeFailedGroupIndexes.has(groupResult.group_index)) {
+            failed += 1
+          }
           const groupOutputs = groupResult.outputs
           const resultGroup = batchOutputGroup(
             template,
             group,
             groupOutputs,
-            groupResult.skipped ? 'skipped' : 'completed',
+            groupResult.error ? 'failed' : groupResult.skipped ? 'skipped' : 'completed',
+            groupResult.error,
           )
           resultGroups.push(resultGroup)
           if (!alreadyEmitted) {
             await this.emitProgress({
               task_id: config.taskId,
               total_groups: groupsTotal,
-              completed: groupsCompleted - skipped,
+              completed: groupsCompleted - skipped - failed,
               failed,
               skipped,
               current_group: group.group_index,
@@ -432,7 +451,7 @@ export class PhotoshopMultiBatchRunner {
         await this.emitProgress({
           task_id: config.taskId,
           total_groups: groupsTotal,
-          completed: groupsCompleted - skipped,
+          completed: groupsCompleted - skipped - failed,
           failed,
           skipped,
           current_group: group.group_index,
@@ -503,7 +522,7 @@ export class PhotoshopMultiBatchRunner {
           await this.emitProgress({
             task_id: config.taskId,
             total_groups: groupsTotal,
-            completed: groupsCompleted - skipped,
+            completed: groupsCompleted - skipped - failed,
             failed,
             skipped,
             current_group: group.group_index,
@@ -536,7 +555,7 @@ export class PhotoshopMultiBatchRunner {
     await this.emitProgress({
       task_id: config.taskId,
       total_groups: groupsTotal,
-      completed: groupsCompleted - skipped,
+      completed: groupsCompleted - skipped - failed,
       failed,
       skipped,
       current_group: null,
@@ -588,6 +607,7 @@ function batchOutputGroup(
   group: PhotoshopTaskGroup,
   outputs: string[],
   status: PhotoshopBatchOutputGroup['status'],
+  error?: string,
 ): PhotoshopBatchOutputGroup {
   return {
     template_id: template.id,
@@ -597,5 +617,6 @@ function batchOutputGroup(
     print_ids: group.print_assets.map((asset) => asset.id),
     outputs,
     status,
+    ...(error ? { error } : {}),
   }
 }

@@ -416,6 +416,77 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(result.outputs).toEqual(outputPaths[0])
   })
 
+  it('continues with later templates after an individual group fails', async () => {
+    const templates = [
+      createTemplate('C:\\templates\\first.psd', 'tpl-first'),
+      createTemplate('C:\\templates\\second.psd', 'tpl-second'),
+    ]
+    const templateCalls: string[] = []
+    const progress: PhotoshopProgressInfo[] = []
+
+    const result = await runBatch(
+      createPrints().slice(0, 1),
+      templates.map((template) => template.file_path),
+      { taskId: 'batch-partial', outputRoot: 'C:\\outputs' },
+      {
+        scanner: {
+          scanPsd: async (path) => {
+            const template = templates.find((item) => item.file_path === path)
+            if (!template) {
+              throw new Error(`Missing test template: ${path}`)
+            }
+            return template
+          },
+        },
+        engine: {
+          runTemplateBatch: async (template, groups) => {
+            templateCalls.push(template.id)
+            const group = groups[0]
+            if (!group) {
+              throw new Error('Expected one test group')
+            }
+            if (template.id === 'tpl-first') {
+              return {
+                ok: true,
+                outputs: [],
+                groups: [
+                  {
+                    group_index: group.group_index,
+                    sku_folder: group.sku_folder,
+                    outputs: [],
+                    error: 'input image remained open',
+                  },
+                ],
+              }
+            }
+            return {
+              ok: true,
+              outputs: group.job.output_paths,
+              groups: [
+                {
+                  group_index: group.group_index,
+                  sku_folder: group.sku_folder,
+                  outputs: group.job.output_paths,
+                },
+              ],
+            }
+          },
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        onProgress: (item) => {
+          progress.push(item)
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(templateCalls).toEqual(['tpl-first', 'tpl-second'])
+    expect(result.ok).toBe(true)
+    expect(result.result_groups.map((group) => group.status)).toEqual(['failed', 'completed'])
+    expect(result.result_groups[0]).toMatchObject({ error: 'input image remained open' })
+    expect(progress.at(-1)).toMatchObject({ completed: 1, failed: 1 })
+  })
+
   it('logs one compatibility fallback when a template has no native slices', async () => {
     const template = createTemplate('C:\\templates\\legacy.psd', 'tpl-legacy')
     const logs: PhotoshopProgressLogEntry[] = []

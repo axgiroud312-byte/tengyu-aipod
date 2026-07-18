@@ -434,24 +434,27 @@ function normalizeTemplateBatchGroups(
   group_index: number
   sku_folder: string
   outputs: string[]
+  error?: string
 }> {
   const rawGroups = Array.isArray(result.groups)
     ? (result.groups as RawTemplateBatchGroupResult[])
     : []
-  return rawGroups
-    .filter((group) => group.error === undefined)
-    .map((group) => {
-      const groupIndex = Number(group.group_index)
-      const sourceGroup = pendingGroups.find((item) => item.group_index === groupIndex)
-      const outputs = Array.isArray(group.outputs)
+  return rawGroups.map((group) => {
+    const groupIndex = Number(group.group_index)
+    const sourceGroup = pendingGroups.find((item) => item.group_index === groupIndex)
+    const error = group.error === undefined ? undefined : String(group.error)
+    const outputs = error
+      ? []
+      : Array.isArray(group.outputs)
         ? group.outputs.map((output) => String(output))
         : (sourceGroup?.job.output_paths ?? [])
-      return {
-        group_index: Number.isFinite(groupIndex) ? groupIndex : (sourceGroup?.group_index ?? 0),
-        sku_folder: String(group.sku_folder ?? sourceGroup?.sku_folder ?? 'group'),
-        outputs,
-      }
-    })
+    return {
+      group_index: Number.isFinite(groupIndex) ? groupIndex : (sourceGroup?.group_index ?? 0),
+      sku_folder: String(group.sku_folder ?? sourceGroup?.sku_folder ?? 'group'),
+      outputs,
+      ...(error ? { error } : {}),
+    }
+  })
 }
 
 function retryDelayMs(attempt: number): number {
@@ -568,6 +571,7 @@ export class PhotoshopExecutionEngine {
       sku_folder: string
       outputs: string[]
       skipped?: boolean
+      error?: string
     }>
     cancelled?: boolean
   }> {
@@ -627,7 +631,8 @@ export class PhotoshopExecutionEngine {
           }
 
           const groupResults = normalizeTemplateBatchGroups(raw, pendingGroups)
-          for (const groupResult of groupResults) {
+          const completedGroupResults = groupResults.filter((group) => !group.error)
+          for (const groupResult of completedGroupResults) {
             await this.verifyOutputs(groupResult.outputs)
             for (const output of groupResult.outputs) {
               await options.onLog?.({
@@ -649,7 +654,18 @@ export class PhotoshopExecutionEngine {
                 (item) => item.group_index === groupResult.group_index,
               )
               if (group) {
-                await this.recorder.recordCompleted(group.job, attempt, groupResult.outputs)
+                if (groupResult.error) {
+                  await this.recorder.recordFailed(
+                    group.job,
+                    attempt,
+                    new AppErrorClass('JSX_EXEC_FAILED', groupResult.error, false, {
+                      template_id: template.id,
+                      group_index: groupResult.group_index,
+                    }),
+                  )
+                } else {
+                  await this.recorder.recordCompleted(group.job, attempt, groupResult.outputs)
+                }
               }
             }
           }

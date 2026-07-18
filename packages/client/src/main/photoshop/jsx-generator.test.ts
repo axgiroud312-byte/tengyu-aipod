@@ -288,6 +288,49 @@ describe('generateTemplateBatchJsx', () => {
     )
   })
 
+  it('continues after an individual group fails and retries closing opened input documents', () => {
+    const jsx = generateTemplateBatchJsx({
+      task_id: 'task-partial-failure',
+      mockup_path: 'C:\\templates\\mockup.psd',
+      template_name: 'mockup',
+      result_file_path: 'C:\\tmp\\result.json',
+      log_file_path: 'C:\\tmp\\photoshop-task.log',
+      cancel_file_path: 'C:\\tmp\\cancel.flag',
+      groups: [
+        {
+          group_index: 0,
+          sku_folder: 'sku-1',
+          so_replacements: [{ layer_path: 'SO 1', input_image: 'C:\\prints\\sku-1.png' }],
+          clip_areas: [{ x: 0, y: 0, w: 500, h: 500, is_full: true }],
+          output_paths: ['C:\\outputs\\sku-1\\01.jpg'],
+          format: 'jpg',
+          jpg_quality: 10,
+        },
+        {
+          group_index: 1,
+          sku_folder: 'sku-2',
+          so_replacements: [{ layer_path: 'SO 1', input_image: 'C:\\prints\\sku-2.png' }],
+          clip_areas: [{ x: 0, y: 0, w: 500, h: 500, is_full: true }],
+          output_paths: ['C:\\outputs\\sku-2\\01.jpg'],
+          format: 'jpg',
+          jpg_quality: 10,
+        },
+      ],
+    })
+
+    const runBatchStart = jsx.indexOf('function runBatch()')
+    const groupFailureStart = jsx.indexOf('failed = true;', runBatchStart)
+    const groupFailureBlock = jsx.slice(
+      groupFailureStart,
+      jsx.indexOf('} finally {', groupFailureStart),
+    )
+    expect(groupFailureBlock).not.toContain('break;')
+    expect(groupFailureBlock).toContain('removeOutputFiles(groupResult.outputs)')
+    expect(jsx).toContain('result.ok = !result.cancelled;')
+    expect(jsx).toContain('for (var closeAttempt = 0; closeAttempt < 3; closeAttempt++)')
+    expect(jsx).toContain('Failed to close input image after 3 attempts:')
+  })
+
   it('checks cancellation inside native slice export and ignores extra exported fragments', () => {
     const jsx = generateTemplateBatchJsx({
       task_id: 'task-native-cancel',

@@ -581,6 +581,104 @@ describe('PhotoshopExecutionEngine', () => {
     expect(events).toEqual(['running:0', 'running:1', 'completed:0', 'cancelled:1'])
   })
 
+  it('returns individual group failures without failing the template batch', async () => {
+    const resultPath = join(tempDir, 'partial-result.json')
+    const logPath = join(tempDir, 'partial.log')
+    const outputPath = join(tempDir, 'successful.jpg')
+    const events: string[] = []
+    await writeFile(outputPath, 'fake image', 'utf8')
+    const template: PsdTemplate = {
+      id: 'tpl-partial',
+      file_path: 'C:\\templates\\mockup.psd',
+      file_hash: 'hash',
+      doc_size: { w: 1000, h: 1000 },
+      smart_objects: [],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      native_slices: [],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: 123,
+      layers: [],
+      text_layers: [],
+    }
+    const groups = [
+      {
+        group_index: 0,
+        sku_folder: 'failed-print',
+        template_name: 'mockup',
+        print_assets: [{ id: 'failed-print', file_path: 'C:\\prints\\failed.png' }],
+        job: createJob({ group_index: 0, mockup_path: template.file_path }),
+      },
+      {
+        group_index: 1,
+        sku_folder: 'successful-print',
+        template_name: 'mockup',
+        print_assets: [{ id: 'successful-print', file_path: 'C:\\prints\\successful.png' }],
+        job: createJob({
+          group_index: 1,
+          mockup_path: template.file_path,
+          output_paths: [outputPath],
+        }),
+      },
+    ]
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      writeTemplateBatchJsx: async () => ({
+        jsx_path: join(tempDir, 'partial.jsx'),
+        result_file_path: resultPath,
+        log_file_path: logPath,
+        cancel_file_path: join(tempDir, 'cancel.flag'),
+        content: '',
+      }),
+      comAdapter: readyComAdapter(async () => {
+        await writeFile(
+          resultPath,
+          JSON.stringify({
+            ok: true,
+            outputs: [outputPath],
+            groups: [
+              {
+                ok: false,
+                group_index: 0,
+                sku_folder: 'failed-print',
+                outputs: [join(tempDir, 'partial.jpg')],
+                error: 'input image remained open',
+              },
+              {
+                ok: true,
+                group_index: 1,
+                sku_folder: 'successful-print',
+                outputs: [outputPath],
+              },
+            ],
+          }),
+          'utf8',
+        )
+      }),
+      recorder: {
+        recordRunning: async () => {},
+        recordCompleted: async (job) => {
+          events.push(`completed:${job.group_index}`)
+        },
+        recordFailed: async (job) => {
+          events.push(`failed:${job.group_index}`)
+        },
+      },
+      shouldSkipJob: async () => false,
+    })
+
+    await expect(engine.runTemplateBatch(template, groups, 0)).resolves.toMatchObject({
+      ok: true,
+      outputs: [outputPath],
+      groups: [
+        { group_index: 0, outputs: [], error: 'input image remained open' },
+        { group_index: 1, outputs: [outputPath] },
+      ],
+    })
+    expect(events).toEqual(['failed:0', 'completed:1'])
+  })
+
   it('persists workflow_steps rows through the sqlite recorder', async () => {
     const rows: Array<{ sql: string; params: Record<string, unknown> }> = []
     const artifactColumns = [

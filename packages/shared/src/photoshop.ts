@@ -228,7 +228,8 @@ export interface PhotoshopBatchOutputGroup {
   sku_folder: string
   print_ids: string[]
   outputs: string[]
-  status: 'completed' | 'skipped'
+  status: 'completed' | 'skipped' | 'failed'
+  error?: string
 }
 
 export interface PhotoshopBatchResult {

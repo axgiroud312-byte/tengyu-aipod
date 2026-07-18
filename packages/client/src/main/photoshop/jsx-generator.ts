@@ -496,12 +496,29 @@ function normalizeInputForSmartObject(doc, layer, replacement, cacheKey) {
       fit_mode: fitMode
     };
   } finally {
-    try {
-      if (inputDocument) {
+    var closeFailure = null;
+    for (var closeAttempt = 0; closeAttempt < 3; closeAttempt++) {
+      try {
+        if (!inputDocument) {
+          break;
+        }
+        app.activeDocument = inputDocument;
         inputDocument.close(SaveOptions.DONOTSAVECHANGES);
+        inputDocument = null;
+        closeFailure = null;
+        break;
+      } catch (closeInputError) {
+        closeFailure = closeInputError;
+        $.sleep(100);
       }
-    } catch (closeInputError) {}
+    }
     app.activeDocument = doc;
+    if (inputDocument) {
+      throw new Error(
+        'Failed to close input image after 3 attempts: ' + inputFile.fsName +
+        (closeFailure ? ' (' + String(closeFailure) + ')' : '')
+      );
+    }
   }
 }
 
@@ -1581,12 +1598,29 @@ function normalizeInputForSmartObject(doc, layer, replacement, cacheKey) {
       fit_mode: fitMode
     };
   } finally {
-    try {
-      if (inputDocument) {
+    var closeFailure = null;
+    for (var closeAttempt = 0; closeAttempt < 3; closeAttempt++) {
+      try {
+        if (!inputDocument) {
+          break;
+        }
+        app.activeDocument = inputDocument;
         inputDocument.close(SaveOptions.DONOTSAVECHANGES);
+        inputDocument = null;
+        closeFailure = null;
+        break;
+      } catch (closeInputError) {
+        closeFailure = closeInputError;
+        $.sleep(100);
       }
-    } catch (closeInputError) {}
+    }
     app.activeDocument = doc;
+    if (inputDocument) {
+      throw new Error(
+        'Failed to close input image after 3 attempts: ' + inputFile.fsName +
+        (closeFailure ? ' (' + String(closeFailure) + ')' : '')
+      );
+    }
   }
 }
 
@@ -1865,24 +1899,28 @@ function runBatch() {
         }
         failed = true;
         groupResult.error = String(groupError);
+        var failureCleanup = removeOutputFiles(groupResult.outputs);
+        groupResult.outputs = [];
+        if (failureCleanup.length > 0) {
+          groupResult.error +=
+            ' | Failed to remove partial outputs: ' + failureCleanup.join(', ');
+        }
         appendLog({
           level: 'error',
           stage: 'group_complete',
           message: '套版组失败',
           group: group.group_index,
           sku_folder: group.sku_folder,
-          error: String(groupError),
+          error: groupResult.error,
           duration_ms: new Date().getTime() - groupStartedAt
         });
-        result.groups.push(groupResult);
-        break;
       } finally {
         ${workingDocumentClose}
       }
       result.groups.push(groupResult);
     }
 
-    result.ok = !failed && !result.cancelled;
+    result.ok = !result.cancelled;
     if (result.cancelled) {
       appendLog({
         level: 'warn',
@@ -1890,7 +1928,14 @@ function runBatch() {
         message: '套版任务已取消',
         duration_ms: new Date().getTime() - batchStartedAt
       });
-    } else if (!failed) {
+    } else if (failed) {
+      appendLog({
+        level: 'warn',
+        stage: 'task_complete',
+        message: '套版任务完成，部分分组失败',
+        duration_ms: new Date().getTime() - batchStartedAt
+      });
+    } else {
       appendLog({
         level: 'info',
         stage: 'task_complete',
