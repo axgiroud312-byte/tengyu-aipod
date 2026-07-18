@@ -1398,6 +1398,12 @@ test.describe('production-first Workbench shell', () => {
       )
     }
 
+    await expect(page.getByRole('region', { name: '本次执行摘要' })).toHaveCount(0)
+    await expect(page.getByText('历史记录', { exact: true })).toHaveCount(0)
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '运行记录', exact: true })
+      .click()
     await page.getByRole('button', { name: '从中断处继续' }).click()
     await expect
       .poll(() =>
@@ -2036,7 +2042,18 @@ test.describe('production-first Workbench shell', () => {
     await expect(results).toBeVisible()
     await expect(inputAndSettings.getByLabel('替换范围')).toHaveValue('topmost')
     await expect(inputAndSettings.getByLabel('智能对象替换方式')).toHaveValue('replaceContents')
-    await expect(inputAndSettings.getByLabel('内部缩放方式')).toHaveValue('fill')
+    const fitModeSelect = inputAndSettings.getByLabel('印花适配方式')
+    await expect(fitModeSelect).toHaveValue('fill')
+    await expect(
+      inputAndSettings.getByText('适合满版图案、背景或无缝纹理；比例不一致时可能裁切边缘。'),
+    ).toBeVisible()
+    await fitModeSelect.selectOption('fit')
+    await expect(
+      inputAndSettings.getByText(
+        '适合 Logo、文字和胸前图案；完整保留内容，比例不一致时可能留透明边。',
+      ),
+    ).toBeVisible()
+    await fitModeSelect.selectOption('fill')
     await expect(inputAndSettings.getByLabel('裁切模式')).toHaveValue('auto')
     await expect(inputAndSettings.getByLabel('导出格式')).toHaveValue('jpg')
     await expect(inputAndSettings.getByLabel('失败重试')).toHaveValue('1')
@@ -2068,9 +2085,7 @@ test.describe('production-first Workbench shell', () => {
       { width: 1920, height: 1080 },
     ]) {
       await page.setViewportSize(viewport)
-      await workspace
-        .getByRole('heading', { name: '模板批量套版与上架图输出' })
-        .scrollIntoViewIfNeeded()
+      await fitModeSelect.scrollIntoViewIfNeeded()
       await attachScreenshot(
         page,
         testInfo,

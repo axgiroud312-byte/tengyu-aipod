@@ -1035,8 +1035,8 @@ test.describe('pipeline comfyui real probe', () => {
       expectedMode: 'collection' | 'txt2img' | 'img2img' | 'existing_prints',
       expectedName: string,
     ) => {
-      const summary = page.getByRole('region', { name: '本次执行摘要' })
-      await expect(summary).toBeVisible()
+      await expect(page.getByRole('region', { name: '本次执行摘要' })).toHaveCount(0)
+      await expect(page.getByText('历史记录', { exact: true })).toHaveCount(0)
       const startButton = page.getByRole('button', { name: '启动完整任务' })
       await expect(startButton).toBeEnabled()
       await startButton.click()

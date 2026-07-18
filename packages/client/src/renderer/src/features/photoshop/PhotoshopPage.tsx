@@ -28,6 +28,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PhotoshopPrintFolderScan } from '../../../../main/photoshop/print-folder'
 import { formatPhotoshopDebugLogLine, photoshopDebugLogLevelCounts } from './photoshop-debug-log'
+import { photoshopFitModeDescription, photoshopFitModeOptions } from './photoshop-fit-mode-copy'
 import {
   type PhotoshopResultFilter,
   filterPhotoshopSkuCards,
@@ -231,6 +232,7 @@ export function PhotoshopPage() {
   const [message, setMessage] = useState('请选择印花文件夹和 PSD/PSB 模板')
   const [scanningTemplates, setScanningTemplates] = useState(false)
   const [batchRunning, setBatchRunning] = useState(false)
+  const [cancellationRequested, setCancellationRequested] = useState(false)
   const [photoshopReady, setPhotoshopReady] = useState(false)
   const isMac = navigator.platform.toLowerCase().includes('mac')
   const debugLogEndRef = useRef<HTMLDivElement | null>(null)
@@ -451,6 +453,7 @@ export function PhotoshopPage() {
 
   async function runPhotoshopBatch() {
     setBatchRunning(true)
+    setCancellationRequested(false)
     setMessage('正在执行套版...')
     setDebugLogs([])
     setBatchResult(null)
@@ -523,15 +526,26 @@ export function PhotoshopPage() {
       )
     } finally {
       setBatchRunning(false)
+      setCancellationRequested(false)
     }
   }
 
   async function cancelPhotoshopBatch() {
-    if (!currentTaskId) {
+    if (!currentTaskId || cancellationRequested) {
       return
     }
-    const result = await window.api.photoshop.cancel({ task_id: currentTaskId })
-    setMessage(result.ok ? '已发送取消请求，当前组结束后停止' : '当前没有可取消的 PS 任务')
+    setCancellationRequested(true)
+    setMessage('正在取消套版，等待当前 Photoshop 操作结束...')
+    try {
+      const result = await window.api.photoshop.cancel({ task_id: currentTaskId })
+      if (!result.ok) {
+        setCancellationRequested(false)
+        setMessage('当前没有可取消的 PS 任务')
+      }
+    } catch (error) {
+      setCancellationRequested(false)
+      setMessage(error instanceof Error ? error.message : String(error))
+    }
   }
 
   if (isMac) {
@@ -773,17 +787,28 @@ export function PhotoshopPage() {
                 </select>
               </label>
               <label className="space-y-2 text-sm font-medium">
-                <span>内部缩放方式</span>
+                <span>印花适配方式</span>
                 <select
+                  aria-describedby="photoshop-fit-mode-help"
+                  aria-label="印花适配方式"
                   className="h-10 w-full rounded-md border px-3"
                   onChange={(event) =>
                     setSmartObjectInnerFitMode(event.target.value as typeof smartObjectInnerFitMode)
                   }
                   value={smartObjectInnerFitMode}
                 >
-                  <option value="fill">铺满（fill）</option>
-                  <option value="fit">完整显示（fit）</option>
+                  {photoshopFitModeOptions.map((option) => (
+                    <option key={option.key} value={option.key}>
+                      {option.label}
+                    </option>
+                  ))}
                 </select>
+                <span
+                  className="block text-xs font-normal leading-5 text-muted-foreground"
+                  id="photoshop-fit-mode-help"
+                >
+                  {photoshopFitModeDescription(smartObjectInnerFitMode)}
+                </span>
               </label>
               <label className="space-y-2 text-sm font-medium">
                 <span>裁切模式</span>
@@ -910,12 +935,13 @@ export function PhotoshopPage() {
             </Button>
             <Button
               className="mt-3 w-full"
-              disabled={!batchRunning || !currentTaskId}
+              disabled={!batchRunning || !currentTaskId || cancellationRequested}
               onClick={() => void cancelPhotoshopBatch()}
               type="button"
               variant="secondary"
             >
-              取消套版
+              <X className="mr-2 h-4 w-4" />
+              {cancellationRequested ? '正在取消...' : '取消套版'}
             </Button>
           </div>
 

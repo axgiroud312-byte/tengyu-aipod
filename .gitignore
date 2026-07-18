@@ -75,6 +75,7 @@ test-results/
 playwright-report/
 playwright/.cache/
 packages/client/output/
+/output/
 
 # ─── Prisma ─────────────────────────────────
 prisma/generated/

@@ -22,10 +22,13 @@ import {
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import {
+  photoshopFitModeDescription,
+  photoshopFitModeOptions,
+} from '@/features/photoshop/photoshop-fit-mode-copy'
 import { PipelineRail } from '@/features/pipeline/components/PipelineRail'
 import { PipelineRunHistoryPanel } from '@/features/pipeline/components/PipelineResultPanels'
 import { PipelineRunControls } from '@/features/pipeline/components/PipelineRunControls'
-import { PipelineRunSummary } from '@/features/pipeline/components/PipelineRunSummary'
 import { PipelineStatusAlerts } from '@/features/pipeline/components/PipelineStatusAlerts'
 import { PipelineSelectedStageIssues, RunTheater } from '@/features/pipeline/components/RunTheater'
 import { shouldApplyPipelineCompletedEvent } from '@/features/pipeline/pipeline-completion-events'
@@ -38,7 +41,6 @@ import {
 } from '@/features/pipeline/pipeline-execution-plans'
 import { buildPipelineRailViewModel } from '@/features/pipeline/pipeline-progress-view-model'
 import { buildPipelineRunConfig } from '@/features/pipeline/pipeline-run-config'
-import { buildPipelineRunSummary } from '@/features/pipeline/pipeline-run-summary'
 import {
   createPipelineSourceDrafts,
   transitionPipelineSourceDraft,
@@ -87,7 +89,7 @@ import {
   Trash2,
   Upload,
 } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useId } from 'react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import type { DetectionConfig } from '../../../../main/lib/detection-config'
@@ -325,6 +327,7 @@ function Field({
 
 function SelectField({
   ariaLabel,
+  description,
   label,
   onValueChange,
   options,
@@ -332,16 +335,20 @@ function SelectField({
   value,
 }: {
   ariaLabel?: string
+  description?: string
   label: string
   onValueChange: (value: string) => void
   options: Option[]
   placeholder?: string
   value: string
 }) {
+  const descriptionId = useId()
+
   return (
     <Field label={label}>
       <Select onValueChange={onValueChange} value={value}>
         <SelectTrigger
+          aria-describedby={description ? descriptionId : undefined}
           aria-label={ariaLabel}
           className="min-w-0 [&>span]:min-w-0 [&>span]:truncate"
         >
@@ -355,6 +362,11 @@ function SelectField({
           ))}
         </SelectContent>
       </Select>
+      {description ? (
+        <p className="text-xs font-normal leading-5 text-muted-foreground" id={descriptionId}>
+          {description}
+        </p>
+      ) : null}
     </Field>
   )
 }
@@ -1205,8 +1217,6 @@ export function FullTaskPage({
     locked: progress ? {} : pipelineStageLocks,
   })
   const canStart = optionsLoaded && !running && validationIssues.length === 0
-  const summaryConfig = displayedRunConfig
-  const runSummary = buildPipelineRunSummary(summaryConfig)
   const firstValidationIssue = validationIssues[0] ?? null
   const firstValidationStageLabel = firstValidationIssue
     ? railView.stages.find((stage) => stage.key === firstValidationIssue.stage)?.label
@@ -1324,8 +1334,11 @@ export function FullTaskPage({
   }, [recordsOnly, refreshOptions])
 
   useEffect(() => {
+    if (!recordsOnly) {
+      return
+    }
     void refreshRunHistory()
-  }, [refreshRunHistory])
+  }, [recordsOnly, refreshRunHistory])
 
   useEffect(() => {
     if (!currentRunId) {
@@ -1393,9 +1406,11 @@ export function FullTaskPage({
         )
       }
       setRunning(false)
-      void refreshRunHistory()
+      if (recordsOnly) {
+        void refreshRunHistory()
+      }
     })
-  }, [currentRunId, refreshRunHistory, selectCurrentRun])
+  }, [currentRunId, recordsOnly, refreshRunHistory, selectCurrentRun])
 
   useEffect(() => {
     if (grsaiModelOptions.length === 0) {
@@ -2046,7 +2061,6 @@ export function FullTaskPage({
       })
       setRunning(true)
       setMessage('完整任务已启动')
-      void refreshRunHistory()
     } catch (nextError) {
       setError(nextError instanceof Error ? nextError.message : '完整任务启动失败')
     }
@@ -2151,28 +2165,18 @@ export function FullTaskPage({
           selectedStage={selectedPipelineStage}
           validationIssues={[]}
         />
-        <PipelineRunHistoryPanel
-          currentRunId={currentRunId}
-          loading={runHistoryLoading}
-          onRefresh={() => void refreshRunHistory()}
-          onResume={(runId) => void resumePipeline(runId)}
-          onView={viewRunResult}
-          resumeLoading={resumePipelineMutation.loading}
-          runs={runHistory}
-        />
       </div>
     )
   }
 
   return (
     <div className="space-y-5">
-      <div className="space-y-5">
-        <PipelineStatusAlerts
-          error={executionPlanStorageError?.message ?? optionsError ?? error}
-          showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
-        />
+      <PipelineStatusAlerts
+        error={executionPlanStorageError?.message ?? optionsError ?? error}
+        showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
+      />
 
-        <Card>
+      <Card>
           <CardHeader className="pb-4">
             <div className="flex items-start justify-between gap-3">
               <div>
@@ -3198,14 +3202,13 @@ export function FullTaskPage({
                         value={smartObjectReplaceMode}
                       />
                       <SelectField
-                        label="内部缩放方式"
+                        ariaLabel="印花适配方式"
+                        description={photoshopFitModeDescription(smartObjectInnerFitMode)}
+                        label="印花适配方式"
                         onValueChange={(value) =>
                           setSmartObjectInnerFitMode(value as 'fit' | 'fill')
                         }
-                        options={[
-                          { key: 'fill', label: '铺满（fill）' },
-                          { key: 'fit', label: '完整显示（fit）' },
-                        ]}
+                        options={photoshopFitModeOptions}
                         value={smartObjectInnerFitMode}
                       />
                       <SelectField
@@ -3458,7 +3461,6 @@ export function FullTaskPage({
               </CardContent>
             </Card>
 
-            <PipelineRunSummary summary={runSummary} />
             <PipelineRunControls
               canStart={canStart}
               cancelLoading={cancelPipelineMutation.loading}
@@ -3481,18 +3483,7 @@ export function FullTaskPage({
               {...(validationMessages[0] ? { launchDisabledReason: validationMessages[0] } : {})}
             />
           </CardContent>
-        </Card>
-      </div>
-
-      <PipelineRunHistoryPanel
-        currentRunId={currentRunId}
-        loading={runHistoryLoading}
-        onRefresh={() => void refreshRunHistory()}
-        onResume={(runId) => void resumePipeline(runId)}
-        onView={viewRunResult}
-        resumeLoading={resumePipelineMutation.loading}
-        runs={runHistory}
-      />
+      </Card>
     </div>
   )
 }
