@@ -1,7 +1,7 @@
 import { execFile as nodeExecFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import type { PhotoshopStatus } from '@tengyu-aipod/shared'
-import { PhotoshopComAdapter } from './com-adapter'
+import { type PhotoshopComAdapter, photoshopComAdapter } from './com-adapter'
 
 type ExecFileResult = { stdout: string; stderr: string }
 type ExecFileFn = (file: string, args: string[]) => Promise<ExecFileResult>
@@ -68,12 +68,7 @@ export class PhotoshopStatusChecker {
         const result = await execFileAsync(file, args, { windowsHide: true })
         return { stdout: result.stdout, stderr: result.stderr }
       })
-    this.comAdapter =
-      options.comAdapter ??
-      new PhotoshopComAdapter({
-        platform: this.platform,
-        execFile: this.execFile,
-      })
+    this.comAdapter = options.comAdapter ?? photoshopComAdapter
   }
 
   async check(): Promise<PhotoshopStatus> {

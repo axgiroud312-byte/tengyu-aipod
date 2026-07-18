@@ -16,6 +16,7 @@ afterEach(async () => {
 
 function createAdapter(options: {
   platform?: NodeJS.Platform
+  bridgeFactory?: NonNullable<ConstructorParameters<typeof PhotoshopComAdapter>[0]>['bridgeFactory']
   execFile?: (
     file: string,
     args: string[],
@@ -29,6 +30,9 @@ function createAdapter(options: {
   if (options.execFile) {
     adapterOptions.execFile = options.execFile
   }
+  if (options.bridgeFactory) {
+    adapterOptions.bridgeFactory = options.bridgeFactory
+  }
   if (options.jsxTimeoutMs !== undefined) {
     Object.assign(adapterOptions, { jsxTimeoutMs: options.jsxTimeoutMs })
   }
@@ -36,6 +40,52 @@ function createAdapter(options: {
 }
 
 describe('PhotoshopComAdapter', () => {
+  it('reuses one persistent bridge and releases it on dispose', async () => {
+    const requests: string[] = []
+    let bridgeCreations = 0
+    let bridgeDisposals = 0
+    const adapter = createAdapter({
+      bridgeFactory: () => {
+        bridgeCreations += 1
+        return {
+          request: async (request) => {
+            requests.push(request.operation)
+            return request.operation === 'getVersion' ? { version: '27.8.0' } : {}
+          },
+          dispose: () => {
+            bridgeDisposals += 1
+          },
+        }
+      },
+    })
+    const jsxPath = join(tempDir, 'job.jsx')
+    await writeFile(jsxPath, 'app.version', 'utf8')
+
+    await expect(adapter.getVersion()).resolves.toBe('27.8.0')
+    await expect(adapter.runJsxFile(jsxPath)).resolves.toBeUndefined()
+    await adapter.dispose()
+
+    expect(bridgeCreations).toBe(1)
+    expect(requests).toEqual(['getVersion', 'runJsxFile'])
+    expect(bridgeDisposals).toBe(1)
+  })
+
+  it('requires three successful JSX probes before reporting Photoshop ready', async () => {
+    const requests: string[] = []
+    const adapter = createAdapter({
+      bridgeFactory: () => ({
+        request: async (request) => {
+          requests.push(request.operation)
+          return { version: '27.8.0' }
+        },
+        dispose: () => undefined,
+      }),
+    })
+
+    await expect(adapter.ensureReady()).resolves.toBe('27.8.0')
+    expect(requests).toEqual(['probe', 'probe', 'probe'])
+  })
+
   it('rejects non-Windows platforms with AppError', async () => {
     const adapter = createAdapter({ platform: 'darwin' })
 
@@ -102,6 +152,24 @@ describe('PhotoshopComAdapter', () => {
     })
   })
 
+  it('keeps bridge COM server activation failures retryable', async () => {
+    const jsxPath = join(tempDir, 'bridge-disconnected.jsx')
+    await writeFile(jsxPath, 'app.version', 'utf8')
+    const adapter = createAdapter({
+      bridgeFactory: () => ({
+        request: async () => {
+          throw new Error('COM server execution failed (HRESULT: 0x80080005)')
+        },
+        dispose: () => undefined,
+      }),
+    })
+
+    await expect(adapter.runJsxFile(jsxPath)).rejects.toMatchObject({
+      code: 'PS_COM_FAILED',
+      retryable: true,
+    })
+  })
+
   it('applies a JSX watchdog and classifies timeouts as retryable', async () => {
     const jsxPath = join(tempDir, 'slow.jsx')
     await writeFile(jsxPath, 'while (true) {}', 'utf8')
@@ -140,8 +208,14 @@ describe('PhotoshopComAdapter', () => {
     }
 
     const adapter = createAdapter({})
-    const version = await adapter.getVersion()
+    try {
+      const version = await adapter.getVersion()
+      const readyVersion = await adapter.ensureReady()
 
-    expect(version).toMatch(/^\d+(\.\d+)*$/)
+      expect(version).toMatch(/^\d+(\.\d+)*$/)
+      expect(readyVersion).toMatch(/^\d+(\.\d+)*$/)
+    } finally {
+      await adapter.dispose()
+    }
   })
 })

@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import type { PhotoshopJob, PsdTemplate } from '@tengyu-aipod/shared'
+import { AppErrorClass, type PhotoshopJob, type PsdTemplate } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openSqliteDatabase } from '../lib/sqlite'
 import { TempFileManager } from '../lib/temp-file-manager'
@@ -21,6 +21,13 @@ const noopRecorder = {
   recordRunning: async () => undefined,
   recordCompleted: async () => undefined,
   recordFailed: async () => undefined,
+}
+
+function readyComAdapter(runJsxFile: (path: string) => Promise<void> = async () => undefined) {
+  return {
+    ensureReady: async () => '27.8.0',
+    runJsxFile,
+  }
 }
 
 function createMemoryCache() {
@@ -100,11 +107,9 @@ describe('PhotoshopExecutionEngine', () => {
     const engine = new PhotoshopExecutionEngine({
       platform: 'win32',
       writeJsx: async () => ({ jsx_path: join(tempDir, 'job.jsx'), result_file_path: resultPath }),
-      comAdapter: {
-        runJsxFile: async (path) => {
-          calls.push(path)
-        },
-      },
+      comAdapter: readyComAdapter(async (path) => {
+        calls.push(path)
+      }),
       recorder: noopRecorder,
     })
 
@@ -126,7 +131,7 @@ describe('PhotoshopExecutionEngine', () => {
     const engine = new PhotoshopExecutionEngine({
       platform: 'win32',
       writeJsx: async () => ({ jsx_path: join(tempDir, 'job.jsx'), result_file_path: resultPath }),
-      comAdapter: { runJsxFile: async () => undefined },
+      comAdapter: readyComAdapter(),
       recorder: noopRecorder,
       accessFile: async () => {
         checks += 1
@@ -155,7 +160,7 @@ describe('PhotoshopExecutionEngine', () => {
     const engine = new PhotoshopExecutionEngine({
       platform: 'win32',
       writeJsx: async () => ({ jsx_path: join(tempDir, 'job.jsx'), result_file_path: resultPath }),
-      comAdapter: { runJsxFile: async () => undefined },
+      comAdapter: readyComAdapter(),
       recorder: noopRecorder,
     })
 
@@ -175,7 +180,7 @@ describe('PhotoshopExecutionEngine', () => {
     const engine = new PhotoshopExecutionEngine({
       platform: 'win32',
       writeJsx: async () => ({ jsx_path: join(tempDir, 'job.jsx'), result_file_path: resultPath }),
-      comAdapter: { runJsxFile: async () => undefined },
+      comAdapter: readyComAdapter(),
       recorder: {
         recordRunning: async (_job, attempt) => {
           events.push(`running:${attempt}`)
@@ -206,11 +211,9 @@ describe('PhotoshopExecutionEngine', () => {
           result_file_path: join(tempDir, 'result.json'),
         }
       },
-      comAdapter: {
-        runJsxFile: async () => {
-          calls.push('com')
-        },
-      },
+      comAdapter: readyComAdapter(async () => {
+        calls.push('com')
+      }),
       recorder: noopRecorder,
     })
 
@@ -232,11 +235,9 @@ describe('PhotoshopExecutionEngine', () => {
       platform: 'win32',
       shouldSkipJob: async () => true,
       writeJsx: async () => ({ jsx_path: join(tempDir, 'job.jsx'), result_file_path: resultPath }),
-      comAdapter: {
-        runJsxFile: async () => {
-          calls.push('com')
-        },
-      },
+      comAdapter: readyComAdapter(async () => {
+        calls.push('com')
+      }),
       recorder: noopRecorder,
     })
 
@@ -245,6 +246,63 @@ describe('PhotoshopExecutionEngine', () => {
       attempts: 1,
     })
     expect(calls).toEqual(['com'])
+  })
+
+  it('stops template batches before JSX generation when Photoshop is not ready', async () => {
+    const calls: string[] = []
+    const template: PsdTemplate = {
+      id: 'tpl-readiness',
+      file_path: 'C:\\templates\\readiness.psd',
+      file_hash: 'readiness-hash',
+      doc_size: { w: 1000, h: 1000 },
+      smart_objects: [],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      native_slices: [],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: 123,
+      layers: [],
+      text_layers: [],
+    }
+    const group = {
+      group_index: 0,
+      sku_folder: 'print-1',
+      template_name: 'readiness',
+      print_assets: [{ id: 'print-1', file_path: 'C:\\prints\\print-1.png' }],
+      job: createJob({ mockup_path: template.file_path }),
+    }
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      writeTemplateBatchJsx: async () => {
+        calls.push('write')
+        return {
+          jsx_path: join(tempDir, 'batch.jsx'),
+          result_file_path: join(tempDir, 'batch-result.json'),
+          log_file_path: join(tempDir, 'batch.log'),
+          cancel_file_path: join(tempDir, 'cancel.flag'),
+          content: '',
+        }
+      },
+      comAdapter: {
+        ensureReady: async () => {
+          calls.push('ready')
+          throw new AppErrorClass('PS_COM_FAILED', 'Photoshop is not ready', true)
+        },
+        runJsxFile: async () => {
+          calls.push('jsx')
+        },
+      },
+      recorder: noopRecorder,
+      shouldSkipJob: async () => false,
+      readDiagnosticWorkbenchRoot: async () => null,
+    })
+
+    await expect(engine.runTemplateBatch(template, [group])).rejects.toMatchObject({
+      code: 'PS_COM_FAILED',
+      retryable: true,
+    })
+    expect(calls).toEqual(['ready'])
   })
 
   it('runs native-slice batches through one JSX call without workflow or artifact recording', async () => {
@@ -289,32 +347,30 @@ describe('PhotoshopExecutionEngine', () => {
         cancel_file_path: join(tempDir, 'cancel.flag'),
         content: '',
       }),
-      comAdapter: {
-        runJsxFile: async (path) => {
-          calls.push(path)
-          await writeFile(
-            logPath,
-            `${JSON.stringify({ ts: 1, level: 'info', stage: 'group_start', group: 0 })}\n`,
-            'utf8',
-          )
-          await writeFile(
-            resultPath,
-            JSON.stringify({
-              ok: true,
-              outputs: [outputPath],
-              groups: [
-                {
-                  ok: true,
-                  group_index: 0,
-                  sku_folder: 'img2',
-                  outputs: [outputPath],
-                },
-              ],
-            }),
-            'utf8',
-          )
-        },
-      },
+      comAdapter: readyComAdapter(async (path) => {
+        calls.push(path)
+        await writeFile(
+          logPath,
+          `${JSON.stringify({ ts: 1, level: 'info', stage: 'group_start', group: 0 })}\n`,
+          'utf8',
+        )
+        await writeFile(
+          resultPath,
+          JSON.stringify({
+            ok: true,
+            outputs: [outputPath],
+            groups: [
+              {
+                ok: true,
+                group_index: 0,
+                sku_folder: 'img2',
+                outputs: [outputPath],
+              },
+            ],
+          }),
+          'utf8',
+        )
+      }),
       recorder: {
         recordRunning: async () => {
           throw new Error('fast path must not record workflow state')
@@ -383,27 +439,25 @@ describe('PhotoshopExecutionEngine', () => {
         cancel_file_path: join(tempDir, 'cancel.flag'),
         content: '',
       }),
-      comAdapter: {
-        runJsxFile: async (path) => {
-          calls.push(path)
-          await writeFile(
-            resultPath,
-            JSON.stringify({
-              ok: true,
-              outputs: [outputPath],
-              groups: [
-                {
-                  ok: true,
-                  group_index: 0,
-                  sku_folder: 'retry-print',
-                  outputs: [outputPath],
-                },
-              ],
-            }),
-            'utf8',
-          )
-        },
-      },
+      comAdapter: readyComAdapter(async (path) => {
+        calls.push(path)
+        await writeFile(
+          resultPath,
+          JSON.stringify({
+            ok: true,
+            outputs: [outputPath],
+            groups: [
+              {
+                ok: true,
+                group_index: 0,
+                sku_folder: 'retry-print',
+                outputs: [outputPath],
+              },
+            ],
+          }),
+          'utf8',
+        )
+      }),
       accessFile: async () => {
         outputChecks += 1
         if (outputChecks === 1) {
@@ -481,28 +535,26 @@ describe('PhotoshopExecutionEngine', () => {
         cancel_file_path: join(tempDir, 'cancel.flag'),
         content: '',
       }),
-      comAdapter: {
-        runJsxFile: async () => {
-          await writeFile(logPath, '', 'utf8')
-          await writeFile(
-            resultPath,
-            JSON.stringify({
-              ok: false,
-              cancelled: true,
-              outputs: [firstOutputPath],
-              groups: [
-                {
-                  ok: true,
-                  group_index: 0,
-                  sku_folder: 'img1',
-                  outputs: [firstOutputPath],
-                },
-              ],
-            }),
-            'utf8',
-          )
-        },
-      },
+      comAdapter: readyComAdapter(async () => {
+        await writeFile(logPath, '', 'utf8')
+        await writeFile(
+          resultPath,
+          JSON.stringify({
+            ok: false,
+            cancelled: true,
+            outputs: [firstOutputPath],
+            groups: [
+              {
+                ok: true,
+                group_index: 0,
+                sku_folder: 'img1',
+                outputs: [firstOutputPath],
+              },
+            ],
+          }),
+          'utf8',
+        )
+      }),
       recorder: {
         recordRunning: async (job) => {
           events.push(`running:${job.group_index}`)

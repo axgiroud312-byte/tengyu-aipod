@@ -46,7 +46,7 @@ export interface WorkflowStepRecorder {
 
 interface PhotoshopExecutionEngineOptions {
   platform?: NodeJS.Platform
-  comAdapter?: Pick<PhotoshopComAdapter, 'runJsxFile'>
+  comAdapter?: Pick<PhotoshopComAdapter, 'ensureReady' | 'runJsxFile'>
   writeJsx?: JsxWriter
   readTextFile?: TextReader
   accessFile?: AccessFn
@@ -464,7 +464,7 @@ function isRetryable(error: AppErrorClass): boolean {
 
 export class PhotoshopExecutionEngine {
   private readonly platform: NodeJS.Platform
-  private readonly comAdapter: Pick<PhotoshopComAdapter, 'runJsxFile'>
+  private readonly comAdapter: Pick<PhotoshopComAdapter, 'ensureReady' | 'runJsxFile'>
   private readonly writeJsx: JsxWriter
   private readonly readTextFile: TextReader
   private readonly accessFile: AccessFn
@@ -615,6 +615,7 @@ export class PhotoshopExecutionEngine {
         }
 
         try {
+          await this.comAdapter.ensureReady()
           const jobFile = await this.writeTemplateBatchJsx(template, pendingGroups, cancelFilePath)
           await this.runJsxFileWithLogTail(jobFile.jsx_path, jobFile.log_file_path, options.onLog)
           const raw = JSON.parse(

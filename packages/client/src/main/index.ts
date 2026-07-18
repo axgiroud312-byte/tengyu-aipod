@@ -50,6 +50,7 @@ import { registerTitleIpc } from './lib/title-service'
 import { registerVideoGenerationIpc } from './lib/video-generation-service'
 import { getConfiguredWorkbenchRoot } from './lib/workbench-config'
 import { registerOnboardingIpc } from './onboarding'
+import { photoshopComAdapter } from './photoshop/com-adapter'
 import { registerPhotoshopIpc } from './photoshop/ipc'
 import { rendererContentSecurityPolicyResponse } from './window-security'
 
@@ -324,6 +325,7 @@ if (hasSingleInstanceLock) {
     },
     cleanup: async () => {
       browserProfileLocks.clear()
+      await photoshopComAdapter.dispose().catch(() => null)
       await tempFileManager.cleanupSession().catch(() => null)
       tempFileManager.clearTimers()
       if (diagnosticLogCleanupTimer) {
