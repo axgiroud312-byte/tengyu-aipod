@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { AppErrorClass } from '@tengyu-aipod/shared'
-import { BrowserWindow, app, dialog, ipcMain, shell } from 'electron'
+import { BrowserWindow, app, dialog, ipcMain, session, shell } from 'electron'
 import { z } from 'zod'
 import {
   getActiveListingRunCount,
@@ -51,6 +51,7 @@ import { registerVideoGenerationIpc } from './lib/video-generation-service'
 import { getConfiguredWorkbenchRoot } from './lib/workbench-config'
 import { registerOnboardingIpc } from './onboarding'
 import { registerPhotoshopIpc } from './photoshop/ipc'
+import { rendererContentSecurityPolicyResponse } from './window-security'
 
 const currentDir = dirname(fileURLToPath(import.meta.url))
 let diagnosticLogCleanupTimer: ReturnType<typeof setInterval> | null = null
@@ -120,10 +121,11 @@ function createMainWindow(appIconPath = resolveAppIconPath()): void {
     ...(appIconPath ? { icon: appIconPath } : {}),
     title: '腾域 aipod',
     webPreferences: {
-      preload: join(currentDir, '../preload/index.mjs'),
+      preload: join(currentDir, '../preload/index.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
+      webSecurity: true,
     },
   })
   mainWindow.webContents.on('preload-error', (_event, preloadPath, error) => {
@@ -186,6 +188,9 @@ function ipcError(error: unknown, fallbackCode: string) {
 
 if (hasSingleInstanceLock) {
   app.whenReady().then(() => {
+    session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
+      callback(rendererContentSecurityPolicyResponse(details, app.isPackaged))
+    })
     void pipelineService.markPersistedRunningRunsInterrupted().catch(() => null)
     try {
       runNativeSmoke()

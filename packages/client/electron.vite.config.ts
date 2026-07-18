@@ -19,6 +19,15 @@ export default defineConfig({
     plugins: [externalizeDepsPlugin({ exclude: ['@tengyu-aipod/shared'] })],
   },
   preload: {
+    build: {
+      rollupOptions: {
+        output: {
+          entryFileNames: '[name].cjs',
+          format: 'cjs',
+          inlineDynamicImports: true,
+        },
+      },
+    },
     plugins: [externalizeDepsPlugin({ exclude: ['@tengyu-aipod/shared'] })],
   },
   renderer: {

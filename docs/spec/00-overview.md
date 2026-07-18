@@ -176,6 +176,13 @@
 - 不持有 API Key 明文
 - 不直接持有 PHP `secret`
 
+### 渲染进程安全边界
+
+- 主窗口必须启用 `contextIsolation`、Chromium sandbox 和 `webSecurity`，并关闭 `nodeIntegration`。
+- sandbox preload 必须构建为单文件 CommonJS，只通过 `contextBridge` 暴露明确的 IPC API；不能使用 sandbox 不支持的 ESM preload。
+- 主文档必须通过响应头携带 CSP。生产环境不允许内联脚本或开发 WebSocket，只允许自身脚本/字体、内联样式、`data:` / `blob:` / HTTPS / `tengyu-local-image:` 图片和 `file:` 视频。
+- 开发环境只额外允许 Vite 刷新所需的内联脚本、WebSocket 和本地 HTTP 图片；不能把这些例外带入生产策略。
+
 ### IPC 协议
 
 ```ts
