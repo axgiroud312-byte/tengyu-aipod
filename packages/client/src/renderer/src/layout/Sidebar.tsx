@@ -1,5 +1,6 @@
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { t } from '@/locale/t'
 import {
   Download,
   HelpCircle,
@@ -50,26 +51,26 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
     >
       <div
         className={cn(
-          'flex h-[116px] shrink-0',
-          collapsed
-            ? 'items-center justify-center px-0'
-            : 'flex-col items-center justify-center px-5 py-4',
+          'flex h-16 shrink-0 items-center',
+          collapsed ? 'justify-center px-0' : 'gap-3 px-3',
         )}
       >
         <img
           alt=""
           aria-hidden="true"
-          className={cn(
-            'shrink-0 rounded-md border bg-background object-contain shadow-sm',
-            collapsed ? 'h-10 w-10' : 'h-16 w-16',
-          )}
+          className={cn('size-9 shrink-0 rounded-sm border bg-background object-contain shadow-sm')}
           loading="lazy"
           src="brand/brand-logo.svg"
         />
         {collapsed ? null : (
-          <p className="brand-wordmark mt-2 text-center text-xl font-semibold leading-none tracking-normal">
-            腾域Ai
-          </p>
+          <div className="min-w-0">
+            <p className="brand-wordmark truncate text-base font-semibold leading-5 tracking-normal">
+              腾域Ai
+            </p>
+            <p className="truncate text-[11px] leading-4 text-muted-foreground">
+              {t('运营工作台')}
+            </p>
+          </div>
         )}
       </div>
 

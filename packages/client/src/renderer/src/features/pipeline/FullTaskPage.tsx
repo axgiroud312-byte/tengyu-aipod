@@ -56,6 +56,7 @@ import {
 } from '@/features/title/TitlePage'
 import { useIpcMutation } from '@/lib/use-ipc'
 import { cn } from '@/lib/utils'
+import { t } from '@/locale/t'
 import { useExecutionPlanStore } from '@/store/execution-plans'
 import { usePipelineDraftStore } from '@/store/pipeline'
 import { useTaskDockStore } from '@/store/task-dock'
@@ -2124,7 +2125,7 @@ export function FullTaskPage({
         <CardContent className="flex min-h-64 items-center justify-center p-6">
           <div className="text-center">
             <Loader2 className="mx-auto h-5 w-5 animate-spin text-primary motion-reduce:animate-none" />
-            <h1 className="mt-3 text-xl font-semibold">成果剧场</h1>
+            <h2 className="mt-3 text-xl font-semibold">{t('运行详情')}</h2>
             <p className="mt-1 text-sm text-muted-foreground">正在读取完整任务快照</p>
           </div>
         </CardContent>
@@ -2293,7 +2294,10 @@ export function FullTaskPage({
                     </AlertDialogHeader>
                     <AlertDialogFooter>
                       <AlertDialogCancel>取消</AlertDialogCancel>
-                      <AlertDialogAction onClick={confirmDeleteSelectedExecutionPlan}>
+                      <AlertDialogAction
+                        onClick={confirmDeleteSelectedExecutionPlan}
+                        variant="destructive"
+                      >
                         确认删除
                       </AlertDialogAction>
                     </AlertDialogFooter>

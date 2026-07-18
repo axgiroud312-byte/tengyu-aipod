@@ -1,4 +1,5 @@
 import { Button } from '@/components/ui/button'
+import { t } from '@/locale/t'
 import { AlertCircle, ArrowRight, Play, RefreshCw, Settings2, Square } from 'lucide-react'
 
 export function PipelineRunControls({
@@ -31,12 +32,16 @@ export function PipelineRunControls({
   running: boolean
 }) {
   return (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
+    <section
+      aria-label={t('完整任务操作')}
+      className="sticky bottom-0 z-20 -mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 border-t bg-card/95 px-6 py-4 shadow-[0_-12px_24px_-22px_rgb(15_23_42_/_0.35)] backdrop-blur supports-[backdrop-filter]:bg-card/90"
+    >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
         <Button
+          aria-label={t('取消当前完整任务')}
           disabled={!running || !currentRunId || cancelLoading}
           onClick={onCancel}
-          variant="outline"
+          variant={running ? 'destructive' : 'outline'}
         >
           <Square className="mr-2 h-4 w-4" />
           取消
@@ -75,6 +80,6 @@ export function PipelineRunControls({
           启动完整任务
         </Button>
       </div>
-    </div>
+    </section>
   )
 }

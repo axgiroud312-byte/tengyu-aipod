@@ -29,6 +29,7 @@ describe('PipelineRunControls', () => {
       }),
     )
 
+    expect(screen.getByRole('region', { name: '完整任务操作' })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '启动完整任务' }))
     fireEvent.click(screen.getByRole('button', { name: '刷新选项' }))
     fireEvent.click(screen.getByRole('button', { name: '日志 3' }))
@@ -37,6 +38,7 @@ describe('PipelineRunControls', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1)
     expect(onOpenLog).toHaveBeenCalledTimes(1)
     expect(onCancel).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: '取消当前完整任务' })).toBeTruthy()
     expect(screen.getByText('完整任务已启动')).toBeTruthy()
   })
 

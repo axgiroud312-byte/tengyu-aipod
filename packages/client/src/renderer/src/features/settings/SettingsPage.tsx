@@ -345,7 +345,11 @@ export function SettingsPage({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deletingLogs}>取消</AlertDialogCancel>
-            <AlertDialogAction disabled={deletingLogs} onClick={() => void deleteAllLogs()}>
+            <AlertDialogAction
+              disabled={deletingLogs}
+              onClick={() => void deleteAllLogs()}
+              variant="destructive"
+            >
               {deletingLogs ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
               确认删除
             </AlertDialogAction>
@@ -374,6 +378,7 @@ export function SettingsPage({
             <AlertDialogAction
               disabled={destroyConfirm.trim() !== destroySuffix}
               onClick={() => void destroyInstance()}
+              variant="destructive"
             >
               确认销毁
             </AlertDialogAction>

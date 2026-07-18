@@ -108,7 +108,7 @@ async function advanceOnboardingToCompletion(page: Page, workbenchRoot: string) 
   }, workbenchRoot)
   await page.reload()
   await page.getByRole('button', { name: '保存并继续' }).click()
-  await page.getByRole('button', { name: '全部跳过' }).click()
+  await page.getByRole('button', { name: '稍后设置' }).click()
 }
 
 test.describe('tutorial page', () => {

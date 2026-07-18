@@ -15,7 +15,7 @@ import {
   lightweightTaskFromVideoCompleted,
   lightweightTaskFromVideoProgress,
 } from '@/store/lightweight-task'
-import { useTaskDockStore } from '@/store/task-dock'
+import { TASK_DOCK_OVERLAY_MAX_WIDTH, useTaskDockStore } from '@/store/task-dock'
 import { type PipelineRunRecord, formatIpcError } from '@tengyu-aipod/shared'
 import {
   Activity,
@@ -102,6 +102,24 @@ function LightweightTaskButton({ task }: { task: LightweightTaskSummary }) {
         <span className="mt-1 block text-xs leading-5 text-amber-800">{task.waitingReason}</span>
       ) : null}
     </button>
+  )
+}
+
+export function TaskDockScrim() {
+  const expanded = useTaskDockStore((state) => state.expanded)
+  const setExpanded = useTaskDockStore((state) => state.setExpanded)
+
+  if (!expanded) {
+    return null
+  }
+
+  return (
+    <button
+      aria-label={t('关闭任务坞')}
+      className="task-dock-scrim"
+      onClick={() => setExpanded(false)}
+      type="button"
+    />
   )
 }
 
@@ -226,7 +244,10 @@ export function TaskDock() {
       return
     }
     const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && window.matchMedia('(max-width: 1399px)').matches) {
+      if (
+        event.key === 'Escape' &&
+        window.matchMedia(`(max-width: ${TASK_DOCK_OVERLAY_MAX_WIDTH}px)`).matches
+      ) {
         setExpanded(false)
       }
     }

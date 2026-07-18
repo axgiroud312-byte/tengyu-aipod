@@ -295,7 +295,7 @@ export function PipelineResultsPanel({
                 </span>
               </button>
             ) : (
-              <div className="flex min-h-[360px] items-center justify-center bg-muted text-sm text-muted-foreground">
+              <div className="flex min-h-[360px] items-center justify-center bg-zinc-950 text-sm text-zinc-400">
                 <div className="flex flex-col items-center gap-2 px-4 text-center">
                   <ImageIcon className="size-6" />
                   <span>启动完整任务后，这里会展示当前最终产物。</span>

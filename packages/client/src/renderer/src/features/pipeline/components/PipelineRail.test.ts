@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, render, screen } from '@testing-library/react'
+import { cleanup, render, screen, within } from '@testing-library/react'
 import { createElement } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PipelineRailViewModel, RailStage } from '../pipeline-progress-view-model'
@@ -43,6 +43,30 @@ function renderRail(input: { stages: RailStage[]; mode?: PipelineRailViewModel['
 }
 
 describe('PipelineRail', () => {
+  it('exposes the fixed complete-task stages as one ordered rail', () => {
+    renderRail({
+      stages: [
+        stage({ key: 'source', label: '任务起点' }),
+        stage({ key: 'matting', label: '抠图' }),
+        stage({ key: 'detection', label: '侵权检测' }),
+        stage({ key: 'photoshop', label: 'PS 套版' }),
+        stage({ key: 'title', label: '标题生成' }),
+      ],
+    })
+
+    const rail = screen.getByRole('list', { name: '完整任务阶段' })
+    const stages = within(rail).getAllByRole('listitem')
+
+    expect(stages).toHaveLength(5)
+    expect(stages.map((item) => item.textContent)).toEqual([
+      expect.stringContaining('任务起点'),
+      expect.stringContaining('抠图'),
+      expect.stringContaining('侵权检测'),
+      expect.stringContaining('PS 套版'),
+      expect.stringContaining('标题生成'),
+    ])
+  })
+
   it('shows configuration issues and locked reasons on stage nodes', () => {
     renderRail({
       stages: [
@@ -85,5 +109,6 @@ describe('PipelineRail', () => {
     expect(screen.getByText('失败 1')).toBeTruthy()
     expect(screen.getByText('拦截 2')).toBeTruthy()
     expect(screen.getByText('耗时 1分01秒')).toBeTruthy()
+    expect(screen.getByText('运行摘要')).toBeTruthy()
   })
 })

@@ -21,7 +21,7 @@ function theaterStatusLabel(status: PipelineProgress['status'] | undefined, hasE
     return t('完成，有异常')
   }
   if (status === 'completed') {
-    return t('完成战报')
+    return t('运行摘要')
   }
   if (status === 'failed') {
     return '运行失败'
@@ -135,7 +135,7 @@ export function RunTheater({
       <header className="flex flex-wrap items-center justify-between gap-3 border-b pb-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold">成果剧场</h1>
+            <h2 className="text-xl font-semibold">{t('运行详情')}</h2>
             <Badge
               variant={
                 status === 'failed'
@@ -165,7 +165,7 @@ export function RunTheater({
             全部日志
           </Button>
           {status === 'running' ? (
-            <Button disabled={cancelLoading} onClick={onCancel} type="button" variant="outline">
+            <Button disabled={cancelLoading} onClick={onCancel} type="button" variant="destructive">
               <Square className="mr-2 h-4 w-4" />
               停止任务
             </Button>

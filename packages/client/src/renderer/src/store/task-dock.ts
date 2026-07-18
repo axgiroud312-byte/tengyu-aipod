@@ -18,11 +18,13 @@ type TaskDockState = {
   upsertLightweightTask: (task: LightweightTaskSummary) => void
 }
 
+export const TASK_DOCK_OVERLAY_MAX_WIDTH = 1599
+
 function defaultTaskDockExpanded() {
   return (
     typeof window === 'undefined' ||
     typeof window.matchMedia !== 'function' ||
-    window.matchMedia('(min-width: 1400px)').matches
+    window.matchMedia(`(min-width: ${TASK_DOCK_OVERLAY_MAX_WIDTH + 1}px)`).matches
   )
 }
 

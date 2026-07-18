@@ -165,7 +165,7 @@ async function enterPreparedWorkbench(
   }, workbenchRoot)
   await page.reload()
   await page.getByRole('button', { name: '保存并继续' }).click()
-  await page.getByRole('button', { name: '全部跳过' }).click()
+  await page.getByRole('button', { name: '稍后设置' }).click()
   await page.getByRole('button', { name: '开始使用' }).click()
   await beforeReload?.()
   await page.reload()
@@ -1191,7 +1191,7 @@ test.describe('production-first Workbench shell', () => {
         .getByText('当前', { exact: true }),
     ).toBeVisible()
     await expect(page.getByText('文生图产出', { exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '成果剧场' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '运行详情' })).toBeVisible()
     await expect(page.getByRole('button', { name: '停止任务' })).toBeVisible()
     await expect(page.getByRole('button', { name: '启动完整任务' })).toHaveCount(0)
     await expect(page.getByRole('button', { name: '保存执行方案' })).toHaveCount(0)
@@ -1209,7 +1209,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(page).toHaveURL(/#\/pipeline$/)
     await expect(
       page
-        .getByRole('heading', { name: '成果剧场' })
+        .getByRole('heading', { name: '运行详情' })
         .locator('xpath=../..')
         .getByText('Later created task', { exact: true }),
     ).toBeVisible()
@@ -1267,12 +1267,9 @@ test.describe('production-first Workbench shell', () => {
     await expect(page.getByText('抠图云机拒绝了这一张，请检查工作流输入')).toBeVisible()
     await expect(page.getByRole('heading', { name: '异常项' })).toBeVisible()
     await expect(page.getByText('运行中', { exact: true }).first()).toBeVisible()
-    await expect(
-      page.getByRole('group', { name: '任务起点阶段' }).getByText('运行', { exact: true }),
-    ).toBeVisible()
-    await expect(
-      page.getByRole('group', { name: '抠图阶段' }).getByText('运行', { exact: true }),
-    ).toBeVisible()
+    const stageItems = page.getByRole('list', { name: '完整任务阶段' }).getByRole('listitem')
+    await expect(stageItems.nth(0).getByText('运行', { exact: true })).toBeVisible()
+    await expect(stageItems.nth(1).getByText('运行', { exact: true })).toBeVisible()
 
     const secondProgress = theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 2 })
     await expect
@@ -1488,7 +1485,7 @@ test.describe('production-first Workbench shell', () => {
     await page.getByRole('button', { name: '查看完整任务 History task 1 结果' }).click()
 
     await expect(page).toHaveURL(/#\/pipeline$/)
-    await expect(page.getByRole('heading', { name: '成果剧场' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '运行详情' })).toBeVisible()
     await expect(page.getByText('完成，有异常', { exact: true }).first()).toBeVisible()
     await expect(page.getByText('检测服务拒绝了这张印花', { exact: true })).toBeVisible()
   })
@@ -1514,18 +1511,22 @@ test.describe('production-first Workbench shell', () => {
     const expandedCentralWidth = (await central.boundingBox())?.width ?? 0
     expect(expandedCentralWidth).toBeGreaterThanOrEqual(collapsedCentralWidth)
 
-    const stageGroups = page.getByRole('group', { name: /阶段$/ })
-    await expect(stageGroups).toHaveCount(5)
+    const stageRail = page.getByRole('list', { name: '完整任务阶段' })
+    const stageItems = stageRail.getByRole('listitem')
+    await expect(stageItems).toHaveCount(5)
     const stageBoxes = await Promise.all(
-      Array.from({ length: 5 }, (_, index) => stageGroups.nth(index).boundingBox()),
+      Array.from({ length: 5 }, (_, index) => stageItems.nth(index).boundingBox()),
     )
     const rowTops = new Set(stageBoxes.map((box) => Math.round(box?.y ?? -1)))
-    expect(rowTops.size).toBe(2)
-    for (const label of ['任务起点', '抠图', '侵权检测', 'PS 套版', '标题生成']) {
-      const labelBox = await page
-        .getByRole('group', { name: `${label}阶段` })
-        .getByText(label, { exact: true })
-        .boundingBox()
+    expect(rowTops.size).toBe(1)
+    for (const [index, label] of [
+      '任务起点',
+      '抠图',
+      '侵权检测',
+      'PS 套版',
+      '标题生成',
+    ].entries()) {
+      const labelBox = await stageItems.nth(index).getByText(label, { exact: true }).boundingBox()
       expect(labelBox?.height ?? 100).toBeLessThan(30)
     }
   })
@@ -2811,13 +2812,14 @@ test.describe('production-first Workbench shell', () => {
     const central = page.locator('[data-workbench-region="central"]')
     const completeTaskLink = navigation.getByRole('link', { name: '完整任务', exact: true })
     await page.setViewportSize({ width: 1440, height: 900 })
-    await expandTaskDockIfCollapsed(page)
     await expect(sidebar).toHaveCSS('width', '188px')
-    await expect(taskDock).toHaveCSS('position', 'static')
-    await expect(taskDock).toHaveCSS('width', '310px')
-    await expect(central).toHaveCSS('width', '942px')
+    await expect(taskDock).toHaveAttribute('data-state', 'collapsed')
+    await expect(taskDock).toHaveCSS('width', '44px')
+    await expect(central).toHaveCSS('width', '1208px')
     await expect(completeTaskLink).toBeVisible()
     const expandedLinkTop = (await completeTaskLink.boundingBox())?.y
+
+    await taskDock.getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }).click()
 
     await page.setViewportSize({ width: 1280, height: 720 })
     await expect(taskDock).toHaveCSS('position', 'absolute')
@@ -2825,11 +2827,12 @@ test.describe('production-first Workbench shell', () => {
     await expect(central).toHaveCSS('width', '1092px')
     const stopTaskButton = page.getByRole('button', { name: '停止任务' })
     await expect(stopTaskButton).toBeVisible()
-    const stageGroups = page.getByRole('group', { name: /阶段$/ })
+    await expect(page.getByRole('button', { name: '关闭任务坞' })).toBeVisible()
+    const stageItems = page.getByRole('list', { name: '完整任务阶段' }).getByRole('listitem')
     const stageBoxes = await Promise.all(
-      Array.from({ length: 5 }, (_, index) => stageGroups.nth(index).boundingBox()),
+      Array.from({ length: 5 }, (_, index) => stageItems.nth(index).boundingBox()),
     )
-    expect(new Set(stageBoxes.map((box) => Math.round(box?.y ?? -1))).size).toBe(2)
+    expect(new Set(stageBoxes.map((box) => Math.round(box?.y ?? -1))).size).toBe(1)
     await page.keyboard.press('Escape')
     const expandDockButton = taskDock.getByRole('button', {
       name: '展开任务坞，2 个运行中，1 个异常',
@@ -2874,6 +2877,7 @@ test.describe('production-first Workbench shell', () => {
 
     await taskDock.getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }).click()
     await page.setViewportSize({ width: 1440, height: 900 })
+    await page.getByRole('button', { name: '关闭任务坞' }).click()
     await page.getByRole('button', { name: '折叠', exact: true }).click()
     await expect(sidebar).toHaveCSS('width', '56px')
     await expect(completeTaskLink).toBeVisible()
@@ -2912,7 +2916,7 @@ test.describe('production-first Workbench shell', () => {
       })
       expect(regions.centralWidth).toBeGreaterThan(0)
       expect(regions.dockWidth).toBe(310)
-      expect(regions.dockPosition).toBe(viewport.width < 1400 ? 'absolute' : 'static')
+      expect(regions.dockPosition).toBe(viewport.width < 1600 ? 'absolute' : 'static')
       expect(regions.hasHorizontalOverflow).toBe(false)
       await attachScreenshot(
         page,

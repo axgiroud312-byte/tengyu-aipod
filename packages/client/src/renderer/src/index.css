@@ -115,7 +115,21 @@ button {
   background: hsl(var(--background));
 }
 
-@media (max-width: 1399px) {
+.task-dock-scrim {
+  display: none;
+}
+
+/* Keep this breakpoint aligned with TASK_DOCK_OVERLAY_MAX_WIDTH. */
+@media (max-width: 1599px) {
+  .task-dock-scrim {
+    position: absolute;
+    inset: 0;
+    z-index: 30;
+    display: block;
+    border: 0;
+    background: rgb(15 23 42 / 32%);
+  }
+
   [data-workbench-region="task-dock"][data-state="expanded"] {
     position: absolute;
     top: 0;

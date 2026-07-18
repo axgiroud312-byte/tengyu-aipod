@@ -3,7 +3,7 @@ import { Input } from '@/components/ui/input'
 import { Progress } from '@/components/ui/progress'
 import { cn } from '@/lib/utils'
 import { t } from '@/locale/t'
-import { ArrowLeft, CheckCircle2, FolderOpen, KeyRound, PlayCircle } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, FolderOpen, PlayCircle, Plug } from 'lucide-react'
 import type { ComponentType, SVGProps } from 'react'
 
 export type OnboardingStep = 1 | 2 | 3
@@ -45,15 +45,15 @@ const stepMetas: StepMeta[] = [
     number: 1,
     label: t('工作区'),
     title: t('选择业务工作区'),
-    detail: t('业务文件只保存在您选择的本地目录'),
+    detail: t('业务文件仅保存在所选本地目录'),
     icon: FolderOpen,
   },
   {
     number: 2,
-    label: t('接口密钥'),
-    title: t('保存本机密钥'),
-    detail: t('密钥只进入系统加密存储'),
-    icon: KeyRound,
+    label: t('服务连接'),
+    title: t('连接常用服务'),
+    detail: t('按需填写，稍后也可在设置中补充'),
+    icon: Plug,
   },
   {
     number: 3,
@@ -68,16 +68,18 @@ const defaultStepMeta: StepMeta = {
   number: 1,
   label: t('工作区'),
   title: t('选择业务工作区'),
-  detail: t('业务文件只保存在您选择的本地目录'),
+  detail: t('业务文件仅保存在所选本地目录'),
   icon: FolderOpen,
 }
 
-const apiKeyFields: Array<{
+interface ServiceField {
   key: OnboardingApiKey
   label: string
   placeholder: string
   type: 'password' | 'text'
-}> = [
+}
+
+const aiServiceFields: ServiceField[] = [
   {
     key: 'chenyu',
     label: t('晨羽智云密钥'),
@@ -91,13 +93,14 @@ const apiKeyFields: Array<{
     placeholder: t('用于检测和标题生成'),
     type: 'password',
   },
-  {
-    key: 'bit_browser_url',
-    label: t('比特浏览器地址'),
-    placeholder: t('127.0.0.1:54345'),
-    type: 'text',
-  },
 ]
+
+const bitBrowserField: ServiceField = {
+  key: 'bit_browser_url',
+  label: t('比特浏览器地址'),
+  placeholder: t('127.0.0.1:54345'),
+  type: 'text',
+}
 
 function currentStepMeta(step: OnboardingStep) {
   return stepMetas.find((item) => item.number === step) ?? defaultStepMeta
@@ -109,20 +112,21 @@ function stepProgress(step: OnboardingStep) {
 
 function StepRail({ step }: { step: OnboardingStep }) {
   return (
-    <div className="space-y-2">
+    <ol className="space-y-1">
       {stepMetas.map((item) => {
         const Icon = item.icon
         const isCurrent = item.number === step
         const isDone = item.number < step
         return (
-          <div
+          <li
+            aria-current={isCurrent ? 'step' : undefined}
             className={cn(
-              'flex items-start gap-3 rounded-md border p-3 transition-colors duration-150 motion-reduce:transition-none',
+              'flex items-center gap-3 rounded-md px-2 py-2.5 transition-colors duration-150 motion-reduce:transition-none',
               isCurrent
-                ? 'border-primary/30 bg-primary/10 text-foreground'
+                ? 'bg-primary/10 text-foreground'
                 : isDone
-                  ? 'border-emerald-200 bg-emerald-50 text-emerald-950'
-                  : 'border-border bg-muted/30 text-muted-foreground',
+                  ? 'text-emerald-950'
+                  : 'text-muted-foreground',
             )}
             key={item.number}
           >
@@ -138,18 +142,22 @@ function StepRail({ step }: { step: OnboardingStep }) {
             >
               <Icon className="h-4 w-4" />
             </div>
-            <div className="min-w-0">
-              <p className="text-sm font-semibold">
-                {t('第 {step} 步，共 3 步 · {label}')
-                  .replace('{step}', String(item.number))
-                  .replace('{label}', item.label)}
-              </p>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-semibold">{item.label}</p>
+                {isCurrent ? (
+                  <span className="text-xs font-medium text-primary">{t('当前')}</span>
+                ) : null}
+                {isDone ? (
+                  <span className="text-xs font-medium text-emerald-700">{t('已完成')}</span>
+                ) : null}
+              </div>
               <p className="mt-0.5 text-xs leading-4 opacity-80">{item.detail}</p>
             </div>
-          </div>
+          </li>
         )
       })}
-    </div>
+    </ol>
   )
 }
 
@@ -281,65 +289,74 @@ export function OnboardingPage({
             ) : null}
 
             {step === 2 ? (
-              <div className="mt-5 grid gap-5">
-                <div className="grid gap-4">
-                  {apiKeyFields.map((field) => (
+              <div className="mt-5 grid gap-6">
+                <fieldset className="grid gap-4">
+                  <legend className="text-sm font-semibold">{t('AI 服务')}</legend>
+                  <p className="-mt-2 text-sm text-muted-foreground">
+                    {t('用于生图、侵权检测和标题生成，可按需填写。')}
+                  </p>
+                  {aiServiceFields.map((field) => (
                     <div className="grid gap-2" key={field.key}>
                       <label className="text-sm font-medium" htmlFor={`onboarding-${field.key}`}>
                         {field.label}
                       </label>
-                      <div
-                        className={cn(
-                          'grid gap-2',
-                          field.key === 'bit_browser_url'
-                            ? 'sm:grid-cols-[minmax(0,1fr)_auto_auto]'
-                            : 'sm:grid-cols-[minmax(0,1fr)_auto]',
-                        )}
-                      >
-                        <Input
-                          className="h-10 min-w-0"
-                          id={`onboarding-${field.key}`}
-                          disabled={saving}
-                          onChange={(event) => onApiKeyChange(field.key, event.target.value)}
-                          placeholder={field.placeholder}
-                          type={field.type}
-                          value={apiKeys[field.key]}
-                        />
-                        {field.key === 'bit_browser_url' ? (
-                          <Button
-                            disabled={
-                              saving || testingBitBrowser || !apiKeys.bit_browser_url.trim()
-                            }
-                            onClick={onTestBitBrowser}
-                            type="button"
-                            variant="secondary"
-                          >
-                            {testingBitBrowser ? t('正在测试...') : t('测试连接')}
-                          </Button>
-                        ) : null}
-                        <Button
-                          aria-label={t('跳过{name}').replace('{name}', field.label)}
-                          className="h-10"
-                          disabled={saving}
-                          onClick={() => onApiKeyChange(field.key, '')}
-                          type="button"
-                          variant="secondary"
-                        >
-                          {t('跳过')}
-                        </Button>
-                      </div>
-                      {field.key === 'bit_browser_url' && bitBrowserTestMessage ? (
-                        <output className="text-xs text-muted-foreground">
-                          {bitBrowserTestMessage}
-                        </output>
-                      ) : null}
+                      <Input
+                        className="h-10 min-w-0"
+                        id={`onboarding-${field.key}`}
+                        disabled={saving}
+                        onChange={(event) => onApiKeyChange(field.key, event.target.value)}
+                        placeholder={field.placeholder}
+                        type={field.type}
+                        value={apiKeys[field.key]}
+                      />
                     </div>
                   ))}
-                </div>
+                </fieldset>
 
-                <div className="rounded-md border bg-muted/40 p-4 text-sm text-muted-foreground">
-                  {t('可全部跳过并稍后在设置中补充。已填写的密钥只写入本机密钥存储。')}
-                </div>
+                <fieldset className="grid gap-4 border-t pt-5">
+                  <legend className="pr-2 text-sm font-semibold">{t('浏览器连接')}</legend>
+                  <p className="-mt-2 text-sm text-muted-foreground">
+                    {t('用于连接店铺环境并执行采集与上架。')}
+                  </p>
+                  <div className="grid gap-2">
+                    <label
+                      className="text-sm font-medium"
+                      htmlFor={`onboarding-${bitBrowserField.key}`}
+                    >
+                      {bitBrowserField.label}
+                    </label>
+                    <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                      <Input
+                        className="h-10 min-w-0"
+                        id={`onboarding-${bitBrowserField.key}`}
+                        disabled={saving}
+                        onChange={(event) =>
+                          onApiKeyChange(bitBrowserField.key, event.target.value)
+                        }
+                        placeholder={bitBrowserField.placeholder}
+                        type={bitBrowserField.type}
+                        value={apiKeys.bit_browser_url}
+                      />
+                      <Button
+                        disabled={saving || testingBitBrowser || !apiKeys.bit_browser_url.trim()}
+                        onClick={onTestBitBrowser}
+                        type="button"
+                        variant="secondary"
+                      >
+                        {testingBitBrowser ? t('正在测试...') : t('测试连接')}
+                      </Button>
+                    </div>
+                    {bitBrowserTestMessage ? (
+                      <output className="text-xs text-muted-foreground">
+                        {bitBrowserTestMessage}
+                      </output>
+                    ) : null}
+                  </div>
+                </fieldset>
+
+                <p className="text-sm text-muted-foreground">
+                  {t('密钥仅保存在本机；未填写的服务可稍后在设置中补充。')}
+                </p>
 
                 <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-4">
                   <Button disabled={saving} onClick={onPrevious} type="button" variant="ghost">
@@ -353,7 +370,7 @@ export function OnboardingPage({
                       type="button"
                       variant="secondary"
                     >
-                      {t('全部跳过')}
+                      {t('稍后设置')}
                     </Button>
                     <Button disabled={saving} onClick={onSaveApiKeys} type="button">
                       {saving ? t('正在保存...') : t('保存并继续')}
