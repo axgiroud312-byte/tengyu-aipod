@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PhotoshopComAdapter } from './com-adapter'
 
 let tempDir = ''
@@ -68,6 +68,31 @@ describe('PhotoshopComAdapter', () => {
     expect(bridgeCreations).toBe(1)
     expect(requests).toEqual(['getVersion', 'runJsxFile'])
     expect(bridgeDisposals).toBe(1)
+  })
+
+  it('disposes the bridge immediately while a COM request is pending', async () => {
+    let rejectRequest: ((error: Error) => void) | undefined
+    let bridgeDisposals = 0
+    const adapter = createAdapter({
+      bridgeFactory: () => ({
+        request: () =>
+          new Promise((_resolve, reject) => {
+            rejectRequest = reject
+          }),
+        dispose: () => {
+          bridgeDisposals += 1
+        },
+      }),
+    })
+    const versionRequest = adapter.getVersion()
+    const requestExpectation = expect(versionRequest).rejects.toThrow('bridge stopped')
+    await vi.waitFor(() => expect(rejectRequest).toBeTypeOf('function'))
+
+    void adapter.dispose()
+    const immediateDisposals = bridgeDisposals
+    rejectRequest?.(new Error('bridge stopped'))
+    await requestExpectation
+    expect(immediateDisposals).toBe(1)
   })
 
   it('requires three successful JSX probes before reporting Photoshop ready', async () => {
@@ -215,7 +240,7 @@ describe('PhotoshopComAdapter', () => {
       expect(version).toMatch(/^\d+(\.\d+)*$/)
       expect(readyVersion).toMatch(/^\d+(\.\d+)*$/)
     } finally {
-      await adapter.dispose()
+      adapter.dispose()
     }
-  })
+  }, 30_000)
 })

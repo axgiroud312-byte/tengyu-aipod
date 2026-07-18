@@ -21,7 +21,7 @@ export interface PhotoshopBridgeResponse {
 
 export interface PhotoshopComBridge {
   request(request: PhotoshopBridgeRequest, timeoutMs: number): Promise<PhotoshopBridgeResponse>
-  dispose(): void | Promise<void>
+  dispose(): void
 }
 
 type SpawnFn = (
@@ -52,6 +52,42 @@ $ErrorActionPreference = 'Stop'
 [Console]::InputEncoding = New-Object System.Text.UTF8Encoding($false)
 [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
 $script:photoshop = $null
+$MK_E_UNAVAILABLE = -2147221021
+$RPC_E_DISCONNECTED = -2147417848
+$RPC_S_SERVER_UNAVAILABLE = -2147023174
+
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+
+public static class TengyuComRot {
+  [DllImport("ole32.dll", CharSet = CharSet.Unicode)]
+  private static extern int CLSIDFromProgID(string progId, out Guid clsid);
+
+  [DllImport("oleaut32.dll", PreserveSig = false)]
+  private static extern void GetActiveObject(
+    ref Guid clsid,
+    IntPtr reserved,
+    [MarshalAs(UnmanagedType.IUnknown)] out object value
+  );
+
+  public static object GetActive(string progId) {
+    Guid clsid;
+    Marshal.ThrowExceptionForHR(CLSIDFromProgID(progId, out clsid));
+    object value;
+    GetActiveObject(ref clsid, IntPtr.Zero, out value);
+    return value;
+  }
+}
+'@
+
+function Get-ExceptionHResult($errorRecord) {
+  $exception = $errorRecord.Exception
+  if ($null -ne $exception.InnerException) {
+    $exception = $exception.InnerException
+  }
+  return [int64]$exception.HResult
+}
 
 function Get-PhotoshopApplication {
   if ($null -ne $script:photoshop) {
@@ -59,13 +95,20 @@ function Get-PhotoshopApplication {
       [void]$script:photoshop.Version
       return $script:photoshop
     } catch {
+      $hresult = Get-ExceptionHResult $_
+      if (($hresult -ne $RPC_E_DISCONNECTED) -and ($hresult -ne $RPC_S_SERVER_UNAVAILABLE)) {
+        throw
+      }
       $script:photoshop = $null
     }
   }
 
   try {
-    $script:photoshop = [Runtime.InteropServices.Marshal]::GetActiveObject('Photoshop.Application')
+    $script:photoshop = [TengyuComRot]::GetActive('Photoshop.Application')
   } catch {
+    if ((Get-ExceptionHResult $_) -ne $MK_E_UNAVAILABLE) {
+      throw
+    }
     $script:photoshop = New-Object -ComObject Photoshop.Application
   }
   return $script:photoshop
@@ -115,10 +158,7 @@ while (($line = [Console]::ReadLine()) -ne $null) {
   } catch {
     $script:photoshop = $null
     $exception = $_.Exception
-    $hresult = [int64]$exception.HResult
-    if ($null -ne $exception.InnerException) {
-      $hresult = [int64]$exception.InnerException.HResult
-    }
+    $hresult = Get-ExceptionHResult $_
     $reply = @{
       id = $requestId
       ok = $false
@@ -143,6 +183,19 @@ function bridgeErrorMessage(value: unknown): string {
     return `${String(value.message)}${hresultSuffix}`
   }
   return 'Photoshop COM bridge request failed'
+}
+
+function bridgeErrorHresult(value: unknown): number | null {
+  if (typeof value !== 'object' || value === null || !('hresult' in value)) {
+    return null
+  }
+  const hresult = Number(value.hresult)
+  return Number.isInteger(hresult) ? hresult >>> 0 : null
+}
+
+function shouldRestartBridge(value: unknown): boolean {
+  const hresult = bridgeErrorHresult(value)
+  return hresult === 0x80080005 || hresult === 0x800706ba || hresult === 0x80010108
 }
 
 function responseData(value: unknown): PhotoshopBridgeResponse {
@@ -286,7 +339,11 @@ export class PowerShellPhotoshopBridge implements PhotoshopComBridge {
       pending.resolve(responseData(reply.data))
       return
     }
-    pending.reject(new Error(bridgeErrorMessage(reply.error)))
+    const error = new Error(bridgeErrorMessage(reply.error))
+    pending.reject(error)
+    if (shouldRestartBridge(reply.error)) {
+      this.stopProcess(error)
+    }
   }
 
   private stopProcess(

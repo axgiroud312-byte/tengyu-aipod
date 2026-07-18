@@ -325,7 +325,7 @@ if (hasSingleInstanceLock) {
     },
     cleanup: async () => {
       browserProfileLocks.clear()
-      await photoshopComAdapter.dispose().catch(() => null)
+      photoshopComAdapter.dispose()
       await tempFileManager.cleanupSession().catch(() => null)
       tempFileManager.clearTimers()
       if (diagnosticLogCleanupTimer) {

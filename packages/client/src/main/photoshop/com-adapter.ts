@@ -232,12 +232,10 @@ export class PhotoshopComAdapter {
     )
   }
 
-  async dispose(): Promise<void> {
-    await photoshopMutex.runExclusive(async () => {
-      const bridge = this.bridge
-      this.bridge = null
-      await bridge?.dispose()
-    })
+  dispose(): void {
+    const bridge = this.bridge
+    this.bridge = null
+    bridge?.dispose()
   }
 
   async tryFixCom(): Promise<{ ok: false; message: string }> {
