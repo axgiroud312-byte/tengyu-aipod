@@ -2171,581 +2171,414 @@ export function FullTaskPage({
 
   return (
     <div className="space-y-5">
-      <PipelineStatusAlerts
-        error={executionPlanStorageError?.message ?? optionsError ?? error}
-        showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
-      />
+      <div className="space-y-5">
+        <PipelineStatusAlerts
+          error={executionPlanStorageError?.message ?? optionsError ?? error}
+          showMacPhotoshopNotice={isMac && effectivePhotoshopEnabled}
+        />
 
-      <Card>
-        <CardHeader className="pb-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <CardTitle className="flex items-center gap-2 text-lg text-balance">
-                完整任务
-              </CardTitle>
-              <CardDescription>上方配置，下方按模块查看预览和日志。</CardDescription>
+        <Card>
+          <CardHeader className="pb-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <CardTitle className="flex items-center gap-2 text-lg text-balance">
+                  完整任务
+                </CardTitle>
+                <CardDescription>上方配置，下方按模块查看预览和日志。</CardDescription>
+              </div>
+              <Badge variant="secondary">可视化</Badge>
             </div>
-            <Badge variant="secondary">可视化</Badge>
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-5">
-          {!progress ? (
-            <section aria-label="执行方案" className="rounded-md border bg-muted/20 p-3">
-              <div className="grid gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto_auto] lg:items-end">
-                <SelectField
-                  ariaLabel="执行方案"
-                  label="执行方案"
-                  onValueChange={selectExecutionPlan}
-                  options={executionPlans.map((plan) => ({ key: plan.id, label: plan.name }))}
-                  placeholder="尚未保存"
-                  value={selectedExecutionPlanId ?? ''}
-                />
-                <Field label="方案名称">
-                  <Input
-                    aria-label="方案名称"
-                    maxLength={60}
-                    onChange={(event) => setExecutionPlanName(event.target.value)}
-                    placeholder="例如：晨羽标准生产"
-                    value={executionPlanName}
+          </CardHeader>
+          <CardContent className="space-y-5">
+            {!progress ? (
+              <section aria-label="执行方案" className="rounded-md border bg-muted/20 p-3">
+                <div className="grid gap-3 lg:grid-cols-[minmax(180px,1fr)_minmax(180px,1fr)_auto_auto] lg:items-end">
+                  <SelectField
+                    ariaLabel="执行方案"
+                    label="执行方案"
+                    onValueChange={selectExecutionPlan}
+                    options={executionPlans.map((plan) => ({ key: plan.id, label: plan.name }))}
+                    placeholder="尚未保存"
+                    value={selectedExecutionPlanId ?? ''}
                   />
-                </Field>
-                <Button
-                  disabled={
-                    !optionsLoaded ||
-                    optionsLoading ||
-                    !executionPlanName.trim() ||
-                    executionPlans.length >= MAX_EXECUTION_PLANS
-                  }
-                  onClick={saveCurrentExecutionPlan}
-                  type="button"
-                  variant="outline"
-                >
-                  <Save className="mr-2 h-4 w-4" />
-                  保存执行方案
-                </Button>
-                <Button
-                  disabled={!optionsLoaded || optionsLoading || !selectedExecutionPlan}
-                  onClick={applySelectedExecutionPlan}
-                  type="button"
-                >
-                  <Check className="mr-2 h-4 w-4" />
-                  应用执行方案
-                </Button>
-                <div className="flex flex-wrap gap-2 lg:col-span-4">
+                  <Field label="方案名称">
+                    <Input
+                      aria-label="方案名称"
+                      maxLength={60}
+                      onChange={(event) => setExecutionPlanName(event.target.value)}
+                      placeholder="例如：晨羽标准生产"
+                      value={executionPlanName}
+                    />
+                  </Field>
                   <Button
-                    disabled={!optionsLoaded || optionsLoading || !selectedExecutionPlan}
-                    onClick={overwriteSelectedExecutionPlan}
+                    disabled={
+                      !optionsLoaded ||
+                      optionsLoading ||
+                      !executionPlanName.trim() ||
+                      executionPlans.length >= MAX_EXECUTION_PLANS
+                    }
+                    onClick={saveCurrentExecutionPlan}
                     type="button"
                     variant="outline"
                   >
                     <Save className="mr-2 h-4 w-4" />
-                    覆盖保存
+                    保存执行方案
                   </Button>
                   <Button
-                    disabled={optionsLoading || !selectedExecutionPlan || !executionPlanName.trim()}
-                    onClick={renameSelectedExecutionPlan}
+                    disabled={!optionsLoaded || optionsLoading || !selectedExecutionPlan}
+                    onClick={applySelectedExecutionPlan}
                     type="button"
-                    variant="outline"
                   >
-                    <Pencil className="mr-2 h-4 w-4" />
-                    重命名
+                    <Check className="mr-2 h-4 w-4" />
+                    应用执行方案
                   </Button>
-                  <Button
-                    aria-label="删除执行方案"
-                    disabled={optionsLoading || !selectedExecutionPlan}
-                    onClick={requestDeleteSelectedExecutionPlan}
-                    title="删除执行方案"
-                    type="button"
-                    variant="outline"
-                  >
-                    <Trash2 className="mr-2 h-4 w-4" />
-                    删除
-                  </Button>
-                </div>
-              </div>
-              <p className="mt-2 text-xs text-muted-foreground">
-                已保存 {executionPlans.length}/{MAX_EXECUTION_PLANS} 套执行方案
-                {executionPlans.length >= MAX_EXECUTION_PLANS
-                  ? '，已达到上限，请先维护现有方案。'
-                  : '，最多保存 5 套。'}
-              </p>
-              <p className="mt-1 text-xs font-medium text-foreground">
-                {activeExecutionPlan
-                  ? `当前已应用：${activeExecutionPlan.name}`
-                  : '当前尚未应用执行方案'}
-              </p>
-              {executionPlanStorageError ? (
-                <Button
-                  className="mt-3"
-                  onClick={clearInvalidExecutionPlanStorage}
-                  type="button"
-                  variant="destructive"
-                >
-                  <Trash2 className="mr-2 h-4 w-4" />
-                  清除损坏方案数据
-                </Button>
-              ) : null}
-              <AlertDialog onOpenChange={setDeleteConfirmationOpen} open={deleteConfirmationOpen}>
-                <AlertDialogContent>
-                  <AlertDialogHeader>
-                    <AlertDialogTitle>删除当前执行方案</AlertDialogTitle>
-                    <AlertDialogDescription>
-                      删除“{selectedExecutionPlan?.name ?? ''}
-                      ”后不会自动应用其他方案，当前页面草稿会完整保留。
-                    </AlertDialogDescription>
-                  </AlertDialogHeader>
-                  <AlertDialogFooter>
-                    <AlertDialogCancel>取消</AlertDialogCancel>
-                    <AlertDialogAction
-                      onClick={confirmDeleteSelectedExecutionPlan}
-                      variant="destructive"
-                    >
-                      确认删除
-                    </AlertDialogAction>
-                  </AlertDialogFooter>
-                </AlertDialogContent>
-              </AlertDialog>
-            </section>
-          ) : null}
-          {!progress ? (
-            <PipelineRail
-              onSelectStage={setSelectedPipelineStage}
-              onToggleStage={setOptionalStageEnabled}
-              selectedStage={selectedPipelineStage}
-              view={railView}
-            />
-          ) : null}
-          {!progress ? (
-            <PipelineSelectedStageIssues
-              issues={validationIssues}
-              selectedStage={selectedPipelineStage}
-            />
-          ) : null}
-
-          <div
-            className={cn(
-              'grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_120px_220px]',
-              selectedPipelineStage !== 'source' && 'hidden',
-            )}
-          >
-            <Field label="任务名">
-              <Input
-                onChange={(event) => setName(event.target.value)}
-                placeholder="可选"
-                value={name}
-              />
-            </Field>
-            <Field label="印花货号">
-              <Input
-                onChange={(event) => setPrintSkuCode(event.target.value)}
-                placeholder="例如 gyxkj"
-                value={printSkuCode}
-              />
-            </Field>
-            <Field label="分隔符">
-              <Input
-                onChange={(event) => setFilenameSeparator(event.target.value)}
-                placeholder="-"
-                value={filenameSeparator}
-              />
-            </Field>
-            <SelectField
-              label="印花类型"
-              onValueChange={(value) => updatePrintMode(value as PipelinePrintMode)}
-              options={[
-                { key: 'local', label: '局部印花' },
-                { key: 'full', label: '满印' },
-              ]}
-              value={printMode}
-            />
-          </div>
-
-          <div
-            className={cn(
-              'rounded-md border bg-muted/20 p-4',
-              selectedPipelineStage !== 'source' && 'hidden',
-            )}
-          >
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <div>
-                <p className="text-sm font-medium text-muted-foreground">任务起点</p>
-                <h2 className="mt-1 text-lg font-semibold">任务起点</h2>
-                <p className="mt-1 text-sm text-muted-foreground">
-                  采集+提取、文生图、图生图、已有印花只保留各自需要的设置。
-                </p>
-              </div>
-              <Badge variant="secondary">{sourceBadgeLabel}</Badge>
-            </div>
-
-            <Tabs
-              className="mt-4"
-              onValueChange={(value) => updateSourceMode(value as TaskSourceMode)}
-              value={sourceMode}
-            >
-              <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
-                {sourceModeOptions.map((option) => (
-                  <TabsTrigger key={option.key} value={option.key}>
-                    {option.label}
-                  </TabsTrigger>
-                ))}
-              </TabsList>
-            </Tabs>
-
-            <div className="mt-5 space-y-4">
-              {sourceMode === 'collection' ? (
-                <>
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                    <Field label="采集文件夹">
-                      <Input
-                        onChange={(event) => setSourceFolder(event.target.value)}
-                        placeholder="选择采集图片文件夹"
-                        value={sourceFolder}
-                      />
-                    </Field>
+                  <div className="flex flex-wrap gap-2 lg:col-span-4">
                     <Button
-                      className="mt-7 h-10"
-                      disabled={chooseSourceFolderMutation.loading}
-                      onClick={() => void chooseSourceFolder()}
+                      disabled={!optionsLoaded || optionsLoading || !selectedExecutionPlan}
+                      onClick={overwriteSelectedExecutionPlan}
+                      type="button"
                       variant="outline"
                     >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      选择
+                      <Save className="mr-2 h-4 w-4" />
+                      覆盖保存
+                    </Button>
+                    <Button
+                      disabled={
+                        optionsLoading || !selectedExecutionPlan || !executionPlanName.trim()
+                      }
+                      onClick={renameSelectedExecutionPlan}
+                      type="button"
+                      variant="outline"
+                    >
+                      <Pencil className="mr-2 h-4 w-4" />
+                      重命名
+                    </Button>
+                    <Button
+                      aria-label="删除执行方案"
+                      disabled={optionsLoading || !selectedExecutionPlan}
+                      onClick={requestDeleteSelectedExecutionPlan}
+                      title="删除执行方案"
+                      type="button"
+                      variant="outline"
+                    >
+                      <Trash2 className="mr-2 h-4 w-4" />
+                      删除
                     </Button>
                   </div>
+                </div>
+                <p className="mt-2 text-xs text-muted-foreground">
+                  已保存 {executionPlans.length}/{MAX_EXECUTION_PLANS} 套执行方案
+                  {executionPlans.length >= MAX_EXECUTION_PLANS
+                    ? '，已达到上限，请先维护现有方案。'
+                    : '，最多保存 5 套。'}
+                </p>
+                <p className="mt-1 text-xs font-medium text-foreground">
+                  {activeExecutionPlan
+                    ? `当前已应用：${activeExecutionPlan.name}`
+                    : '当前尚未应用执行方案'}
+                </p>
+                {executionPlanStorageError ? (
+                  <Button
+                    className="mt-3"
+                    onClick={clearInvalidExecutionPlanStorage}
+                    type="button"
+                    variant="destructive"
+                  >
+                    <Trash2 className="mr-2 h-4 w-4" />
+                    清除损坏方案数据
+                  </Button>
+                ) : null}
+                <AlertDialog onOpenChange={setDeleteConfirmationOpen} open={deleteConfirmationOpen}>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>删除当前执行方案</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        删除“{selectedExecutionPlan?.name ?? ''}
+                        ”后不会自动应用其他方案，当前页面草稿会完整保留。
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>取消</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={confirmDeleteSelectedExecutionPlan}
+                        variant="destructive"
+                      >
+                        确认删除
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </section>
+            ) : null}
+            {!progress ? (
+              <PipelineRail
+                onSelectStage={setSelectedPipelineStage}
+                onToggleStage={setOptionalStageEnabled}
+                selectedStage={selectedPipelineStage}
+                view={railView}
+              />
+            ) : null}
+            {!progress ? (
+              <PipelineSelectedStageIssues
+                issues={validationIssues}
+                selectedStage={selectedPipelineStage}
+              />
+            ) : null}
 
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <SelectField
-                      label="提取方式"
-                      onValueChange={(value) => setExtractProvider(value as ExtractProvider)}
-                      options={[
-                        { key: 'grsai', label: '付费模型' },
-                        { key: 'comfyui-chenyu', label: '晨羽智云' },
-                      ]}
-                      value={extractProvider}
-                    />
-                    <SelectField
-                      label="提取 Skill"
-                      onValueChange={setExtractSkillId}
-                      options={extractSkillOptions}
-                      value={extractSkillId}
-                    />
-                    {extractProvider === 'grsai' ? (
-                      <SelectField
-                        label="Grsai 模型"
-                        onValueChange={setGrsaiModel}
-                        options={grsaiModelOptions.map((item) => ({
-                          key: item.id,
-                          label: item.label,
-                        }))}
-                        value={grsaiModel}
-                      />
-                    ) : (
-                      <SelectField
-                        label="晨羽工作流"
-                        onValueChange={setExtractWorkflowId}
-                        options={extractWorkflows}
-                        value={extractWorkflowId}
-                      />
-                    )}
-                  </div>
+            <div
+              className={cn(
+                'grid gap-4 md:grid-cols-[minmax(0,1fr)_minmax(180px,260px)_120px_220px]',
+                selectedPipelineStage !== 'source' && 'hidden',
+              )}
+            >
+              <Field label="任务名">
+                <Input
+                  onChange={(event) => setName(event.target.value)}
+                  placeholder="可选"
+                  value={name}
+                />
+              </Field>
+              <Field label="印花货号">
+                <Input
+                  onChange={(event) => setPrintSkuCode(event.target.value)}
+                  placeholder="例如 gyxkj"
+                  value={printSkuCode}
+                />
+              </Field>
+              <Field label="分隔符">
+                <Input
+                  onChange={(event) => setFilenameSeparator(event.target.value)}
+                  placeholder="-"
+                  value={filenameSeparator}
+                />
+              </Field>
+              <SelectField
+                label="印花类型"
+                onValueChange={(value) => updatePrintMode(value as PipelinePrintMode)}
+                options={[
+                  { key: 'local', label: '局部印花' },
+                  { key: 'full', label: '满印' },
+                ]}
+                value={printMode}
+              />
+            </div>
 
-                  {extractProvider === 'grsai' ? (
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <Field label="尺寸 / 比例">
+            <div
+              className={cn(
+                'rounded-md border bg-muted/20 p-4',
+                selectedPipelineStage !== 'source' && 'hidden',
+              )}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-muted-foreground">任务起点</p>
+                  <h2 className="mt-1 text-lg font-semibold">任务起点</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    采集+提取、文生图、图生图、已有印花只保留各自需要的设置。
+                  </p>
+                </div>
+                <Badge variant="secondary">{sourceBadgeLabel}</Badge>
+              </div>
+
+              <Tabs
+                className="mt-4"
+                onValueChange={(value) => updateSourceMode(value as TaskSourceMode)}
+                value={sourceMode}
+              >
+                <TabsList className="grid w-full grid-cols-2 md:grid-cols-4">
+                  {sourceModeOptions.map((option) => (
+                    <TabsTrigger key={option.key} value={option.key}>
+                      {option.label}
+                    </TabsTrigger>
+                  ))}
+                </TabsList>
+              </Tabs>
+
+              <div className="mt-5 space-y-4">
+                {sourceMode === 'collection' ? (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <Field label="采集文件夹">
                         <Input
-                          onChange={(event) => setAspectRatio(event.target.value)}
-                          placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
-                          value={aspectRatio}
+                          onChange={(event) => setSourceFolder(event.target.value)}
+                          placeholder="选择采集图片文件夹"
+                          value={sourceFolder}
                         />
                       </Field>
-                      <Field label="并发">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setGrsaiConcurrency(event.target.value)}
-                          type="number"
-                          value={grsaiConcurrency}
-                        />
-                      </Field>
-                      <div className="flex items-end text-xs text-muted-foreground">
-                        采集后会先提取，再把原图变成可套版印花。
-                      </div>
+                      <Button
+                        className="mt-7 h-10"
+                        disabled={chooseSourceFolderMutation.loading}
+                        onClick={() => void chooseSourceFolder()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择
+                      </Button>
                     </div>
-                  ) : (
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <ChenyuInstanceSelectField
-                        instances={runningInstances}
-                        loading={optionsLoading}
-                        onRefresh={() => void refreshOptions()}
-                        onValueChange={setExtractInstanceUuid}
-                        options={runningInstanceOptions}
-                        value={extractInstanceUuid}
-                      />
-                      <Field label="宽">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setWidth(event.target.value)}
-                          type="number"
-                          value={width}
-                        />
-                      </Field>
-                      <Field label="高">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setHeight(event.target.value)}
-                          type="number"
-                          value={height}
-                        />
-                      </Field>
-                      <div className="flex items-end text-xs text-muted-foreground">
-                        晨羽路径要先配好运行云机和工作流。
-                      </div>
-                    </div>
-                  )}
-                </>
-              ) : null}
 
-              {sourceMode === 'txt2img' ? (
-                <>
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <Badge variant="secondary">
-                      {txt2imgProvider === 'grsai' ? 'AI 写提示词' : '晨羽工作流'}
-                    </Badge>
-                    <span className="text-muted-foreground">
-                      {txt2imgProvider === 'grsai'
-                        ? 'AI 生成提示词后再走 Grsai 付费生图。'
-                        : '提示词先走百炼，再送入晨羽文生图工作流。'}
-                    </span>
-                  </div>
-                  <div className="grid gap-4 lg:grid-cols-[minmax(180px,220px)_1fr]">
-                    <SelectField
-                      label="生图方式"
-                      onValueChange={(value) => setTxt2imgProvider(value as Txt2imgProvider)}
-                      options={[
-                        { key: 'grsai', label: 'Grsai' },
-                        { key: 'comfyui-chenyu', label: '晨羽智云' },
-                      ]}
-                      value={txt2imgProvider}
-                    />
-                    {txt2imgUsesComfyui ? (
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <SelectField
+                        label="提取方式"
+                        onValueChange={(value) => setExtractProvider(value as ExtractProvider)}
+                        options={[
+                          { key: 'grsai', label: '付费模型' },
+                          { key: 'comfyui-chenyu', label: '晨羽智云' },
+                        ]}
+                        value={extractProvider}
+                      />
+                      <SelectField
+                        label="提取 Skill"
+                        onValueChange={setExtractSkillId}
+                        options={extractSkillOptions}
+                        value={extractSkillId}
+                      />
+                      {extractProvider === 'grsai' ? (
                         <SelectField
-                          label="文生图工作流"
-                          onValueChange={setTxt2imgComfyuiWorkflowId}
-                          options={txt2imgWorkflows}
-                          value={txt2imgComfyuiWorkflowId}
+                          label="Grsai 模型"
+                          onValueChange={setGrsaiModel}
+                          options={grsaiModelOptions.map((item) => ({
+                            key: item.id,
+                            label: item.label,
+                          }))}
+                          value={grsaiModel}
                         />
-                        <Button
-                          className="mt-7 h-10"
-                          onClick={() => void refreshOptions()}
-                          variant="outline"
-                        >
-                          <RefreshCw className="mr-2 h-4 w-4" />
-                          刷新
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-                  <div className="grid gap-4 lg:grid-cols-5">
-                    <SelectField
-                      label="提示词 Skill"
-                      onValueChange={setPromptSkillId}
-                      options={promptSkillOptions}
-                      value={promptSkillId}
-                    />
-                    <SelectField
-                      label="提示词模型"
-                      onValueChange={setPromptModel}
-                      options={promptModelOptions}
-                      value={promptModel}
-                    />
-                    <PromptRequirementField
-                      id="txt2img-print-requirement"
-                      onOpenChange={setPromptRequirementOpen}
-                      onValueChange={setPromptRequirement}
-                      open={promptRequirementOpen}
-                      value={promptRequirement}
-                    />
-                    <Field label="数量">
-                      <Input
-                        className="tabular-nums"
-                        onChange={(event) => setPromptCount(event.target.value)}
-                        type="number"
-                        value={promptCount}
-                      />
-                    </Field>
-                  </div>
-
-                  {txt2imgProvider === 'grsai' ? (
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <SelectField
-                        label="Grsai 模型"
-                        onValueChange={setGrsaiModel}
-                        options={grsaiModelOptions.map((item) => ({
-                          key: item.id,
-                          label: item.label,
-                        }))}
-                        value={grsaiModel}
-                      />
-                      <Field label="尺寸 / 比例">
-                        <Input
-                          onChange={(event) => setAspectRatio(event.target.value)}
-                          placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
-                          value={aspectRatio}
+                      ) : (
+                        <SelectField
+                          label="晨羽工作流"
+                          onValueChange={setExtractWorkflowId}
+                          options={extractWorkflows}
+                          value={extractWorkflowId}
                         />
-                      </Field>
-                      <Field label="并发">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setGrsaiConcurrency(event.target.value)}
-                          type="number"
-                          value={grsaiConcurrency}
-                        />
-                      </Field>
+                      )}
                     </div>
-                  ) : (
-                    <div className="grid gap-4 md:grid-cols-3">
-                      <ChenyuInstanceSelectField
-                        instances={runningInstances}
-                        loading={optionsLoading}
-                        onRefresh={() => void refreshOptions()}
-                        onValueChange={setTxt2imgComfyuiInstanceUuid}
-                        options={runningInstanceOptions}
-                        value={txt2imgComfyuiInstanceUuid}
-                      />
-                      <Field label="宽">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setWidth(event.target.value)}
-                          type="number"
-                          value={width}
-                        />
-                      </Field>
-                      <Field label="高">
-                        <Input
-                          className="tabular-nums"
-                          onChange={(event) => setHeight(event.target.value)}
-                          type="number"
-                          value={height}
-                        />
-                      </Field>
-                    </div>
-                  )}
-                </>
-              ) : null}
 
-              {sourceMode === 'img2img' ? (
-                <>
-                  {img2imgUsesGrsai ? (
-                    <ReferenceImagePicker
-                      images={referenceImages}
-                      onAddFiles={(files) => void addReferenceFiles(files)}
-                      onRemove={removeReferenceImage}
-                    />
-                  ) : null}
-
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <Badge variant="secondary">
-                      {img2imgProvider === 'grsai' ? '固定付费模型' : '晨羽工作流'}
-                    </Badge>
-                    <span className="text-muted-foreground">
-                      {img2imgProvider === 'grsai'
-                        ? '默认只用于提示词生成，勾选后才送给 Grsai 图片模型。'
-                        : '选择图片文件夹、工作流、晨羽实例和每张生成数量。'}
-                    </span>
-                  </div>
-
-                  <div className="grid gap-4 lg:grid-cols-[minmax(180px,220px)_1fr]">
-                    <SelectField
-                      label="生图方式"
-                      onValueChange={(value) => setImg2imgProvider(value as Img2imgProvider)}
-                      options={[
-                        { key: 'grsai', label: 'Grsai' },
-                        { key: 'comfyui-chenyu', label: '晨羽智云' },
-                      ]}
-                      value={img2imgProvider}
-                    />
-                    {img2imgUsesComfyui ? (
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                        <Field label="图片文件夹">
+                    {extractProvider === 'grsai' ? (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <Field label="尺寸 / 比例">
                           <Input
-                            onChange={(event) => setImg2imgSourceFolder(event.target.value)}
-                            placeholder="选择任意图片文件夹"
-                            value={img2imgSourceFolder}
+                            onChange={(event) => setAspectRatio(event.target.value)}
+                            placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
+                            value={aspectRatio}
                           />
                         </Field>
-                        <Button
-                          className="mt-7 h-10"
-                          disabled={chooseImg2imgSourceFolderMutation.loading}
-                          onClick={() => void chooseImg2imgSourceFolder()}
-                          variant="outline"
-                        >
-                          <FolderOpen className="mr-2 h-4 w-4" />
-                          选择
-                        </Button>
-                      </div>
-                    ) : null}
-                  </div>
-
-                  {img2imgUsesGrsai ? (
-                    <>
-                      <label
-                        className="inline-flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                        htmlFor="send-reference-to-image-model"
-                      >
-                        <Checkbox
-                          aria-label="生图时带参考图"
-                          checked={sendReferenceToImageModel}
-                          id="send-reference-to-image-model"
-                          onCheckedChange={(checked) =>
-                            setSendReferenceToImageModel(Boolean(checked))
-                          }
-                        />
-                        生图时带参考图
-                      </label>
-
-                      <SelectField
-                        label="参考方式"
-                        onValueChange={(value) =>
-                          setImg2imgReferenceMode(value as Img2imgReferenceMode)
-                        }
-                        options={img2imgReferenceModes.map((item) => ({
-                          key: item.key,
-                          label: item.label,
-                        }))}
-                        value={img2imgReferenceMode}
-                      />
-
-                      <div className="grid gap-4 lg:grid-cols-4">
-                        <SelectField
-                          label="提示词 Skill"
-                          onValueChange={setPromptSkillId}
-                          options={promptSkillOptions}
-                          value={promptSkillId}
-                        />
-                        <SelectField
-                          label="提示词模型"
-                          onValueChange={setPromptModel}
-                          options={promptModelOptions}
-                          value={promptModel}
-                        />
-                        <PromptRequirementField
-                          id="img2img-print-requirement"
-                          label="印花要求"
-                          onOpenChange={setPromptRequirementOpen}
-                          onValueChange={setPromptRequirement}
-                          open={promptRequirementOpen}
-                          value={promptRequirement}
-                        />
-                        <Field label="数量">
+                        <Field label="并发">
                           <Input
                             className="tabular-nums"
-                            onChange={(event) => setPromptCount(event.target.value)}
+                            onChange={(event) => setGrsaiConcurrency(event.target.value)}
                             type="number"
-                            value={promptCount}
+                            value={grsaiConcurrency}
                           />
                         </Field>
+                        <div className="flex items-end text-xs text-muted-foreground">
+                          采集后会先提取，再把原图变成可套版印花。
+                        </div>
                       </div>
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-3">
+                        <ChenyuInstanceSelectField
+                          instances={runningInstances}
+                          loading={optionsLoading}
+                          onRefresh={() => void refreshOptions()}
+                          onValueChange={setExtractInstanceUuid}
+                          options={runningInstanceOptions}
+                          value={extractInstanceUuid}
+                        />
+                        <Field label="宽">
+                          <Input
+                            className="tabular-nums"
+                            onChange={(event) => setWidth(event.target.value)}
+                            type="number"
+                            value={width}
+                          />
+                        </Field>
+                        <Field label="高">
+                          <Input
+                            className="tabular-nums"
+                            onChange={(event) => setHeight(event.target.value)}
+                            type="number"
+                            value={height}
+                          />
+                        </Field>
+                        <div className="flex items-end text-xs text-muted-foreground">
+                          晨羽路径要先配好运行云机和工作流。
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : null}
 
+                {sourceMode === 'txt2img' ? (
+                  <>
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge variant="secondary">
+                        {txt2imgProvider === 'grsai' ? 'AI 写提示词' : '晨羽工作流'}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {txt2imgProvider === 'grsai'
+                          ? 'AI 生成提示词后再走 Grsai 付费生图。'
+                          : '提示词先走百炼，再送入晨羽文生图工作流。'}
+                      </span>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-[minmax(180px,220px)_1fr]">
+                      <SelectField
+                        label="生图方式"
+                        onValueChange={(value) => setTxt2imgProvider(value as Txt2imgProvider)}
+                        options={[
+                          { key: 'grsai', label: 'Grsai' },
+                          { key: 'comfyui-chenyu', label: '晨羽智云' },
+                        ]}
+                        value={txt2imgProvider}
+                      />
+                      {txt2imgUsesComfyui ? (
+                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                          <SelectField
+                            label="文生图工作流"
+                            onValueChange={setTxt2imgComfyuiWorkflowId}
+                            options={txt2imgWorkflows}
+                            value={txt2imgComfyuiWorkflowId}
+                          />
+                          <Button
+                            className="mt-7 h-10"
+                            onClick={() => void refreshOptions()}
+                            variant="outline"
+                          >
+                            <RefreshCw className="mr-2 h-4 w-4" />
+                            刷新
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-5">
+                      <SelectField
+                        label="提示词 Skill"
+                        onValueChange={setPromptSkillId}
+                        options={promptSkillOptions}
+                        value={promptSkillId}
+                      />
+                      <SelectField
+                        label="提示词模型"
+                        onValueChange={setPromptModel}
+                        options={promptModelOptions}
+                        value={promptModel}
+                      />
+                      <PromptRequirementField
+                        id="txt2img-print-requirement"
+                        onOpenChange={setPromptRequirementOpen}
+                        onValueChange={setPromptRequirement}
+                        open={promptRequirementOpen}
+                        value={promptRequirement}
+                      />
+                      <Field label="数量">
+                        <Input
+                          className="tabular-nums"
+                          onChange={(event) => setPromptCount(event.target.value)}
+                          type="number"
+                          value={promptCount}
+                        />
+                      </Field>
+                    </div>
+
+                    {txt2imgProvider === 'grsai' ? (
                       <div className="grid gap-4 md:grid-cols-3">
                         <SelectField
                           label="Grsai 模型"
@@ -2772,23 +2605,15 @@ export function FullTaskPage({
                           />
                         </Field>
                       </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="grid gap-4 md:grid-cols-4">
-                        <SelectField
-                          label="图生图工作流"
-                          onValueChange={setImg2imgComfyuiWorkflowId}
-                          options={img2imgWorkflows}
-                          value={img2imgComfyuiWorkflowId}
-                        />
+                    ) : (
+                      <div className="grid gap-4 md:grid-cols-3">
                         <ChenyuInstanceSelectField
                           instances={runningInstances}
                           loading={optionsLoading}
                           onRefresh={() => void refreshOptions()}
-                          onValueChange={setImg2imgComfyuiInstanceUuid}
+                          onValueChange={setTxt2imgComfyuiInstanceUuid}
                           options={runningInstanceOptions}
-                          value={img2imgComfyuiInstanceUuid}
+                          value={txt2imgComfyuiInstanceUuid}
                         />
                         <Field label="宽">
                           <Input
@@ -2807,675 +2632,860 @@ export function FullTaskPage({
                           />
                         </Field>
                       </div>
-                      <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
-                        <Field label="每张生成">
-                          <Input
-                            className="tabular-nums"
-                            min={1}
-                            max={8}
-                            onChange={(event) => setImg2imgComfyuiBatchSize(event.target.value)}
-                            type="number"
-                            value={img2imgComfyuiBatchSize}
-                          />
-                        </Field>
-                        <SelectField
-                          label="提示词方式"
-                          onValueChange={(value) =>
-                            setImg2imgComfyuiPromptMode(value as ComfyuiImg2imgPromptMode)
-                          }
-                          options={[
-                            { key: 'ai', label: 'AI 看图写提示词（推荐）' },
-                            { key: 'workflow', label: '工作流默认' },
-                          ]}
-                          value={img2imgComfyuiPromptMode}
-                        />
-                      </div>
-                      {img2imgComfyuiPromptMode === 'ai' ? (
-                        <>
-                          <SelectField
-                            label="参考方式"
-                            onValueChange={(value) =>
-                              setImg2imgReferenceMode(value as Img2imgReferenceMode)
+                    )}
+                  </>
+                ) : null}
+
+                {sourceMode === 'img2img' ? (
+                  <>
+                    {img2imgUsesGrsai ? (
+                      <ReferenceImagePicker
+                        images={referenceImages}
+                        onAddFiles={(files) => void addReferenceFiles(files)}
+                        onRemove={removeReferenceImage}
+                      />
+                    ) : null}
+
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge variant="secondary">
+                        {img2imgProvider === 'grsai' ? '固定付费模型' : '晨羽工作流'}
+                      </Badge>
+                      <span className="text-muted-foreground">
+                        {img2imgProvider === 'grsai'
+                          ? '默认只用于提示词生成，勾选后才送给 Grsai 图片模型。'
+                          : '选择图片文件夹、工作流、晨羽实例和每张生成数量。'}
+                      </span>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-[minmax(180px,220px)_1fr]">
+                      <SelectField
+                        label="生图方式"
+                        onValueChange={(value) => setImg2imgProvider(value as Img2imgProvider)}
+                        options={[
+                          { key: 'grsai', label: 'Grsai' },
+                          { key: 'comfyui-chenyu', label: '晨羽智云' },
+                        ]}
+                        value={img2imgProvider}
+                      />
+                      {img2imgUsesComfyui ? (
+                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                          <Field label="图片文件夹">
+                            <Input
+                              onChange={(event) => setImg2imgSourceFolder(event.target.value)}
+                              placeholder="选择任意图片文件夹"
+                              value={img2imgSourceFolder}
+                            />
+                          </Field>
+                          <Button
+                            className="mt-7 h-10"
+                            disabled={chooseImg2imgSourceFolderMutation.loading}
+                            onClick={() => void chooseImg2imgSourceFolder()}
+                            variant="outline"
+                          >
+                            <FolderOpen className="mr-2 h-4 w-4" />
+                            选择
+                          </Button>
+                        </div>
+                      ) : null}
+                    </div>
+
+                    {img2imgUsesGrsai ? (
+                      <>
+                        <label
+                          className="inline-flex w-fit items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                          htmlFor="send-reference-to-image-model"
+                        >
+                          <Checkbox
+                            aria-label="生图时带参考图"
+                            checked={sendReferenceToImageModel}
+                            id="send-reference-to-image-model"
+                            onCheckedChange={(checked) =>
+                              setSendReferenceToImageModel(Boolean(checked))
                             }
-                            options={img2imgReferenceModes.map((item) => ({
-                              key: item.key,
+                          />
+                          生图时带参考图
+                        </label>
+
+                        <SelectField
+                          label="参考方式"
+                          onValueChange={(value) =>
+                            setImg2imgReferenceMode(value as Img2imgReferenceMode)
+                          }
+                          options={img2imgReferenceModes.map((item) => ({
+                            key: item.key,
+                            label: item.label,
+                          }))}
+                          value={img2imgReferenceMode}
+                        />
+
+                        <div className="grid gap-4 lg:grid-cols-4">
+                          <SelectField
+                            label="提示词 Skill"
+                            onValueChange={setPromptSkillId}
+                            options={promptSkillOptions}
+                            value={promptSkillId}
+                          />
+                          <SelectField
+                            label="提示词模型"
+                            onValueChange={setPromptModel}
+                            options={promptModelOptions}
+                            value={promptModel}
+                          />
+                          <PromptRequirementField
+                            id="img2img-print-requirement"
+                            label="印花要求"
+                            onOpenChange={setPromptRequirementOpen}
+                            onValueChange={setPromptRequirement}
+                            open={promptRequirementOpen}
+                            value={promptRequirement}
+                          />
+                          <Field label="数量">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setPromptCount(event.target.value)}
+                              type="number"
+                              value={promptCount}
+                            />
+                          </Field>
+                        </div>
+
+                        <div className="grid gap-4 md:grid-cols-3">
+                          <SelectField
+                            label="Grsai 模型"
+                            onValueChange={setGrsaiModel}
+                            options={grsaiModelOptions.map((item) => ({
+                              key: item.id,
                               label: item.label,
                             }))}
-                            value={img2imgReferenceMode}
+                            value={grsaiModel}
                           />
-                          <div className="grid gap-4 lg:grid-cols-3">
+                          <Field label="尺寸 / 比例">
+                            <Input
+                              onChange={(event) => setAspectRatio(event.target.value)}
+                              placeholder={grsaiSizeOptions.slice(0, 3).join(' / ')}
+                              value={aspectRatio}
+                            />
+                          </Field>
+                          <Field label="并发">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setGrsaiConcurrency(event.target.value)}
+                              type="number"
+                              value={grsaiConcurrency}
+                            />
+                          </Field>
+                        </div>
+                      </>
+                    ) : (
+                      <>
+                        <div className="grid gap-4 md:grid-cols-4">
+                          <SelectField
+                            label="图生图工作流"
+                            onValueChange={setImg2imgComfyuiWorkflowId}
+                            options={img2imgWorkflows}
+                            value={img2imgComfyuiWorkflowId}
+                          />
+                          <ChenyuInstanceSelectField
+                            instances={runningInstances}
+                            loading={optionsLoading}
+                            onRefresh={() => void refreshOptions()}
+                            onValueChange={setImg2imgComfyuiInstanceUuid}
+                            options={runningInstanceOptions}
+                            value={img2imgComfyuiInstanceUuid}
+                          />
+                          <Field label="宽">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setWidth(event.target.value)}
+                              type="number"
+                              value={width}
+                            />
+                          </Field>
+                          <Field label="高">
+                            <Input
+                              className="tabular-nums"
+                              onChange={(event) => setHeight(event.target.value)}
+                              type="number"
+                              value={height}
+                            />
+                          </Field>
+                        </div>
+                        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_160px]">
+                          <Field label="每张生成">
+                            <Input
+                              className="tabular-nums"
+                              min={1}
+                              max={8}
+                              onChange={(event) => setImg2imgComfyuiBatchSize(event.target.value)}
+                              type="number"
+                              value={img2imgComfyuiBatchSize}
+                            />
+                          </Field>
+                          <SelectField
+                            label="提示词方式"
+                            onValueChange={(value) =>
+                              setImg2imgComfyuiPromptMode(value as ComfyuiImg2imgPromptMode)
+                            }
+                            options={[
+                              { key: 'ai', label: 'AI 看图写提示词（推荐）' },
+                              { key: 'workflow', label: '工作流默认' },
+                            ]}
+                            value={img2imgComfyuiPromptMode}
+                          />
+                        </div>
+                        {img2imgComfyuiPromptMode === 'ai' ? (
+                          <>
                             <SelectField
-                              label="提示词 Skill"
-                              onValueChange={setPromptSkillId}
-                              options={promptSkillOptions}
-                              value={promptSkillId}
+                              label="参考方式"
+                              onValueChange={(value) =>
+                                setImg2imgReferenceMode(value as Img2imgReferenceMode)
+                              }
+                              options={img2imgReferenceModes.map((item) => ({
+                                key: item.key,
+                                label: item.label,
+                              }))}
+                              value={img2imgReferenceMode}
                             />
-                            <SelectField
-                              label="提示词模型"
-                              onValueChange={setPromptModel}
-                              options={promptModelOptions}
-                              value={promptModel}
-                            />
-                            <PromptRequirementField
-                              id="img2img-comfyui-print-requirement"
-                              label="其他要求"
-                              onOpenChange={setPromptRequirementOpen}
-                              onValueChange={setPromptRequirement}
-                              open={promptRequirementOpen}
-                              value={promptRequirement}
-                            />
-                          </div>
-                        </>
-                      ) : null}
-                    </>
-                  )}
-                </>
-              ) : null}
+                            <div className="grid gap-4 lg:grid-cols-3">
+                              <SelectField
+                                label="提示词 Skill"
+                                onValueChange={setPromptSkillId}
+                                options={promptSkillOptions}
+                                value={promptSkillId}
+                              />
+                              <SelectField
+                                label="提示词模型"
+                                onValueChange={setPromptModel}
+                                options={promptModelOptions}
+                                value={promptModel}
+                              />
+                              <PromptRequirementField
+                                id="img2img-comfyui-print-requirement"
+                                label="其他要求"
+                                onOpenChange={setPromptRequirementOpen}
+                                onValueChange={setPromptRequirement}
+                                open={promptRequirementOpen}
+                                value={promptRequirement}
+                              />
+                            </div>
+                          </>
+                        ) : null}
+                      </>
+                    )}
+                  </>
+                ) : null}
 
-              {sourceMode === 'existing_prints' ? (
-                <>
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                    <Field label="已有印花文件夹">
-                      <Input
-                        onChange={(event) => setExistingPrintFolder(event.target.value)}
-                        placeholder="选择 02-印花工作区 下的具体印花文件夹"
-                        value={existingPrintFolder}
-                      />
-                    </Field>
-                    <Button
-                      className="mt-7 h-10"
-                      disabled={chooseExistingPrintFolderMutation.loading}
-                      onClick={() => void chooseExistingPrintFolder()}
-                      variant="outline"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      选择
-                    </Button>
-                  </div>
-                  <SelectField
-                    label="起始步骤"
-                    onValueChange={(value) => setExistingPrintStartStep(value as PipelineStartStep)}
-                    options={existingPrintStartStepOptions}
-                    value={existingPrintStartStep}
-                  />
-                  <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
-                    不能选择 02-印花工作区 根目录或等待套版目录；启用 PS
-                    时会按印花货号重新生成等待套版文件名。
-                  </div>
-                </>
-              ) : null}
+                {sourceMode === 'existing_prints' ? (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <Field label="已有印花文件夹">
+                        <Input
+                          onChange={(event) => setExistingPrintFolder(event.target.value)}
+                          placeholder="选择 02-印花工作区 下的具体印花文件夹"
+                          value={existingPrintFolder}
+                        />
+                      </Field>
+                      <Button
+                        className="mt-7 h-10"
+                        disabled={chooseExistingPrintFolderMutation.loading}
+                        onClick={() => void chooseExistingPrintFolder()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择
+                      </Button>
+                    </div>
+                    <SelectField
+                      label="起始步骤"
+                      onValueChange={(value) =>
+                        setExistingPrintStartStep(value as PipelineStartStep)
+                      }
+                      options={existingPrintStartStepOptions}
+                      value={existingPrintStartStep}
+                    />
+                    <div className="rounded-md border border-dashed px-3 py-3 text-sm text-muted-foreground">
+                      不能选择 02-印花工作区 根目录或等待套版目录；启用 PS
+                      时会按印花货号重新生成等待套版文件名。
+                    </div>
+                  </>
+                ) : null}
+              </div>
             </div>
-          </div>
 
-          <Card className={selectedPipelineStage === 'matting' ? undefined : 'hidden'}>
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-lg">
-                    <h2>抠图设置</h2>
-                  </CardTitle>
-                  <CardDescription>抠图固定走 ComfyUI 晨羽工作流。</CardDescription>
+            <Card className={selectedPipelineStage === 'matting' ? undefined : 'hidden'}>
+              <CardHeader className="pb-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-lg">
+                      <h2>抠图设置</h2>
+                    </CardTitle>
+                    <CardDescription>抠图固定走 ComfyUI 晨羽工作流。</CardDescription>
+                  </div>
+                  <Badge variant={effectiveMattingEnabled ? 'secondary' : 'outline'}>
+                    {effectiveMattingEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
-                <Badge variant={effectiveMattingEnabled ? 'secondary' : 'outline'}>
-                  {effectiveMattingEnabled ? '本次执行' : '本次跳过'}
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {effectiveMattingEnabled ? (
-                <AdvancedDisclosure summary="抠图设置">
-                  <div className="flex flex-wrap items-center gap-2 text-sm">
-                    <Badge variant="secondary">仅晨羽工作流</Badge>
-                    <span className="text-muted-foreground">需要先配置运行云机和抠图工作流。</span>
-                  </div>
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <SelectField
-                      label="抠图工作流"
-                      onValueChange={setMattingWorkflowId}
-                      options={mattingWorkflows}
-                      value={mattingWorkflowId}
-                    />
-                    <ChenyuInstanceSelectField
-                      instances={runningInstances}
-                      loading={optionsLoading}
-                      onRefresh={() => void refreshOptions()}
-                      onValueChange={setMattingInstanceUuid}
-                      options={runningInstanceOptions}
-                      value={mattingInstanceUuid}
-                    />
-                    <Field label="宽">
-                      <Input
-                        className="tabular-nums"
-                        onChange={(event) => setWidth(event.target.value)}
-                        type="number"
-                        value={width}
-                      />
-                    </Field>
-                  </div>
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <Field label="高">
-                      <Input
-                        className="tabular-nums"
-                        onChange={(event) => setHeight(event.target.value)}
-                        type="number"
-                        value={height}
-                      />
-                    </Field>
-                    <div className="lg:col-span-2 flex items-end rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
-                      关闭后会直接进入侵权检测、套版和标题。
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {effectiveMattingEnabled ? (
+                  <AdvancedDisclosure summary="抠图设置">
+                    <div className="flex flex-wrap items-center gap-2 text-sm">
+                      <Badge variant="secondary">仅晨羽工作流</Badge>
+                      <span className="text-muted-foreground">
+                        需要先配置运行云机和抠图工作流。
+                      </span>
                     </div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <SelectField
+                        label="抠图工作流"
+                        onValueChange={setMattingWorkflowId}
+                        options={mattingWorkflows}
+                        value={mattingWorkflowId}
+                      />
+                      <ChenyuInstanceSelectField
+                        instances={runningInstances}
+                        loading={optionsLoading}
+                        onRefresh={() => void refreshOptions()}
+                        onValueChange={setMattingInstanceUuid}
+                        options={runningInstanceOptions}
+                        value={mattingInstanceUuid}
+                      />
+                      <Field label="宽">
+                        <Input
+                          className="tabular-nums"
+                          onChange={(event) => setWidth(event.target.value)}
+                          type="number"
+                          value={width}
+                        />
+                      </Field>
+                    </div>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <Field label="高">
+                        <Input
+                          className="tabular-nums"
+                          onChange={(event) => setHeight(event.target.value)}
+                          type="number"
+                          value={height}
+                        />
+                      </Field>
+                      <div className="lg:col-span-2 flex items-end rounded-md border border-dashed px-3 py-2 text-sm text-muted-foreground">
+                        关闭后会直接进入侵权检测、套版和标题。
+                      </div>
+                    </div>
+                  </AdvancedDisclosure>
+                ) : (
+                  <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
+                    {mattingLockedSkipped
+                      ? '当前起始步骤会跳过抠图。'
+                      : '已关闭抠图，后续步骤会直接进入侵权检测和套版。'}
                   </div>
-                </AdvancedDisclosure>
-              ) : (
-                <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">
-                  {mattingLockedSkipped
-                    ? '当前起始步骤会跳过抠图。'
-                    : '已关闭抠图，后续步骤会直接进入侵权检测和套版。'}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          <Card
-            className={
-              selectedPipelineStage === 'detection' ||
-              selectedPipelineStage === 'photoshop' ||
-              selectedPipelineStage === 'title'
-                ? undefined
-                : 'hidden'
-            }
-          >
-            <CardHeader className="pb-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <CardTitle className="text-lg">
-                    <h2>
-                      {selectedPipelineStage === 'detection'
-                        ? '侵权检测设置'
-                        : selectedPipelineStage === 'photoshop'
-                          ? 'PS 套版设置'
-                          : '标题生成设置'}
-                    </h2>
-                  </CardTitle>
-                  <CardDescription>关闭的阶段保留当前配置，本次执行会跳过。</CardDescription>
-                </div>
-                <Badge variant="secondary">后续流程</Badge>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-5">
-              <div
-                className={cn(
-                  'flex flex-wrap items-start justify-between gap-3',
-                  selectedPipelineStage !== 'detection' && 'hidden',
                 )}
-              >
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">侵权检测</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    勾选后会复用单独的检测设置面板。
-                  </p>
-                </div>
-                <Badge variant={effectiveDetectionEnabled ? 'secondary' : 'outline'}>
-                  {effectiveDetectionEnabled ? '本次执行' : '本次跳过'}
-                </Badge>
-              </div>
+              </CardContent>
+            </Card>
 
-              {effectiveDetectionEnabled ? (
-                <div className="space-y-4" hidden={selectedPipelineStage !== 'detection'}>
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <SelectField
-                      label="检测模型"
-                      onValueChange={setDetectionModel}
-                      options={detectionModelOptions.map((item) => ({
-                        key: item,
-                        label: item,
-                      }))}
-                      value={detectionModel}
-                    />
-                    <SelectField
-                      label="检测 Skill"
-                      onValueChange={setDetectionSkillKey}
-                      options={detectionSkillOptions}
-                      value={detectionSkillKey}
-                    />
-                    <SelectField
-                      label="通过要求"
-                      onValueChange={(value) => setDetectionPassRule(value as DetectionPassRule)}
-                      options={[
-                        { key: 'allow-review', label: '无风险 + 疑似通过' },
-                        { key: 'pass-only', label: '仅无风险通过' },
-                      ]}
-                      value={detectionPassRule}
-                    />
+            <Card
+              className={
+                selectedPipelineStage === 'detection' ||
+                selectedPipelineStage === 'photoshop' ||
+                selectedPipelineStage === 'title'
+                  ? undefined
+                  : 'hidden'
+              }
+            >
+              <CardHeader className="pb-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <CardTitle className="text-lg">
+                      <h2>
+                        {selectedPipelineStage === 'detection'
+                          ? '侵权检测设置'
+                          : selectedPipelineStage === 'photoshop'
+                            ? 'PS 套版设置'
+                            : '标题生成设置'}
+                      </h2>
+                    </CardTitle>
+                    <CardDescription>关闭的阶段保留当前配置，本次执行会跳过。</CardDescription>
                   </div>
-                  <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground md:grid-cols-3">
-                    <div>
-                      <p className="text-xs">默认配置</p>
-                      <p className="mt-1 truncate font-medium text-foreground">
-                        {detectionConfig?.model || '未加载'}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-xs">本次 Skill</p>
-                      <p className="mt-1 truncate font-medium text-foreground">
-                        {selectedDetectionSkill?.id || '未选择'}
-                      </p>
-                    </div>
-                    <label className="flex items-center gap-2" htmlFor="detection-compression">
-                      <Checkbox
-                        checked={detectionCompression}
-                        id="detection-compression"
-                        onCheckedChange={(checked) => setDetectionCompression(Boolean(checked))}
-                      />
-                      压缩图片
-                    </label>
-                  </div>
+                  <Badge variant="secondary">后续流程</Badge>
                 </div>
-              ) : (
+              </CardHeader>
+              <CardContent className="space-y-5">
                 <div
-                  className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
-                  hidden={selectedPipelineStage !== 'detection'}
+                  className={cn(
+                    'flex flex-wrap items-start justify-between gap-3',
+                    selectedPipelineStage !== 'detection' && 'hidden',
+                  )}
                 >
-                  {detectionLockedSkipped
-                    ? '当前起始步骤会跳过侵权检测。'
-                    : '已关闭侵权检测，后续会直接进入已开启的下一步。'}
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">侵权检测</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      勾选后会复用单独的检测设置面板。
+                    </p>
+                  </div>
+                  <Badge variant={effectiveDetectionEnabled ? 'secondary' : 'outline'}>
+                    {effectiveDetectionEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
-              )}
 
-              <div
-                className={cn(
-                  'flex flex-wrap items-start justify-between gap-3',
-                  selectedPipelineStage !== 'photoshop' && 'hidden',
-                )}
-              >
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    开启后才要求印花货号、PSD 模板和 Windows 环境。
-                  </p>
-                </div>
-                <Badge variant={effectivePhotoshopEnabled ? 'secondary' : 'outline'}>
-                  {effectivePhotoshopEnabled ? '本次执行' : '本次跳过'}
-                </Badge>
-              </div>
-
-              {effectivePhotoshopEnabled ? (
-                <AdvancedDisclosure
-                  hidden={selectedPipelineStage !== 'photoshop'}
-                  summary="PS 套版设置"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
-                      <p className="mt-1 text-sm text-muted-foreground">
-                        选择模板和输出目录，其他参数沿用现有模块设置。
-                      </p>
+                {effectiveDetectionEnabled ? (
+                  <div className="space-y-4" hidden={selectedPipelineStage !== 'detection'}>
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <SelectField
+                        label="检测模型"
+                        onValueChange={setDetectionModel}
+                        options={detectionModelOptions.map((item) => ({
+                          key: item,
+                          label: item,
+                        }))}
+                        value={detectionModel}
+                      />
+                      <SelectField
+                        label="检测 Skill"
+                        onValueChange={setDetectionSkillKey}
+                        options={detectionSkillOptions}
+                        value={detectionSkillKey}
+                      />
+                      <SelectField
+                        label="通过要求"
+                        onValueChange={(value) => setDetectionPassRule(value as DetectionPassRule)}
+                        options={[
+                          { key: 'allow-review', label: '无风险 + 疑似通过' },
+                          { key: 'pass-only', label: '仅无风险通过' },
+                        ]}
+                        value={detectionPassRule}
+                      />
                     </div>
-                    <Badge variant="secondary">Windows only</Badge>
+                    <div className="grid gap-3 rounded-md border bg-muted/20 p-3 text-sm text-muted-foreground md:grid-cols-3">
+                      <div>
+                        <p className="text-xs">默认配置</p>
+                        <p className="mt-1 truncate font-medium text-foreground">
+                          {detectionConfig?.model || '未加载'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs">本次 Skill</p>
+                        <p className="mt-1 truncate font-medium text-foreground">
+                          {selectedDetectionSkill?.id || '未选择'}
+                        </p>
+                      </div>
+                      <label className="flex items-center gap-2" htmlFor="detection-compression">
+                        <Checkbox
+                          checked={detectionCompression}
+                          id="detection-compression"
+                          onCheckedChange={(checked) => setDetectionCompression(Boolean(checked))}
+                        />
+                        压缩图片
+                      </label>
+                    </div>
                   </div>
-
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto]">
-                    <Field label="PSD 模板">
-                      <Input readOnly value={templatePaths.join('；')} />
-                    </Field>
-                    <Button
-                      className="mt-7 h-10"
-                      disabled={chooseTemplatesMutation.loading}
-                      onClick={() => void chooseTemplates()}
-                      variant="outline"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      选择模板
-                    </Button>
-                    <Button
-                      className="mt-7 h-10"
-                      onClick={() => setTemplatePaths([])}
-                      variant="ghost"
-                    >
-                      清空
-                    </Button>
+                ) : (
+                  <div
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                    hidden={selectedPipelineStage !== 'detection'}
+                  >
+                    {detectionLockedSkipped
+                      ? '当前起始步骤会跳过侵权检测。'
+                      : '已关闭侵权检测，后续会直接进入已开启的下一步。'}
                   </div>
-
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
-                    <Field label="套版输出目录">
-                      <Input
-                        onChange={(event) => setOutputRoot(event.target.value)}
-                        placeholder="留空则写入 04-上架工作区"
-                        value={outputRoot}
-                      />
-                    </Field>
-                    <Button
-                      className="mt-7 h-10"
-                      disabled={chooseOutputRootMutation.loading}
-                      onClick={() => void chooseOutputRoot()}
-                      variant="outline"
-                    >
-                      <FolderOpen className="mr-2 h-4 w-4" />
-                      选择
-                    </Button>
-                  </div>
-
-                  <div className="flex flex-wrap items-center gap-2">
-                    <label
-                      className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
-                      htmlFor="skip-completed"
-                    >
-                      <Checkbox
-                        aria-label="跳过已完成"
-                        checked={skipCompleted}
-                        id="skip-completed"
-                        onCheckedChange={(checked) => setSkipCompleted(Boolean(checked))}
-                      />
-                      跳过已完成
-                    </label>
-                  </div>
-
-                  <div className="grid gap-4 lg:grid-cols-3">
-                    <SelectField
-                      label="替换范围"
-                      onValueChange={(value) =>
-                        setReplaceRange(value as 'auto' | 'topmost' | 'top' | 'all')
-                      }
-                      options={[
-                        { key: 'topmost', label: '最上方智能对象（推荐）' },
-                        { key: 'auto', label: '自动识别（最上方优先）' },
-                        { key: 'top', label: '根级智能对象' },
-                        { key: 'all', label: '全部智能对象' },
-                      ]}
-                      value={replaceRange}
-                    />
-                    <SelectField
-                      label="智能对象替换方式"
-                      onValueChange={(value) =>
-                        setSmartObjectReplaceMode(value as 'replaceContents' | 'editSmartObject')
-                      }
-                      options={[
-                        { key: 'replaceContents', label: '直接替换内容（旧模板）' },
-                        { key: 'editSmartObject', label: '进入内部替换（链接模板）' },
-                      ]}
-                      value={smartObjectReplaceMode}
-                    />
-                    <SelectField
-                      ariaLabel="印花适配方式"
-                      description={photoshopFitModeDescription(smartObjectInnerFitMode)}
-                      label="印花适配方式"
-                      onValueChange={(value) => setSmartObjectInnerFitMode(value as 'fit' | 'fill')}
-                      options={photoshopFitModeOptions}
-                      value={smartObjectInnerFitMode}
-                    />
-                    <SelectField
-                      label="裁切模式"
-                      onValueChange={(value) => setClipMode(value as 'auto' | 'guides' | 'none')}
-                      options={[
-                        { key: 'auto', label: '自动裁切' },
-                        { key: 'guides', label: '参考辅助线' },
-                        { key: 'none', label: '不裁切' },
-                      ]}
-                      value={clipMode}
-                    />
-                    <SelectField
-                      label="导出格式"
-                      onValueChange={(value) => setFormat(value as 'jpg' | 'png')}
-                      options={[
-                        { key: 'jpg', label: 'JPG' },
-                        { key: 'png', label: 'PNG' },
-                      ]}
-                      value={format}
-                    />
-                    <Field label="失败重试">
-                      <Input
-                        className="tabular-nums"
-                        max={5}
-                        min={0}
-                        onChange={(event) => setPhotoshopMaxRetries(event.target.value)}
-                        type="number"
-                        value={photoshopMaxRetries}
-                      />
-                    </Field>
-                  </div>
-                </AdvancedDisclosure>
-              ) : (
-                <div
-                  className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
-                  hidden={selectedPipelineStage !== 'photoshop'}
-                >
-                  已关闭 PS 套版，任务会在当前印花产物处结束。
-                </div>
-              )}
-
-              <div
-                className={cn(
-                  'flex flex-wrap items-start justify-between gap-3',
-                  selectedPipelineStage !== 'title' && 'hidden',
                 )}
-              >
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">标题生成</p>
-                  <p className="mt-1 text-sm text-muted-foreground">
-                    需要 PS 套版产出的货号文件夹；关闭套版时不可开启。
-                  </p>
-                </div>
-                <Badge variant={effectiveTitleEnabled ? 'secondary' : 'outline'}>
-                  {effectiveTitleEnabled ? '本次执行' : '本次跳过'}
-                </Badge>
-              </div>
 
-              {effectiveTitleEnabled ? (
-                <AdvancedDisclosure
-                  hidden={selectedPipelineStage !== 'title'}
-                  summary="标题生成设置"
+                <div
+                  className={cn(
+                    'flex flex-wrap items-start justify-between gap-3',
+                    selectedPipelineStage !== 'photoshop' && 'hidden',
+                  )}
+                >
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      开启后才要求印花货号、PSD 模板和 Windows 环境。
+                    </p>
+                  </div>
+                  <Badge variant={effectivePhotoshopEnabled ? 'secondary' : 'outline'}>
+                    {effectivePhotoshopEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
+                </div>
+
+                {effectivePhotoshopEnabled ? (
+                  <AdvancedDisclosure
+                    hidden={selectedPipelineStage !== 'photoshop'}
+                    summary="PS 套版设置"
+                  >
+                    <div className="flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-medium text-muted-foreground">PS 套版</p>
+                        <p className="mt-1 text-sm text-muted-foreground">
+                          选择模板和输出目录，其他参数沿用现有模块设置。
+                        </p>
+                      </div>
+                      <Badge variant="secondary">Windows only</Badge>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto_auto]">
+                      <Field label="PSD 模板">
+                        <Input readOnly value={templatePaths.join('；')} />
+                      </Field>
+                      <Button
+                        className="mt-7 h-10"
+                        disabled={chooseTemplatesMutation.loading}
+                        onClick={() => void chooseTemplates()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择模板
+                      </Button>
+                      <Button
+                        className="mt-7 h-10"
+                        onClick={() => setTemplatePaths([])}
+                        variant="ghost"
+                      >
+                        清空
+                      </Button>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto]">
+                      <Field label="套版输出目录">
+                        <Input
+                          onChange={(event) => setOutputRoot(event.target.value)}
+                          placeholder="留空则写入 04-上架工作区"
+                          value={outputRoot}
+                        />
+                      </Field>
+                      <Button
+                        className="mt-7 h-10"
+                        disabled={chooseOutputRootMutation.loading}
+                        onClick={() => void chooseOutputRoot()}
+                        variant="outline"
+                      >
+                        <FolderOpen className="mr-2 h-4 w-4" />
+                        选择
+                      </Button>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2">
+                      <label
+                        className="flex items-center gap-2 rounded-md border px-3 py-2 text-sm font-medium"
+                        htmlFor="skip-completed"
+                      >
+                        <Checkbox
+                          aria-label="跳过已完成"
+                          checked={skipCompleted}
+                          id="skip-completed"
+                          onCheckedChange={(checked) => setSkipCompleted(Boolean(checked))}
+                        />
+                        跳过已完成
+                      </label>
+                    </div>
+
+                    <div className="grid gap-4 lg:grid-cols-3">
+                      <SelectField
+                        label="替换范围"
+                        onValueChange={(value) =>
+                          setReplaceRange(value as 'auto' | 'topmost' | 'top' | 'all')
+                        }
+                        options={[
+                          { key: 'topmost', label: '最上方智能对象（推荐）' },
+                          { key: 'auto', label: '自动识别（最上方优先）' },
+                          { key: 'top', label: '根级智能对象' },
+                          { key: 'all', label: '全部智能对象' },
+                        ]}
+                        value={replaceRange}
+                      />
+                      <SelectField
+                        label="智能对象替换方式"
+                        onValueChange={(value) =>
+                          setSmartObjectReplaceMode(value as 'replaceContents' | 'editSmartObject')
+                        }
+                        options={[
+                          { key: 'replaceContents', label: '直接替换内容（旧模板）' },
+                          { key: 'editSmartObject', label: '进入内部替换（链接模板）' },
+                        ]}
+                        value={smartObjectReplaceMode}
+                      />
+                      <SelectField
+                        ariaLabel="印花适配方式"
+                        description={photoshopFitModeDescription(smartObjectInnerFitMode)}
+                        label="印花适配方式"
+                        onValueChange={(value) =>
+                          setSmartObjectInnerFitMode(value as 'fit' | 'fill')
+                        }
+                        options={photoshopFitModeOptions}
+                        value={smartObjectInnerFitMode}
+                      />
+                      <SelectField
+                        label="裁切模式"
+                        onValueChange={(value) => setClipMode(value as 'auto' | 'guides' | 'none')}
+                        options={[
+                          { key: 'auto', label: '自动裁切' },
+                          { key: 'guides', label: '参考辅助线' },
+                          { key: 'none', label: '不裁切' },
+                        ]}
+                        value={clipMode}
+                      />
+                      <SelectField
+                        label="导出格式"
+                        onValueChange={(value) => setFormat(value as 'jpg' | 'png')}
+                        options={[
+                          { key: 'jpg', label: 'JPG' },
+                          { key: 'png', label: 'PNG' },
+                        ]}
+                        value={format}
+                      />
+                      <Field label="失败重试">
+                        <Input
+                          className="tabular-nums"
+                          max={5}
+                          min={0}
+                          onChange={(event) => setPhotoshopMaxRetries(event.target.value)}
+                          type="number"
+                          value={photoshopMaxRetries}
+                        />
+                      </Field>
+                    </div>
+                  </AdvancedDisclosure>
+                ) : (
+                  <div
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                    hidden={selectedPipelineStage !== 'photoshop'}
+                  >
+                    已关闭 PS 套版，任务会在当前印花产物处结束。
+                  </div>
+                )}
+
+                <div
+                  className={cn(
+                    'flex flex-wrap items-start justify-between gap-3',
+                    selectedPipelineStage !== 'title' && 'hidden',
+                  )}
                 >
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">标题生成</p>
                     <p className="mt-1 text-sm text-muted-foreground">
-                      直接扫描套版后的货号文件夹并写入标题表。
+                      需要 PS 套版产出的货号文件夹；关闭套版时不可开启。
                     </p>
                   </div>
-
-                  <div className="grid gap-4 md:grid-cols-3">
-                    <SelectField
-                      label="标题平台"
-                      onValueChange={setTitlePlatform}
-                      options={platforms}
-                      value={titlePlatform}
-                    />
-                    <SelectField
-                      label="标题语言"
-                      onValueChange={setTitleLanguage}
-                      options={languages}
-                      value={titleLanguage}
-                    />
-                    <SelectField
-                      label="标题模型"
-                      onValueChange={setTitleModel}
-                      options={titleModels}
-                      value={titleModel}
-                    />
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-4">
-                    <Field label="标题文件名">
-                      <Input
-                        onChange={(event) => setTitleFileName(event.target.value)}
-                        value={titleFileName}
-                      />
-                    </Field>
-                    <Field label="取第几张">
-                      <Input
-                        className="tabular-nums"
-                        min={1}
-                        onChange={(event) => setTitleImageIndex(event.target.value)}
-                        type="number"
-                        value={titleImageIndex}
-                      />
-                    </Field>
-                    <Field label="最大边长">
-                      <Input
-                        className="tabular-nums"
-                        min={256}
-                        onChange={(event) => setTitleMaxSize(event.target.value)}
-                        type="number"
-                        value={titleMaxSize}
-                      />
-                    </Field>
-                    <Field label="关键词分隔符">
-                      <Input
-                        onChange={(event) => setTitleKeywordGroupSeparator(event.target.value)}
-                        placeholder="空格"
-                        value={titleKeywordGroupSeparator}
-                      />
-                    </Field>
-                  </div>
-
-                  <div className="rounded-md border p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                      <div>
-                        <p className="text-sm font-medium text-muted-foreground">标题关键词组</p>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          完整任务会在每个模板批次标题生成时按货号顺序平均分组。
-                        </p>
-                      </div>
-                      <Button onClick={addTitleKeywordGroup} type="button" variant="secondary">
-                        <Plus className="mr-2 h-4 w-4" />
-                        新增组
-                      </Button>
-                    </div>
-
-                    <div className="mt-4 space-y-2">
-                      {titleKeywordGroups.map((group, index) => (
-                        <div
-                          className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
-                          key={group.id}
-                        >
-                          <div className="flex items-center text-sm font-medium text-muted-foreground">
-                            第 {index + 1} 组
-                          </div>
-                          <Input
-                            aria-label={`第 ${index + 1} 组前缀`}
-                            onChange={(event) =>
-                              updateTitleKeywordGroup(index, 'prefix', event.target.value)
-                            }
-                            placeholder="前缀关键词"
-                            value={group.prefix ?? ''}
-                          />
-                          <Input
-                            aria-label={`第 ${index + 1} 组后缀`}
-                            onChange={(event) =>
-                              updateTitleKeywordGroup(index, 'suffix', event.target.value)
-                            }
-                            placeholder="后缀关键词"
-                            value={group.suffix ?? ''}
-                          />
-                          <Button
-                            aria-label={`删除第 ${index + 1} 组`}
-                            className="h-10 w-10 p-0"
-                            onClick={() => removeTitleKeywordGroup(index)}
-                            title={`删除第 ${index + 1} 组`}
-                            type="button"
-                            variant="ghost"
-                          >
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="grid gap-4 md:grid-cols-2">
-                    <SelectField
-                      label="已有标题策略"
-                      onValueChange={(value) =>
-                        setTitleExistingStrategy(value as TitleExistingStrategy)
-                      }
-                      options={[
-                        { key: 'skip', label: '跳过已有' },
-                        { key: 'regenerate', label: '重新生成' },
-                      ]}
-                      value={titleExistingStrategy}
-                    />
-                    <Field label="失败重试次数">
-                      <Input
-                        className="tabular-nums"
-                        min={0}
-                        max={5}
-                        onChange={(event) => setTitleMaxRetries(event.target.value)}
-                        type="number"
-                        value={titleMaxRetries}
-                      />
-                    </Field>
-                  </div>
-
-                  <Field label="标题额外要求">
-                    <Textarea
-                      onChange={(event) => setExtraRequirement(event.target.value)}
-                      placeholder="例如：强调原创设计、带 vintage 关键词"
-                      value={extraRequirement}
-                    />
-                  </Field>
-
-                  <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
-                    <Field label="图像预处理">
-                      <div className="rounded-md border p-4">
-                        <div className="space-y-3 text-sm">
-                          <label
-                            className="flex items-center gap-2 text-muted-foreground"
-                            htmlFor="title-preprocess-flatten"
-                          >
-                            <Checkbox checked disabled id="title-preprocess-flatten" />
-                            透明底自动加白
-                          </label>
-                          <label className="flex items-center gap-2" htmlFor="title-compression">
-                            <Checkbox
-                              checked={titleCompression}
-                              id="title-compression"
-                              onCheckedChange={(checked) => setTitleCompression(Boolean(checked))}
-                            />
-                            压缩图片节省费用
-                          </label>
-                        </div>
-                      </div>
-                    </Field>
-                    <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
-                      标题生成会沿用当前平台、语言、模型和预处理设置。
-                    </div>
-                  </div>
-                </AdvancedDisclosure>
-              ) : (
-                <div
-                  className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
-                  hidden={selectedPipelineStage !== 'title'}
-                >
-                  {effectivePhotoshopEnabled
-                    ? '已关闭标题生成，任务会在 PS 套版后结束。'
-                    : '标题生成需要先启用 PS 套版。'}
+                  <Badge variant={effectiveTitleEnabled ? 'secondary' : 'outline'}>
+                    {effectiveTitleEnabled ? '本次执行' : '本次跳过'}
+                  </Badge>
                 </div>
-              )}
-            </CardContent>
-          </Card>
 
-          <PipelineRunControls
-            canStart={canStart}
-            cancelLoading={cancelPipelineMutation.loading}
-            currentRunId={currentRunId}
-            logCount={0}
-            message={message}
-            onCancel={() => void cancelPipeline()}
-            onOpenLog={() => setIsLogOpen(true)}
-            onRefresh={() => void refreshOptions()}
-            onResolveLaunchBlock={() => {
-              if (firstValidationIssue) {
-                setSelectedPipelineStage(firstValidationIssue.stage)
-              }
-            }}
-            onStart={() => void runPipeline()}
-            running={running}
-            {...(firstValidationStageLabel
-              ? { launchDisabledStageLabel: firstValidationStageLabel }
-              : {})}
-            {...(validationMessages[0] ? { launchDisabledReason: validationMessages[0] } : {})}
-          />
-        </CardContent>
-      </Card>
+                {effectiveTitleEnabled ? (
+                  <AdvancedDisclosure
+                    hidden={selectedPipelineStage !== 'title'}
+                    summary="标题生成设置"
+                  >
+                    <div>
+                      <p className="text-sm font-medium text-muted-foreground">标题生成</p>
+                      <p className="mt-1 text-sm text-muted-foreground">
+                        直接扫描套版后的货号文件夹并写入标题表。
+                      </p>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-3">
+                      <SelectField
+                        label="标题平台"
+                        onValueChange={setTitlePlatform}
+                        options={platforms}
+                        value={titlePlatform}
+                      />
+                      <SelectField
+                        label="标题语言"
+                        onValueChange={setTitleLanguage}
+                        options={languages}
+                        value={titleLanguage}
+                      />
+                      <SelectField
+                        label="标题模型"
+                        onValueChange={setTitleModel}
+                        options={titleModels}
+                        value={titleModel}
+                      />
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-4">
+                      <Field label="标题文件名">
+                        <Input
+                          onChange={(event) => setTitleFileName(event.target.value)}
+                          value={titleFileName}
+                        />
+                      </Field>
+                      <Field label="取第几张">
+                        <Input
+                          className="tabular-nums"
+                          min={1}
+                          onChange={(event) => setTitleImageIndex(event.target.value)}
+                          type="number"
+                          value={titleImageIndex}
+                        />
+                      </Field>
+                      <Field label="最大边长">
+                        <Input
+                          className="tabular-nums"
+                          min={256}
+                          onChange={(event) => setTitleMaxSize(event.target.value)}
+                          type="number"
+                          value={titleMaxSize}
+                        />
+                      </Field>
+                      <Field label="关键词分隔符">
+                        <Input
+                          onChange={(event) => setTitleKeywordGroupSeparator(event.target.value)}
+                          placeholder="空格"
+                          value={titleKeywordGroupSeparator}
+                        />
+                      </Field>
+                    </div>
+
+                    <div className="rounded-md border p-4">
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <p className="text-sm font-medium text-muted-foreground">标题关键词组</p>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            完整任务会在每个模板批次标题生成时按货号顺序平均分组。
+                          </p>
+                        </div>
+                        <Button onClick={addTitleKeywordGroup} type="button" variant="secondary">
+                          <Plus className="mr-2 h-4 w-4" />
+                          新增组
+                        </Button>
+                      </div>
+
+                      <div className="mt-4 space-y-2">
+                        {titleKeywordGroups.map((group, index) => (
+                          <div
+                            className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-[72px_minmax(0,1fr)_minmax(0,1fr)_40px]"
+                            key={group.id}
+                          >
+                            <div className="flex items-center text-sm font-medium text-muted-foreground">
+                              第 {index + 1} 组
+                            </div>
+                            <Input
+                              aria-label={`第 ${index + 1} 组前缀`}
+                              onChange={(event) =>
+                                updateTitleKeywordGroup(index, 'prefix', event.target.value)
+                              }
+                              placeholder="前缀关键词"
+                              value={group.prefix ?? ''}
+                            />
+                            <Input
+                              aria-label={`第 ${index + 1} 组后缀`}
+                              onChange={(event) =>
+                                updateTitleKeywordGroup(index, 'suffix', event.target.value)
+                              }
+                              placeholder="后缀关键词"
+                              value={group.suffix ?? ''}
+                            />
+                            <Button
+                              aria-label={`删除第 ${index + 1} 组`}
+                              className="h-10 w-10 p-0"
+                              onClick={() => removeTitleKeywordGroup(index)}
+                              title={`删除第 ${index + 1} 组`}
+                              type="button"
+                              variant="ghost"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <SelectField
+                        label="已有标题策略"
+                        onValueChange={(value) =>
+                          setTitleExistingStrategy(value as TitleExistingStrategy)
+                        }
+                        options={[
+                          { key: 'skip', label: '跳过已有' },
+                          { key: 'regenerate', label: '重新生成' },
+                        ]}
+                        value={titleExistingStrategy}
+                      />
+                      <Field label="失败重试次数">
+                        <Input
+                          className="tabular-nums"
+                          min={0}
+                          max={5}
+                          onChange={(event) => setTitleMaxRetries(event.target.value)}
+                          type="number"
+                          value={titleMaxRetries}
+                        />
+                      </Field>
+                    </div>
+
+                    <Field label="标题额外要求">
+                      <Textarea
+                        onChange={(event) => setExtraRequirement(event.target.value)}
+                        placeholder="例如：强调原创设计、带 vintage 关键词"
+                        value={extraRequirement}
+                      />
+                    </Field>
+
+                    <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_320px]">
+                      <Field label="图像预处理">
+                        <div className="rounded-md border p-4">
+                          <div className="space-y-3 text-sm">
+                            <label
+                              className="flex items-center gap-2 text-muted-foreground"
+                              htmlFor="title-preprocess-flatten"
+                            >
+                              <Checkbox checked disabled id="title-preprocess-flatten" />
+                              透明底自动加白
+                            </label>
+                            <label className="flex items-center gap-2" htmlFor="title-compression">
+                              <Checkbox
+                                checked={titleCompression}
+                                id="title-compression"
+                                onCheckedChange={(checked) => setTitleCompression(Boolean(checked))}
+                              />
+                              压缩图片节省费用
+                            </label>
+                          </div>
+                        </div>
+                      </Field>
+                      <div className="rounded-md border border-dashed p-4 text-sm text-muted-foreground">
+                        标题生成会沿用当前平台、语言、模型和预处理设置。
+                      </div>
+                    </div>
+                  </AdvancedDisclosure>
+                ) : (
+                  <div
+                    className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground"
+                    hidden={selectedPipelineStage !== 'title'}
+                  >
+                    {effectivePhotoshopEnabled
+                      ? '已关闭标题生成，任务会在 PS 套版后结束。'
+                      : '标题生成需要先启用 PS 套版。'}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <PipelineRunControls
+              canStart={canStart}
+              cancelLoading={cancelPipelineMutation.loading}
+              currentRunId={currentRunId}
+              logCount={0}
+              message={message}
+              onCancel={() => void cancelPipeline()}
+              onOpenLog={() => setIsLogOpen(true)}
+              onRefresh={() => void refreshOptions()}
+              onResolveLaunchBlock={() => {
+                if (firstValidationIssue) {
+                  setSelectedPipelineStage(firstValidationIssue.stage)
+                }
+              }}
+              onStart={() => void runPipeline()}
+              running={running}
+              {...(firstValidationStageLabel
+                ? { launchDisabledStageLabel: firstValidationStageLabel }
+                : {})}
+              {...(validationMessages[0] ? { launchDisabledReason: validationMessages[0] } : {})}
+            />
+          </CardContent>
+        </Card>
+      </div>
     </div>
   )
 }
