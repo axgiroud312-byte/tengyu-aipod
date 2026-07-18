@@ -462,7 +462,7 @@ async function installPhotoshopWorkspaceHarness(
       return {
         ok: true,
         task_id: taskId,
-        output_layout: 'sku_flat',
+        output_layout: 'template_first',
         log_path: fixture.outputPaths[0].replace(/[\\/][^\\/]+$/, '\\photoshop-ui-run.log'),
         templates_total: 2,
         groups_total: 4,
@@ -1983,9 +1983,9 @@ test.describe('production-first Workbench shell', () => {
     ]
     const folderPrintPath = join(printDir, 'SKU-FOLDER.png')
     const outputPaths = [
-      join(batchDir, 'SKU-001', 'front-01.jpg'),
-      join(batchDir, 'SKU-001', 'back-01.jpg'),
-      join(batchDir, 'SKU-002', 'front-01.jpg'),
+      join(batchDir, 'front', 'SKU-001', '01.jpg'),
+      join(batchDir, 'back', 'SKU-001', '01.jpg'),
+      join(batchDir, 'front', 'SKU-002', '01.jpg'),
     ] as [string, string, string]
     const templatePaths = [
       join(workbenchRoot, 'mockups', 'front.psd'),
@@ -1994,8 +1994,9 @@ test.describe('production-first Workbench shell', () => {
     await Promise.all([
       mkdir(printDir, { recursive: true }),
       mkdir(candidateDir, { recursive: true }),
-      mkdir(join(batchDir, 'SKU-001'), { recursive: true }),
-      mkdir(join(batchDir, 'SKU-002'), { recursive: true }),
+      mkdir(join(batchDir, 'front', 'SKU-001'), { recursive: true }),
+      mkdir(join(batchDir, 'front', 'SKU-002'), { recursive: true }),
+      mkdir(join(batchDir, 'back', 'SKU-001'), { recursive: true }),
     ])
     await Promise.all(
       [...printPaths, folderPrintPath, ...outputPaths].map((path, index) =>
@@ -2097,7 +2098,10 @@ test.describe('production-first Workbench shell', () => {
         (globalThis as typeof globalThis & { __photoshopRunBatchInput?: unknown })
           .__photoshopRunBatchInput,
     )
-    expect(submittedInput).toMatchObject({ print_paths: printPaths })
+    expect(submittedInput).toMatchObject({
+      print_paths: printPaths,
+      output_layout: 'template_first',
+    })
     expect(submittedInput).not.toHaveProperty('print_folder')
 
     const batch = results.getByRole('region', { name: '单次套版批次 套版-e2e' })
@@ -2112,9 +2116,11 @@ test.describe('production-first Workbench shell', () => {
     await batch.getByRole('button', { name: '查看 SKU SKU-001，2 张成品图' }).click()
     const resultDialog = page.getByRole('dialog', { name: 'SKU-001 成品图' })
     await expect(
-      resultDialog.getByRole('button', { name: '查看成品图 front-01.jpg' }),
+      resultDialog.getByRole('button', { name: '查看成品图 front / 01.jpg' }),
     ).toBeVisible()
-    await expect(resultDialog.getByRole('button', { name: '查看成品图 back-01.jpg' })).toBeVisible()
+    await expect(
+      resultDialog.getByRole('button', { name: '查看成品图 back / 01.jpg' }),
+    ).toBeVisible()
     await page.keyboard.press('Escape')
 
     const expandTaskDock = page.getByRole('button', { name: /展开任务坞/ })

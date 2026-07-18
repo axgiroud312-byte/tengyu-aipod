@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from './sqlite'
 
-export const CURRENT_WORKBENCH_SCHEMA_VERSION = 2
+export const CURRENT_WORKBENCH_SCHEMA_VERSION = 3
 
 type MigrationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'>
 
@@ -210,6 +210,7 @@ CREATE TABLE IF NOT EXISTS psd_templates (
   guides TEXT NOT NULL,
   clip_areas TEXT NOT NULL,
   native_slices TEXT NOT NULL DEFAULT '[]',
+  scanner_version INTEGER NOT NULL DEFAULT 0,
   mode TEXT NOT NULL,
   representative_so_count INTEGER NOT NULL,
   scanned_at INTEGER NOT NULL,
@@ -255,6 +256,11 @@ const COLUMN_MIGRATIONS: Array<{ table: string; column: string; definition: stri
     table: 'psd_templates',
     column: 'native_slices',
     definition: "native_slices TEXT NOT NULL DEFAULT '[]'",
+  },
+  {
+    table: 'psd_templates',
+    column: 'scanner_version',
+    definition: 'scanner_version INTEGER NOT NULL DEFAULT 0',
   },
   {
     table: 'psd_templates',

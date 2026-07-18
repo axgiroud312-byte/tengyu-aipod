@@ -21,6 +21,7 @@ export interface GroupPhotoshopTasksOptions {
   format?: PhotoshopExportFormat
   jpgQuality?: number
   outputLayout?: PhotoshopOutputLayout
+  templateName?: string
   smartObjectReplaceMode?: PhotoshopSmartObjectReplaceMode
   smartObjectInnerFitMode?: PhotoshopInnerFitMode
 }
@@ -98,7 +99,24 @@ export function sanitizeTemplateName(psdPath: string): string {
     .replace(/[<>:"/\\|?*]/g, '_')
     .trim()
     .slice(0, 60)
-  return sanitized.length > 0 ? sanitized : 'template'
+    .replace(/[. ]+$/g, '')
+  return sanitized.length > 0 && sanitized !== '.' && sanitized !== '..' ? sanitized : 'template'
+}
+
+export function uniqueTemplateNames(templatePaths: string[]): string[] {
+  const usedNames = new Set<string>()
+  return templatePaths.map((templatePath) => {
+    const baseName = sanitizeTemplateName(templatePath)
+    let candidate = baseName
+    let suffixIndex = 2
+    while (usedNames.has(candidate.toLowerCase())) {
+      const suffix = `-${suffixIndex}`
+      candidate = `${baseName.slice(0, Math.max(1, 60 - suffix.length))}${suffix}`
+      suffixIndex += 1
+    }
+    usedNames.add(candidate.toLowerCase())
+    return candidate
+  })
 }
 
 function buildJob(
@@ -189,6 +207,10 @@ export function groupTasks(
     format: options.format ?? 'jpg',
     jpgQuality: options.jpgQuality ?? 12,
     outputLayout: options.outputLayout ?? 'template_first',
+    templateName:
+      options.templateName === undefined
+        ? sanitizeTemplateName(template.file_path)
+        : sanitizeTemplateName(options.templateName),
     smartObjectReplaceMode: options.smartObjectReplaceMode ?? 'replaceContents',
     smartObjectInnerFitMode: options.smartObjectInnerFitMode ?? 'fill',
     outputRoot: options.outputRoot,
@@ -201,7 +223,7 @@ export function groupTasks(
   }
 
   const chunks = chunkPrintAssets(sortedPrintAssets, groupSize)
-  const templateName = sanitizeTemplateName(template.file_path)
+  const templateName = resolvedOptions.templateName
   return chunks.map((chunk, index) => {
     const skuFolder = skuFolderForGroup(chunk, index, resolvedOptions.outputLayout)
     return {

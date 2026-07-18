@@ -7,10 +7,22 @@ type Row = Record<string, unknown>
 function createFakeDb() {
   const rows = new Map<string, Row>()
   return {
+    rows,
     exec: () => undefined,
     prepare: (sql: string) => ({
-      get: (fileHash: string) => rows.get(fileHash),
-      all: () => [...rows.values()].sort((a, b) => Number(b.scanned_at) - Number(a.scanned_at)),
+      get: (fileHash: string, scannerVersion?: number) => {
+        const row = rows.get(fileHash)
+        if (sql.includes('scanner_version') && row?.scanner_version !== scannerVersion) {
+          return undefined
+        }
+        return row
+      },
+      all: (scannerVersion?: number) =>
+        [...rows.values()]
+          .filter((row) =>
+            sql.includes('scanner_version') ? row.scanner_version === scannerVersion : true,
+          )
+          .sort((a, b) => Number(b.scanned_at) - Number(a.scanned_at)),
       run: (row: Row) => {
         if (sql.includes('INSERT INTO psd_templates')) {
           rows.set(String(row.file_hash), row)
@@ -77,5 +89,22 @@ describe('SqlitePsdTemplateCache', () => {
       { file_hash: 'hash-b' },
       { file_hash: 'hash-a' },
     ])
+  })
+
+  it('invalidates legacy scanner rows but caches current no-slice templates', async () => {
+    const db = createFakeDb()
+    const cache = new SqlitePsdTemplateCache({ db: db as never })
+    const noSliceTemplate = { ...template('no-slices', 1000), native_slices: [] }
+
+    await cache.save(noSliceTemplate)
+    await expect(cache.findByHash('no-slices')).resolves.toMatchObject({ native_slices: [] })
+
+    const row = db.rows.get('no-slices')
+    expect(row?.scanner_version).toBeGreaterThan(0)
+    if (row) {
+      row.scanner_version = 0
+    }
+    await expect(cache.findByHash('no-slices')).resolves.toBeNull()
+    await expect(cache.list()).resolves.toEqual([])
   })
 })

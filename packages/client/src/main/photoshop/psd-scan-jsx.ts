@@ -186,7 +186,10 @@ function nativeSliceKind(origin) {
   if (value.indexOf('layer') >= 0) {
     return 'layer';
   }
-  return 'user';
+  if (value.indexOf('user') >= 0) {
+    return 'user';
+  }
+  return 'unknown';
 }
 
 function descriptorNumber(descriptor, key) {
@@ -221,10 +224,10 @@ function scanNativeSlices() {
     var slice = slices.getObjectValue(i);
     var origin = slice.hasKey(originKey)
       ? typeIDToStringID(slice.getEnumerationValue(originKey))
-      : 'userGenerated';
+      : 'unknown';
     var bounds = slice.getObjectValue(boundsKey);
     output.push({
-      name: slice.hasKey(nameKey) ? slice.getString(nameKey) : ('slice-' + (i + 1)),
+      name: slice.hasKey(nameKey) ? slice.getString(nameKey) : '',
       kind: nativeSliceKind(origin),
       bounds: [
         descriptorNumber(bounds, leftKey),

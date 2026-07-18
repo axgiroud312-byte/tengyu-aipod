@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type {
@@ -9,13 +9,14 @@ import type {
 } from '@tengyu-aipod/shared'
 import { SLICE_8_LISTING_TEMPLATES } from '@tengyu-aipod/shared'
 import ExcelJS from 'exceljs'
+import sharp from 'sharp'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { loadBatchAsListingItems } from '../lib/listing-batch-loader'
 import { TempFileManager } from '../lib/temp-file-manager'
 import { PhotoshopExecutionEngine } from './execution-engine'
 import { writePhotoshopJobJsx, writePhotoshopTemplateBatchJsx } from './jsx-generator'
 import { PhotoshopMultiBatchRunner, createCompletedJobResult, runBatch } from './multi-batch'
-import { PsdScanner } from './psd-scanner'
+import { PsdScanner, deriveClipAreas } from './psd-scanner'
 
 let tempDir = ''
 
@@ -52,6 +53,15 @@ function createTemplate(filePath: string, id: string): PsdTemplate {
     layers: [],
     text_layers: [],
   }
+}
+
+function sliceDimensionTolerance(expected: number): number {
+  return Math.max(4, Math.ceil(expected * 0.02))
+}
+
+function expectSliceDimension(actual: number | undefined, expected: number): void {
+  expect(actual).toBeDefined()
+  expect(Math.abs((actual ?? 0) - expected)).toBeLessThanOrEqual(sliceDimensionTolerance(expected))
 }
 
 function createPrints(): PhotoshopPrintAsset[] {
@@ -213,8 +223,9 @@ describe('PhotoshopMultiBatchRunner', () => {
       ['C:\\templates\\shirt.psd', createTemplate('C:\\templates\\shirt.psd', 'tpl-shirt')],
     ])
     const progressTotals: number[] = []
+    const outputPaths: string[] = []
 
-    await runBatch(
+    const result = await runBatch(
       createPrints(),
       [...templates.keys()],
       {
@@ -226,7 +237,10 @@ describe('PhotoshopMultiBatchRunner', () => {
           scanPsd: async (path) => templates.get(path) as PsdTemplate,
         },
         engine: {
-          runJob: async (job) => createCompletedJobResult(job.output_paths),
+          runJob: async (job) => {
+            outputPaths.push(...job.output_paths)
+            return createCompletedJobResult(job.output_paths)
+          },
         },
         onProgress: (item) => {
           progressTotals.push(item.total_groups)
@@ -238,6 +252,13 @@ describe('PhotoshopMultiBatchRunner', () => {
     expect(progressTotals).not.toHaveLength(0)
     expect(progressTotals[0]).toBe(0)
     expect(new Set(progressTotals.slice(1))).toEqual(new Set([4]))
+    expect(result.output_layout).toBe('template_first')
+    expect(outputPaths).toEqual([
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/cup/img2/01.jpg',
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/cup/img10/01.jpg',
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/shirt/img2/01.jpg',
+      'C:\\Users\\niilo\\Desktop\\新建文件夹/shirt/img10/01.jpg',
+    ])
   })
 
   it('uses template-level execution when the engine supports it', async () => {
@@ -302,6 +323,46 @@ describe('PhotoshopMultiBatchRunner', () => {
         outputs: ['C:\\Users\\niilo\\Desktop\\新建文件夹/img10/template/01.jpg'],
         status: 'completed',
       },
+    ])
+  })
+
+  it('keeps same-named templates in separate template folders', async () => {
+    const firstTemplate = createTemplate('C:\\templates\\front\\mockup.psd', 'tpl-front')
+    const secondTemplate = createTemplate('C:\\templates\\back\\mockup.psd', 'tpl-back')
+    const templates = new Map([
+      [firstTemplate.file_path, firstTemplate],
+      [secondTemplate.file_path, secondTemplate],
+    ])
+    const outputPaths: string[] = []
+
+    const result = await runBatch(
+      [{ id: 'SKU-001', file_path: 'C:\\prints\\SKU-001.png' }],
+      [...templates.keys()],
+      {
+        taskId: 'batch-duplicate-template-names',
+        outputRoot: 'C:\\outputs\\batch',
+      },
+      {
+        scanner: {
+          scanPsd: async (path) => templates.get(path) as PsdTemplate,
+        },
+        engine: {
+          runJob: async (job) => {
+            outputPaths.push(...job.output_paths)
+            return createCompletedJobResult(job.output_paths)
+          },
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(outputPaths).toEqual([
+      'C:\\outputs\\batch/mockup/SKU-001/01.jpg',
+      'C:\\outputs\\batch/mockup-2/SKU-001/01.jpg',
+    ])
+    expect(result.templates.map((template) => template.template_name)).toEqual([
+      'mockup',
+      'mockup-2',
     ])
   })
 
@@ -610,6 +671,44 @@ describe('PhotoshopMultiBatchRunner', () => {
     })
   })
 
+  it('stops scanning later templates when cancellation is requested', async () => {
+    const cancelFilePath = join(tempDir, 'cancel.flag')
+    const firstTemplate = createTemplate('C:\\templates\\first.psd', 'first')
+    const secondTemplate = createTemplate('C:\\templates\\second.psd', 'second')
+    const scanned: string[] = []
+    const executed: string[] = []
+
+    const result = await runBatch(
+      createPrints(),
+      [firstTemplate.file_path, secondTemplate.file_path],
+      {
+        taskId: 'batch-cancel-scan',
+        outputRoot: 'C:\\outputs',
+        cancelFilePath,
+      },
+      {
+        scanner: {
+          scanPsd: async (path) => {
+            scanned.push(path)
+            await writeFile(cancelFilePath, 'cancel', 'utf8')
+            return path === firstTemplate.file_path ? firstTemplate : secondTemplate
+          },
+        },
+        engine: {
+          runJob: async (job) => {
+            executed.push(job.mockup_path)
+            return createCompletedJobResult(job.output_paths)
+          },
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(scanned).toEqual([firstTemplate.file_path])
+    expect(executed).toEqual([])
+    expect(result).toMatchObject({ ok: false, cancelled: true, groups_completed: 0 })
+  })
+
   it('compares native-slice and legacy export with a real PSD when REAL_PS=1', async () => {
     if (process.env.REAL_PS !== '1' || process.env.REAL_PS_MUTATE !== '1') {
       return
@@ -686,9 +785,13 @@ describe('PhotoshopMultiBatchRunner', () => {
           ),
       })
     const runRealBatch = async (nextTemplate: PsdTemplate, mode: 'legacy' | 'native') => {
+      const logs: PhotoshopProgressLogEntry[] = []
       const runner = new PhotoshopMultiBatchRunner({
         scanner: { scanPsd: async () => nextTemplate },
         engine: createEngine(`${mode}-jsx-tmp`),
+        onLog: (entry) => {
+          logs.push(entry)
+        },
         progressLogger: null,
       })
       const startedAt = performance.now()
@@ -699,11 +802,40 @@ describe('PhotoshopMultiBatchRunner', () => {
         jpgQuality: 10,
         maxRetries: 0,
       })
-      return { result, durationMs: performance.now() - startedAt }
+      return { result, logs, durationMs: performance.now() - startedAt }
+    }
+
+    const native = await runRealBatch(template, 'native')
+    expect(native.logs).not.toContainEqual(
+      expect.objectContaining({ stage: 'native_slice_export_fallback' }),
+    )
+    const replacementLogs = native.logs.filter((entry) => entry.stage === 'so_replace')
+    expect(replacementLogs).toHaveLength(prints.length)
+    for (const replacementLog of replacementLogs) {
+      const before = replacementLog.before_bounds
+      const after = replacementLog.after_bounds
+      expect(before).toBeDefined()
+      expect(after).toBeDefined()
+      expect(
+        Math.abs((after?.[2] ?? 0) - (after?.[0] ?? 0) - ((before?.[2] ?? 0) - (before?.[0] ?? 0))),
+      ).toBeLessThanOrEqual(2)
+      expect(
+        Math.abs((after?.[3] ?? 0) - (after?.[1] ?? 0) - ((before?.[3] ?? 0) - (before?.[1] ?? 0))),
+      ).toBeLessThanOrEqual(2)
+    }
+    if (process.env.PS_NATIVE_ONLY === '1') {
+      expect(native.result.outputs).toHaveLength(prints.length * template.native_slices.length)
+      for (const [outputIndex, outputPath] of native.result.outputs.entries()) {
+        const metadata = await sharp(outputPath).metadata()
+        const slice = template.native_slices[outputIndex % template.native_slices.length]
+        expect(metadata.format).toBe('jpeg')
+        expectSliceDimension(metadata.width, (slice?.bounds[2] ?? 0) - (slice?.bounds[0] ?? 0))
+        expectSliceDimension(metadata.height, (slice?.bounds[3] ?? 0) - (slice?.bounds[1] ?? 0))
+      }
+      return
     }
 
     const legacy = await runRealBatch(legacyTemplate, 'legacy')
-    const native = await runRealBatch(template, 'native')
 
     expect(native.result.outputs).toHaveLength(legacy.result.outputs.length)
     expect(native.result.outputs.map((path) => basename(path))).toEqual(
@@ -724,6 +856,165 @@ describe('PhotoshopMultiBatchRunner', () => {
     })
     expect(listingBatch.listingItems.map((item) => item.sku)).toEqual(
       native.result.result_groups.map((group) => group.sku_folder),
+    )
+  }, 600_000)
+
+  it('validates a real Photoshop template matrix when REAL_PS_MATRIX=1', async () => {
+    if (process.env.REAL_PS_MATRIX !== '1') {
+      return
+    }
+
+    const templateRoot = process.env.PS_TEMPLATE_ROOT
+    const printPath = process.env.PS_PRINT_PATH
+    const outputRoot = process.env.PS_OUTPUT_ROOT
+    const replaceMode =
+      process.env.PS_REPLACE_MODE === 'editSmartObject' ? 'editSmartObject' : 'replaceContents'
+    expect(templateRoot).toBeTruthy()
+    expect(printPath).toBeTruthy()
+    expect(outputRoot).toBeTruthy()
+
+    const templateFiles = (await readdir(templateRoot as string))
+      .filter((file) => /\.(psd|psb)$/i.test(file))
+      .sort((left, right) => left.localeCompare(right))
+    expect(templateFiles.length).toBeGreaterThan(0)
+    await mkdir(outputRoot as string, { recursive: true })
+
+    const scanner = new PsdScanner({
+      platform: 'win32',
+      tempFiles: new TempFileManager({ rootDir: join(tempDir, 'matrix-scan-tmp') }),
+      cache: createMemoryCache(),
+    })
+    const matrixTempFiles = new TempFileManager({ rootDir: join(tempDir, 'matrix-jsx-tmp') })
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      shouldSkipJob: async () => false,
+      recorder: {
+        recordRunning: async () => undefined,
+        recordCompleted: async () => undefined,
+        recordFailed: async () => undefined,
+      },
+      writeJsx: (job) => writePhotoshopJobJsx(job, { tempFiles: matrixTempFiles }),
+      writeTemplateBatchJsx: (template, groups, cancelFilePath) =>
+        writePhotoshopTemplateBatchJsx(
+          {
+            task_id: groups[0]?.job.task_id ?? 'real-matrix',
+            mockup_path: template.file_path,
+            template_name: basename(template.file_path, '.psd'),
+            native_slices: template.native_slices,
+            cancel_file_path: cancelFilePath,
+            groups: groups.map((group) => ({
+              group_index: group.group_index,
+              sku_folder: group.sku_folder,
+              so_replacements: group.job.so_replacements,
+              clip_areas: group.job.clip_areas,
+              output_paths: group.job.output_paths,
+              format: group.job.format,
+              jpg_quality: group.job.jpg_quality,
+            })),
+          },
+          { tempFiles: matrixTempFiles },
+        ),
+    })
+    const report: Array<{
+      template: string
+      document_size: { w: number; h: number }
+      target_smart_object: string
+      smart_objects: PsdTemplate['smart_objects']
+      native_slices: PsdTemplate['native_slices']
+      outputs: Array<{ path: string; format: string; width: number; height: number }>
+    }> = []
+
+    for (const [templateIndex, templateFile] of templateFiles.entries()) {
+      const templatePath = join(templateRoot as string, templateFile)
+      const template = await scanner.scanPsd(templatePath)
+      expect(template.smart_objects.length, `${templateFile}: smart objects`).toBeGreaterThan(0)
+      const target =
+        template.smart_objects.find((smartObject) => smartObject.is_top_level) ??
+        template.smart_objects[0]
+      expect(target, `${templateFile}: topmost smart object`).toBeTruthy()
+
+      const logs: PhotoshopProgressLogEntry[] = []
+      const runner = new PhotoshopMultiBatchRunner({
+        scanner: { scanPsd: async () => template },
+        engine,
+        onLog: (entry) => {
+          logs.push(entry)
+        },
+        progressLogger: null,
+      })
+      const result = await runner.runBatch(
+        [{ id: 'matrix-0001', file_path: printPath as string }],
+        [templatePath],
+        {
+          taskId: `real-matrix-${templateIndex}`,
+          outputRoot: outputRoot as string,
+          outputLayout: 'template_first',
+          replaceRange: 'topmost',
+          smartObjectReplaceMode: replaceMode,
+          smartObjectInnerFitMode: 'fill',
+          format: 'jpg',
+          jpgQuality: 10,
+          clipMode: 'auto',
+          skipCompleted: false,
+          maxRetries: 0,
+        },
+      )
+
+      const replacementLog = logs.find((entry) =>
+        replaceMode === 'editSmartObject'
+          ? entry.stage === 'so_edit_open'
+          : entry.stage === 'so_replace',
+      )
+      expect(replacementLog?.smart_object, `${templateFile}: replaced smart object`).toBe(
+        target?.path,
+      )
+      const expectedAreas =
+        template.native_slices.length > 0
+          ? template.native_slices.map((slice) => ({
+              w: slice.bounds[2] - slice.bounds[0],
+              h: slice.bounds[3] - slice.bounds[1],
+            }))
+          : deriveClipAreas(template, 'auto')
+      expect(result.outputs, `${templateFile}: output count`).toHaveLength(expectedAreas.length)
+
+      const outputs = []
+      for (const [outputIndex, outputPath] of result.outputs.entries()) {
+        const metadata = await sharp(outputPath).metadata()
+        const expectedArea = expectedAreas[outputIndex]
+        expect(metadata.format, `${templateFile}: output format`).toBe('jpeg')
+        if (template.native_slices.length > 0) {
+          expectSliceDimension(metadata.width, Math.round(expectedArea?.w ?? 0))
+          expectSliceDimension(metadata.height, Math.round(expectedArea?.h ?? 0))
+        } else {
+          expect(metadata.width, `${templateFile}: output width ${outputIndex + 1}`).toBe(
+            Math.round(expectedArea?.w ?? 0),
+          )
+          expect(metadata.height, `${templateFile}: output height ${outputIndex + 1}`).toBe(
+            Math.round(expectedArea?.h ?? 0),
+          )
+        }
+        outputs.push({
+          path: outputPath,
+          format: metadata.format ?? '',
+          width: metadata.width ?? 0,
+          height: metadata.height ?? 0,
+        })
+      }
+
+      report.push({
+        template: templateFile,
+        document_size: template.doc_size,
+        target_smart_object: target?.path ?? '',
+        smart_objects: template.smart_objects,
+        native_slices: template.native_slices,
+        outputs,
+      })
+    }
+
+    await writeFile(
+      join(tempDir, 'validation-report.json'),
+      JSON.stringify(report, null, 2),
+      'utf8',
     )
   }, 600_000)
 })

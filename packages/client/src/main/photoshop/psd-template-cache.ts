@@ -11,6 +11,8 @@ import type {
 import type { SqliteDatabase } from '../lib/sqlite'
 import { getDefaultWorkbenchDatabase } from '../lib/workbench-db'
 
+const CURRENT_PSD_SCANNER_VERSION = 1
+
 export interface PsdTemplateCache {
   findByHash(fileHash: string): Promise<PsdTemplate | null>
   save(template: PsdTemplate): Promise<void>
@@ -27,6 +29,7 @@ interface PsdTemplateRow {
   guides: string
   clip_areas: string
   native_slices?: string
+  scanner_version: number
   mode: SmartObjectMode
   representative_so_count: number
   scanned_at: number
@@ -51,9 +54,9 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
 
   async findByHash(fileHash: string): Promise<PsdTemplate | null> {
     const db = await this.db()
-    const row = db.prepare('SELECT * FROM psd_templates WHERE file_hash = ?').get(fileHash) as
-      | PsdTemplateRow
-      | undefined
+    const row = db
+      .prepare('SELECT * FROM psd_templates WHERE file_hash = ? AND scanner_version = ?')
+      .get(fileHash, CURRENT_PSD_SCANNER_VERSION) as PsdTemplateRow | undefined
 
     return row ? this.fromRow(row) : null
   }
@@ -71,6 +74,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
         guides,
         clip_areas,
         native_slices,
+        scanner_version,
         mode,
         representative_so_count,
         scanned_at,
@@ -86,6 +90,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
         @guides,
         @clip_areas,
         @native_slices,
+        @scanner_version,
         @mode,
         @representative_so_count,
         @scanned_at,
@@ -100,6 +105,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
         guides = excluded.guides,
         clip_areas = excluded.clip_areas,
         native_slices = excluded.native_slices,
+        scanner_version = excluded.scanner_version,
         mode = excluded.mode,
         representative_so_count = excluded.representative_so_count,
         scanned_at = excluded.scanned_at,
@@ -111,8 +117,8 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
   async list(): Promise<PsdTemplate[]> {
     const db = await this.db()
     const rows = db
-      .prepare('SELECT * FROM psd_templates ORDER BY scanned_at DESC')
-      .all() as unknown as PsdTemplateRow[]
+      .prepare('SELECT * FROM psd_templates WHERE scanner_version = ? ORDER BY scanned_at DESC')
+      .all(CURRENT_PSD_SCANNER_VERSION) as unknown as PsdTemplateRow[]
 
     return rows.map((row) => this.fromRow(row))
   }
@@ -132,6 +138,7 @@ export class SqlitePsdTemplateCache implements PsdTemplateCache {
       guides: JSON.stringify(template.guides),
       clip_areas: JSON.stringify(template.clip_areas),
       native_slices: JSON.stringify(template.native_slices),
+      scanner_version: CURRENT_PSD_SCANNER_VERSION,
       mode: template.mode,
       representative_so_count: template.representative_so_count,
       scanned_at: template.scanned_at,

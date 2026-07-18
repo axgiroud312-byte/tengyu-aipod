@@ -33,7 +33,7 @@ const runBatchOptionsSchema = z.object({
     .enum(['replaceContents', 'editSmartObject'])
     .default('replaceContents'),
   smart_object_inner_fit_mode: z.enum(['fit', 'fill']).default('fill'),
-  output_layout: z.enum(['template_first', 'sku_first', 'sku_flat']).default('sku_flat'),
+  output_layout: z.enum(['template_first', 'sku_first', 'sku_flat']).default('template_first'),
   format: z.enum(['jpg', 'png']).default('jpg'),
   clip_mode: z.enum(['none', 'auto', 'guides']).default('auto'),
   skip_completed: z.boolean().default(true),
@@ -207,8 +207,9 @@ export function registerPhotoshopIpc(): void {
     const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
     const cancelFilePath = join(taskDir, 'cancel.flag')
     activePhotoshopCancels.set(taskId, cancelFilePath)
+    let completed = false
     try {
-      return await runBatch(
+      const result = await runBatch(
         scan.prints,
         parsed.data.templates,
         {
@@ -229,8 +230,22 @@ export function registerPhotoshopIpc(): void {
           onLog: (entry) => sendPhotoshopLog(event.sender, entry),
         },
       )
+      completed = true
+      return result
     } finally {
       activePhotoshopCancels.delete(taskId)
+      try {
+        await tempFileManager.cleanupTask('photoshop', taskId, { keepIfFailed: !completed })
+      } catch (cleanupError) {
+        sendPhotoshopLog(event.sender, {
+          ts: Date.now(),
+          level: 'warn',
+          stage: 'task_complete',
+          task_id: taskId,
+          message: 'PS 临时文件暂时无法清理，将由自动清理任务稍后重试',
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        })
+      }
     }
   })
   ipcMain.handle('photoshop:cancel', async (_event, input: unknown) => {

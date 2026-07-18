@@ -21,6 +21,7 @@ interface TempFileManagerOptions {
   now?: () => number
   orphanTtlMs?: number
   failedTtlMs?: number
+  removeDir?: (path: string) => Promise<void>
 }
 
 interface CleanupTaskOptions {
@@ -33,6 +34,14 @@ const DEFAULT_FAILED_TTL_MS = 60 * 60 * 1000
 const DEFAULT_PERIODIC_CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000
 const MAX_SAFE_SEGMENT_LENGTH = 120
 const RESERVED_PATH_CHARS = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+const TRANSIENT_CLEANUP_ERROR_CODES = new Set([
+  'EACCES',
+  'EBUSY',
+  'EMFILE',
+  'ENFILE',
+  'ENOTEMPTY',
+  'EPERM',
+])
 
 function hasUnsafePathChar(value: string) {
   return Array.from(value).some((char) => RESERVED_PATH_CHARS.has(char) || char.charCodeAt(0) < 32)
@@ -82,12 +91,23 @@ async function dirSizeBytes(path: string): Promise<number> {
   return total
 }
 
+function isTransientCleanupError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string' &&
+    TRANSIENT_CLEANUP_ERROR_CODES.has(error.code)
+  )
+}
+
 export class TempFileManager {
   private readonly rootDir: string | undefined
   private readonly workbenchRootProvider: WorkbenchRootProvider
   private readonly now: () => number
   private readonly orphanTtlMs: number
   private readonly defaultFailedTtlMs: number
+  private readonly removeDir: (path: string) => Promise<void>
   private readonly delayedCleanup = new Map<string, NodeJS.Timeout>()
   private periodicCleanupTimer: NodeJS.Timeout | null = null
   private readonly sessionDirs = new Set<string>()
@@ -105,6 +125,9 @@ export class TempFileManager {
     this.now = options.now ?? Date.now
     this.orphanTtlMs = options.orphanTtlMs ?? DEFAULT_ORPHAN_TTL_MS
     this.defaultFailedTtlMs = defaultFailedTtlMs
+    this.removeDir =
+      options.removeDir ??
+      ((path) => rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }))
   }
 
   async rootPath(): Promise<string> {
@@ -145,17 +168,19 @@ export class TempFileManager {
     if (options.keepIfFailed) {
       const failedTtlMs = options.failedTtlMs ?? this.defaultFailedTtlMs
       await this.markForDelayedCleanup(taskDir)
-      const timer = setTimeout(() => {
-        void rm(taskDir, { recursive: true, force: true }).finally(() => {
-          this.delayedCleanup.delete(key)
-        })
-      }, failedTtlMs)
-      timer.unref?.()
-      this.delayedCleanup.set(key, timer)
+      this.scheduleDelayedCleanup(key, taskDir, failedTtlMs)
       return
     }
 
-    await rm(taskDir, { recursive: true, force: true })
+    try {
+      await this.removeDir(taskDir)
+    } catch (error) {
+      if (!isTransientCleanupError(error)) {
+        throw error
+      }
+      await this.markForDelayedCleanup(taskDir)
+      this.scheduleDelayedCleanup(key, taskDir, this.defaultFailedTtlMs)
+    }
   }
 
   async cleanupOrphans(): Promise<void> {
@@ -258,6 +283,18 @@ export class TempFileManager {
       const date = new Date()
       await utimes(dir, date, date).catch(() => null)
     }
+  }
+
+  private scheduleDelayedCleanup(key: string, taskDir: string, delayMs: number) {
+    const timer = setTimeout(() => {
+      void this.removeDir(taskDir)
+        .catch(() => null)
+        .finally(() => {
+          this.delayedCleanup.delete(key)
+        })
+    }, delayMs)
+    timer.unref?.()
+    this.delayedCleanup.set(key, timer)
   }
 }
 

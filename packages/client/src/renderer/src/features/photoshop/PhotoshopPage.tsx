@@ -86,6 +86,16 @@ function parentLocalPath(path: string) {
   return slashIndex >= 0 ? path.slice(0, slashIndex) : path
 }
 
+function outputDisplayLabel(path: string, layout: PhotoshopOutputLayout) {
+  const filename = templateLabel(path)
+  if (layout !== 'template_first') {
+    return filename
+  }
+  const skuFolder = parentLocalPath(path)
+  const templateFolder = parentLocalPath(skuFolder)
+  return `${templateLabel(templateFolder)} / ${filename}`
+}
+
 function timestampSlug(value: number) {
   const date = new Date(value)
   const pad = (item: number) => String(item).padStart(2, '0')
@@ -193,7 +203,7 @@ function PhotoshopStatusBar({
 
 export function PhotoshopPage() {
   const [skipCompleted, setSkipCompleted] = useState(true)
-  const outputLayout: PhotoshopOutputLayout = 'sku_flat'
+  const outputLayout: PhotoshopOutputLayout = 'template_first'
   const [inputMode, setInputMode] = useState<PhotoshopInputMode>('detection_candidates')
   const [printFolder, setPrintFolder] = useState('02-印花工作区')
   const [outputDir, setOutputDir] = useState(`04-上架工作区/套版-${timestampSlug(Date.now())}`)
@@ -251,9 +261,17 @@ export function PhotoshopPage() {
   )
   const standaloneBatchPath = useMemo(() => {
     const skuFolderPath = skuCards.find((card) => card.folderPath)?.folderPath
-    return skuFolderPath ? parentLocalPath(skuFolderPath) : outputDir
-  }, [outputDir, skuCards])
+    if (!skuFolderPath) {
+      return outputDir
+    }
+    const parentFolder = parentLocalPath(skuFolderPath)
+    return batchResult?.output_layout === 'sku_flat' ? parentFolder : parentLocalPath(parentFolder)
+  }, [batchResult?.output_layout, outputDir, skuCards])
   const standaloneBatchName = templateLabel(standaloneBatchPath)
+  const selectedResultFolderPath =
+    selectedSkuCard && selectedSkuCard.templates.length > 1
+      ? standaloneBatchPath
+      : (selectedSkuCard?.folderPath ?? null)
   const resultOutputCount = skuCards.reduce((count, card) => count + card.imageCount, 0)
   const failureLogs = useMemo(
     () => debugLogs.filter((entry) => entry.level === 'error').slice(-20),
@@ -1091,10 +1109,10 @@ export function PhotoshopPage() {
               </DialogTitle>
               <Button
                 className="h-8 px-3"
-                disabled={!selectedSkuCard?.folderPath}
+                disabled={!selectedResultFolderPath}
                 onClick={() =>
-                  selectedSkuCard?.folderPath &&
-                  void window.api.photoshop.openPath(selectedSkuCard.folderPath)
+                  selectedResultFolderPath &&
+                  void window.api.photoshop.openPath(selectedResultFolderPath)
                 }
                 type="button"
                 variant="secondary"
@@ -1108,14 +1126,14 @@ export function PhotoshopPage() {
             <div className="grid gap-3 p-1 sm:grid-cols-2 lg:grid-cols-3">
               {selectedSkuCard?.outputs.map((output) => (
                 <button
-                  aria-label={`查看成品图 ${templateLabel(output)}`}
+                  aria-label={`查看成品图 ${outputDisplayLabel(output, batchResult?.output_layout ?? outputLayout)}`}
                   className="rounded-md border bg-muted/30 p-2 text-left transition hover:shadow-sm"
                   key={output}
                   onDoubleClick={() => void window.api.photoshop.openPath(output)}
                   type="button"
                 >
                   <img
-                    alt={templateLabel(output)}
+                    alt={outputDisplayLabel(output, batchResult?.output_layout ?? outputLayout)}
                     className="aspect-square w-full rounded border bg-muted object-cover"
                     loading="lazy"
                     src={localImageUrl(output)}

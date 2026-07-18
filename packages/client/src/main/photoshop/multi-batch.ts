@@ -1,4 +1,4 @@
-import { mkdir } from 'node:fs/promises'
+import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import type {
   PhotoshopBatchOutputGroup,
@@ -20,6 +20,7 @@ import {
   type GroupPhotoshopTasksOptions,
   groupTasks,
   sanitizeTemplateName,
+  uniqueTemplateNames,
 } from '@tengyu-aipod/shared'
 import pino from 'pino'
 import { getWorkbenchRoot } from '../lib/workbench-config'
@@ -38,6 +39,7 @@ export interface PhotoshopBatchConfig {
   skipCompleted?: boolean
   maxRetries?: number
   outputLayout?: PhotoshopOutputLayout
+  templateNameOverride?: string
   cancelFilePath?: string
 }
 
@@ -77,6 +79,18 @@ interface PhotoshopBatchEngine {
       onLog?: (entry: PhotoshopProgressLogEntry) => void | Promise<void>
     },
   ): Promise<PhotoshopTemplateBatchRunResult>
+}
+
+async function cancellationRequested(cancelFilePath?: string): Promise<boolean> {
+  if (!cancelFilePath) {
+    return false
+  }
+  try {
+    await access(cancelFilePath)
+    return true
+  } catch {
+    return false
+  }
 }
 
 export class PhotoshopProgressLogger {
@@ -183,15 +197,29 @@ export class PhotoshopMultiBatchRunner {
       templateName: string
       groups: PhotoshopTaskGroup[]
     }> = []
+    const templateNames =
+      templatePaths.length === 1 && config.templateNameOverride !== undefined
+        ? [sanitizeTemplateName(config.templateNameOverride)]
+        : uniqueTemplateNames(templatePaths)
 
     try {
       for (let templateIndex = 0; templateIndex < templatePaths.length; templateIndex += 1) {
+        if (await cancellationRequested(config.cancelFilePath)) {
+          cancelled = true
+          break
+        }
         const template = await this.scanner.scanPsd(templatePaths[templateIndex] ?? '')
-        const templateName = sanitizeTemplateName(template.file_path)
+        if (await cancellationRequested(config.cancelFilePath)) {
+          cancelled = true
+          break
+        }
+        const templateName =
+          templateNames[templateIndex] ?? sanitizeTemplateName(template.file_path)
         const groupOptions: GroupPhotoshopTasksOptions = {
           taskId: config.taskId,
           outputRoot: config.outputRoot,
           outputLayout,
+          templateName,
         }
         if (config.replaceRange !== undefined) {
           groupOptions.replaceRange = config.replaceRange
@@ -238,6 +266,10 @@ export class PhotoshopMultiBatchRunner {
     }
 
     for (const { templateIndex, template, templateName, groups } of preparedTemplates) {
+      if (cancelled || (await cancellationRequested(config.cancelFilePath))) {
+        cancelled = true
+        break
+      }
       const templateOutputs: string[] = []
       if (this.engine.runTemplateBatch) {
         const realtimeCompletedGroupIndexes = new Set<number>()
@@ -389,7 +421,7 @@ export class PhotoshopMultiBatchRunner {
             level: 'warn',
             stage: 'cancelled',
             template_name: templateName,
-            message: '用户取消任务，当前模板批处理已在组边界停止',
+            message: '用户取消任务，当前处理已停止',
           })
           break
         }

@@ -119,6 +119,8 @@ export function generateJsx(job: PhotoshopJob): string {
   })};
 var RESULT_FILE_PATH = ${jsonString(job.result_file_path)};
 var GENERATED_ARTWORK_LAYER_NAME = '__TENGYU_ARTWORK__';
+var SMART_OBJECT_CANVAS_CACHE = {};
+var NORMALIZED_INPUT_INDEX = 0;
 
 function escapeJsonString(value) {
   return String(value)
@@ -178,6 +180,106 @@ function createFolder(folder) {
     createFolder(folder.parent);
   }
   folder.create();
+}
+
+function normalizedFsPath(filePath) {
+  return String(new File(filePath).fsName).toLowerCase();
+}
+
+function assertDocumentNotOpen(filePath, label) {
+  var targetPath = normalizedFsPath(filePath);
+  for (var i = 0; i < app.documents.length; i++) {
+    try {
+      if (normalizedFsPath(app.documents[i].fullName.fsName) === targetPath) {
+        throw new Error(label + ' is already open in Photoshop. Close it before starting: ' + filePath);
+      }
+    } catch (documentPathError) {
+      if (String(documentPathError).indexOf('is already open in Photoshop') >= 0) {
+        throw documentPathError;
+      }
+    }
+  }
+}
+
+function snapshotOpenDocuments() {
+  var documents = [];
+  for (var i = 0; i < app.documents.length; i++) {
+    documents.push(app.documents[i]);
+  }
+  return documents;
+}
+
+function documentWasOpen(document, documents) {
+  for (var i = 0; i < documents.length; i++) {
+    if (documents[i] === document) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function documentIsInsidePhotoshopTemp(document) {
+  try {
+    var documentPath = String(document.fullName.fsName).toLowerCase();
+    var tempPath = String(Folder.temp.fsName).toLowerCase();
+    return (
+      documentPath === tempPath ||
+      documentPath.indexOf(tempPath + '\\\\') === 0 ||
+      documentPath.indexOf(tempPath + '/') === 0
+    );
+  } catch (documentPathError) {
+    return false;
+  }
+}
+
+function saveSmartObjectDocument(document) {
+  var smartObjectFile = new File(document.fullName.fsName);
+  var fileName = String(smartObjectFile.name).toLowerCase();
+  var dotIndex = fileName.lastIndexOf('.');
+  var extension = dotIndex >= 0 ? fileName.substring(dotIndex + 1) : '';
+  var previousDialogs = app.displayDialogs;
+  app.displayDialogs = DialogModes.NO;
+  try {
+    if (extension === 'png') {
+      document.saveAs(smartObjectFile, new PNGSaveOptions(), false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'jpg' || extension === 'jpeg') {
+      var jpgOptions = new JPEGSaveOptions();
+      jpgOptions.quality = 12;
+      document.saveAs(smartObjectFile, jpgOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'psd') {
+      var psdOptions = new PhotoshopSaveOptions();
+      psdOptions.layers = true;
+      document.saveAs(smartObjectFile, psdOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'psb') {
+      var psbOptions = new LargeDocumentFormatSaveOptions();
+      psbOptions.layers = true;
+      document.saveAs(smartObjectFile, psbOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'tif' || extension === 'tiff') {
+      var tiffOptions = new TiffSaveOptions();
+      tiffOptions.layers = true;
+      document.saveAs(smartObjectFile, tiffOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    throw new Error('Unsupported smart object temporary format: ' + smartObjectFile.name);
+  } finally {
+    app.displayDialogs = previousDialogs;
+  }
+}
+
+function positiveFiniteNumber(value, label) {
+  var number = Number(value);
+  if (!isFinite(number) || number <= 0) {
+    throw new Error(label + ' must be a positive finite number');
+  }
+  return number;
 }
 
 function writeResult(value) {
@@ -307,6 +409,102 @@ function fitLayerToBounds(layer, targetBounds, mode) {
   layer.translate(targetCenterX - layerCenterX, targetCenterY - layerCenterY);
 }
 
+function getLayerBoundsArray(layer) {
+  var bounds = getLayerBoundsPx(layer);
+  return [bounds.left, bounds.top, bounds.right, bounds.bottom];
+}
+
+function readSmartObjectCanvas(doc, layer, cacheKey) {
+  if (SMART_OBJECT_CANVAS_CACHE[cacheKey]) {
+    return SMART_OBJECT_CANVAS_CACHE[cacheKey];
+  }
+  var openDocuments = snapshotOpenDocuments();
+  doc.activeLayer = layer;
+  executeAction(stringIDToTypeID('placedLayerEditContents'), new ActionDescriptor(), DialogModes.NO);
+  var soDoc = app.activeDocument;
+  if (!soDoc || soDoc === doc) {
+    throw new Error('Photoshop did not open smart object contents: ' + cacheKey);
+  }
+  var canvas = null;
+  try {
+    canvas = {
+      width: Math.round(positiveFiniteNumber(soDoc.width.value, 'Smart object width')),
+      height: Math.round(positiveFiniteNumber(soDoc.height.value, 'Smart object height')),
+      resolution: positiveFiniteNumber(soDoc.resolution, 'Smart object resolution')
+    };
+  } finally {
+    if (!documentWasOpen(soDoc, openDocuments)) {
+      try {
+        soDoc.close(SaveOptions.DONOTSAVECHANGES);
+      } catch (closeSmartObjectError) {}
+    }
+    app.activeDocument = doc;
+  }
+  SMART_OBJECT_CANVAS_CACHE[cacheKey] = canvas;
+  return canvas;
+}
+
+function normalizeInputForSmartObject(doc, layer, replacement, cacheKey) {
+  var canvas = readSmartObjectCanvas(doc, layer, cacheKey);
+  var inputFile = new File(replacement.input_image);
+  if (!inputFile.exists) {
+    throw new Error('Smart object input image not found: ' + replacement.input_image);
+  }
+  assertDocumentNotOpen(inputFile.fsName, 'Input image');
+  var inputDocument = null;
+  try {
+    inputDocument = app.open(inputFile);
+    var sourceWidth = positiveFiniteNumber(inputDocument.width.value, 'Input image width');
+    var sourceHeight = positiveFiniteNumber(inputDocument.height.value, 'Input image height');
+    var scaleX = canvas.width / sourceWidth;
+    var scaleY = canvas.height / sourceHeight;
+    var fitMode = replacement.inner_fit_mode || 'fill';
+    var scale = fitMode === 'fill' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+    var scaledWidth = Math.max(1, Math.round(sourceWidth * scale));
+    var scaledHeight = Math.max(1, Math.round(sourceHeight * scale));
+    inputDocument.resizeImage(
+      UnitValue(scaledWidth, 'px'),
+      UnitValue(scaledHeight, 'px'),
+      canvas.resolution,
+      ResampleMethod.BICUBIC
+    );
+    try {
+      inputDocument.backgroundLayer.isBackgroundLayer = false;
+    } catch (noBackgroundLayerError) {}
+    inputDocument.resizeCanvas(
+      UnitValue(canvas.width, 'px'),
+      UnitValue(canvas.height, 'px'),
+      AnchorPosition.MIDDLECENTER
+    );
+
+    var normalizedFolder = new Folder(new File(RESULT_FILE_PATH).parent.fsName + '/normalized-inputs');
+    createFolder(normalizedFolder);
+    var normalizedFile = new File(
+      normalizedFolder.fsName + '/input-' + (++NORMALIZED_INPUT_INDEX) + '.psd'
+    );
+    if (normalizedFile.exists) {
+      normalizedFile.remove();
+    }
+    var saveOptions = new PhotoshopSaveOptions();
+    saveOptions.layers = true;
+    inputDocument.saveAs(normalizedFile, saveOptions, true, Extension.LOWERCASE);
+    return {
+      file: normalizedFile,
+      canvas: canvas,
+      source_width: sourceWidth,
+      source_height: sourceHeight,
+      fit_mode: fitMode
+    };
+  } finally {
+    try {
+      if (inputDocument) {
+        inputDocument.close(SaveOptions.DONOTSAVECHANGES);
+      }
+    } catch (closeInputError) {}
+    app.activeDocument = doc;
+  }
+}
+
 function replaceArtworkInsideSmartObject(soDoc, replacement) {
   removeGeneratedArtwork(soDoc);
   var targetLayer = null;
@@ -324,7 +522,7 @@ function replaceArtworkInsideSmartObject(soDoc, replacement) {
   fitLayerToBounds(placedLayer, targetBounds, replacement.inner_fit_mode || 'fill');
 }
 
-function replaceSmartObjectContents(doc, replacement, result, mode) {
+function replaceSmartObjectContents(doc, replacement, result, mode, replacementIndex) {
   var layer = findLayerByPath(doc, replacement.layer_path);
   if (!layer) {
     result.stages.push({ stage: 'find_layer', ok: false, layer: replacement.layer_path });
@@ -332,15 +530,31 @@ function replaceSmartObjectContents(doc, replacement, result, mode) {
   }
 
   doc.activeLayer = layer;
+  var beforeBounds = getLayerBoundsArray(layer);
+  var normalizedInput = normalizeInputForSmartObject(
+    doc,
+    layer,
+    replacement,
+    replacement.layer_path + ':' + replacementIndex
+  );
+  doc.activeLayer = layer;
   var desc = new ActionDescriptor();
-  desc.putPath(charIDToTypeID('null'), new File(replacement.input_image));
+  desc.putPath(charIDToTypeID('null'), normalizedInput.file);
   executeAction(stringIDToTypeID('placedLayerReplaceContents'), desc, DialogModes.NO);
   result.stages.push({
     stage: 'replace_so',
     ok: true,
     layer: replacement.layer_path,
     input: replacement.input_image,
-    replace_mode: mode
+    replace_mode: mode,
+    fit_mode: normalizedInput.fit_mode,
+    input_width: normalizedInput.source_width,
+    input_height: normalizedInput.source_height,
+    source_canvas_width: normalizedInput.canvas.width,
+    source_canvas_height: normalizedInput.canvas.height,
+    source_canvas_resolution: normalizedInput.canvas.resolution,
+    before_bounds: beforeBounds,
+    after_bounds: getLayerBoundsArray(layer)
   });
 }
 
@@ -351,6 +565,17 @@ function editSmartObjectContents(doc, replacement, result, mode) {
     throw new Error('Smart object layer not found: ' + replacement.layer_path);
   }
 
+  var openDocuments = snapshotOpenDocuments();
+  doc.activeLayer = layer;
+  var convertedLinkedSource = false;
+  try {
+    executeAction(stringIDToTypeID('placedLayerConvertToEmbedded'), undefined, DialogModes.NO);
+    convertedLinkedSource = true;
+  } catch (convertLinkedSourceError) {}
+  layer = findLayerByPath(doc, replacement.layer_path);
+  if (!layer) {
+    throw new Error('Smart object layer disappeared after link isolation: ' + replacement.layer_path);
+  }
   doc.activeLayer = layer;
   var desc = new ActionDescriptor();
   executeAction(stringIDToTypeID('placedLayerEditContents'), desc, DialogModes.NO);
@@ -358,32 +583,52 @@ function editSmartObjectContents(doc, replacement, result, mode) {
   if (!soDoc || soDoc === doc) {
     throw new Error('Photoshop did not open smart object contents: ' + replacement.layer_path);
   }
+  var openedByTask = !documentWasOpen(soDoc, openDocuments);
+  if (!openedByTask) {
+    app.activeDocument = doc;
+    throw new Error(
+      'Smart object source is already open in Photoshop. Close it before starting: ' +
+      replacement.layer_path
+    );
+  }
 
+  var smartObjectClosed = false;
   try {
+    if (!documentIsInsidePhotoshopTemp(soDoc)) {
+      throw new Error(
+        'Smart object content is outside Photoshop temporary storage; refusing to modify the source file: ' +
+        replacement.layer_path
+      );
+    }
     replaceArtworkInsideSmartObject(soDoc, replacement);
-    soDoc.save();
+    saveSmartObjectDocument(soDoc);
+    soDoc.close(SaveOptions.DONOTSAVECHANGES);
+    smartObjectClosed = true;
     result.stages.push({
       stage: 'replace_so',
       ok: true,
       layer: replacement.layer_path,
       input: replacement.input_image,
-      replace_mode: mode
+      replace_mode: mode,
+      converted_linked_source: convertedLinkedSource
     });
   } finally {
-    try {
-      soDoc.close(SaveOptions.DONOTSAVECHANGES);
-    } catch (closeSmartObjectError) {}
+    if (openedByTask && !smartObjectClosed) {
+      try {
+        soDoc.close(SaveOptions.DONOTSAVECHANGES);
+      } catch (closeSmartObjectError) {}
+    }
     app.activeDocument = doc;
   }
 }
 
-function replaceSmartObject(doc, replacement, result) {
+function replaceSmartObject(doc, replacement, result, replacementIndex) {
   var mode = replacement.replace_mode || CONFIG.smart_object_replace_mode || 'replaceContents';
   if (mode === 'editSmartObject') {
     editSmartObjectContents(doc, replacement, result, mode);
     return;
   }
-  replaceSmartObjectContents(doc, replacement, result, mode);
+  replaceSmartObjectContents(doc, replacement, result, mode, replacementIndex);
 }
 
 function saveAs(doc, outputPath, format, jpgQuality) {
@@ -434,11 +679,12 @@ function runJob() {
 
   try {
     app.preferences.rulerUnits = Units.PIXELS;
+    assertDocumentNotOpen(CONFIG.mockup_path, 'Template');
     mockup = app.open(new File(CONFIG.mockup_path));
     result.stages.push({ stage: 'open_mockup', ok: true, path: CONFIG.mockup_path });
 
     for (var i = 0; i < CONFIG.so_replacements.length; i++) {
-      replaceSmartObject(mockup, CONFIG.so_replacements[i], result);
+      replaceSmartObject(mockup, CONFIG.so_replacements[i], result, i);
     }
 
     exportOutputs(mockup, result);
@@ -544,6 +790,143 @@ function naturalExportKey(file) {
   });
 }
 
+function binaryByte(data, offset) {
+  return data.charCodeAt(offset) & 255;
+}
+
+function binaryUint16(data, offset) {
+  return binaryByte(data, offset) * 256 + binaryByte(data, offset + 1);
+}
+
+function binaryUint32(data, offset) {
+  return (
+    ((binaryByte(data, offset) * 256 + binaryByte(data, offset + 1)) * 256 +
+      binaryByte(data, offset + 2)) *
+      256 +
+    binaryByte(data, offset + 3)
+  );
+}
+
+function isJpegStartOfFrame(marker) {
+  return (
+    marker === 0xC0 || marker === 0xC1 || marker === 0xC2 || marker === 0xC3 ||
+    marker === 0xC5 || marker === 0xC6 || marker === 0xC7 || marker === 0xC9 ||
+    marker === 0xCA || marker === 0xCB || marker === 0xCD || marker === 0xCE ||
+    marker === 0xCF
+  );
+}
+
+function readExportedImageSize(file) {
+  var data = '';
+  try {
+    file.encoding = 'BINARY';
+    if (!file.open('r')) {
+      return null;
+    }
+    data = file.read(262144);
+  } catch (readHeaderError) {
+    return null;
+  } finally {
+    try { file.close(); } catch (closeHeaderError) {}
+  }
+
+  if (
+    data.length >= 24 &&
+    binaryByte(data, 0) === 0x89 && binaryByte(data, 1) === 0x50 &&
+    binaryByte(data, 2) === 0x4E && binaryByte(data, 3) === 0x47
+  ) {
+    return { width: binaryUint32(data, 16), height: binaryUint32(data, 20) };
+  }
+  if (data.length < 10 || binaryByte(data, 0) !== 0xFF || binaryByte(data, 1) !== 0xD8) {
+    return null;
+  }
+
+  var offset = 2;
+  while (offset + 8 < data.length) {
+    if (binaryByte(data, offset) !== 0xFF) {
+      offset++;
+      continue;
+    }
+    while (offset < data.length && binaryByte(data, offset) === 0xFF) {
+      offset++;
+    }
+    if (offset >= data.length) {
+      break;
+    }
+    var marker = binaryByte(data, offset++);
+    if (marker === 0x00 || marker === 0xD8 || marker === 0xD9 || marker === 0x01 ||
+        (marker >= 0xD0 && marker <= 0xD7)) {
+      continue;
+    }
+    if (offset + 1 >= data.length || marker === 0xDA) {
+      break;
+    }
+    var segmentLength = binaryUint16(data, offset);
+    if (segmentLength < 2 || offset + segmentLength > data.length) {
+      break;
+    }
+    if (isJpegStartOfFrame(marker) && segmentLength >= 7) {
+      return {
+        width: binaryUint16(data, offset + 5),
+        height: binaryUint16(data, offset + 3)
+      };
+    }
+    offset += segmentLength;
+  }
+  return null;
+}
+
+function sliceDimensionTolerance(expected) {
+  return Math.max(4, Math.ceil(expected * 0.02));
+}
+
+function exportedSizeMatchesSlice(size, slice) {
+  if (!size || !slice.bounds || slice.bounds.length !== 4) {
+    return false;
+  }
+  var expectedWidth = slice.bounds[2] - slice.bounds[0];
+  var expectedHeight = slice.bounds[3] - slice.bounds[1];
+  return (
+    Math.abs(size.width - expectedWidth) <= sliceDimensionTolerance(expectedWidth) &&
+    Math.abs(size.height - expectedHeight) <= sliceDimensionTolerance(expectedHeight)
+  );
+}
+
+function selectExpectedSliceExports(files, slices) {
+  var remaining = [];
+  for (var fileIndex = 0; fileIndex < files.length; fileIndex++) {
+    remaining.push({ file: files[fileIndex], size: readExportedImageSize(files[fileIndex]) });
+  }
+
+  var selected = [];
+  for (var sliceIndex = 0; sliceIndex < slices.length; sliceIndex++) {
+    var matchIndex = -1;
+    for (var candidateIndex = 0; candidateIndex < remaining.length; candidateIndex++) {
+      if (exportedSizeMatchesSlice(remaining[candidateIndex].size, slices[sliceIndex])) {
+        matchIndex = candidateIndex;
+        break;
+      }
+    }
+    if (matchIndex < 0) {
+      return [];
+    }
+    selected.push(remaining[matchIndex].file);
+    remaining.splice(matchIndex, 1);
+  }
+
+  for (var extraIndex = 0; extraIndex < remaining.length; extraIndex++) {
+    if (!remaining[extraIndex].size) {
+      return [];
+    }
+    for (var expectedIndex = 0; expectedIndex < slices.length; expectedIndex++) {
+      if (exportedSizeMatchesSlice(remaining[extraIndex].size, slices[expectedIndex])) {
+        return [];
+      }
+    }
+  }
+  return selected;
+}
+
 function orderExportedImages(files, slices) {
   var remaining = files.slice(0);
   var ordered = [];
@@ -574,37 +957,102 @@ function orderExportedImages(files, slices) {
   return ordered.concat(remaining);
 }
 
+function exportNativeSlicesByBounds(doc, group, groupResult) {
+  for (var i = 0; i < CONFIG.native_slices.length; i++) {
+    throwIfCancellationRequested();
+    var bounds = CONFIG.native_slices[i].bounds;
+    if (!bounds || bounds.length !== 4 || bounds[2] <= bounds[0] || bounds[3] <= bounds[1]) {
+      throw new Error('Invalid native slice bounds: ' + CONFIG.native_slices[i].name);
+    }
+    var sliceDocument = doc.duplicate();
+    try {
+      sliceDocument.crop([bounds[0], bounds[1], bounds[2], bounds[3]]);
+      saveAs(sliceDocument, group.output_paths[i], group.format, group.jpg_quality);
+      groupResult.outputs.push(group.output_paths[i]);
+      throwIfCancellationRequested();
+    } finally {
+      try {
+        sliceDocument.close(SaveOptions.DONOTSAVECHANGES);
+      } catch (closeSliceError) {}
+      app.activeDocument = doc;
+    }
+  }
+}
+
 function exportNativeSlices(doc, group, groupResult) {
   var tempRoot = new File(RESULT_FILE_PATH).parent;
   var exportFolder = new Folder(tempRoot.fsName + '/native-slices-' + group.group_index);
   removeFolderTree(exportFolder);
   createFolder(exportFolder);
-  var descriptor = new ActionDescriptor();
-  descriptor.putEnumerated(charIDToTypeID('Op  '), charIDToTypeID('SWOp'), charIDToTypeID('OpSa'));
-  descriptor.putEnumerated(
+  var exportDescriptor = new ActionDescriptor();
+  var saveForWebOptions = new ActionDescriptor();
+  saveForWebOptions.putEnumerated(charIDToTypeID('Op  '), charIDToTypeID('SWOp'), charIDToTypeID('OpSa'));
+  saveForWebOptions.putEnumerated(
     charIDToTypeID('Fmt '),
     charIDToTypeID('IRFm'),
     group.format === 'jpg' ? charIDToTypeID('JPEG') : charIDToTypeID('PN24')
   );
-  descriptor.putBoolean(charIDToTypeID('Intr'), false);
-  descriptor.putInteger(charIDToTypeID('Qlty'), group.jpg_quality || 10);
-  descriptor.putBoolean(charIDToTypeID('SHTM'), false);
-  descriptor.putBoolean(charIDToTypeID('SImg'), true);
-  descriptor.putBoolean(charIDToTypeID('SSSO'), false);
-  descriptor.putEnumerated(charIDToTypeID('SWsl'), charIDToTypeID('STsl'), charIDToTypeID('SLUs'));
-  descriptor.putPath(charIDToTypeID('In  '), exportFolder);
-  executeAction(charIDToTypeID('Expr'), descriptor, DialogModes.NO);
+  saveForWebOptions.putBoolean(charIDToTypeID('Intr'), false);
+  var webJpegQuality = Math.max(0, Math.min(100, Math.round((group.jpg_quality / 12) * 100)));
+  saveForWebOptions.putInteger(charIDToTypeID('Qlty'), webJpegQuality);
+  saveForWebOptions.putBoolean(charIDToTypeID('SHTM'), false);
+  saveForWebOptions.putBoolean(charIDToTypeID('SImg'), true);
+  saveForWebOptions.putBoolean(charIDToTypeID('SSSO'), false);
+  saveForWebOptions.putList(charIDToTypeID('SSLt'), new ActionList());
+  saveForWebOptions.putBoolean(charIDToTypeID('DIDr'), false);
+  saveForWebOptions.putEnumerated(charIDToTypeID('SWsl'), charIDToTypeID('STsl'), charIDToTypeID('SLUs'));
+  saveForWebOptions.putPath(charIDToTypeID('In  '), exportFolder);
+  exportDescriptor.putObject(charIDToTypeID('Usng'), stringIDToTypeID('SaveForWeb'), saveForWebOptions);
+  throwIfCancellationRequested();
+  executeAction(charIDToTypeID('Expr'), exportDescriptor, DialogModes.NO);
+  throwIfCancellationRequested();
 
   var exported = [];
   collectExportedImages(exportFolder, exported);
   exported = orderExportedImages(exported, CONFIG.native_slices);
-  if (exported.length !== CONFIG.native_slices.length) {
-    throw new Error(
-      'Native slice export count mismatch: expected ' +
-      CONFIG.native_slices.length + ', got ' + exported.length
-    );
+  if (exported.length < CONFIG.native_slices.length) {
+    appendLog({
+      level: 'warn',
+      stage: 'native_slice_export_fallback',
+      message: 'PS 原生切片导出数量不符，改用切片边界裁切',
+      group: group.group_index,
+      sku_folder: group.sku_folder,
+      expected_outputs: CONFIG.native_slices.length,
+      actual_outputs: exported.length
+    });
+    removeFolderTree(exportFolder);
+    exportNativeSlicesByBounds(doc, group, groupResult);
+    return;
+  }
+  if (exported.length > CONFIG.native_slices.length) {
+    var expectedExports = selectExpectedSliceExports(exported, CONFIG.native_slices);
+    if (expectedExports.length !== CONFIG.native_slices.length) {
+      appendLog({
+        level: 'warn',
+        stage: 'native_slice_export_fallback',
+        message: 'PS 原生切片额外文件无法安全匹配，改用切片边界裁切',
+        group: group.group_index,
+        sku_folder: group.sku_folder,
+        expected_outputs: CONFIG.native_slices.length,
+        actual_outputs: exported.length
+      });
+      removeFolderTree(exportFolder);
+      exportNativeSlicesByBounds(doc, group, groupResult);
+      return;
+    }
+    appendLog({
+      level: 'warn',
+      stage: 'native_slice_extra_ignored',
+      message: '忽略 PS 原生切片导出的额外碎片',
+      group: group.group_index,
+      sku_folder: group.sku_folder,
+      expected_outputs: CONFIG.native_slices.length,
+      actual_outputs: exported.length
+    });
+    exported = expectedExports;
   }
   for (var i = 0; i < exported.length; i++) {
+    throwIfCancellationRequested();
     var outputPath = group.output_paths[i];
     ensureParentFolder(outputPath);
     var destination = new File(outputPath);
@@ -615,6 +1063,7 @@ function exportNativeSlices(doc, group, groupResult) {
       throw new Error('Failed to move native slice output: ' + exported[i].fsName);
     }
     groupResult.outputs.push(outputPath);
+    throwIfCancellationRequested();
   }
   removeFolderTree(exportFolder);
   appendLog({
@@ -640,11 +1089,13 @@ function exportOutputs(doc, group, groupResult) {
   });
   var startedAt = new Date().getTime();
   for (var i = 0; i < group.clip_areas.length; i++) {
+    throwIfCancellationRequested();
     var area = group.clip_areas[i];
     var outputPath = group.output_paths[i];
     if (group.clip_areas.length === 1 && area.is_full) {
       saveAs(doc, outputPath, group.format, group.jpg_quality);
       groupResult.outputs.push(outputPath);
+      throwIfCancellationRequested();
       continue;
     }
 
@@ -653,6 +1104,7 @@ function exportOutputs(doc, group, groupResult) {
       duplicate.crop([area.x, area.y, area.x + area.w, area.y + area.h]);
       saveAs(duplicate, outputPath, group.format, group.jpg_quality);
       groupResult.outputs.push(outputPath);
+      throwIfCancellationRequested();
     } finally {
       try {
         duplicate.close(SaveOptions.DONOTSAVECHANGES);
@@ -701,6 +1153,9 @@ var RESULT_FILE_PATH = ${jsonString(input.result_file_path)};
 var LOG_FILE_PATH = ${jsonString(input.log_file_path)};
 var CANCEL_FILE_PATH = ${jsonString(input.cancel_file_path)};
 var GENERATED_ARTWORK_LAYER_NAME = '__TENGYU_ARTWORK__';
+var SMART_OBJECT_CANVAS_CACHE = {};
+var NORMALIZED_INPUT_INDEX = 0;
+var CANCELLATION_ERROR = '__TENGYU_CANCELLED__';
 
 function escapeJsonString(value) {
   return String(value)
@@ -762,6 +1217,106 @@ function createFolder(folder) {
   folder.create();
 }
 
+function normalizedFsPath(filePath) {
+  return String(new File(filePath).fsName).toLowerCase();
+}
+
+function assertDocumentNotOpen(filePath, label) {
+  var targetPath = normalizedFsPath(filePath);
+  for (var i = 0; i < app.documents.length; i++) {
+    try {
+      if (normalizedFsPath(app.documents[i].fullName.fsName) === targetPath) {
+        throw new Error(label + ' is already open in Photoshop. Close it before starting: ' + filePath);
+      }
+    } catch (documentPathError) {
+      if (String(documentPathError).indexOf('is already open in Photoshop') >= 0) {
+        throw documentPathError;
+      }
+    }
+  }
+}
+
+function snapshotOpenDocuments() {
+  var documents = [];
+  for (var i = 0; i < app.documents.length; i++) {
+    documents.push(app.documents[i]);
+  }
+  return documents;
+}
+
+function documentWasOpen(document, documents) {
+  for (var i = 0; i < documents.length; i++) {
+    if (documents[i] === document) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function documentIsInsidePhotoshopTemp(document) {
+  try {
+    var documentPath = String(document.fullName.fsName).toLowerCase();
+    var tempPath = String(Folder.temp.fsName).toLowerCase();
+    return (
+      documentPath === tempPath ||
+      documentPath.indexOf(tempPath + '\\\\') === 0 ||
+      documentPath.indexOf(tempPath + '/') === 0
+    );
+  } catch (documentPathError) {
+    return false;
+  }
+}
+
+function saveSmartObjectDocument(document) {
+  var smartObjectFile = new File(document.fullName.fsName);
+  var fileName = String(smartObjectFile.name).toLowerCase();
+  var dotIndex = fileName.lastIndexOf('.');
+  var extension = dotIndex >= 0 ? fileName.substring(dotIndex + 1) : '';
+  var previousDialogs = app.displayDialogs;
+  app.displayDialogs = DialogModes.NO;
+  try {
+    if (extension === 'png') {
+      document.saveAs(smartObjectFile, new PNGSaveOptions(), false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'jpg' || extension === 'jpeg') {
+      var jpgOptions = new JPEGSaveOptions();
+      jpgOptions.quality = 12;
+      document.saveAs(smartObjectFile, jpgOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'psd') {
+      var psdOptions = new PhotoshopSaveOptions();
+      psdOptions.layers = true;
+      document.saveAs(smartObjectFile, psdOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'psb') {
+      var psbOptions = new LargeDocumentFormatSaveOptions();
+      psbOptions.layers = true;
+      document.saveAs(smartObjectFile, psbOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    if (extension === 'tif' || extension === 'tiff') {
+      var tiffOptions = new TiffSaveOptions();
+      tiffOptions.layers = true;
+      document.saveAs(smartObjectFile, tiffOptions, false, Extension.LOWERCASE);
+      return;
+    }
+    throw new Error('Unsupported smart object temporary format: ' + smartObjectFile.name);
+  } finally {
+    app.displayDialogs = previousDialogs;
+  }
+}
+
+function positiveFiniteNumber(value, label) {
+  var number = Number(value);
+  if (!isFinite(number) || number <= 0) {
+    throw new Error(label + ' must be a positive finite number');
+  }
+  return number;
+}
+
 function appendLog(entry) {
   ensureParentFolder(LOG_FILE_PATH);
   entry.ts = new Date().getTime();
@@ -785,6 +1340,40 @@ function writeResult(value) {
 
 function cancelRequested() {
   return CANCEL_FILE_PATH && new File(CANCEL_FILE_PATH).exists;
+}
+
+function throwIfCancellationRequested() {
+  if (cancelRequested()) {
+    throw new Error(CANCELLATION_ERROR);
+  }
+}
+
+function isCancellationError(error) {
+  return String(error).indexOf(CANCELLATION_ERROR) >= 0;
+}
+
+function removeOutputFiles(paths) {
+  var failures = [];
+  for (var i = 0; i < paths.length; i++) {
+    var file = new File(paths[i]);
+    var lastError = '';
+    for (var attempt = 0; attempt < 3 && file.exists; attempt++) {
+      try {
+        if (!file.remove() && file.exists) {
+          lastError = 'File.remove returned false';
+        }
+      } catch (removeOutputError) {
+        lastError = String(removeOutputError);
+      }
+      if (file.exists && attempt < 2) {
+        $.sleep(100);
+      }
+    }
+    if (file.exists) {
+      failures.push(paths[i] + (lastError ? ' (' + lastError + ')' : ''));
+    }
+  }
+  return failures;
 }
 
 function findLayerByPath(container, layerPath) {
@@ -905,6 +1494,102 @@ function fitLayerToBounds(layer, targetBounds, mode) {
   layer.translate(targetCenterX - layerCenterX, targetCenterY - layerCenterY);
 }
 
+function getLayerBoundsArray(layer) {
+  var bounds = getLayerBoundsPx(layer);
+  return [bounds.left, bounds.top, bounds.right, bounds.bottom];
+}
+
+function readSmartObjectCanvas(doc, layer, cacheKey) {
+  if (SMART_OBJECT_CANVAS_CACHE[cacheKey]) {
+    return SMART_OBJECT_CANVAS_CACHE[cacheKey];
+  }
+  var openDocuments = snapshotOpenDocuments();
+  doc.activeLayer = layer;
+  executeAction(stringIDToTypeID('placedLayerEditContents'), new ActionDescriptor(), DialogModes.NO);
+  var soDoc = app.activeDocument;
+  if (!soDoc || soDoc === doc) {
+    throw new Error('Photoshop did not open smart object contents: ' + cacheKey);
+  }
+  var canvas = null;
+  try {
+    canvas = {
+      width: Math.round(positiveFiniteNumber(soDoc.width.value, 'Smart object width')),
+      height: Math.round(positiveFiniteNumber(soDoc.height.value, 'Smart object height')),
+      resolution: positiveFiniteNumber(soDoc.resolution, 'Smart object resolution')
+    };
+  } finally {
+    if (!documentWasOpen(soDoc, openDocuments)) {
+      try {
+        soDoc.close(SaveOptions.DONOTSAVECHANGES);
+      } catch (closeSmartObjectError) {}
+    }
+    app.activeDocument = doc;
+  }
+  SMART_OBJECT_CANVAS_CACHE[cacheKey] = canvas;
+  return canvas;
+}
+
+function normalizeInputForSmartObject(doc, layer, replacement, cacheKey) {
+  var canvas = readSmartObjectCanvas(doc, layer, cacheKey);
+  var inputFile = new File(replacement.input_image);
+  if (!inputFile.exists) {
+    throw new Error('Smart object input image not found: ' + replacement.input_image);
+  }
+  assertDocumentNotOpen(inputFile.fsName, 'Input image');
+  var inputDocument = null;
+  try {
+    inputDocument = app.open(inputFile);
+    var sourceWidth = positiveFiniteNumber(inputDocument.width.value, 'Input image width');
+    var sourceHeight = positiveFiniteNumber(inputDocument.height.value, 'Input image height');
+    var scaleX = canvas.width / sourceWidth;
+    var scaleY = canvas.height / sourceHeight;
+    var fitMode = replacement.inner_fit_mode || 'fill';
+    var scale = fitMode === 'fill' ? Math.max(scaleX, scaleY) : Math.min(scaleX, scaleY);
+    var scaledWidth = Math.max(1, Math.round(sourceWidth * scale));
+    var scaledHeight = Math.max(1, Math.round(sourceHeight * scale));
+    inputDocument.resizeImage(
+      UnitValue(scaledWidth, 'px'),
+      UnitValue(scaledHeight, 'px'),
+      canvas.resolution,
+      ResampleMethod.BICUBIC
+    );
+    try {
+      inputDocument.backgroundLayer.isBackgroundLayer = false;
+    } catch (noBackgroundLayerError) {}
+    inputDocument.resizeCanvas(
+      UnitValue(canvas.width, 'px'),
+      UnitValue(canvas.height, 'px'),
+      AnchorPosition.MIDDLECENTER
+    );
+
+    var normalizedFolder = new Folder(new File(RESULT_FILE_PATH).parent.fsName + '/normalized-inputs');
+    createFolder(normalizedFolder);
+    var normalizedFile = new File(
+      normalizedFolder.fsName + '/input-' + (++NORMALIZED_INPUT_INDEX) + '.psd'
+    );
+    if (normalizedFile.exists) {
+      normalizedFile.remove();
+    }
+    var saveOptions = new PhotoshopSaveOptions();
+    saveOptions.layers = true;
+    inputDocument.saveAs(normalizedFile, saveOptions, true, Extension.LOWERCASE);
+    return {
+      file: normalizedFile,
+      canvas: canvas,
+      source_width: sourceWidth,
+      source_height: sourceHeight,
+      fit_mode: fitMode
+    };
+  } finally {
+    try {
+      if (inputDocument) {
+        inputDocument.close(SaveOptions.DONOTSAVECHANGES);
+      }
+    } catch (closeInputError) {}
+    app.activeDocument = doc;
+  }
+}
+
 function replaceArtworkInsideSmartObject(soDoc, group, replacement) {
   removeGeneratedArtwork(soDoc);
   var targetLayer = null;
@@ -936,7 +1621,7 @@ function replaceArtworkInsideSmartObject(soDoc, group, replacement) {
   });
 }
 
-function replaceSmartObjectContents(doc, group, replacement, mode) {
+function replaceSmartObjectContents(doc, group, replacement, mode, replacementIndex) {
   var layer = findLayerByPath(doc, replacement.layer_path);
   if (!layer) {
     throw new Error('Smart object layer not found: ' + replacement.layer_path);
@@ -944,8 +1629,16 @@ function replaceSmartObjectContents(doc, group, replacement, mode) {
 
   doc.activeLayer = layer;
   var startedAt = new Date().getTime();
+  var beforeBounds = getLayerBoundsArray(layer);
+  var normalizedInput = normalizeInputForSmartObject(
+    doc,
+    layer,
+    replacement,
+    replacement.layer_path + ':' + replacementIndex
+  );
+  doc.activeLayer = layer;
   var desc = new ActionDescriptor();
-  desc.putPath(charIDToTypeID('null'), new File(replacement.input_image));
+  desc.putPath(charIDToTypeID('null'), normalizedInput.file);
   executeAction(stringIDToTypeID('placedLayerReplaceContents'), desc, DialogModes.NO);
   appendLog({
     level: 'info',
@@ -956,6 +1649,14 @@ function replaceSmartObjectContents(doc, group, replacement, mode) {
     smart_object: replacement.layer_path,
     input: replacement.input_image,
     replace_mode: mode,
+    fit_mode: normalizedInput.fit_mode,
+    input_width: normalizedInput.source_width,
+    input_height: normalizedInput.source_height,
+    source_canvas_width: normalizedInput.canvas.width,
+    source_canvas_height: normalizedInput.canvas.height,
+    source_canvas_resolution: normalizedInput.canvas.resolution,
+    before_bounds: beforeBounds,
+    after_bounds: getLayerBoundsArray(layer),
     duration_ms: new Date().getTime() - startedAt
   });
 }
@@ -966,6 +1667,17 @@ function editSmartObjectContents(doc, group, replacement) {
     throw new Error('Smart object layer not found: ' + replacement.layer_path);
   }
 
+  var openDocuments = snapshotOpenDocuments();
+  doc.activeLayer = layer;
+  var convertedLinkedSource = false;
+  try {
+    executeAction(stringIDToTypeID('placedLayerConvertToEmbedded'), undefined, DialogModes.NO);
+    convertedLinkedSource = true;
+  } catch (convertLinkedSourceError) {}
+  layer = findLayerByPath(doc, replacement.layer_path);
+  if (!layer) {
+    throw new Error('Smart object layer disappeared after link isolation: ' + replacement.layer_path);
+  }
   doc.activeLayer = layer;
   appendLog({
     level: 'info',
@@ -983,10 +1695,27 @@ function editSmartObjectContents(doc, group, replacement) {
   if (!soDoc || soDoc === doc) {
     throw new Error('Photoshop did not open smart object contents: ' + replacement.layer_path);
   }
+  var openedByTask = !documentWasOpen(soDoc, openDocuments);
+  if (!openedByTask) {
+    app.activeDocument = doc;
+    throw new Error(
+      'Smart object source is already open in Photoshop. Close it before starting: ' +
+      replacement.layer_path
+    );
+  }
 
+  var smartObjectClosed = false;
   try {
+    if (!documentIsInsidePhotoshopTemp(soDoc)) {
+      throw new Error(
+        'Smart object content is outside Photoshop temporary storage; refusing to modify the source file: ' +
+        replacement.layer_path
+      );
+    }
     replaceArtworkInsideSmartObject(soDoc, group, replacement);
-    soDoc.save();
+    saveSmartObjectDocument(soDoc);
+    soDoc.close(SaveOptions.DONOTSAVECHANGES);
+    smartObjectClosed = true;
     appendLog({
       level: 'info',
       stage: 'so_edit_save',
@@ -994,17 +1723,20 @@ function editSmartObjectContents(doc, group, replacement) {
       group: group.group_index,
       sku_folder: group.sku_folder,
       smart_object: replacement.layer_path,
-      replace_mode: 'editSmartObject'
+      replace_mode: 'editSmartObject',
+      converted_linked_source: convertedLinkedSource
     });
   } finally {
-    try {
-      soDoc.close(SaveOptions.DONOTSAVECHANGES);
-    } catch (closeSmartObjectError) {}
+    if (openedByTask && !smartObjectClosed) {
+      try {
+        soDoc.close(SaveOptions.DONOTSAVECHANGES);
+      } catch (closeSmartObjectError) {}
+    }
     app.activeDocument = doc;
   }
 }
 
-function replaceSmartObject(doc, group, replacement) {
+function replaceSmartObject(doc, group, replacement, replacementIndex) {
   var mode = replacement.replace_mode || group.smart_object_replace_mode || CONFIG.smart_object_replace_mode || 'replaceContents';
   appendLog({
     level: 'debug',
@@ -1020,7 +1752,7 @@ function replaceSmartObject(doc, group, replacement) {
     editSmartObjectContents(doc, group, replacement);
     return;
   }
-  replaceSmartObjectContents(doc, group, replacement, mode);
+  replaceSmartObjectContents(doc, group, replacement, mode, replacementIndex);
 }
 
 function saveAs(doc, outputPath, format, jpgQuality) {
@@ -1054,6 +1786,7 @@ function runBatch() {
     appendLog({ level: 'info', stage: 'task_start', message: '开始模板批处理' });
     appendLog({ level: 'info', stage: 'template_start', message: '开始处理模板' });
     appendLog({ level: 'info', stage: 'template_open', message: '打开模板' });
+    assertDocumentNotOpen(CONFIG.mockup_path, 'Template');
     baseDocument = app.open(new File(CONFIG.mockup_path));
     ${pristineHistoryState}
 
@@ -1089,9 +1822,18 @@ function runBatch() {
           sku_folder: group.sku_folder
         });
         for (var replacementIndex = 0; replacementIndex < group.so_replacements.length; replacementIndex++) {
-          replaceSmartObject(workingDocument, group, group.so_replacements[replacementIndex]);
+          throwIfCancellationRequested();
+          replaceSmartObject(
+            workingDocument,
+            group,
+            group.so_replacements[replacementIndex],
+            replacementIndex
+          );
+          throwIfCancellationRequested();
         }
+        throwIfCancellationRequested();
         exportOutputs(workingDocument, group, groupResult);
+        throwIfCancellationRequested();
         groupResult.ok = true;
         result.outputs = result.outputs.concat(groupResult.outputs);
         appendLog({
@@ -1103,6 +1845,24 @@ function runBatch() {
           duration_ms: new Date().getTime() - groupStartedAt
         });
       } catch (groupError) {
+        if (isCancellationError(groupError)) {
+          result.cancelled = true;
+          var cleanupFailures = removeOutputFiles(groupResult.outputs);
+          groupResult.outputs = [];
+          if (cleanupFailures.length > 0) {
+            result.cancelled = false;
+            throw new Error('Failed to remove partial outputs after cancellation: ' + cleanupFailures.join(', '));
+          }
+          appendLog({
+            level: 'warn',
+            stage: 'cancelled',
+            message: '用户取消，停止当前分组和后续分组',
+            group: group.group_index,
+            sku_folder: group.sku_folder,
+            duration_ms: new Date().getTime() - groupStartedAt
+          });
+          break;
+        }
         failed = true;
         groupResult.error = String(groupError);
         appendLog({

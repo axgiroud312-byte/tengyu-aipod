@@ -134,6 +134,8 @@ export type PhotoshopProgressStage =
   | 'native_slice_detected'
   | 'native_slice_fallback'
   | 'native_slice_export'
+  | 'native_slice_export_fallback'
+  | 'native_slice_extra_ignored'
   | 'group_start'
   | 'jsx_generate'
   | 'jsx_exec'
@@ -182,6 +184,16 @@ export interface PhotoshopProgressLogEntry {
   inner_layer_path?: string
   inner_layer_name?: string
   fit_mode?: PhotoshopInnerFitMode
+  input_width?: number
+  input_height?: number
+  source_canvas_width?: number
+  source_canvas_height?: number
+  source_canvas_resolution?: number
+  converted_linked_source?: boolean
+  before_bounds?: PsdBounds
+  after_bounds?: PsdBounds
+  expected_outputs?: number
+  actual_outputs?: number
   attempt?: number
   output_file?: string
   error?: string

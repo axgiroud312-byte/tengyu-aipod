@@ -8,6 +8,7 @@ import {
   type PipelineResultImage,
   type PipelineResultSection,
   WORKBENCH_DIRECTORIES,
+  uniqueTemplateNames,
 } from '@tengyu-aipod/shared'
 import type { PipelineRunStats, PipelineRuntimeLogEntry } from '@tengyu-aipod/shared'
 import type { runBatch as runPhotoshopBatch } from '../../photoshop/multi-batch'
@@ -221,6 +222,7 @@ export function createPhotoshopStage(
     const outputItems: PipelineResultImage[] = []
     const outputGroups: PipelineResultGroup[] = []
     const outputRootPath = outputRoot(dependencies.workbenchRoot, config)
+    const templateNames = uniqueTemplateNames(config.templates)
 
     const refreshSection = (failed: number) => {
       dependencies.updateResultSection(
@@ -327,7 +329,8 @@ export function createPhotoshopStage(
           }
         }
 
-        for (const templatePath of config.templates) {
+        for (const [templateIndex, templatePath] of config.templates.entries()) {
+          const templateName = templateNames[templateIndex] ?? 'template'
           const pending = preparedItems.filter(({ item }) => {
             const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
             return context.resume?.getItem('photoshop', stageItemKey)?.status !== 'completed'
@@ -374,6 +377,7 @@ export function createPhotoshopStage(
                   taskId,
                   outputRoot: outputRootPath,
                   outputLayout: 'template_first',
+                  templateNameOverride: templateName,
                   replaceRange,
                   smartObjectReplaceMode: config.smartObjectReplaceMode ?? 'replaceContents',
                   smartObjectInnerFitMode: config.smartObjectInnerFitMode ?? 'fill',

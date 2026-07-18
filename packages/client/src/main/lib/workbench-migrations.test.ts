@@ -125,7 +125,7 @@ describe('workbench migrations', () => {
         expect.arrayContaining(['result_sections_json', 'logs_json']),
       )
       expect(columnNames(db, 'psd_templates')).toEqual(
-        expect.arrayContaining(['layers', 'text_layers']),
+        expect.arrayContaining(['layers', 'text_layers', 'scanner_version']),
       )
       expect(db.prepare('SELECT id, file_path FROM artifacts').get()).toEqual({
         id: 'art-old',
@@ -138,6 +138,9 @@ describe('workbench migrations', () => {
       expect(db.prepare('SELECT id, file_hash FROM psd_templates').get()).toEqual({
         id: 'tpl-old',
         file_hash: 'tpl-hash',
+      })
+      expect(db.prepare('SELECT scanner_version FROM psd_templates').get()).toEqual({
+        scanner_version: 0,
       })
     } finally {
       db.close()

@@ -84,6 +84,30 @@ describe('TempFileManager', () => {
     await expect(stat(dir)).rejects.toThrow()
   })
 
+  it('retries completed task cleanup after a transient Windows file lock', async () => {
+    let removalAttempt = 0
+    const manager = new TempFileManager({
+      rootDir: tempDir,
+      failedTtlMs: 1,
+      removeDir: async (path) => {
+        removalAttempt += 1
+        if (removalAttempt === 1) {
+          throw Object.assign(new Error('file is locked'), { code: 'EPERM' })
+        }
+        await rm(path, { recursive: true, force: true })
+      },
+    })
+    const dir = await manager.createTaskDir('photoshop', 'completed-with-lock')
+    await writeFile(join(dir, 'result.json'), '{}')
+
+    await expect(manager.cleanupTask('photoshop', 'completed-with-lock')).resolves.toBeUndefined()
+    await expect(stat(dir)).resolves.toBeTruthy()
+
+    await vi.waitFor(async () => {
+      await expect(stat(dir)).rejects.toThrow()
+    })
+  })
+
   it('keeps failed task directories for delayed cleanup', async () => {
     const manager = new TempFileManager({ rootDir: tempDir, failedTtlMs: 1 })
     const dir = await manager.createTaskDir('title', 'failed')

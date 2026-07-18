@@ -3509,6 +3509,7 @@ describe('PipelineService', () => {
     const firstPhotoshopEntered = createDeferred<void>()
     const releaseFirstPhotoshop = createDeferred<void>()
     const runBatchCalls: string[] = []
+    const templateNameOverrides: Array<string | undefined> = []
 
     mocks.runTxt2imgBatch.mockImplementationOnce(
       async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
@@ -3596,10 +3597,12 @@ describe('PipelineService', () => {
           taskId: string
           outputRoot: string
           outputLayout: PhotoshopOutputLayout
+          templateNameOverride?: string
         },
       ) => {
         const templatePath = Array.isArray(templates) ? String(templates[0] ?? '') : ''
         const printId = prints[0]?.id ?? 'print'
+        templateNameOverrides.push(config.templateNameOverride)
         runBatchCalls.push(`${printId}:${windowsBaseName(templatePath).replace(/\.psd$/i, '')}`)
         if (runBatchCalls.length === 1) {
           firstPhotoshopEntered.resolve()
@@ -3693,6 +3696,7 @@ describe('PipelineService', () => {
       'GYX-0002:mug',
       'GYX-0002:shirt',
     ])
+    expect(templateNameOverrides).toEqual(['mug', 'shirt', 'mug', 'shirt'])
     await expect(
       readFile(
         join(

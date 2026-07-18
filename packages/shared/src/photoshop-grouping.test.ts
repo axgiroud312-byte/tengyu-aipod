@@ -5,6 +5,7 @@ import {
   representativeSoCount,
   sanitizeTemplateName,
   sortAlphaNum,
+  uniqueTemplateNames,
 } from './photoshop-grouping'
 
 function createTemplate(overrides: Partial<PsdTemplate> = {}): PsdTemplate {
@@ -71,10 +72,35 @@ describe('representativeSoCount', () => {
 describe('sanitizeTemplateName', () => {
   it('uses the PSD basename and removes Windows-invalid characters', () => {
     expect(sanitizeTemplateName('C:\\templates\\mockup:cup?.psd')).toBe('mockup_cup_')
+    expect(sanitizeTemplateName('..')).toBe('template')
+  })
+
+  it('allocates case-insensitive unique names within the length limit', () => {
+    expect(
+      uniqueTemplateNames(['C:\\templates\\front\\mockup.psd', 'C:\\templates\\back\\MOCKUP.psd']),
+    ).toEqual(['mockup', 'MOCKUP-2'])
+    expect(
+      uniqueTemplateNames(['C:\\templates\\mockup.psd', 'C:\\templates\\mockup..psd']),
+    ).toEqual(['mockup', 'mockup-2'])
   })
 })
 
 describe('groupTasks', () => {
+  it('sanitizes an explicit template folder name before building output paths', () => {
+    const groups = groupTasks(
+      [{ id: 'img1', file_path: 'C:\\素材\\img1.png' }],
+      createTemplate({ representative_so_count: 1 }),
+      {
+        taskId: 'task-1',
+        outputRoot: 'C:\\outputs',
+        templateName: '../bad:name',
+      },
+    )
+
+    expect(groups[0]?.template_name).toBe('bad_name')
+    expect(groups[0]?.job.output_paths[0]).toBe('C:\\outputs/bad_name/img1/01.jpg')
+  })
+
   it('keeps the final partial group instead of discarding it', () => {
     const groups = groupTasks(
       [

@@ -49,6 +49,8 @@ interface RawPsdScanResult {
 }
 
 const FULL_AREA_FLAG = 'full'
+const NATIVE_SLICE_GUIDE_IOU_THRESHOLD = 0.94
+const MAX_EDGE_FRAGMENT_AREA_RATIO = 0.1
 
 export async function hashFile(path: string): Promise<string> {
   return new Promise((resolveHash, reject) => {
@@ -379,6 +381,103 @@ function normalizeNativeSlices(value: unknown): PsdNativeSlice[] {
   })
 }
 
+function boundsArea(bounds: PsdBounds): number {
+  return Math.max(0, bounds[2] - bounds[0]) * Math.max(0, bounds[3] - bounds[1])
+}
+
+function clipAreaBounds(area: PsdClipArea): PsdBounds {
+  return [area.x, area.y, area.x + area.w, area.y + area.h]
+}
+
+function boundsIou(left: PsdBounds, right: PsdBounds): number {
+  const intersectionWidth = Math.max(0, Math.min(left[2], right[2]) - Math.max(left[0], right[0]))
+  const intersectionHeight = Math.max(0, Math.min(left[3], right[3]) - Math.max(left[1], right[1]))
+  const intersectionArea = intersectionWidth * intersectionHeight
+  const unionArea = boundsArea(left) + boundsArea(right) - intersectionArea
+  return unionArea > 0 ? intersectionArea / unionArea : 0
+}
+
+function touchesTrailingDocumentEdge(
+  bounds: PsdBounds,
+  docSize: { w: number; h: number },
+): boolean {
+  return bounds[2] > docSize.w || bounds[3] > docSize.h
+}
+
+function boundsContain(outer: PsdBounds, inner: PsdBounds): boolean {
+  return (
+    outer[0] <= inner[0] && outer[1] <= inner[1] && outer[2] >= inner[2] && outer[3] >= inner[3]
+  )
+}
+
+function formsUnnamedNestedEdgeFragmentCluster(
+  slices: PsdNativeSlice[],
+  docSize: { w: number; h: number },
+): boolean {
+  if (
+    slices.length < 2 ||
+    slices.some(
+      (slice) =>
+        slice.name.trim().length > 0 || !touchesTrailingDocumentEdge(slice.bounds, docSize),
+    )
+  ) {
+    return false
+  }
+
+  return slices.some((outer) =>
+    slices.every((inner) => outer === inner || boundsContain(outer.bounds, inner.bounds)),
+  )
+}
+
+function normalizeNativeSlicesToGuides(
+  slices: PsdNativeSlice[],
+  guides: PsdGuides,
+  docSize: { w: number; h: number },
+): PsdNativeSlice[] {
+  const guideAreas = deriveClipAreasFromGuides(guides, docSize)
+  if (guideAreas.length === 0 || slices.length < guideAreas.length) {
+    return slices
+  }
+
+  const matchedIndexes: number[] = []
+  const usedSliceIndexes = new Set<number>()
+  for (const guideArea of guideAreas) {
+    const guideBounds = clipAreaBounds(guideArea)
+    let bestIndex = -1
+    let bestIou = NATIVE_SLICE_GUIDE_IOU_THRESHOLD
+    for (let sliceIndex = 0; sliceIndex < slices.length; sliceIndex += 1) {
+      if (usedSliceIndexes.has(sliceIndex)) {
+        continue
+      }
+      const iou = boundsIou(guideBounds, slices[sliceIndex]?.bounds ?? [0, 0, 0, 0])
+      if (iou >= bestIou) {
+        bestIndex = sliceIndex
+        bestIou = iou
+      }
+    }
+    if (bestIndex < 0) {
+      return slices
+    }
+    matchedIndexes.push(bestIndex)
+    usedSliceIndexes.add(bestIndex)
+  }
+
+  const unmatchedSlices = slices.filter((_slice, index) => !usedSliceIndexes.has(index))
+  const smallestGuideArea = Math.min(...guideAreas.map((area) => area.w * area.h))
+  const unmatchedArea = unmatchedSlices.reduce(
+    (total, slice) => total + boundsArea(slice.bounds),
+    0,
+  )
+  if (
+    unmatchedArea > smallestGuideArea * MAX_EDGE_FRAGMENT_AREA_RATIO ||
+    !formsUnnamedNestedEdgeFragmentCluster(unmatchedSlices, docSize)
+  ) {
+    return slices
+  }
+
+  return matchedIndexes.map((index) => slices[index] as PsdNativeSlice)
+}
+
 export function buildPsdTemplateFromScanResult(
   raw: RawPsdScanResult,
   options: { psdPath: string; fileHash: string; scannedAt: number },
@@ -406,6 +505,11 @@ export function buildPsdTemplateFromScanResult(
     layers,
   })
   const mode = detectSmartObjectMode(smartObjects)
+  const nativeSlices = normalizeNativeSlicesToGuides(
+    normalizeNativeSlices(raw.native_slices),
+    guides,
+    docSize,
+  )
 
   return {
     id: `psd_${options.fileHash.slice(0, 24)}`,
@@ -415,7 +519,7 @@ export function buildPsdTemplateFromScanResult(
     smart_objects: smartObjects,
     guides,
     clip_areas: clipAreas,
-    native_slices: normalizeNativeSlices(raw.native_slices),
+    native_slices: nativeSlices,
     mode,
     representative_so_count: representativeSoCount(smartObjects),
     scanned_at: options.scannedAt,
@@ -457,7 +561,24 @@ export class PsdScanner {
     const fileHash = await this.hashFile(absolutePsdPath)
     const cached = await this.cache.findByHash(fileHash)
     if (cached) {
-      return cached
+      const nativeSlices = normalizeNativeSlicesToGuides(
+        cached.native_slices,
+        cached.guides,
+        cached.doc_size,
+      )
+      const slicesChanged =
+        nativeSlices.some((slice, index) => slice !== cached.native_slices[index]) ||
+        nativeSlices.length !== cached.native_slices.length
+      if (cached.file_path === absolutePsdPath && !slicesChanged) {
+        return cached
+      }
+      const reboundTemplate = {
+        ...cached,
+        file_path: absolutePsdPath,
+        native_slices: nativeSlices,
+      }
+      await this.cache.save(reboundTemplate)
+      return reboundTemplate
     }
 
     const taskId = this.taskIdFactory(fileHash)
