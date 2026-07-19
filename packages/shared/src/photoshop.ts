@@ -14,6 +14,7 @@ export type PhotoshopOutputLayout = 'template_first' | 'sku_first' | 'sku_flat'
 export type PhotoshopReplaceRange = 'auto' | 'topmost' | 'top' | 'all'
 export type PhotoshopSmartObjectReplaceMode = 'replaceContents' | 'editSmartObject'
 export type PhotoshopInnerFitMode = 'fit' | 'fill'
+export type PhotoshopCancellationMode = 'immediate' | 'between_groups'
 
 export type PsdBounds = [number, number, number, number]
 

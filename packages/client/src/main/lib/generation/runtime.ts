@@ -101,6 +101,7 @@ export type GenerationServiceDependencies = {
   emitDebugLog?: (entry: GenerationDebugLogEntry) => void
   onImageComplete?: (image: GenerationImageCompletePayload) => void | Promise<void>
   onPromptResolved?: (payload: GenerationPromptResolvedPayload) => void | Promise<void>
+  instanceLockOwner?: string
   strictImageComplete?: boolean | undefined
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
@@ -213,17 +214,18 @@ export function promptSkillCategory(
 }
 
 export class ComfyuiInstanceLockManager {
-  private readonly locks = new Map<string, string>()
+  private readonly locks = new Map<string, { ownerId: string; leases: number }>()
 
   async run<T>(
     input: { instanceUuid?: string | undefined },
     taskId: string,
     operation: () => Promise<T>,
+    instanceLockOwner?: string,
   ) {
     const lockKey = comfyuiInstanceLockKey(input)
-    const runId = randomUUID()
+    const ownerId = instanceLockOwner?.trim() || randomUUID()
     const holder = this.locks.get(lockKey)
-    if (holder) {
+    if (holder && holder.ownerId !== ownerId) {
       throw new AppErrorClass('HTTP_4XX', '该云机正在执行其他任务，请换一台或稍后再试', false, {
         provider: 'comfyui-chenyu',
         instance: lockKey,
@@ -231,18 +233,35 @@ export class ComfyuiInstanceLockManager {
       })
     }
 
-    this.locks.set(lockKey, runId)
+    if (holder) {
+      holder.leases += 1
+    } else {
+      this.locks.set(lockKey, { ownerId, leases: 1 })
+    }
     try {
       return await operation()
     } finally {
-      if (this.locks.get(lockKey) === runId) {
-        this.locks.delete(lockKey)
+      const current = this.locks.get(lockKey)
+      if (current?.ownerId === ownerId) {
+        current.leases -= 1
+        if (current.leases === 0) {
+          this.locks.delete(lockKey)
+        }
       }
     }
   }
 }
 
 export const comfyuiInstanceLocks = new ComfyuiInstanceLockManager()
+
+export function runWithComfyuiInstanceLock<T>(
+  input: { instanceUuid?: string | undefined },
+  taskId: string,
+  dependencies: Pick<GenerationServiceDependencies, 'instanceLockOwner'>,
+  operation: () => Promise<T>,
+) {
+  return comfyuiInstanceLocks.run(input, taskId, operation, dependencies.instanceLockOwner)
+}
 
 function comfyuiInstanceLockKey(input: { instanceUuid?: string | undefined }) {
   return input.instanceUuid?.trim() || 'default'

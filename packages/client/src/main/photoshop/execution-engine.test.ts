@@ -1,7 +1,12 @@
 import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { AppErrorClass, type PhotoshopJob, type PsdTemplate } from '@tengyu-aipod/shared'
+import {
+  AppErrorClass,
+  type PhotoshopCancellationMode,
+  type PhotoshopJob,
+  type PsdTemplate,
+} from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { openSqliteDatabase } from '../lib/sqlite'
 import { TempFileManager } from '../lib/temp-file-manager'
@@ -303,6 +308,69 @@ describe('PhotoshopExecutionEngine', () => {
       retryable: true,
     })
     expect(calls).toEqual(['ready'])
+  })
+
+  it('forwards cancellation mode to the template JSX writer', async () => {
+    const outputPath = join(tempDir, 'mode-01.jpg')
+    const cancellationModes: Array<PhotoshopCancellationMode | undefined> = []
+    const template: PsdTemplate = {
+      id: 'tpl-cancellation-mode',
+      file_path: 'C:\\templates\\mode.psd',
+      file_hash: 'mode-hash',
+      doc_size: { w: 1000, h: 1000 },
+      smart_objects: [],
+      guides: { horizontal: [], vertical: [] },
+      clip_areas: [{ x: 0, y: 0, w: 1000, h: 1000, is_full: true }],
+      native_slices: [],
+      mode: 'single',
+      representative_so_count: 1,
+      scanned_at: 123,
+      layers: [],
+      text_layers: [],
+    }
+    const group = {
+      group_index: 0,
+      sku_folder: 'mode-print',
+      template_name: 'mode',
+      print_assets: [{ id: 'mode-print', file_path: 'C:\\prints\\mode.png' }],
+      job: createJob({ output_paths: [outputPath], mockup_path: template.file_path }),
+    }
+    const engine = new PhotoshopExecutionEngine({
+      platform: 'win32',
+      writeTemplateBatchJsx: async (_template, _groups, _cancelFilePath, cancellationMode) => {
+        cancellationModes.push(cancellationMode)
+        return {
+          jsx_path: join(tempDir, 'mode.jsx'),
+          result_file_path: join(tempDir, 'mode-result.json'),
+          log_file_path: join(tempDir, 'mode.log'),
+          cancel_file_path: join(tempDir, 'cancel.flag'),
+          content: '',
+        }
+      },
+      readTextFile: async () =>
+        JSON.stringify({
+          ok: true,
+          outputs: [outputPath],
+          groups: [
+            {
+              ok: true,
+              group_index: 0,
+              sku_folder: 'mode-print',
+              outputs: [outputPath],
+            },
+          ],
+        }),
+      accessFile: async () => undefined,
+      comAdapter: readyComAdapter(),
+      recorder: noopRecorder,
+      shouldSkipJob: async () => false,
+    })
+
+    await engine.runTemplateBatch(template, [group], 0, {
+      cancellationMode: 'between_groups',
+    })
+
+    expect(cancellationModes).toEqual(['between_groups'])
   })
 
   it('runs native-slice batches through one JSX call without workflow or artifact recording', async () => {

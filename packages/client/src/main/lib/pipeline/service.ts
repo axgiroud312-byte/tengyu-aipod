@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto'
+import type { Dirent } from 'node:fs'
 import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
@@ -77,7 +78,11 @@ import {
   openWorkbenchDatabase as openWorkbenchDatabaseFile,
   workbenchDatabasePath,
 } from '../workbench-db'
-import { assertPathInsideWorkbench, canonicalPath } from '../workbench-path-guard'
+import {
+  type WorkbenchPathDomain,
+  assertPathInsideWorkbench,
+  canonicalPath,
+} from '../workbench-path-guard'
 import * as pipelineStore from './store'
 import type {
   PipelineItemRecord,
@@ -438,16 +443,51 @@ async function imageReference(imagePath: string) {
 
 async function scanImageFiles(folder: string): Promise<string[]> {
   if (!folder.trim() || !isAbsolute(folder)) {
-    throw new AppErrorClass('HTTP_4XX', '请选择有效的图片文件夹', false, { folder })
+    throw new AppErrorClass('INVALID_INPUT', '请选择有效的图片文件夹', false, { folder })
   }
-  const folderStat = await stat(folder).catch(() => null)
-  if (!folderStat?.isDirectory()) {
-    throw new AppErrorClass('HTTP_4XX', '选择的路径不是文件夹', false, { folder })
+
+  let folderStat: Awaited<ReturnType<typeof stat>>
+  try {
+    folderStat = await stat(folder)
+  } catch (error) {
+    const filesystemCode = readFilesystemErrorCode(error)
+    if (filesystemCode === 'ENOENT' || filesystemCode === 'ENOTDIR') {
+      throw new AppErrorClass('INVALID_INPUT', '选择的路径不是文件夹', false, {
+        folder,
+        filesystemCode,
+      })
+    }
+    throw new AppErrorClass(
+      'WORKSPACE_IO_FAILED',
+      `无法读取图片文件夹，请检查目录权限和状态后重试：${folder}`,
+      false,
+      { folder, operation: 'stat', filesystemCode },
+      error,
+    )
+  }
+  if (!folderStat.isDirectory()) {
+    throw new AppErrorClass('INVALID_INPUT', '选择的路径不是文件夹', false, { folder })
   }
 
   const files: string[] = []
   async function visit(currentFolder: string) {
-    const entries = await readdir(currentFolder, { withFileTypes: true })
+    let entries: Dirent[]
+    try {
+      entries = await readdir(currentFolder, { withFileTypes: true })
+    } catch (error) {
+      throw new AppErrorClass(
+        'WORKSPACE_IO_FAILED',
+        `无法扫描图片文件夹，请检查目录权限和状态后重试：${currentFolder}`,
+        false,
+        {
+          folder,
+          currentFolder,
+          operation: 'readdir',
+          filesystemCode: readFilesystemErrorCode(error),
+        },
+        error,
+      )
+    }
     for (const entry of entries.sort((left, right) => naturalCompare(left.name, right.name))) {
       const entryPath = join(currentFolder, entry.name)
       if (entry.isDirectory()) {
@@ -461,6 +501,33 @@ async function scanImageFiles(folder: string): Promise<string[]> {
   }
   await visit(folder)
   return files.sort(naturalCompare)
+}
+
+function readFilesystemErrorCode(error: unknown) {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code
+  }
+  return undefined
+}
+
+async function assertPipelinePathInsideWorkbench(
+  workbenchRoot: string,
+  targetPath: string,
+  options: { domain: WorkbenchPathDomain; label: string },
+) {
+  try {
+    return await assertPathInsideWorkbench(workbenchRoot, targetPath, options)
+  } catch (error) {
+    if (error instanceof AppErrorClass && error.code === 'HTTP_4XX') {
+      throw new AppErrorClass('INVALID_INPUT', error.message, false, error.details, error)
+    }
+    throw error
+  }
 }
 
 async function pathExists(path: string) {
@@ -1152,19 +1219,6 @@ export class PipelineService {
     waitTimeoutMs: PHOTOSHOP_MUTEX_TIMEOUT_MS,
     timeoutError: () => new AppErrorClass('HTTP_5XX', 'Photoshop 无响应,请检查 PS 后重试', true),
   })
-  private readonly comfyuiInstanceQueues = new Map<string, PromiseMutex>()
-
-  private comfyuiQueueForInstance(instanceUuid?: string | undefined) {
-    const key = instanceUuid?.trim() || ''
-    const existing = this.comfyuiInstanceQueues.get(key)
-    if (existing) {
-      return existing
-    }
-    const created = new PromiseMutex()
-    this.comfyuiInstanceQueues.set(key, created)
-    return created
-  }
-
   async startRun(config: unknown) {
     const parsedConfig = parsePipelineLaunchConfig(config)
     const runId = randomUUID()
@@ -1189,7 +1243,9 @@ export class PipelineService {
 
   startResume(runId: string) {
     if (this.activeRuns.has(runId) || this.fireAndForgetResumeRunIds.has(runId)) {
-      throw new AppErrorClass('HTTP_4XX', '完整任务正在运行,不能重复续跑', false, { runId })
+      throw new AppErrorClass('INVALID_INPUT', '完整任务正在运行,不能重复续跑', false, {
+        runId,
+      })
     }
     this.fireAndForgetResumeRunIds.add(runId)
     void this.resumeRun(runId)
@@ -1308,12 +1364,12 @@ export class PipelineService {
     const db = openWorkbenchDatabase(workbenchRoot)
     let activePrintSkuLock: string | null = null
     try {
-      const detail = this.requireRunDetail(db, runId)
+      const detail = this.requireRunDetail(db, runId, 'INVALID_INPUT')
       if (detail.run.status === 'running') {
-        throw new AppErrorClass('HTTP_4XX', '完整任务正在运行,不能续跑', false, { runId })
+        throw new AppErrorClass('INVALID_INPUT', '完整任务正在运行,不能续跑', false, { runId })
       }
       if (detail.run.status !== 'interrupted' && detail.run.status !== 'failed') {
-        throw new AppErrorClass('HTTP_4XX', '只有已中断或失败的完整任务可以续跑', false, {
+        throw new AppErrorClass('INVALID_INPUT', '只有已中断或失败的完整任务可以续跑', false, {
           runId,
           status: detail.run.status,
         })
@@ -1742,7 +1798,7 @@ export class PipelineService {
     if (source.mode === 'collection') {
       const paths = await scanImageFiles(source.sourceFolder)
       if (paths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '采集目录里没有可提取的图片', false)
+        throw new AppErrorClass('INVALID_INPUT', '采集目录里没有可提取的图片', false)
       }
       return {
         ...normalizedConfig,
@@ -1755,7 +1811,7 @@ export class PipelineService {
     if (source.mode === 'existing_prints') {
       const paths = await scanImageFiles(source.printFolder)
       if (paths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '印花目录里没有可套版图片', false)
+        throw new AppErrorClass('INVALID_INPUT', '印花目录里没有可套版图片', false)
       }
       return {
         ...normalizedConfig,
@@ -1768,7 +1824,7 @@ export class PipelineService {
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
       const paths = await scanImageFiles(source.sourceFolder)
       if (paths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '图生图图片文件夹里没有可用图片', false)
+        throw new AppErrorClass('INVALID_INPUT', '图生图图片文件夹里没有可用图片', false)
       }
       return {
         ...normalizedConfig,
@@ -1783,13 +1839,13 @@ export class PipelineService {
 
   private async assertRunConfigPaths(workbenchRoot: string, config: PipelineRunConfig) {
     if (config.source.mode === 'collection') {
-      await assertPathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
+      await assertPipelinePathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
         domain: 'collection',
         label: '完整任务采集来源目录',
       })
     }
     if (config.source.mode === 'existing_prints') {
-      const printFolder = await assertPathInsideWorkbench(
+      const printFolder = await assertPipelinePathInsideWorkbench(
         workbenchRoot,
         config.source.printFolder,
         {
@@ -1803,7 +1859,7 @@ export class PipelineService {
       const waitingRoot = await canonicalPath(join(generationRoot, WAITING_PHOTOSHOP_PRINT_FOLDER))
       if (printFolder === generationRoot || sameOrInsidePath(printFolder, waitingRoot)) {
         throw new AppErrorClass(
-          'HTTP_4XX',
+          'INVALID_INPUT',
           '已有印花来源必须选择 02-印花工作区 下的具体印花文件夹，不能选择根目录或等待套版目录',
           false,
           { kind: 'invalid_existing_print_folder', printFolder },
@@ -1812,14 +1868,14 @@ export class PipelineService {
     }
     if (config.source.mode === 'img2img') {
       if (config.source.provider === 'grsai' && config.source.sourceFolder) {
-        await assertPathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
+        await assertPipelinePathInsideWorkbench(workbenchRoot, config.source.sourceFolder, {
           domain: 'generation',
           label: '完整任务图生图来源目录',
         })
       }
       if (config.source.provider === 'grsai') {
         for (const referencePath of config.source.referenceImagePaths ?? []) {
-          await assertPathInsideWorkbench(workbenchRoot, referencePath, {
+          await assertPipelinePathInsideWorkbench(workbenchRoot, referencePath, {
             domain: 'local-image',
             label: '完整任务图生图参考图',
           })
@@ -1827,7 +1883,7 @@ export class PipelineService {
       }
     }
     if (config.photoshop.enabled !== false && config.photoshop.outputRoot) {
-      await assertPathInsideWorkbench(workbenchRoot, config.photoshop.outputRoot, {
+      await assertPipelinePathInsideWorkbench(workbenchRoot, config.photoshop.outputRoot, {
         domain: 'listing',
         label: '完整任务套版输出目录',
       })
@@ -2010,7 +2066,7 @@ export class PipelineService {
         })
         if (missingPromptSnapshot) {
           throw new AppErrorClass(
-            'HTTP_4XX',
+            'WORKSPACE_IO_FAILED',
             'AI 提示词未保存，无法安全续跑生成阶段，请使用已生成印花从“已有印花来源”新建完整任务',
             false,
           )
@@ -2020,7 +2076,7 @@ export class PipelineService {
     }
     if (source.prompt?.mode === 'ai' && !source.prompt.prompts?.some((prompt) => prompt.trim())) {
       throw new AppErrorClass(
-        'HTTP_4XX',
+        'WORKSPACE_IO_FAILED',
         'AI 提示词未保存，无法安全续跑生成阶段，请使用已生成印花从“已有印花来源”新建完整任务',
         false,
       )
@@ -2029,7 +2085,7 @@ export class PipelineService {
     const completedSourceItems = resumeState.completedItemsByStep.get('source') ?? []
     if (completedSourceItems.some((item) => !stableKeyPattern.test(item.item_key))) {
       throw new AppErrorClass(
-        'HTTP_4XX',
+        'WORKSPACE_IO_FAILED',
         '该完整任务缺少可精确续跑的生成槽位记录，无法安全续跑，请使用已生成印花从“已有印花来源”新建完整任务',
         false,
       )
@@ -2053,7 +2109,7 @@ export class PipelineService {
         return
       }
       throw new AppErrorClass(
-        'HTTP_4XX',
+        'WORKSPACE_IO_FAILED',
         '该完整任务缺少冻结来源清单，无法安全续跑，请从原来源重新启动新的完整任务',
         false,
       )
@@ -2072,7 +2128,7 @@ export class PipelineService {
     })
     if (hasUnknownKey) {
       throw new AppErrorClass(
-        'HTTP_4XX',
+        'WORKSPACE_IO_FAILED',
         '该完整任务的来源身份记录不完整，无法安全续跑，请从原来源重新启动新的完整任务',
         false,
       )
@@ -2100,7 +2156,7 @@ export class PipelineService {
       const recoveryPath =
         item.step_key === 'photoshop' ? item.output_path : (item.output_path ?? item.source_path)
       if (!recoveryPath || !(await pathExists(recoveryPath))) {
-        throw new AppErrorClass('HTTP_4XX', '源目录已被清理,无法续跑', false, {
+        throw new AppErrorClass('WORKSPACE_IO_FAILED', '源目录已被清理,无法续跑', false, {
           runId,
           stepKey: item.step_key,
           itemKey: item.item_key,
@@ -2136,7 +2192,7 @@ export class PipelineService {
       }
       const waitingPath = items.map((item) => item.source_path).find(Boolean)
       if (waitingPath && !(await pathExists(waitingPath))) {
-        throw new AppErrorClass('HTTP_4XX', '源目录已被清理,无法续跑', false, {
+        throw new AppErrorClass('WORKSPACE_IO_FAILED', '源目录已被清理,无法续跑', false, {
           runId,
           stepKey: 'photoshop',
           itemKey,
@@ -2146,10 +2202,14 @@ export class PipelineService {
     }
   }
 
-  private requireRunDetail(db: Pick<SqliteDatabase, 'prepare'>, runId: string): PipelineRunDetail {
+  private requireRunDetail(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    missingCode: 'INVALID_INPUT' | 'WORKSPACE_IO_FAILED' = 'WORKSPACE_IO_FAILED',
+  ): PipelineRunDetail {
     const detail = pipelineStore.readRunDetail(db, runId)
     if (!detail) {
-      throw new AppErrorClass('HTTP_5XX', '完整任务记录缺失', true, { runId })
+      throw new AppErrorClass(missingCode, '完整任务记录缺失', false, { runId })
     }
     return detail
   }
@@ -3358,7 +3418,7 @@ export class PipelineService {
     if (source.mode === 'collection') {
       const paths = await scanImageFiles(source.sourceFolder)
       if (paths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '采集目录里没有可提取的图片', false)
+        throw new AppErrorClass('INVALID_INPUT', '采集目录里没有可提取的图片', false)
       }
       return { extractSources: imagesFromPaths(paths), prints: [] }
     }
@@ -3366,7 +3426,7 @@ export class PipelineService {
     if (source.mode === 'existing_prints') {
       const paths = await scanImageFiles(source.printFolder)
       if (paths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '印花目录里没有可套版图片', false)
+        throw new AppErrorClass('INVALID_INPUT', '印花目录里没有可套版图片', false)
       }
       return { extractSources: [], prints: imagesFromPaths(paths) }
     }
@@ -3386,6 +3446,7 @@ export class PipelineService {
               ...comfyuiOptionalFields(source.comfyui),
             },
             {
+              instanceLockOwner: runId,
               emitProgress: emitGenerationProgressAsPipeline(
                 runId,
                 'source',
@@ -3434,7 +3495,7 @@ export class PipelineService {
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
       const sourcePaths = await scanImageFiles(source.sourceFolder)
       if (sourcePaths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '图生图图片文件夹里没有可用图片', false)
+        throw new AppErrorClass('INVALID_INPUT', '图生图图片文件夹里没有可用图片', false)
       }
       const comfyuiConfig = source.comfyui
       const batchSize = comfyuiConfig.batchSize ?? 1
@@ -3451,6 +3512,7 @@ export class PipelineService {
             ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
           },
           {
+            instanceLockOwner: runId,
             emitProgress: emitGenerationProgressAsPipeline(
               runId,
               'source',
@@ -3662,6 +3724,7 @@ export class PipelineService {
           ...comfyuiOptionalFields(comfyuiConfig),
         },
         {
+          instanceLockOwner: runId,
           emitProgress: emitGenerationProgressAsPipeline(
             runId,
             'extract',
@@ -3710,7 +3773,7 @@ export class PipelineService {
     if (source.mode === 'collection') {
       const sourceManifest = source.sourceManifest
       if (!sourceManifest?.length) {
-        throw new AppErrorClass('HTTP_5XX', '完整任务缺少冻结采集来源清单', true)
+        throw new AppErrorClass('WORKSPACE_IO_FAILED', '完整任务缺少冻结采集来源清单', false)
       }
       callbacks.onPlannedCount?.(sourceManifest.length)
       for (const sourceItem of sourceManifest) {
@@ -3737,7 +3800,7 @@ export class PipelineService {
     if (source.mode === 'existing_prints') {
       const sourceManifest = source.sourceManifest
       if (!sourceManifest?.length) {
-        throw new AppErrorClass('HTTP_5XX', '完整任务缺少冻结已有印花来源清单', true)
+        throw new AppErrorClass('WORKSPACE_IO_FAILED', '完整任务缺少冻结已有印花来源清单', false)
       }
       callbacks.onPlannedCount?.(sourceManifest.length)
       for (const sourceItem of sourceManifest) {
@@ -3787,7 +3850,6 @@ export class PipelineService {
       this.persistResolvedAiPromptPlan(db, runId, config, prompts)
       callbacks.onPlannedCount?.(prompts.length)
       if (source.provider === 'comfyui-chenyu') {
-        const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
         const aggregate: GenerationRunResult = {
           taskId: `${runId}-txt2img`,
           total: prompts.length,
@@ -3805,33 +3867,32 @@ export class PipelineService {
           this.assertCanAcceptMoreWork(active)
           const taskId = `${runId}-txt2img-${index + 1}`
           const result = await this.withGenerationCancel(active, taskId, async () =>
-            queue.runExclusive(() =>
-              runComfyuiTxt2imgBatch(
-                {
-                  prompts: [prompt],
-                  workflowId: source.comfyui.workflowId,
-                  taskId,
-                  outputTaskName: taskName,
-                  filenameStartIndex: index,
-                  inputIndexes: [index],
-                  ...visibleFilenameFields,
-                  ...comfyuiOptionalFields(source.comfyui),
+            runComfyuiTxt2imgBatch(
+              {
+                prompts: [prompt],
+                workflowId: source.comfyui.workflowId,
+                taskId,
+                outputTaskName: taskName,
+                filenameStartIndex: index,
+                inputIndexes: [index],
+                ...visibleFilenameFields,
+                ...comfyuiOptionalFields(source.comfyui),
+              },
+              {
+                instanceLockOwner: runId,
+                strictImageComplete: true,
+                onImageComplete: async (payload) => {
+                  itemCount += 1
+                  onItem({
+                    itemKey: generatedSourceItemKey('txt2img', payload),
+                    path: payload.path,
+                    artifactId: payload.artifactId,
+                    printId: payload.printId,
+                    prompt: payload.prompt,
+                    sourceArtifactIds: payload.sourceArtifactIds,
+                  })
                 },
-                {
-                  strictImageComplete: true,
-                  onImageComplete: async (payload) => {
-                    itemCount += 1
-                    onItem({
-                      itemKey: generatedSourceItemKey('txt2img', payload),
-                      path: payload.path,
-                      artifactId: payload.artifactId,
-                      printId: payload.printId,
-                      prompt: payload.prompt,
-                      sourceArtifactIds: payload.sourceArtifactIds,
-                    })
-                  },
-                },
-              ),
+              },
             ),
           )
           aggregate.succeeded += result.succeeded
@@ -3914,12 +3975,11 @@ export class PipelineService {
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
       const sourceManifest = source.sourceManifest
       if (!sourceManifest?.length) {
-        throw new AppErrorClass('HTTP_5XX', '完整任务缺少冻结图生图来源清单', true)
+        throw new AppErrorClass('WORKSPACE_IO_FAILED', '完整任务缺少冻结图生图来源清单', false)
       }
       const aiPromptConfig = source.prompt?.mode === 'ai' ? source.prompt : null
       const batchSize = source.comfyui.batchSize ?? 1
       callbacks.onPlannedCount?.(sourceManifest.length * batchSize)
-      const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
       const aggregate: GenerationRunResult = {
         taskId: `${runId}-img2img`,
         total: sourceManifest.length * batchSize,
@@ -3954,76 +4014,75 @@ export class PipelineService {
             : `${runId}-img2img-${index + 1}`
           const resolvedPrompt = aiPromptConfig?.resolvedPromptsBySourceKey?.[sourceItem.itemKey]
           const result = await this.withGenerationCancel(active, taskId, async () =>
-            queue.runExclusive(() =>
-              runComfyuiImg2imgBatch(
-                {
-                  sourceImagePaths: [sourceItem.path],
-                  workflowId: source.comfyui.workflowId,
-                  taskId,
-                  outputTaskName: taskName,
-                  filenameStartIndex: index * batchSize + firstOutputIndex,
-                  inputIndexes: [index],
-                  outputIndexes,
-                  ...visibleFilenameFields,
-                  ...comfyuiImg2imgOptionalFields(source.comfyui),
-                  batchSize: outputIndexes.length,
-                  ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
-                  ...(resolvedPrompt !== undefined ? { resolvedPrompt } : {}),
+            runComfyuiImg2imgBatch(
+              {
+                sourceImagePaths: [sourceItem.path],
+                workflowId: source.comfyui.workflowId,
+                taskId,
+                outputTaskName: taskName,
+                filenameStartIndex: index * batchSize + firstOutputIndex,
+                inputIndexes: [index],
+                outputIndexes,
+                ...visibleFilenameFields,
+                ...comfyuiImg2imgOptionalFields(source.comfyui),
+                batchSize: outputIndexes.length,
+                ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
+                ...(resolvedPrompt !== undefined ? { resolvedPrompt } : {}),
+              },
+              {
+                instanceLockOwner: runId,
+                strictImageComplete: true,
+                ...(aiPromptConfig
+                  ? {
+                      onPromptResolved: async (payload) => {
+                        if (
+                          payload.inputIndex !== index ||
+                          resolve(payload.sourcePath) !== resolve(sourceItem.path)
+                        ) {
+                          throw new AppErrorClass(
+                            'HTTP_5XX',
+                            '图生图提示词来源与冻结来源清单不一致，已停止任务',
+                            false,
+                            {
+                              expectedInputIndex: index,
+                              actualInputIndex: payload.inputIndex,
+                              expectedSourcePath: sourceItem.path,
+                              actualSourcePath: payload.sourcePath,
+                            },
+                          )
+                        }
+                        const resolvedPrompt = payload.prompt.trim()
+                        if (!resolvedPrompt) {
+                          throw new AppErrorClass(
+                            'HTTP_5XX',
+                            '图生图提示词为空，无法保存后继续生图',
+                            false,
+                            { sourceItemKey: sourceItem.itemKey },
+                          )
+                        }
+                        aiPromptConfig.resolvedPromptsBySourceKey = {
+                          ...aiPromptConfig.resolvedPromptsBySourceKey,
+                          [sourceItem.itemKey]: resolvedPrompt,
+                        }
+                        pipelineStore.updatePipelineRunConfig(db, { runId, config })
+                      },
+                    }
+                  : {}),
+                onImageComplete: async (payload) => {
+                  itemCount += 1
+                  onItem({
+                    itemKey: generatedSourceOutputItemKey(
+                      sourceItem.itemKey,
+                      payload.outputIndex ?? 0,
+                    ),
+                    path: payload.path,
+                    artifactId: payload.artifactId,
+                    printId: payload.printId,
+                    prompt: payload.prompt,
+                    sourceArtifactIds: payload.sourceArtifactIds,
+                  })
                 },
-                {
-                  strictImageComplete: true,
-                  ...(aiPromptConfig
-                    ? {
-                        onPromptResolved: async (payload) => {
-                          if (
-                            payload.inputIndex !== index ||
-                            resolve(payload.sourcePath) !== resolve(sourceItem.path)
-                          ) {
-                            throw new AppErrorClass(
-                              'HTTP_5XX',
-                              '图生图提示词来源与冻结来源清单不一致，已停止任务',
-                              false,
-                              {
-                                expectedInputIndex: index,
-                                actualInputIndex: payload.inputIndex,
-                                expectedSourcePath: sourceItem.path,
-                                actualSourcePath: payload.sourcePath,
-                              },
-                            )
-                          }
-                          const resolvedPrompt = payload.prompt.trim()
-                          if (!resolvedPrompt) {
-                            throw new AppErrorClass(
-                              'HTTP_5XX',
-                              '图生图提示词为空，无法保存后继续生图',
-                              false,
-                              { sourceItemKey: sourceItem.itemKey },
-                            )
-                          }
-                          aiPromptConfig.resolvedPromptsBySourceKey = {
-                            ...aiPromptConfig.resolvedPromptsBySourceKey,
-                            [sourceItem.itemKey]: resolvedPrompt,
-                          }
-                          pipelineStore.updatePipelineRunConfig(db, { runId, config })
-                        },
-                      }
-                    : {}),
-                  onImageComplete: async (payload) => {
-                    itemCount += 1
-                    onItem({
-                      itemKey: generatedSourceOutputItemKey(
-                        sourceItem.itemKey,
-                        payload.outputIndex ?? 0,
-                      ),
-                      path: payload.path,
-                      artifactId: payload.artifactId,
-                      printId: payload.printId,
-                      prompt: payload.prompt,
-                      sourceArtifactIds: payload.sourceArtifactIds,
-                    })
-                  },
-                },
-              ),
+              },
             ),
           )
           aggregate.succeeded += result.succeeded
@@ -4408,7 +4467,6 @@ export class PipelineService {
     sourceTotalRef: { value: number },
     sourceFailedRef: { value: number },
   ) {
-    const queue = this.comfyuiQueueForInstance(context.config.matting.instanceUuid)
     let queued = 0
     let completed = 0
     let failed = 0
@@ -4472,19 +4530,17 @@ export class PipelineService {
               }
               const taskId = `${context.runId}-matting-${item.itemKey}`
               result = await service.withGenerationCancel(active, taskId, () =>
-                queue.runExclusive(() =>
-                  runMixedMattingBatch(
-                    {
-                      sourceImagePaths: [item.path],
-                      workflowId,
-                      taskId,
-                      outputTaskName: context.taskName,
-                      filenameStartIndex: outputIndex,
-                      ...visibleFilenameFields,
-                      ...mattingOptionalFields(context.config.matting),
-                    },
-                    {},
-                  ),
+                runMixedMattingBatch(
+                  {
+                    sourceImagePaths: [item.path],
+                    workflowId,
+                    taskId,
+                    outputTaskName: context.taskName,
+                    filenameStartIndex: outputIndex,
+                    ...visibleFilenameFields,
+                    ...mattingOptionalFields(context.config.matting),
+                  },
+                  { instanceLockOwner: context.runId },
                 ),
               )
             } else {
@@ -4494,19 +4550,17 @@ export class PipelineService {
               }
               const taskId = `${context.runId}-matting-${item.itemKey}`
               result = await service.withGenerationCancel(active, taskId, () =>
-                queue.runExclusive(() =>
-                  runComfyuiMattingBatch(
-                    {
-                      sourceImagePaths: [item.path],
-                      workflowId,
-                      taskId,
-                      outputTaskName: context.taskName,
-                      filenameStartIndex: outputIndex,
-                      ...visibleFilenameFields,
-                      ...mattingOptionalFields(context.config.matting),
-                    },
-                    {},
-                  ),
+                runComfyuiMattingBatch(
+                  {
+                    sourceImagePaths: [item.path],
+                    workflowId,
+                    taskId,
+                    outputTaskName: context.taskName,
+                    filenameStartIndex: outputIndex,
+                    ...visibleFilenameFields,
+                    ...mattingOptionalFields(context.config.matting),
+                  },
+                  { instanceLockOwner: context.runId },
                 ),
               )
             }
@@ -4660,6 +4714,7 @@ export class PipelineService {
                 ...mattingOptionalFields(config),
               },
               {
+                instanceLockOwner: runId,
                 emitProgress: emitGenerationProgressAsPipeline(
                   runId,
                   'matting',
@@ -4694,6 +4749,7 @@ export class PipelineService {
                 ...mattingOptionalFields(config),
               },
               {
+                instanceLockOwner: runId,
                 emitProgress: emitGenerationProgressAsPipeline(
                   runId,
                   'matting',

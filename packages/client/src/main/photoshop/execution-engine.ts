@@ -3,6 +3,7 @@ import { createReadStream } from 'node:fs'
 import { access, readFile } from 'node:fs/promises'
 import {
   AppErrorClass,
+  type PhotoshopCancellationMode,
   type PhotoshopJob,
   type PhotoshopJobResult,
   type PhotoshopProgressLogEntry,
@@ -35,6 +36,7 @@ type TemplateBatchJsxWriter = (
   template: PsdTemplate,
   groups: PhotoshopTaskGroup[],
   cancelFilePath: string,
+  cancellationMode: PhotoshopCancellationMode,
 ) => Promise<PhotoshopTemplateBatchJsxFile>
 
 export interface WorkflowStepRecorder {
@@ -490,13 +492,14 @@ export class PhotoshopExecutionEngine {
       options.readDiagnosticWorkbenchRoot ?? getConfiguredWorkbenchRoot
     this.writeTemplateBatchJsx =
       options.writeTemplateBatchJsx ??
-      ((template, groups, cancelFilePath) =>
+      ((template, groups, cancelFilePath, cancellationMode) =>
         writePhotoshopTemplateBatchJsx({
           task_id: groups[0]?.job.task_id ?? 'photoshop-batch',
           mockup_path: template.file_path,
           template_name: groups[0]?.template_name ?? pathBasename(template.file_path),
           native_slices: template.native_slices,
           cancel_file_path: cancelFilePath,
+          cancellation_mode: cancellationMode,
           groups: groups.map((group) => ({
             group_index: group.group_index,
             sku_folder: group.sku_folder,
@@ -561,6 +564,7 @@ export class PhotoshopExecutionEngine {
     options: {
       skipCompleted?: boolean
       cancelFilePath?: string
+      cancellationMode?: PhotoshopCancellationMode
       onLog?: (entry: PhotoshopProgressLogEntry) => void | Promise<void>
     } = {},
   ): Promise<{
@@ -620,7 +624,12 @@ export class PhotoshopExecutionEngine {
 
         try {
           await this.comAdapter.ensureReady()
-          const jobFile = await this.writeTemplateBatchJsx(template, pendingGroups, cancelFilePath)
+          const jobFile = await this.writeTemplateBatchJsx(
+            template,
+            pendingGroups,
+            cancelFilePath,
+            options.cancellationMode ?? 'immediate',
+          )
           await this.runJsxFileWithLogTail(jobFile.jsx_path, jobFile.log_file_path, options.onLog)
           const raw = JSON.parse(
             await this.readTextFile(jobFile.result_file_path, 'utf8'),

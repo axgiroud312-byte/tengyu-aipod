@@ -283,6 +283,7 @@ export function createPhotoshopStage(
       let queued = 0
       let completed = 0
       let failed = 0
+      let cancellationObserved = false
       let nextSequence = new Set(
         (context.resume?.getItems('photoshop') ?? [])
           .map((item) => item.source_path)
@@ -440,9 +441,11 @@ export function createPhotoshopStage(
                   skipCompleted: config.skipCompleted ?? true,
                   maxRetries: config.maxRetries ?? 1,
                   cancelFilePath,
+                  cancellationMode: 'between_groups',
                 },
               )
             })
+            cancellationObserved = result.cancelled === true
             const groupsBySku = new Map(
               result.result_groups.map((group) => [group.sku_folder, group]),
             )
@@ -450,6 +453,9 @@ export function createPhotoshopStage(
             for (const { item, prepared } of pending) {
               const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
               const group = groupsBySku.get(prepared.skuCode)
+              if (result.cancelled && !group) {
+                continue
+              }
               const firstOutputPath = group?.outputs[0]
               if (!group || group.status === 'failed' || group.error || !firstOutputPath) {
                 keepTempOnFailure = true
@@ -591,6 +597,10 @@ export function createPhotoshopStage(
                 })
               }
             }
+          }
+          if (cancellationObserved) {
+            refreshSection(failed)
+            return
           }
         }
       }

@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import type {
+  PhotoshopCancellationMode,
   PhotoshopPrintAsset,
   PhotoshopProgressInfo,
   PhotoshopProgressLogEntry,
@@ -324,6 +325,42 @@ describe('PhotoshopMultiBatchRunner', () => {
         status: 'completed',
       },
     ])
+  })
+
+  it('forwards cancellation mode to the template batch engine', async () => {
+    const template = createTemplate('C:\\templates\\cancel-mode.psd', 'tpl-cancel-mode')
+    const cancellationModes: Array<PhotoshopCancellationMode | undefined> = []
+
+    await runBatch(
+      createPrints().slice(0, 1),
+      [template.file_path],
+      {
+        taskId: 'batch-cancel-mode',
+        outputRoot: 'C:\\outputs',
+        cancellationMode: 'between_groups',
+      },
+      {
+        scanner: { scanPsd: async () => template },
+        engine: {
+          runTemplateBatch: async (_template, groups, _maxRetries, options) => {
+            cancellationModes.push(options.cancellationMode)
+            return {
+              ok: true,
+              outputs: groups.flatMap((group) => group.job.output_paths),
+              groups: groups.map((group) => ({
+                group_index: group.group_index,
+                sku_folder: group.sku_folder,
+                outputs: group.job.output_paths,
+              })),
+            }
+          },
+          runJob: async (job) => createCompletedJobResult(job.output_paths),
+        },
+        progressLogger: null,
+      },
+    )
+
+    expect(cancellationModes).toEqual(['between_groups'])
   })
 
   it('keeps same-named templates in separate template folders', async () => {

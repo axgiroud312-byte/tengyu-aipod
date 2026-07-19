@@ -15,7 +15,6 @@ import {
   assertInsideFolder,
   assertLocalComfyuiWorkflowExists,
   clampInt,
-  comfyuiInstanceLocks,
   comfyuiRunOptions,
   comfyuiSizePx,
   createComfyuiAdapterForRun,
@@ -43,6 +42,7 @@ import {
   readWorkbenchRoot,
   registerExtractArtifact,
   registerSourceArtifact,
+  runWithComfyuiInstanceLock,
   submitGenerationTask,
 } from '../runtime'
 import { isGenerationCancelled } from '../task-registry'
@@ -361,7 +361,7 @@ export async function runComfyuiExtractBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'extract')
-  return comfyuiInstanceLocks.run(input, taskId, async () => {
+  return runWithComfyuiInstanceLock(input, taskId, dependencies, async () => {
     const result: GenerationRunResult = {
       taskId,
       total: sourceImagePaths.length,

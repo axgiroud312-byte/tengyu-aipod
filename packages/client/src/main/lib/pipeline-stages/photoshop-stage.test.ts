@@ -107,15 +107,22 @@ function batchResult(groups: PhotoshopBatchResult['result_groups']): PhotoshopBa
   }
 }
 
-function createHarness() {
+function createHarness(
+  replaceRange: 'top' | 'topmost' = 'top',
+  templates = ['C:\\templates\\shirt.psd'],
+) {
   const db = openSqliteDatabase(':memory:')
   databases.push(db)
   const runBatch = vi.fn<typeof runPhotoshopBatch>()
   const upsertPipelineItem = vi.fn()
+  const config = pipelineConfig()
+  config.photoshop.replaceRange = replaceRange
+  config.photoshop.templates = templates
+  const emitRunningProgress = vi.fn()
   const context: PipelineStageRuntimeContext = {
     runId: 'run-photoshop-stage',
     taskName: 'Photoshop stage test',
-    config: pipelineConfig(),
+    config,
     stepKey: 'photoshop',
     isCancelled: () => false,
   }
@@ -139,11 +146,11 @@ function createHarness() {
     upsertPipelineItem,
     updateResultSection: vi.fn(),
     appendLog: vi.fn(),
-    emitRunningProgress: vi.fn(),
+    emitRunningProgress,
     setCurrentCancel: vi.fn(),
     assertNotCancelled: vi.fn(),
   })(context)
-  return { context, runBatch, stage, upsertPipelineItem }
+  return { context, emitRunningProgress, runBatch, stage, upsertPipelineItem }
 }
 
 async function consumeStage(
@@ -188,6 +195,102 @@ describe('photoshop stage fatal error boundaries', () => {
 
     await expect(consumeStage(harness.stage, harness.context)).rejects.toBe(fatalError)
     expect(harness.runBatch).toHaveBeenCalledTimes(1)
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+  })
+
+  it('uses between-group cancellation so the active Photoshop SKU can finish', async () => {
+    const harness = createHarness()
+    harness.runBatch.mockImplementationOnce(async (prints, _templates, config) => {
+      const skuCode = prints[0]?.id ?? 'missing'
+      expect(config.cancellationMode).toBe('between_groups')
+      return batchResult([
+        {
+          template_id: 'template-1',
+          template_name: 'shirt',
+          group_index: 0,
+          sku_folder: skuCode,
+          print_ids: [skuCode],
+          outputs: ['C:\\output\\shirt\\PRINT-0001\\01.jpg'],
+          status: 'completed',
+        },
+      ])
+    })
+
+    await expect(
+      consumeStage(harness.stage, harness.context, sourceItems(1)),
+    ).resolves.toHaveLength(1)
+  })
+
+  it('keeps unstarted Photoshop groups pending for cancelled run finalization', async () => {
+    const harness = createHarness('topmost')
+    harness.runBatch.mockImplementationOnce(async (prints) => {
+      const skuCode = prints[0]?.id ?? 'missing'
+      return {
+        ...batchResult([
+          {
+            template_id: 'template-1',
+            template_name: 'shirt',
+            group_index: 0,
+            sku_folder: skuCode,
+            print_ids: [skuCode],
+            outputs: ['C:\\output\\shirt\\PRINT-0001\\01.jpg'],
+            status: 'completed',
+          },
+        ]),
+        ok: false,
+        cancelled: true,
+        groups_total: 2,
+        groups_completed: 1,
+      }
+    })
+
+    await expect(consumeStage(harness.stage, harness.context)).resolves.toHaveLength(1)
+    const secondItemStatuses = harness.upsertPipelineItem.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.itemKey.startsWith('print-2:'))
+      .map((input) => input.status)
+    expect(secondItemStatuses).toEqual(['running'])
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+    expect(harness.emitRunningProgress).not.toHaveBeenCalledWith(
+      harness.context.runId,
+      'PS 套版完成',
+    )
+  })
+
+  it('does not start another template after a Photoshop batch reports cancellation', async () => {
+    const harness = createHarness('topmost', [
+      'C:\\templates\\shirt.psd',
+      'C:\\templates\\hoodie.psd',
+    ])
+    harness.runBatch.mockImplementation(async (prints) => {
+      const groups = prints.map((print, index) => ({
+        template_id: 'template-1',
+        template_name: 'shirt',
+        group_index: index,
+        sku_folder: print.id,
+        print_ids: [print.id],
+        outputs: [`C:\\output\\shirt\\${print.id}\\01.jpg`],
+        status: 'completed' as const,
+      }))
+      if (harness.runBatch.mock.calls.length === 1) {
+        return {
+          ...batchResult(groups.slice(0, 1)),
+          ok: false,
+          cancelled: true,
+          groups_total: prints.length,
+          groups_completed: 1,
+        }
+      }
+      return batchResult(groups)
+    })
+
+    await expect(consumeStage(harness.stage, harness.context)).resolves.toHaveLength(1)
+    expect(harness.runBatch).toHaveBeenCalledTimes(1)
+    expect(
+      harness.upsertPipelineItem.mock.calls
+        .map(([input]) => input.status)
+        .filter((status) => status === 'failed'),
+    ).toEqual([])
     expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
   })
 

@@ -28,7 +28,7 @@ import {
   runTxt2imgBatch,
   scanGenerationImageFolder,
 } from './generation-service'
-import { emitImageComplete } from './generation/runtime'
+import { ComfyuiInstanceLockManager, emitImageComplete } from './generation/runtime'
 import { promptGeneratorService } from './prompt-generator-service'
 import type { SqliteDatabase } from './sqlite'
 
@@ -1240,6 +1240,145 @@ describe('generation comfyui service', () => {
     await expect(
       comfyuiInstanceLocks.run({ instanceUuid: 'inst-lock' }, 'task-c', async () => 'third-ok'),
     ).resolves.toBe('third-ok')
+  })
+
+  it('allows overlapping ComfyUI work only for the same explicit pipeline owner', async () => {
+    const locks = new ComfyuiInstanceLockManager()
+    const running = createDeferred<string>()
+    const firstRun = locks.run(
+      { instanceUuid: 'inst-shared-owner' },
+      'pipeline-source',
+      () => running.promise,
+      'pipeline-run-1',
+    )
+
+    const sameOwnerResult = await locks
+      .run(
+        { instanceUuid: 'inst-shared-owner' },
+        'pipeline-matting',
+        async () => 'matting-submitted',
+        'pipeline-run-1',
+      )
+      .then(
+        (value) => ({ value }),
+        (error: unknown) => ({ error }),
+      )
+    await expect(
+      locks.run(
+        { instanceUuid: 'inst-shared-owner' },
+        'other-task',
+        async () => 'should-not-run',
+        'pipeline-run-2',
+      ),
+    ).rejects.toMatchObject({
+      message: '该云机正在执行其他任务，请换一台或稍后再试',
+    })
+
+    running.resolve('source-completed')
+    await expect(firstRun).resolves.toBe('source-completed')
+    expect(sameOwnerResult).toEqual({ value: 'matting-submitted' })
+  })
+
+  it('keeps a shared ComfyUI owner locked until every lease is released', async () => {
+    const locks = new ComfyuiInstanceLockManager()
+    const sourceRun = createDeferred<string>()
+    const firstRun = locks.run(
+      { instanceUuid: 'inst-shared-owner-failure' },
+      'pipeline-source',
+      () => sourceRun.promise,
+      'pipeline-run-1',
+    )
+
+    await expect(
+      locks.run(
+        { instanceUuid: 'inst-shared-owner-failure' },
+        'pipeline-matting',
+        () => {
+          throw new Error('matting submission failed')
+        },
+        'pipeline-run-1',
+      ),
+    ).rejects.toThrow('matting submission failed')
+    await expect(
+      locks.run(
+        { instanceUuid: 'inst-shared-owner-failure' },
+        'other-task',
+        async () => 'should-not-run',
+        'pipeline-run-2',
+      ),
+    ).rejects.toMatchObject({ code: 'HTTP_4XX' })
+
+    sourceRun.resolve('source-completed')
+    await expect(firstRun).resolves.toBe('source-completed')
+    await expect(
+      locks.run(
+        { instanceUuid: 'inst-shared-owner-failure' },
+        'other-task',
+        async () => 'other-task-started',
+        'pipeline-run-2',
+      ),
+    ).resolves.toBe('other-task-started')
+  })
+
+  it('submits overlapping ComfyUI batches through the same pipeline owner', async () => {
+    const fakeDb = createFakeDb()
+    const firstSubmitted = createDeferred<void>()
+    const finishFirst = createDeferred<void>()
+    let callIndex = 0
+    const generate = vi.fn(async () => {
+      callIndex += 1
+      const currentIndex = callIndex
+      if (currentIndex === 1) {
+        firstSubmitted.resolve()
+        await finishFirst.promise
+      }
+      return {
+        status: 'succeeded' as const,
+        images: [
+          {
+            url: `file:///shared-owner-${currentIndex}.png`,
+            local_path: `/shared-owner-${currentIndex}.png`,
+            artifact_id: `art-shared-owner-${currentIndex}`,
+            print_id: `pri_shared_owner_${currentIndex}`,
+          },
+        ],
+      }
+    })
+    const dependencies = {
+      readConfig: async () => ({ workbench_root: workbenchRoot }),
+      getSecret: async () => 'cy-key',
+      openDatabase: fakeDb.openDatabase,
+      createComfyuiAdapter: () => ({ generate }),
+      instanceLockOwner: 'pipeline-run-shared',
+    }
+
+    const firstRun = runComfyuiTxt2imgBatch(
+      {
+        prompts: ['first shared owner prompt'],
+        workflowId: 'txt2img-v1',
+        taskId: 'shared-owner-source',
+      },
+      dependencies,
+    )
+    await firstSubmitted.promise
+    const secondRun = runComfyuiTxt2imgBatch(
+      {
+        prompts: ['second shared owner prompt'],
+        workflowId: 'txt2img-v1',
+        taskId: 'shared-owner-matting',
+      },
+      dependencies,
+    )
+    void secondRun.catch(() => undefined)
+
+    try {
+      await vi.waitUntil(() => generate.mock.calls.length === 2, { timeout: 100, interval: 5 })
+    } finally {
+      finishFirst.resolve()
+    }
+
+    await expect(firstRun).resolves.toMatchObject({ succeeded: 1, failed: 0 })
+    await expect(secondRun).resolves.toMatchObject({ succeeded: 1, failed: 0 })
   })
 
   it('lists only extract ComfyUI workflows', async () => {

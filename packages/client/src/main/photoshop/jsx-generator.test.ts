@@ -267,6 +267,7 @@ describe('generateTemplateBatchJsx', () => {
 
     expect(jsx).toContain('baseDocument = app.open(new File(CONFIG.mockup_path))')
     expect(jsx).toContain('var workingDocument = baseDocument.duplicate()')
+    expect(jsx).toContain('"cancellation_mode":"immediate"')
     expect(jsx).toContain('appendLog({')
     expect(jsx).toContain("stage: 'so_replace'")
     expect(jsx).toContain('cancelRequested()')
@@ -286,6 +287,34 @@ describe('generateTemplateBatchJsx', () => {
     expect(jsx).toContain(
       "throw new Error('Failed to remove partial outputs after cancellation: ' + cleanupFailures.join(', '))",
     )
+  })
+
+  it('defers complete-task cancellation until the next template group', () => {
+    const jsx = generateTemplateBatchJsx({
+      task_id: 'task-complete-pipeline',
+      mockup_path: 'C:\\templates\\mockup.psd',
+      template_name: 'mockup',
+      result_file_path: 'C:\\tmp\\result.json',
+      log_file_path: 'C:\\tmp\\photoshop-task.log',
+      cancel_file_path: 'C:\\tmp\\cancel.flag',
+      cancellation_mode: 'between_groups',
+      groups: [
+        {
+          group_index: 0,
+          sku_folder: 'sku-1',
+          so_replacements: [{ layer_path: 'SO 1', input_image: 'C:\\prints\\sku-1.png' }],
+          clip_areas: [{ x: 0, y: 0, w: 500, h: 500, is_full: true }],
+          output_paths: ['C:\\outputs\\sku-1\\mockup\\01.jpg'],
+          format: 'jpg',
+          jpg_quality: 10,
+        },
+      ],
+    })
+
+    expect(jsx).toContain('"cancellation_mode":"between_groups"')
+    expect(jsx).toContain("if (CONFIG.cancellation_mode === 'immediate' && cancelRequested())")
+    expect(jsx).toContain('if (cancelRequested()) {')
+    expect(jsx).toContain('用户取消，停止后续分组')
   })
 
   it('continues after an individual group fails and retries closing opened input documents', () => {

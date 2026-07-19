@@ -12,7 +12,6 @@ import {
   type GenerationServiceDependencies,
   assertLocalComfyuiWorkflowExists,
   clampInt,
-  comfyuiInstanceLocks,
   comfyuiRunOptions,
   comfyuiSizePx,
   comfyuiSourceArtifactIds,
@@ -35,6 +34,7 @@ import {
   readWorkbenchRoot,
   registerSourceArtifact,
   requestedComfyuiSourceCount,
+  runWithComfyuiInstanceLock,
   safeBaseName,
   submitGenerationTask,
   tempFileManager,
@@ -294,7 +294,7 @@ export async function runComfyuiExtractMattingBatch(
   }
 
   const taskId = extractMattingTaskId(input.taskId)
-  return comfyuiInstanceLocks.run(input, taskId, async () => {
+  return runWithComfyuiInstanceLock(input, taskId, dependencies, async () => {
     const result: GenerationRunResult = {
       taskId,
       total: sourceImagePaths.length,
@@ -514,7 +514,7 @@ export async function runComfyuiMattingBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'matting')
-  return comfyuiInstanceLocks.run(input, taskId, async () => {
+  return runWithComfyuiInstanceLock(input, taskId, dependencies, async () => {
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
@@ -671,7 +671,7 @@ export async function runMixedMattingBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'matting')
-  return comfyuiInstanceLocks.run(input, taskId, async () => {
+  return runWithComfyuiInstanceLock(input, taskId, dependencies, async () => {
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {

@@ -4,6 +4,7 @@ import type {
   PhotoshopBatchOutputGroup,
   PhotoshopBatchResult,
   PhotoshopBatchTemplateResult,
+  PhotoshopCancellationMode,
   PhotoshopClipMode,
   PhotoshopExportFormat,
   PhotoshopInnerFitMode,
@@ -41,6 +42,7 @@ export interface PhotoshopBatchConfig {
   outputLayout?: PhotoshopOutputLayout
   templateNameOverride?: string
   cancelFilePath?: string
+  cancellationMode?: PhotoshopCancellationMode
 }
 
 interface PhotoshopMultiBatchOptions {
@@ -77,6 +79,7 @@ interface PhotoshopBatchEngine {
     options: {
       skipCompleted?: boolean
       cancelFilePath?: string
+      cancellationMode?: PhotoshopCancellationMode
       onLog?: (entry: PhotoshopProgressLogEntry) => void | Promise<void>
     },
   ): Promise<PhotoshopTemplateBatchRunResult>
@@ -320,6 +323,7 @@ export class PhotoshopMultiBatchRunner {
           result = await this.engine.runTemplateBatch(template, groups, config.maxRetries ?? 0, {
             skipCompleted: config.skipCompleted ?? true,
             ...(config.cancelFilePath ? { cancelFilePath: config.cancelFilePath } : {}),
+            cancellationMode: config.cancellationMode ?? 'immediate',
             onLog: async (entry) => {
               logger?.write(entry)
               await this.emitLog(entry)

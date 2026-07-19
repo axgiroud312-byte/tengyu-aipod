@@ -433,6 +433,9 @@ export const ErrorCode = {
   HTTP_5XX: 'HTTP_5XX',
   HTTP_4XX: 'HTTP_4XX',
 
+  // 本地输入
+  INVALID_INPUT: 'INVALID_INPUT',
+
   // 本地工作区 / 文件系统
   WORKSPACE_IO_FAILED: 'WORKSPACE_IO_FAILED',
 

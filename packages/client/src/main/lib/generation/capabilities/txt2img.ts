@@ -16,7 +16,6 @@ import {
   type GenerationServiceDependencies,
   assertLocalComfyuiWorkflowExists,
   clampInt,
-  comfyuiInstanceLocks,
   comfyuiRunOptions,
   createComfyuiAdapterForRun,
   createGenerationDebugLogger,
@@ -41,6 +40,7 @@ import {
   openWorkbenchDatabase,
   readWorkbenchRoot,
   registerGeneratedArtifact,
+  runWithComfyuiInstanceLock,
   submitGenerationTask,
   workflowLogDetails,
 } from '../runtime'
@@ -359,7 +359,7 @@ export async function runComfyuiTxt2imgBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'txt2img')
-  return comfyuiInstanceLocks.run(input, taskId, async () => {
+  return runWithComfyuiInstanceLock(input, taskId, dependencies, async () => {
     const result: GenerationRunResult = {
       taskId,
       total: prompts.length,

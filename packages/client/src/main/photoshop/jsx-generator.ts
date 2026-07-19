@@ -2,6 +2,7 @@ import { writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import {
   AppErrorClass,
+  type PhotoshopCancellationMode,
   type PhotoshopJob,
   type PhotoshopJsxJobFile,
   type PhotoshopSmartObjectReplaceMode,
@@ -37,6 +38,7 @@ export interface PhotoshopTemplateBatchJsxInput {
   result_file_path: string
   log_file_path: string
   cancel_file_path: string
+  cancellation_mode?: PhotoshopCancellationMode
 }
 
 export interface PhotoshopTemplateBatchJsxFile {
@@ -1165,6 +1167,7 @@ function exportOutputs(doc, group, groupResult) {
     result_file_path: input.result_file_path,
     log_file_path: input.log_file_path,
     cancel_file_path: input.cancel_file_path,
+    cancellation_mode: input.cancellation_mode ?? 'immediate',
   })};
 var RESULT_FILE_PATH = ${jsonString(input.result_file_path)};
 var LOG_FILE_PATH = ${jsonString(input.log_file_path)};
@@ -1360,7 +1363,7 @@ function cancelRequested() {
 }
 
 function throwIfCancellationRequested() {
-  if (cancelRequested()) {
+  if (CONFIG.cancellation_mode === 'immediate' && cancelRequested()) {
     throw new Error(CANCELLATION_ERROR);
   }
 }

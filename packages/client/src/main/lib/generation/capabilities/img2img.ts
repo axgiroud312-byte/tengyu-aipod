@@ -11,7 +11,6 @@ import {
   assertLocalComfyuiWorkflowExists,
   comfyuiImg2imgBatchSize,
   comfyuiImg2imgPromptMode,
-  comfyuiInstanceLocks,
   comfyuiRunOptions,
   comfyuiSizePx,
   comfyuiSourceArtifactIds,
@@ -35,6 +34,7 @@ import {
   readReferenceForArtifact,
   readWorkbenchRoot,
   requestedComfyuiSourceCount,
+  runWithComfyuiInstanceLock,
   submitGenerationTask,
   workflowLogDetails,
 } from '../runtime'
@@ -270,7 +270,7 @@ export async function runComfyuiImg2imgBatch(
   }
 
   const taskId = generationTaskId(input.taskId, 'img2img')
-  return comfyuiInstanceLocks.run(input, taskId, async () => {
+  return runWithComfyuiInstanceLock(input, taskId, dependencies, async () => {
     const emit = createGenerationProgressEmitter(dependencies)
     const workbenchRoot = await readWorkbenchRoot(dependencies.readConfig)
     const diagnostics = await createGenerationDiagnostics(workbenchRoot, taskId, {
