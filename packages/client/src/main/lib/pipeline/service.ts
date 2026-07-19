@@ -54,6 +54,7 @@ import {
   runMixedMattingBatch,
   runTxt2imgBatch,
 } from '../generation-service'
+import { appErrorFromGenerationFailure, fatalGenerationFailure } from '../generation/failures'
 import { shouldPipelineDetectionAllow } from '../pipeline-policy'
 import type {
   PipelinePrintStageRegistration,
@@ -90,6 +91,9 @@ const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const PIPELINE_RUNS_FOLDER = 'pipeline-runs'
 const IMAGE_PROCESSING_SECTION_KEY = 'image_processing'
 const PHOTOSHOP_MUTEX_TIMEOUT_MS = 10 * 60 * 1000
+const PROGRESS_DETAIL_INTERVAL = 32
+const RESULT_DETAIL_MAX_LATENCY_MS = 50
+const UI_STATE_PERSIST_INTERVAL = 32
 const RESULT_SECTION_ORDER: PipelineResultSectionKey[] = [
   IMAGE_PROCESSING_SECTION_KEY,
   'detection_passed',
@@ -135,19 +139,52 @@ type PipelineResumeState = {
   itemByStepAndKey: Map<string, PipelineItemRecord>
   completedItemsByStep: Map<PipelineStepKey, PipelineItemRecord[]>
   completedItemByStepAndKey: Map<string, PipelineItemRecord>
+  filteredItemByStepAndKey: Map<string, PipelineItemRecord>
   completedSourceKeys: Set<string>
   completedSourceStep: PipelineStepRecord | null
 }
 
+type PipelineCancelHandler = () => void | Promise<void>
+
+type PendingPipelineProgress = {
+  status: PipelineRunStatus
+  currentStep: PipelineStepKey | null
+  stats: PipelineRunStats
+  message: string
+  includeDetails: boolean
+}
+
+type PreparedPipelineRun = {
+  workbenchRoot: string
+  config: PipelineRunConfig
+}
+
 type ActivePipelineRun = {
   db: Pick<SqliteDatabase, 'prepare'>
+  resuming: boolean
   cancelRequested: boolean
+  stopError: unknown | null
   interrupted: boolean
-  currentCancel: (() => void | Promise<void>) | null
+  cancelHandlers: Map<string, PipelineCancelHandler>
   previewImages: PipelinePreviewImage[]
   resultSections: PipelineResultSection[]
   logs: PipelineRuntimeLogEntry[]
   collectionReadLock: CollectionFolderReadLock | null
+  pendingProgress: PendingPipelineProgress | null
+  lastProgress: PendingPipelineProgress | null
+  progressFlushHandle: ReturnType<typeof setImmediate> | null
+  resultDetailFlushHandle: ReturnType<typeof setTimeout> | null
+  progressError: unknown | null
+  progressRevision: number
+  nextFullProgressRevision: number
+  forceNextProgressDetails: boolean
+  resultSectionsDirty: boolean
+  lastDetailedProgressAt: number
+  uiStateDirty: boolean
+  uiStateFlushHandle: ReturnType<typeof setImmediate> | null
+  uiStateError: unknown | null
+  uiStateRevision: number
+  nextUiStatePersistRevision: number
 }
 
 type PromiseMutexOptions = {
@@ -163,14 +200,21 @@ class PromiseMutex {
   async runExclusive<T>(fn: () => Promise<T>): Promise<T> {
     const previous = this.current
     let release: () => void = () => {}
+    let acquired = false
     this.current = new Promise<void>((resolve) => {
       release = resolve
     })
     try {
       await this.waitForPrevious(previous)
+      acquired = true
       return await fn()
     } finally {
-      release()
+      if (acquired) {
+        release()
+      } else {
+        // A timed-out waiter must preserve the queue until the current holder releases.
+        void previous.then(release)
+      }
     }
   }
 
@@ -361,6 +405,21 @@ function resumeItemMapKey(stepKey: PipelineStepKey, itemKey: string) {
   return `${stepKey}:${itemKey}`
 }
 
+function generatedSourceItemKey(
+  sourceMode: Extract<PipelineSourceConfig['mode'], 'txt2img' | 'img2img'>,
+  payload: GenerationImageCompletePayload,
+) {
+  if (
+    Number.isSafeInteger(payload.inputIndex) &&
+    Number.isSafeInteger(payload.outputIndex) &&
+    (payload.inputIndex ?? -1) >= 0 &&
+    (payload.outputIndex ?? -1) >= 0
+  ) {
+    return `${sourceMode}-${(payload.inputIndex ?? 0) + 1}-${(payload.outputIndex ?? 0) + 1}`
+  }
+  return payload.printId
+}
+
 function sourceArtifactIdsFromRecord(item: PipelineItemRecord) {
   return parseJsonArray<string>(item.source_artifact_ids_json)
 }
@@ -482,6 +541,40 @@ function resultSection(input: {
     collapsible: true,
     default_collapsed: input.defaultCollapsed ?? false,
     paginated: input.paginated ?? false,
+  }
+}
+
+function mergeById<T extends { id: string }>(existing: readonly T[], incoming: readonly T[]) {
+  const merged = new Map(existing.map((item) => [item.id, item] as const))
+  for (const item of incoming) {
+    merged.set(item.id, item)
+  }
+  return Array.from(merged.values())
+}
+
+function mergeResumeResultSection(
+  existing: PipelineResultSection,
+  incoming: PipelineResultSection,
+): PipelineResultSection {
+  const items = mergeById(
+    existing.items.filter((item) => item.status === 'success'),
+    incoming.items,
+  )
+  const groups =
+    existing.groups || incoming.groups
+      ? mergeById(existing.groups ?? [], incoming.groups ?? [])
+      : undefined
+  const completed = groups?.length ?? items.filter((item) => item.status === 'success').length
+  const requestedFailed = incoming.failed ?? 0
+  const total = Math.max(existing.total, incoming.total, completed + requestedFailed)
+  return {
+    ...existing,
+    ...incoming,
+    items,
+    ...(groups ? { groups } : {}),
+    total,
+    completed,
+    failed: Math.max(requestedFailed, total - completed),
   }
 }
 
@@ -726,6 +819,16 @@ function generationFailureReasons(result: GenerationRunResult) {
     .slice(0, 5)
     .map(([reason, count]) => `${reason} x${count}`)
     .join('；')
+}
+
+function fatalGenerationResultError(result: GenerationRunResult, stepKey: PipelineStepKey) {
+  const failure = fatalGenerationFailure(result.failures)
+  return failure
+    ? appErrorFromGenerationFailure(failure, {
+        kind: 'generation_provider_fatal',
+        stepKey,
+      })
+    : null
 }
 
 class AsyncItemQueue<T> implements AsyncIterable<T> {
@@ -982,11 +1085,18 @@ export class PipelineService {
     return created
   }
 
-  startRun(config: PipelineRunConfig) {
+  async startRun(config: PipelineRunConfig) {
     const parsedConfig = parsePipelineRunConfig(config)
     const runId = randomUUID()
     const startKey = this.acquireFireAndForgetStartKey(runId, parsedConfig)
-    void this.runPipeline(runId, parsedConfig)
+    let prepared: PreparedPipelineRun
+    try {
+      prepared = await this.prepareRun(runId, parsedConfig)
+    } catch (error) {
+      this.releaseFireAndForgetStartKey(startKey, runId)
+      throw error
+    }
+    void this.runPipeline(runId, prepared.config, prepared)
       .then((detail) => emitPipelineCompleted({ ok: true, result: detail }))
       .catch((error) =>
         emitPipelineCompleted({ ok: false, run_id: runId, error: appErrorMessage(error) }),
@@ -1019,8 +1129,29 @@ export class PipelineService {
       return false
     }
     active.cancelRequested = true
-    void active.currentCancel?.()
+    this.invokeCancelHandlers(active)
     return true
+  }
+
+  private invokeCancelHandlers(active: ActivePipelineRun) {
+    for (const cancel of active.cancelHandlers.values()) {
+      try {
+        const result = cancel()
+        if (result instanceof Promise) {
+          void result.catch(() => undefined)
+        }
+      } catch {
+        // Cancellation is best effort; stage cleanup still owns the underlying error path.
+      }
+    }
+  }
+
+  private stopRunForStageError(active: ActivePipelineRun, error: unknown) {
+    if (active.stopError !== null) {
+      return
+    }
+    active.stopError = error
+    this.invokeCancelHandlers(active)
   }
 
   getActiveRunCount() {
@@ -1038,18 +1169,13 @@ export class PipelineService {
   }
 
   async markPersistedRunningRunsInterrupted() {
-    const workbenchRoot = await this.readWorkbenchRoot()
-    const db = openWorkbenchDatabase(workbenchRoot)
+    const config = await readAppConfig()
+    if (!config.workbench_root) {
+      return
+    }
+    const db = openWorkbenchDatabase(config.workbench_root)
     try {
-      pipelineStore.markPersistedRunningPipelineRunsInterrupted(db, Date.now())
-      pipelineStore.markPersistedRunningPipelineStepsInterrupted(db, {
-        completedAt: Date.now(),
-        updatedAt: Date.now(),
-      })
-      pipelineStore.markPersistedRunningPipelineItemsInterrupted(db, {
-        completedAt: Date.now(),
-        updatedAt: Date.now(),
-      })
+      pipelineStore.markPersistedRunningPipelineStateInterrupted(db, Date.now())
     } finally {
       db.close()
     }
@@ -1080,6 +1206,7 @@ export class PipelineService {
           level: 'warn',
           message: '完整任务已中断，已完成产物已保留',
         })
+        this.flushRunUiState(runId, active)
       } catch {
         // 退出路径只尽力落状态，不阻断进程关闭。
       }
@@ -1122,21 +1249,40 @@ export class PipelineService {
       }
       activePrintSkuLock = this.acquirePrintSkuLock(runId, parsedConfig)
       await this.assertRunConfigPaths(workbenchRoot, parsedConfig)
-      await this.assertResumeDiskState(workbenchRoot, runId, parsedConfig, detail)
+      const resumeState = this.buildResumeState(detail)
+      this.assertGenerationSourceCanResume(parsedConfig, resumeState)
+      await this.assertResumeDiskState(runId, parsedConfig, detail)
 
       const active: ActivePipelineRun = {
         db,
+        resuming: true,
         cancelRequested: false,
+        stopError: null,
         interrupted: false,
-        currentCancel: null,
+        cancelHandlers: new Map(),
         previewImages: [],
         resultSections: detail.result_sections ?? [],
         logs: detail.logs ?? [],
         collectionReadLock: null,
+        pendingProgress: null,
+        lastProgress: null,
+        progressFlushHandle: null,
+        resultDetailFlushHandle: null,
+        progressError: null,
+        progressRevision: 0,
+        nextFullProgressRevision: 1,
+        forceNextProgressDetails: false,
+        resultSectionsDirty: false,
+        lastDetailedProgressAt: 0,
+        uiStateDirty: false,
+        uiStateFlushHandle: null,
+        uiStateError: null,
+        uiStateRevision: 0,
+        nextUiStatePersistRevision: 1,
       }
       this.activeRuns.set(runId, active)
       const stats = parseStats(detail.run.stats_json)
-      const resumeState = this.buildResumeState(detail)
+      let pipelineFailed = false
 
       try {
         active.collectionReadLock =
@@ -1166,6 +1312,14 @@ export class PipelineService {
         )
 
         if (active.interrupted) {
+          this.emitRunProgress(
+            db,
+            runId,
+            'interrupted',
+            null,
+            stats,
+            '完整任务已中断，已完成产物已保留',
+          )
           return this.requireRunDetail(db, runId)
         }
         if (active.cancelRequested) {
@@ -1177,6 +1331,7 @@ export class PipelineService {
         }
         return this.requireRunDetail(db, runId)
       } catch (error) {
+        pipelineFailed = true
         if (active.interrupted) {
           return this.requireRunDetail(db, runId)
         }
@@ -1201,14 +1356,25 @@ export class PipelineService {
             },
           })
         }
-        this.completeRun(db, runId, status, stats, appErrorMessage(error))
+        const terminalError = await this.completeRunAfterFailure({
+          db,
+          runId,
+          status,
+          stats,
+          error,
+          workbenchRoot,
+          operation: 'resumeRun',
+        })
         if (!active.cancelRequested) {
           throw error
+        }
+        if (terminalError) {
+          throw terminalError
         }
         return this.requireRunDetail(db, runId)
       } finally {
         active.collectionReadLock?.release()
-        this.activeRuns.delete(runId)
+        this.finalizeActiveRunState(runId, active, pipelineFailed)
       }
     } finally {
       this.releasePrintSkuLock(activePrintSkuLock, runId)
@@ -1216,34 +1382,47 @@ export class PipelineService {
     }
   }
 
-  async runPipeline(runId: string, config: PipelineRunConfig): Promise<PipelineRunDetail> {
-    const parsedConfig = parsePipelineRunConfig(config)
-    if (process.platform === 'darwin' && parsedConfig.photoshop.enabled !== false) {
-      throw new AppErrorClass(
-        'HTTP_4XX',
-        '完整任务包含 PS 套版，当前 v1 仅支持在 Windows 执行',
-        false,
-      )
-    }
-    const activePrintSkuLock = this.acquirePrintSkuLock(runId, parsedConfig)
+  async runPipeline(
+    runId: string,
+    config: PipelineRunConfig,
+    preparedRun?: PreparedPipelineRun | undefined,
+  ): Promise<PipelineRunDetail> {
+    const prepared = preparedRun ?? (await this.prepareRun(runId, config))
+    const activePrintSkuLock = this.acquirePrintSkuLock(runId, prepared.config)
     try {
-      const workbenchRoot = await this.readWorkbenchRoot()
-      await this.assertRunConfigPaths(workbenchRoot, parsedConfig)
-      const runConfig = await this.normalizeRunConfig(workbenchRoot, runId, parsedConfig)
+      const { workbenchRoot, config: runConfig } = prepared
       const db = openWorkbenchDatabase(workbenchRoot)
       const active: ActivePipelineRun = {
         db,
+        resuming: false,
         cancelRequested: false,
+        stopError: null,
         interrupted: false,
-        currentCancel: null,
+        cancelHandlers: new Map(),
         previewImages: [],
         resultSections: [],
         logs: [],
         collectionReadLock: null,
+        pendingProgress: null,
+        lastProgress: null,
+        progressFlushHandle: null,
+        resultDetailFlushHandle: null,
+        progressError: null,
+        progressRevision: 0,
+        nextFullProgressRevision: 1,
+        forceNextProgressDetails: false,
+        resultSectionsDirty: false,
+        lastDetailedProgressAt: 0,
+        uiStateDirty: false,
+        uiStateFlushHandle: null,
+        uiStateError: null,
+        uiStateRevision: 0,
+        nextUiStatePersistRevision: 1,
       }
       this.activeRuns.set(runId, active)
       const stats: PipelineRunStats = { ...DEFAULT_STATS }
       const runName = runConfig.name?.trim() || `完整任务-${timestampSlug()}`
+      let pipelineFailed = false
 
       try {
         active.collectionReadLock =
@@ -1264,6 +1443,14 @@ export class PipelineService {
         await this.runStreamingPipeline(db, active, runId, runName, workbenchRoot, runConfig, stats)
 
         if (active.interrupted) {
+          this.emitRunProgress(
+            db,
+            runId,
+            'interrupted',
+            null,
+            stats,
+            '完整任务已中断，已完成产物已保留',
+          )
           return this.requireRunDetail(db, runId)
         }
         if (active.cancelRequested) {
@@ -1275,6 +1462,7 @@ export class PipelineService {
         }
         return this.requireRunDetail(db, runId)
       } catch (error) {
+        pipelineFailed = true
         if (active.interrupted) {
           return this.requireRunDetail(db, runId)
         }
@@ -1299,15 +1487,29 @@ export class PipelineService {
             },
           })
         }
-        this.completeRun(db, runId, status, stats, appErrorMessage(error))
+        const terminalError = await this.completeRunAfterFailure({
+          db,
+          runId,
+          status,
+          stats,
+          error,
+          workbenchRoot,
+          operation: 'runPipeline',
+        })
         if (!active.cancelRequested) {
           throw error
+        }
+        if (terminalError) {
+          throw terminalError
         }
         return this.requireRunDetail(db, runId)
       } finally {
         active.collectionReadLock?.release()
-        db.close()
-        this.activeRuns.delete(runId)
+        try {
+          this.finalizeActiveRunState(runId, active, pipelineFailed)
+        } finally {
+          db.close()
+        }
       }
     } finally {
       this.releasePrintSkuLock(activePrintSkuLock, runId)
@@ -1393,6 +1595,23 @@ export class PipelineService {
       throw new AppErrorClass('HTTP_4XX', '请先在设置里选择工作区', false)
     }
     return config.workbench_root
+  }
+
+  private async prepareRun(runId: string, config: PipelineRunConfig): Promise<PreparedPipelineRun> {
+    const parsedConfig = parsePipelineRunConfig(config)
+    if (process.platform === 'darwin' && parsedConfig.photoshop.enabled !== false) {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        '完整任务包含 PS 套版，当前 v1 仅支持在 Windows 执行',
+        false,
+      )
+    }
+    const workbenchRoot = await this.readWorkbenchRoot()
+    await this.assertRunConfigPaths(workbenchRoot, parsedConfig)
+    return {
+      workbenchRoot,
+      config: await this.normalizeRunConfig(workbenchRoot, runId, parsedConfig),
+    }
   }
 
   private async normalizeRunConfig(
@@ -1508,14 +1727,79 @@ export class PipelineService {
   }
 
   private completeRun(
-    db: Pick<SqliteDatabase, 'prepare'>,
+    db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
     runId: string,
     status: PipelineRunStatus,
     stats: PipelineRunStats,
     error: string | null,
   ) {
-    pipelineStore.updatePipelineRunCompleted(db, { runId, status, stats, error })
+    const active = this.activeRuns.get(runId)
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      if (status === 'failed' || status === 'cancelled') {
+        const now = Date.now()
+        const terminalMessage =
+          error ?? (status === 'cancelled' ? '完整任务已取消' : '完整任务失败')
+        pipelineStore.markPipelineRunRunningStepsTerminal(db, {
+          runId,
+          status,
+          errorMessage: terminalMessage,
+          completedAt: now,
+          updatedAt: now,
+        })
+        pipelineStore.markPipelineRunRunningItemsTerminal(db, {
+          runId,
+          status: status === 'failed' ? 'failed' : 'interrupted',
+          errorMessage: terminalMessage,
+          completedAt: now,
+          updatedAt: now,
+        })
+      }
+      pipelineStore.updatePipelineRunCompleted(db, { runId, status, stats, error })
+      db.exec('COMMIT')
+    } catch (transactionError) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // Preserve the transaction error; it identifies the failed terminal write.
+      }
+      throw transactionError
+    }
+    if (active) {
+      this.flushRunUiState(runId, active)
+    }
     this.emitRunProgress(db, runId, status, null, stats, error ?? '完整任务完成')
+  }
+
+  private async completeRunAfterFailure(input: {
+    db: Pick<SqliteDatabase, 'exec' | 'prepare'>
+    runId: string
+    status: Extract<PipelineRunStatus, 'cancelled' | 'failed'>
+    stats: PipelineRunStats
+    error: unknown
+    workbenchRoot: string
+    operation: 'resumeRun' | 'runPipeline'
+  }) {
+    try {
+      this.completeRun(
+        input.db,
+        input.runId,
+        input.status,
+        input.stats,
+        appErrorMessage(input.error),
+      )
+      return null
+    } catch (terminalError) {
+      await this.writePipelineDiagnostic({
+        workbenchRoot: input.workbenchRoot,
+        runId: input.runId,
+        type: 'pipeline_terminalization_failed',
+        operation: input.operation,
+        error: terminalError,
+        data: { primaryError: appErrorMessage(input.error), status: input.status },
+      })
+      return terminalError
+    }
   }
 
   private markRunResuming(
@@ -1531,12 +1815,17 @@ export class PipelineService {
     const itemByStepAndKey = new Map<string, PipelineItemRecord>()
     const completedItemsByStep = new Map<PipelineStepKey, PipelineItemRecord[]>()
     const completedItemByStepAndKey = new Map<string, PipelineItemRecord>()
+    const filteredItemByStepAndKey = new Map<string, PipelineItemRecord>()
     for (const item of detail.items ?? []) {
       const allItems = itemsByStep.get(item.step_key) ?? []
       allItems.push(item)
       itemsByStep.set(item.step_key, allItems)
       itemByStepAndKey.set(resumeItemMapKey(item.step_key, item.item_key), item)
-      if (item.status !== 'completed' && item.status !== 'skipped' && item.status !== 'filtered') {
+      if (item.status === 'filtered') {
+        filteredItemByStepAndKey.set(resumeItemMapKey(item.step_key, item.item_key), item)
+        continue
+      }
+      if (item.status !== 'completed' && item.status !== 'skipped') {
         continue
       }
       const items = completedItemsByStep.get(item.step_key) ?? []
@@ -1549,6 +1838,7 @@ export class PipelineService {
       itemByStepAndKey,
       completedItemsByStep,
       completedItemByStepAndKey,
+      filteredItemByStepAndKey,
       completedSourceStep:
         detail.steps.find((step) => step.step_key === 'source' && step.status === 'completed') ??
         null,
@@ -1560,37 +1850,97 @@ export class PipelineService {
     }
   }
 
+  private assertGenerationSourceCanResume(
+    config: PipelineRunConfig,
+    resumeState: PipelineResumeState,
+  ) {
+    const source = config.source
+    if (source.mode !== 'txt2img' && source.mode !== 'img2img') {
+      return
+    }
+    if (resumeState.completedSourceStep) {
+      return
+    }
+    if (source.prompt?.mode === 'ai') {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        'AI 提示词未保存，无法安全续跑生成阶段，请使用已生成印花从“已有印花来源”新建完整任务',
+        false,
+      )
+    }
+    const stableKeyPattern = new RegExp(`^${source.mode}-\\d+-\\d+$`)
+    const completedSourceItems = resumeState.completedItemsByStep.get('source') ?? []
+    if (completedSourceItems.some((item) => !stableKeyPattern.test(item.item_key))) {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        '该完整任务缺少可精确续跑的生成槽位记录，无法安全续跑，请使用已生成印花从“已有印花来源”新建完整任务',
+        false,
+      )
+    }
+  }
+
   private async assertResumeDiskState(
-    workbenchRoot: string,
     runId: string,
     config: PipelineRunConfig,
     detail: PipelineRunDetail,
   ) {
-    if (config.photoshop.enabled !== false) {
-      const waitingFolder = join(
-        workbenchRoot,
-        WORKBENCH_DIRECTORIES.generation,
-        WAITING_PHOTOSHOP_PRINT_FOLDER,
-        safePathSegment(runId),
-      )
-      const waitingStat = await stat(waitingFolder).catch(() => null)
-      if (!waitingStat?.isDirectory()) {
+    const reusableOutputSteps = new Set<PipelineStepKey>([
+      'source',
+      'extract',
+      'matting',
+      'detection',
+    ])
+    for (const item of detail.items ?? []) {
+      if (item.status !== 'completed') {
+        continue
+      }
+      if (item.step_key !== 'photoshop' && !reusableOutputSteps.has(item.step_key)) {
+        continue
+      }
+      const recoveryPath =
+        item.step_key === 'photoshop' ? item.output_path : (item.output_path ?? item.source_path)
+      if (!recoveryPath || !(await pathExists(recoveryPath))) {
         throw new AppErrorClass('HTTP_4XX', '源目录已被清理,无法续跑', false, {
           runId,
-          waitingFolder,
+          stepKey: item.step_key,
+          itemKey: item.item_key,
+          recoveryPath,
         })
       }
     }
 
+    if (config.photoshop.enabled === false) {
+      return
+    }
+    const templateSuffixes = config.photoshop.templates.map(
+      (templatePath) => `:${safePathSegment(templatePath)}`,
+    )
+    const photoshopItemsByInput = new Map<string, PipelineItemRecord[]>()
     for (const item of detail.items ?? []) {
-      if (item.step_key !== 'source' || item.status !== 'completed') {
+      if (item.step_key !== 'photoshop') {
         continue
       }
-      const sourcePath = item.output_path ?? item.source_path
-      if (sourcePath && !(await pathExists(sourcePath))) {
+      const suffix = templateSuffixes.find((value) => item.item_key.endsWith(value))
+      if (!suffix) {
+        continue
+      }
+      const inputKey = item.item_key.slice(0, -suffix.length)
+      const items = photoshopItemsByInput.get(inputKey) ?? []
+      items.push(item)
+      photoshopItemsByInput.set(inputKey, items)
+    }
+    for (const [itemKey, items] of photoshopItemsByInput) {
+      const completedTemplates = items.filter((item) => item.status === 'completed').length
+      if (completedTemplates >= config.photoshop.templates.length) {
+        continue
+      }
+      const waitingPath = items.map((item) => item.source_path).find(Boolean)
+      if (waitingPath && !(await pathExists(waitingPath))) {
         throw new AppErrorClass('HTTP_4XX', '源目录已被清理,无法续跑', false, {
           runId,
-          sourcePath,
+          stepKey: 'photoshop',
+          itemKey,
+          waitingPath,
         })
       }
     }
@@ -1605,11 +1955,52 @@ export class PipelineService {
   }
 
   private persistRunUiState(runId: string, active: ActivePipelineRun) {
-    pipelineStore.updatePipelineRunUiState(active.db, {
-      runId,
-      resultSections: active.resultSections,
-      logs: active.logs,
+    active.uiStateDirty = true
+    active.uiStateRevision += 1
+    const shouldPersist = active.uiStateRevision >= active.nextUiStatePersistRevision
+    if (shouldPersist) {
+      while (active.uiStateRevision >= active.nextUiStatePersistRevision) {
+        active.nextUiStatePersistRevision += UI_STATE_PERSIST_INTERVAL
+      }
+    }
+    if (active.uiStateFlushHandle !== null) {
+      return
+    }
+    if (!shouldPersist) {
+      return
+    }
+    active.uiStateFlushHandle = setImmediate(() => {
+      active.uiStateFlushHandle = null
+      try {
+        this.flushRunUiState(runId, active)
+      } catch (error) {
+        active.uiStateError = error
+      }
     })
+  }
+
+  private flushRunUiState(runId: string, active: ActivePipelineRun) {
+    if (active.uiStateFlushHandle !== null) {
+      clearImmediate(active.uiStateFlushHandle)
+      active.uiStateFlushHandle = null
+    }
+    if (active.uiStateError) {
+      throw active.uiStateError
+    }
+    if (!active.uiStateDirty) {
+      return
+    }
+    active.uiStateDirty = false
+    try {
+      pipelineStore.updatePipelineRunUiState(active.db, {
+        runId,
+        resultSections: active.resultSections,
+        logs: active.logs,
+      })
+    } catch (error) {
+      active.uiStateError = error
+      throw error
+    }
   }
 
   private sortResultSections(sections: PipelineResultSection[]) {
@@ -1632,20 +2023,185 @@ export class PipelineService {
     message: string,
   ) {
     const active = this.activeRuns.get(runId)
-    const previewImages = active?.previewImages
-    const persistedDetail = active ? null : pipelineStore.readRunDetail(db, runId)
+    if (!active) {
+      this.emitProgressSnapshot(db, runId, {
+        status,
+        currentStep,
+        stats: { ...stats },
+        message,
+        includeDetails: true,
+      })
+      return
+    }
+    active.progressRevision += 1
+    const reachedFullSnapshot = active.progressRevision >= active.nextFullProgressRevision
+    if (reachedFullSnapshot) {
+      while (active.progressRevision >= active.nextFullProgressRevision) {
+        active.nextFullProgressRevision += PROGRESS_DETAIL_INTERVAL
+      }
+    }
+    const forceDetails = active.forceNextProgressDetails
+    const resultDetailsDue =
+      active.resultSectionsDirty &&
+      Date.now() - active.lastDetailedProgressAt >= RESULT_DETAIL_MAX_LATENCY_MS
+    const progress: PendingPipelineProgress = {
+      status,
+      currentStep,
+      stats: { ...stats },
+      message,
+      includeDetails:
+        status !== 'running' ||
+        reachedFullSnapshot ||
+        forceDetails ||
+        resultDetailsDue ||
+        active.pendingProgress?.includeDetails === true,
+    }
+    active.pendingProgress = progress
+    active.lastProgress = progress
+    active.forceNextProgressDetails = false
+    if (status !== 'running' || forceDetails || resultDetailsDue) {
+      this.flushRunProgress(runId, active)
+      return
+    }
+    if (!progress.includeDetails) {
+      this.scheduleResultDetailFlush(runId, active)
+    }
+    if (active.progressFlushHandle !== null) {
+      return
+    }
+    active.progressFlushHandle = setImmediate(() => {
+      active.progressFlushHandle = null
+      try {
+        this.flushRunProgress(runId, active)
+      } catch (error) {
+        active.progressError = error
+      }
+    })
+  }
+
+  private scheduleResultDetailFlush(runId: string, active: ActivePipelineRun) {
+    if (
+      !active.resultSectionsDirty ||
+      active.resultDetailFlushHandle !== null ||
+      active.lastProgress?.status !== 'running'
+    ) {
+      return
+    }
+    const delay = Math.max(
+      0,
+      RESULT_DETAIL_MAX_LATENCY_MS - (Date.now() - active.lastDetailedProgressAt),
+    )
+    active.resultDetailFlushHandle = setTimeout(() => {
+      active.resultDetailFlushHandle = null
+      if (this.activeRuns.get(runId) !== active || !active.resultSectionsDirty) {
+        return
+      }
+      const latest = active.lastProgress
+      if (!latest || latest.status !== 'running') {
+        return
+      }
+      active.pendingProgress = { ...latest, includeDetails: true }
+      try {
+        this.flushRunProgress(runId, active)
+      } catch (error) {
+        active.progressError = error
+      }
+    }, delay)
+  }
+
+  private clearResultDetailFlush(active: ActivePipelineRun) {
+    if (active.resultDetailFlushHandle === null) {
+      return
+    }
+    clearTimeout(active.resultDetailFlushHandle)
+    active.resultDetailFlushHandle = null
+  }
+
+  private emitProgressSnapshot(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    progress: PendingPipelineProgress,
+    active?: ActivePipelineRun | undefined,
+  ) {
+    const persistedDetail =
+      progress.includeDetails && !active ? pipelineStore.readRunDetail(db, runId) : null
     emitPipelineProgress({
       run_id: runId,
-      status,
-      current_step: currentStep,
-      message,
-      stats: { ...stats },
+      status: progress.status,
+      current_step: progress.currentStep,
+      message: progress.message,
+      stats: progress.stats,
       steps: pipelineStore.readStepRows(db, runId),
-      items: pipelineStore.readItemRows(db, runId),
-      ...(previewImages ? { preview_images: previewImages } : {}),
-      result_sections: active?.resultSections ?? persistedDetail?.result_sections ?? [],
-      logs: active?.logs ?? persistedDetail?.logs ?? [],
+      ...(progress.includeDetails
+        ? {
+            items: pipelineStore.readItemRows(db, runId),
+            ...(active ? { preview_images: active.previewImages } : {}),
+            result_sections: active?.resultSections ?? persistedDetail?.result_sections ?? [],
+            logs: active?.logs ?? persistedDetail?.logs ?? [],
+          }
+        : {}),
     })
+  }
+
+  private flushRunProgress(runId: string, active: ActivePipelineRun) {
+    if (active.progressFlushHandle !== null) {
+      clearImmediate(active.progressFlushHandle)
+      active.progressFlushHandle = null
+    }
+    if (active.progressError) {
+      throw active.progressError
+    }
+    const progress = active.pendingProgress
+    if (!progress) {
+      return
+    }
+    active.pendingProgress = null
+    try {
+      this.emitProgressSnapshot(active.db, runId, progress, active)
+      if (progress.includeDetails) {
+        active.lastDetailedProgressAt = Date.now()
+        active.resultSectionsDirty = false
+        active.forceNextProgressDetails = false
+        this.clearResultDetailFlush(active)
+      }
+    } catch (error) {
+      active.progressError = error
+      throw error
+    }
+  }
+
+  private flushPendingRunState(runId: string, active: ActivePipelineRun) {
+    let firstError: unknown = null
+    try {
+      this.flushRunUiState(runId, active)
+    } catch (error) {
+      firstError = error
+    }
+    try {
+      this.flushRunProgress(runId, active)
+    } catch (error) {
+      firstError ??= error
+    }
+    if (firstError) {
+      throw firstError
+    }
+  }
+
+  private finalizeActiveRunState(
+    runId: string,
+    active: ActivePipelineRun,
+    pipelineFailed: boolean,
+  ) {
+    try {
+      this.flushPendingRunState(runId, active)
+    } catch (error) {
+      if (!pipelineFailed) {
+        throw error
+      }
+    } finally {
+      this.clearResultDetailFlush(active)
+      this.activeRuns.delete(runId)
+    }
   }
 
   private updateResultSection(runId: string, section: PipelineResultSection) {
@@ -1653,12 +2209,22 @@ export class PipelineService {
     if (!active) {
       return
     }
+    if (!active.resultSections.some((item) => item.key === section.key)) {
+      active.forceNextProgressDetails = true
+    }
+    active.resultSectionsDirty = true
+    const existingSection = active.resultSections.find((item) => item.key === section.key)
+    const nextSection =
+      active.resuming && existingSection
+        ? mergeResumeResultSection(existingSection, section)
+        : section
     active.resultSections = [
       ...active.resultSections.filter((item) => item.key !== section.key),
-      section,
+      nextSection,
     ]
     active.resultSections = this.sortResultSections(active.resultSections)
     this.persistRunUiState(runId, active)
+    this.scheduleResultDetailFlush(runId, active)
   }
 
   private appendLog(runId: string, input: Omit<PipelineRuntimeLogEntry, 'id' | 'created_at'>) {
@@ -1743,10 +2309,25 @@ export class PipelineService {
     if (active.cancelRequested) {
       throw new AppErrorClass('HTTP_4XX', '完整任务已取消', false)
     }
+    if (active.stopError !== null) {
+      throw active.stopError
+    }
   }
 
   private stopAcceptingMoreWork(active: ActivePipelineRun) {
-    return active.cancelRequested
+    return active.cancelRequested || active.stopError !== null
+  }
+
+  private setCancelHandler(
+    active: ActivePipelineRun,
+    key: string,
+    cancel: PipelineCancelHandler | null,
+  ) {
+    if (cancel) {
+      active.cancelHandlers.set(key, cancel)
+      return
+    }
+    active.cancelHandlers.delete(key)
   }
 
   private async withGenerationCancel<T>(
@@ -1754,13 +2335,17 @@ export class PipelineService {
     taskId: string,
     run: () => Promise<T>,
   ): Promise<T> {
-    active.currentCancel = () => {
+    const cancelKey = `generation:${taskId}`
+    const cancel = () => {
       requestGenerationCancel(taskId)
     }
+    this.setCancelHandler(active, cancelKey, cancel)
     try {
       return await run()
     } finally {
-      active.currentCancel = null
+      if (active.cancelHandlers.get(cancelKey) === cancel) {
+        this.setCancelHandler(active, cancelKey, null)
+      }
     }
   }
 
@@ -2035,7 +2620,7 @@ export class PipelineService {
           emitRunningProgress: (nextRunId, message) =>
             this.emitRunProgress(db, nextRunId, 'running', 'detection', stats, message),
           setCurrentCancel: (cancel) => {
-            active.currentCancel = cancel
+            this.setCancelHandler(active, 'stage:detection', cancel)
           },
           assertNotCancelled: () => this.assertCanAcceptMoreWork(active),
         }),
@@ -2057,7 +2642,7 @@ export class PipelineService {
           emitRunningProgress: (nextRunId, message) =>
             this.emitRunProgress(db, nextRunId, 'running', 'photoshop', stats, message),
           setCurrentCancel: (cancel) => {
-            active.currentCancel = cancel
+            this.setCancelHandler(active, 'stage:photoshop', cancel)
           },
           assertNotCancelled: () => this.assertCanAcceptMoreWork(active),
         }),
@@ -2079,7 +2664,7 @@ export class PipelineService {
           emitRunningProgress: (nextRunId, message) =>
             this.emitRunProgress(db, nextRunId, 'running', 'title', stats, message),
           setCurrentCancel: (cancel) => {
-            active.currentCancel = cancel
+            this.setCancelHandler(active, 'stage:title', cancel)
           },
           assertNotCancelled: () => this.assertCanAcceptMoreWork(active),
         }),
@@ -2090,9 +2675,11 @@ export class PipelineService {
   }
 
   private applyStreamingPrintStages(
+    db: Pick<SqliteDatabase, 'prepare'>,
     input: AsyncIterable<PipelinePrintStreamItem>,
     stages: PipelinePrintStageRegistration[],
     createContext: (stepKey: PipelineStepKey) => PipelineStageRuntimeContext,
+    onStageError: (error: unknown) => void,
     resumeState?: PipelineResumeState | undefined,
   ) {
     let current: AsyncIterable<PipelinePrintStreamItem> = input
@@ -2105,6 +2692,7 @@ export class PipelineService {
         (async () => {
           try {
             const stageItems = this.createResumeAwareStage(
+              db,
               stage.stepKey,
               stage.create(context),
               stageInput,
@@ -2116,6 +2704,7 @@ export class PipelineService {
             }
             stageOutput.end()
           } catch (error) {
+            onStageError(error)
             stageOutput.fail(error)
           }
         })(),
@@ -2129,6 +2718,7 @@ export class PipelineService {
   }
 
   private createResumeAwareStage(
+    db: Pick<SqliteDatabase, 'prepare'>,
     stepKey: PipelineStepKey,
     stage: ReturnType<PipelinePrintStageRegistration['create']>,
     input: AsyncIterable<PipelinePrintStreamItem>,
@@ -2141,42 +2731,98 @@ export class PipelineService {
     const activeResumeState = resumeState
     const service = this
     async function* resumeAwareStage() {
-      const pendingItems: PipelinePrintStreamItem[] = []
-      for await (const item of input) {
-        const resumedItems = service.resumeOutputItemsForStage(
-          stepKey,
-          item,
-          context.config,
-          activeResumeState,
-        )
-        if (stepKey === 'photoshop' && resumedItems?.length) {
-          for (const resumedItem of resumedItems) {
-            yield resumedItem
-          }
-          if (resumedItems.length === context.config.photoshop.templates.length) {
+      const pendingInput = new AsyncItemQueue<PipelinePrintStreamItem>()
+      const inputIterator = input[Symbol.asyncIterator]()
+      const stageIterator = stage(pendingInput, context)[Symbol.asyncIterator]()
+      let inputDone = false
+      let stageDone = false
+      let inputCount = 0
+      let outputCount = 0
+      let caughtError: unknown = null
+      let hasCaughtError = false
+      const routedItemKeys = new Set<string>()
+      let inputNext = inputIterator.next().then((result) => ({ kind: 'input' as const, result }))
+      let stageNext = stageIterator.next().then((result) => ({ kind: 'stage' as const, result }))
+
+      try {
+        while (!inputDone || !stageDone) {
+          const next = await Promise.race([
+            ...(inputDone ? [] : [inputNext]),
+            ...(stageDone ? [] : [stageNext]),
+          ])
+          if (next.kind === 'stage') {
+            if (next.result.done) {
+              stageDone = true
+              continue
+            }
+            outputCount += 1
+            stageNext = stageIterator.next().then((result) => ({ kind: 'stage' as const, result }))
+            yield next.result.value
             continue
           }
-          pendingItems.push(item)
-          continue
-        }
-        if (resumedItems) {
-          for (const resumedItem of resumedItems) {
-            yield resumedItem
+
+          if (next.result.done) {
+            inputDone = true
+            pendingInput.end()
+            continue
           }
-          continue
+          inputNext = inputIterator.next().then((result) => ({ kind: 'input' as const, result }))
+          const item = next.result.value
+          if (routedItemKeys.has(item.itemKey)) {
+            continue
+          }
+          routedItemKeys.add(item.itemKey)
+          inputCount += 1
+          const resumedItems = service.resumeOutputItemsForStage(
+            stepKey,
+            item,
+            context.config,
+            activeResumeState,
+          )
+          if (stepKey === 'photoshop' && resumedItems?.length) {
+            for (const resumedItem of resumedItems) {
+              outputCount += 1
+              yield resumedItem
+            }
+            if (resumedItems.length === context.config.photoshop.templates.length) {
+              continue
+            }
+            pendingInput.push(item)
+            continue
+          }
+          if (resumedItems) {
+            for (const resumedItem of resumedItems) {
+              outputCount += 1
+              yield resumedItem
+            }
+            continue
+          }
+          pendingInput.push(item)
         }
-        pendingItems.push(item)
-      }
-      if (pendingItems.length === 0) {
-        return
-      }
-      async function* pendingInput() {
-        for (const item of pendingItems) {
-          yield item
+        pipelineStore.updatePipelineStepCounts(db, {
+          runId: context.runId,
+          stepKey,
+          inputCount,
+          outputCount,
+        })
+      } catch (error) {
+        caughtError = error
+        hasCaughtError = true
+        throw error
+      } finally {
+        if (!stageDone) {
+          if (hasCaughtError) {
+            pendingInput.fail(caughtError)
+          } else {
+            pendingInput.end()
+          }
+          await stageNext.catch(() => undefined)
+          await stageIterator.return?.().catch(() => undefined)
         }
-      }
-      for await (const item of stage(pendingInput(), context)) {
-        yield item
+        if (!inputDone) {
+          void inputNext.catch(() => undefined)
+          void inputIterator.return?.().catch(() => undefined)
+        }
       }
     }
     return resumeAwareStage()
@@ -2188,6 +2834,9 @@ export class PipelineService {
     config: PipelineRunConfig,
     resumeState: PipelineResumeState,
   ): PipelinePrintStreamItem[] | null {
+    if (resumeState.filteredItemByStepAndKey.has(resumeItemMapKey(stepKey, item.itemKey))) {
+      return []
+    }
     if (stepKey === 'photoshop') {
       const completed = config.photoshop.templates.flatMap((templatePath) => {
         const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
@@ -2211,6 +2860,47 @@ export class PipelineService {
       return [streamItem]
     }
     return stepKey === 'title' ? [item] : []
+  }
+
+  private reconcileResumeStats(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    config: PipelineRunConfig,
+    stats: PipelineRunStats,
+    resultSections: readonly PipelineResultSection[],
+  ) {
+    const items = pipelineStore.readItemRows(db, runId)
+    const completedCount = (stepKey: PipelineStepKey) =>
+      items.filter((item) => item.step_key === stepKey && item.status === 'completed').length
+
+    stats.sourceImages = config.source.mode === 'collection' ? completedCount('source') : 0
+    const finalPrintStep: PipelineStepKey = shouldRunDetectionStep(config)
+      ? 'detection'
+      : shouldRunMattingStep(config)
+        ? 'matting'
+        : config.source.mode === 'collection'
+          ? 'extract'
+          : 'source'
+    stats.prints = completedCount(finalPrintStep)
+
+    if (shouldRunDetectionStep(config)) {
+      const passedItems =
+        resultSections.find((section) => section.key === 'detection_passed')?.items ?? []
+      stats.detectionReview = passedItems.filter((item) => item.risk_level === 'review').length
+      stats.detectionPass = passedItems.length - stats.detectionReview
+      stats.detectionBlock = items.filter(
+        (item) => item.step_key === 'detection' && item.status === 'filtered',
+      ).length
+    }
+    if (config.photoshop.enabled !== false) {
+      stats.photoshopGroups = completedCount('photoshop')
+    }
+    if (config.photoshop.enabled !== false && config.title.enabled !== false) {
+      stats.titleSucceeded = completedCount('title')
+      stats.titleFailed = items.filter(
+        (item) => item.step_key === 'title' && item.status === 'failed',
+      ).length
+    }
   }
 
   private async runStreamingPipeline(
@@ -2295,6 +2985,7 @@ export class PipelineService {
       sourceFailedRef,
     )
     const stagePipeline = this.applyStreamingPrintStages(
+      db,
       sourceQueue,
       stageRegistrations,
       (stepKey) => ({
@@ -2315,6 +3006,7 @@ export class PipelineService {
             }
           : {}),
       }),
+      (error) => this.stopRunForStageError(active, error),
       resumeState,
     )
     const consumeOutputPromise = (async () => {
@@ -2327,6 +3019,7 @@ export class PipelineService {
         })
       }
     })()
+    void consumeOutputPromise.catch(() => undefined)
 
     for (const item of resumeState?.completedItemsByStep.get('source') ?? []) {
       const payload = streamItemFromPipelineItem(item)
@@ -2419,6 +3112,9 @@ export class PipelineService {
       sourceQueue.end()
       await consumeOutputPromise
       await stagePipeline.completed
+      if (resumeState) {
+        this.reconcileResumeStats(db, runId, config, stats, active.resultSections)
+      }
       pipelineStore.updatePipelineStepCompletedWithInput(db, {
         runId,
         stepKey: 'source',
@@ -2445,6 +3141,8 @@ export class PipelineService {
       }
     } catch (error) {
       sourceQueue.end()
+      await consumeOutputPromise.catch(() => undefined)
+      await stagePipeline.completed
       throw error
     }
   }
@@ -2884,7 +3582,8 @@ export class PipelineService {
         }
         let itemCount = completedSourceCount
         for (const [index, prompt] of prompts.entries()) {
-          if (index < completedSourceCount) {
+          const itemKey = `txt2img-${index + 1}-1`
+          if (resumeState?.completedSourceKeys.has(itemKey)) {
             continue
           }
           this.assertCanAcceptMoreWork(active)
@@ -2898,6 +3597,7 @@ export class PipelineService {
                   taskId,
                   outputTaskName: taskName,
                   filenameStartIndex: index,
+                  inputIndexes: [index],
                   ...visibleFilenameFields,
                   ...comfyuiOptionalFields(source.comfyui),
                 },
@@ -2909,7 +3609,7 @@ export class PipelineService {
                     }
                     itemCount += 1
                     onItem({
-                      itemKey: payload.printId,
+                      itemKey: generatedSourceItemKey('txt2img', payload),
                       path: payload.path,
                       artifactId: payload.artifactId,
                       printId: payload.printId,
@@ -2925,6 +3625,11 @@ export class PipelineService {
           aggregate.failed += result.failed
           aggregate.images.push(...result.images)
           aggregate.failures.push(...result.failures)
+          const fatalError = fatalGenerationResultError(result, 'source')
+          if (fatalError) {
+            this.recordStreamingSourceFailures(db, runId, result, itemCount)
+            throw fatalError
+          }
         }
         this.recordStreamingSourceFailures(db, runId, aggregate, itemCount)
         return { ...aggregate, itemCount }
@@ -2934,8 +3639,12 @@ export class PipelineService {
       }
       const grsaiConfig = source.grsai
       let itemCount = 0
-      const promptsToRun = prompts.slice(completedSourceCount)
-      if (promptsToRun.length === 0) {
+      const pendingPrompts = prompts.flatMap((prompt, index) =>
+        resumeState?.completedSourceKeys.has(`txt2img-${index + 1}-1`)
+          ? []
+          : [{ prompt, inputIndex: index }],
+      )
+      if (pendingPrompts.length === 0) {
         return {
           taskId: `${runId}-txt2img`,
           total: prompts.length,
@@ -2950,7 +3659,8 @@ export class PipelineService {
         runTxt2imgBatch(
           {
             capability: 'txt2img',
-            prompts: promptsToRun,
+            prompts: pendingPrompts.map((item) => item.prompt),
+            inputIndexes: pendingPrompts.map((item) => item.inputIndex),
             model: grsaiConfig.model,
             aspectRatio: grsaiConfig.aspectRatio,
             concurrency: grsaiConfig.concurrency ?? 3,
@@ -2967,7 +3677,7 @@ export class PipelineService {
               }
               itemCount += 1
               onItem({
-                itemKey: payload.printId,
+                itemKey: generatedSourceItemKey('txt2img', payload),
                 path: payload.path,
                 artifactId: payload.artifactId,
                 printId: payload.printId,
@@ -2980,6 +3690,10 @@ export class PipelineService {
         ),
       )
       this.recordStreamingSourceFailures(db, runId, result, completedSourceCount + itemCount)
+      const fatalError = fatalGenerationResultError(result, 'source')
+      if (fatalError) {
+        throw fatalError
+      }
       return {
         ...result,
         total: prompts.length,
@@ -2990,57 +3704,85 @@ export class PipelineService {
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
       const sourcePaths = await scanImageFiles(source.sourceFolder)
       const batchSize = source.comfyui.batchSize ?? 1
+      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
       callbacks.onPlannedCount?.(sourcePaths.length * batchSize)
       const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
       const aggregate: GenerationRunResult = {
         taskId: `${runId}-img2img`,
         total: sourcePaths.length * batchSize,
-        succeeded: 0,
+        succeeded: completedSourceCount,
         failed: 0,
         images: [],
         failures: [],
       }
-      let itemCount = 0
+      let itemCount = completedSourceCount
       for (const [index, sourcePath] of sourcePaths.entries()) {
-        this.assertCanAcceptMoreWork(active)
-        const taskId = `${runId}-img2img-${index + 1}`
-        const result = await this.withGenerationCancel(active, taskId, async () =>
-          queue.runExclusive(() =>
-            runComfyuiImg2imgBatch(
-              {
-                sourceImagePaths: [sourcePath],
-                workflowId: source.comfyui.workflowId,
-                taskId,
-                outputTaskName: taskName,
-                filenameStartIndex: index * batchSize,
-                ...visibleFilenameFields,
-                ...comfyuiImg2imgOptionalFields(source.comfyui),
-                ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
-              },
-              {
-                strictImageComplete: true,
-                onImageComplete: async (payload) => {
-                  if (this.stopAcceptingMoreWork(active)) {
-                    return
-                  }
-                  itemCount += 1
-                  onItem({
-                    itemKey: payload.printId,
-                    path: payload.path,
-                    artifactId: payload.artifactId,
-                    printId: payload.printId,
-                    prompt: payload.prompt,
-                    sourceArtifactIds: payload.sourceArtifactIds,
-                  })
-                },
-              },
-            ),
-          ),
+        const pendingOutputIndexes = Array.from(
+          { length: batchSize },
+          (_, outputIndex) => outputIndex,
+        ).filter(
+          (outputIndex) =>
+            !resumeState?.completedSourceKeys.has(`img2img-${index + 1}-${outputIndex + 1}`),
         )
-        aggregate.succeeded += result.succeeded
-        aggregate.failed += result.failed
-        aggregate.images.push(...result.images)
-        aggregate.failures.push(...result.failures)
+        const outputBatches =
+          resumeState && pendingOutputIndexes.length < batchSize
+            ? pendingOutputIndexes.map((outputIndex) => [outputIndex])
+            : [pendingOutputIndexes]
+        for (const outputIndexes of outputBatches) {
+          if (outputIndexes.length === 0) {
+            continue
+          }
+          this.assertCanAcceptMoreWork(active)
+          const firstOutputIndex = outputIndexes[0] ?? 0
+          const taskId = resumeState
+            ? `${runId}-img2img-${index + 1}-${firstOutputIndex + 1}`
+            : `${runId}-img2img-${index + 1}`
+          const result = await this.withGenerationCancel(active, taskId, async () =>
+            queue.runExclusive(() =>
+              runComfyuiImg2imgBatch(
+                {
+                  sourceImagePaths: [sourcePath],
+                  workflowId: source.comfyui.workflowId,
+                  taskId,
+                  outputTaskName: taskName,
+                  filenameStartIndex: index * batchSize + firstOutputIndex,
+                  inputIndexes: [index],
+                  outputIndexes,
+                  ...visibleFilenameFields,
+                  ...comfyuiImg2imgOptionalFields(source.comfyui),
+                  batchSize: outputIndexes.length,
+                  ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
+                },
+                {
+                  strictImageComplete: true,
+                  onImageComplete: async (payload) => {
+                    if (this.stopAcceptingMoreWork(active)) {
+                      return
+                    }
+                    itemCount += 1
+                    onItem({
+                      itemKey: generatedSourceItemKey('img2img', payload),
+                      path: payload.path,
+                      artifactId: payload.artifactId,
+                      printId: payload.printId,
+                      prompt: payload.prompt,
+                      sourceArtifactIds: payload.sourceArtifactIds,
+                    })
+                  },
+                },
+              ),
+            ),
+          )
+          aggregate.succeeded += result.succeeded
+          aggregate.failed += result.failed
+          aggregate.images.push(...result.images)
+          aggregate.failures.push(...result.failures)
+          const fatalError = fatalGenerationResultError(result, 'source')
+          if (fatalError) {
+            this.recordStreamingSourceFailures(db, runId, result, itemCount)
+            throw fatalError
+          }
+        }
       }
       this.recordStreamingSourceFailures(db, runId, aggregate, itemCount)
       return { ...aggregate, itemCount }
@@ -3068,12 +3810,30 @@ export class PipelineService {
         throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
       }
       const grsaiConfig = source.grsai
+      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
+      const pendingPrompts = prompts.flatMap((prompt, index) =>
+        resumeState?.completedSourceKeys.has(`img2img-${index + 1}-1`)
+          ? []
+          : [{ prompt, inputIndex: index }],
+      )
+      if (pendingPrompts.length === 0) {
+        return {
+          taskId: `${runId}-img2img`,
+          total: prompts.length,
+          succeeded: completedSourceCount,
+          failed: 0,
+          images: [],
+          failures: [],
+          itemCount: completedSourceCount,
+        }
+      }
       let itemCount = 0
       const result = await this.withGenerationCancel(active, `${runId}-img2img`, async () =>
         runTxt2imgBatch(
           {
             capability: 'img2img',
-            prompts,
+            prompts: pendingPrompts.map((item) => item.prompt),
+            inputIndexes: pendingPrompts.map((item) => item.inputIndex),
             model: grsaiConfig.model,
             aspectRatio: grsaiConfig.aspectRatio,
             concurrency: grsaiConfig.concurrency ?? 3,
@@ -3091,7 +3851,7 @@ export class PipelineService {
               }
               itemCount += 1
               onItem({
-                itemKey: payload.printId,
+                itemKey: generatedSourceItemKey('img2img', payload),
                 path: payload.path,
                 artifactId: payload.artifactId,
                 printId: payload.printId,
@@ -3102,8 +3862,17 @@ export class PipelineService {
           },
         ),
       )
-      this.recordStreamingSourceFailures(db, runId, result, itemCount)
-      return { ...result, itemCount }
+      this.recordStreamingSourceFailures(db, runId, result, completedSourceCount + itemCount)
+      const fatalError = fatalGenerationResultError(result, 'source')
+      if (fatalError) {
+        throw fatalError
+      }
+      return {
+        ...result,
+        total: prompts.length,
+        succeeded: completedSourceCount + result.succeeded,
+        itemCount: completedSourceCount + itemCount,
+      }
     }
     throw new AppErrorClass('HTTP_5XX', '当前来源暂不支持流式生产者', true)
   }
@@ -3231,86 +4000,115 @@ export class PipelineService {
           }
         }
 
-        const extractResult = await service.runExtractConfig(
-          active,
-          context.runId,
-          context.taskName,
-          activeCollectionSource.extract,
-          sourceItems.map((item) => ({ path: item.path })),
-          visibleFilenameFields,
-          (message) => {
-            service.appendLog(context.runId, {
-              level: 'info',
-              step_key: 'extract',
-              message,
-            })
-            service.emitRunProgress(db, context.runId, 'running', 'extract', stats, message)
-          },
-          (_images, total, failedCount) => {
-            service.updateResultSection(
-              context.runId,
-              resultSection({
-                key: IMAGE_PROCESSING_SECTION_KEY,
-                title: '图像处理',
-                items: [
-                  ...outputItems.map((image, index) =>
-                    resultImageFromPipelineImage('extract', basename(image.path), image, index),
-                  ),
-                  ...loadingResultImages(
-                    'extract',
-                    '图像加载中',
-                    Math.max(0, total - outputItems.length - failedCount),
-                  ),
-                ],
-                total,
-                failed: failedCount,
-              }),
-            )
-            service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取流处理中')
-          },
-          async (payload) => {
-            const sourceArtifactId = payload.sourceArtifactIds[0]
-            const sourceItem = sourceArtifactId
-              ? sourceItemByArtifactId.get(sourceArtifactId)
-              : undefined
-            const itemKey = payload.printId ?? sourceItem?.itemKey ?? `extract-${completed + 1}`
-            const prompt = payload.prompt ?? sourceItem?.prompt
-            completed += 1
-            outputItems.push({
-              path: payload.path,
-              ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
-              ...(payload.printId ? { printId: payload.printId } : {}),
-              ...(prompt ? { prompt } : {}),
-            })
-            stats.prints = completed
-            service.upsertPipelineItem(db, {
-              runId: context.runId,
-              itemKey,
-              stepKey: 'extract',
-              status: 'completed',
-              sourcePath: sourceItem?.path,
-              outputPath: payload.path,
-              artifactId: payload.artifactId,
-              printId: payload.printId,
-              sourceArtifactIds: payload.sourceArtifactIds,
-              completed: true,
-            })
-            refreshExtractSection()
-            pipelineStore.updatePipelineStepOutputCount(db, {
-              runId: context.runId,
-              stepKey: 'extract',
-              outputCount: completed,
-            })
-            stageOutput.push({
-              itemKey,
-              path: payload.path,
-              artifactId: payload.artifactId,
-              printId: payload.printId,
-              prompt,
-              sourceArtifactIds: payload.sourceArtifactIds,
-            })
-          },
-        )
+        const extractResultPromise = service
+          .runExtractConfig(
+            active,
+            context.runId,
+            context.taskName,
+            activeCollectionSource.extract,
+            sourceItems.map((item) => ({ path: item.path })),
+            visibleFilenameFields,
+            (message) => {
+              service.appendLog(context.runId, {
+                level: 'info',
+                step_key: 'extract',
+                message,
+              })
+              service.emitRunProgress(db, context.runId, 'running', 'extract', stats, message)
+            },
+            (_images, total, failedCount) => {
+              service.updateResultSection(
+                context.runId,
+                resultSection({
+                  key: IMAGE_PROCESSING_SECTION_KEY,
+                  title: '图像处理',
+                  items: [
+                    ...outputItems.map((image, index) =>
+                      resultImageFromPipelineImage('extract', basename(image.path), image, index),
+                    ),
+                    ...loadingResultImages(
+                      'extract',
+                      '图像加载中',
+                      Math.max(0, total - outputItems.length - failedCount),
+                    ),
+                  ],
+                  total,
+                  failed: failedCount,
+                }),
+              )
+              service.emitRunProgress(
+                db,
+                context.runId,
+                'running',
+                'extract',
+                stats,
+                '提取流处理中',
+              )
+            },
+            async (payload) => {
+              const sourceArtifactId = payload.sourceArtifactIds[0]
+              const sourceItem =
+                (payload.sourcePath ? sourceItemsByPath.get(payload.sourcePath) : undefined) ??
+                (sourceArtifactId ? sourceItemByArtifactId.get(sourceArtifactId) : undefined)
+              const itemKey = sourceItem?.itemKey ?? payload.printId ?? `extract-${completed + 1}`
+              const prompt = payload.prompt ?? sourceItem?.prompt
+              completed += 1
+              outputItems.push({
+                path: payload.path,
+                ...(payload.artifactId ? { artifactId: payload.artifactId } : {}),
+                ...(payload.printId ? { printId: payload.printId } : {}),
+                ...(prompt ? { prompt } : {}),
+              })
+              stats.prints = completed
+              service.upsertPipelineItem(db, {
+                runId: context.runId,
+                itemKey,
+                stepKey: 'extract',
+                status: 'completed',
+                sourcePath: sourceItem?.path ?? payload.sourcePath,
+                outputPath: payload.path,
+                artifactId: payload.artifactId,
+                printId: payload.printId,
+                sourceArtifactIds: payload.sourceArtifactIds,
+                completed: true,
+              })
+              refreshExtractSection()
+              pipelineStore.updatePipelineStepOutputCount(db, {
+                runId: context.runId,
+                stepKey: 'extract',
+                outputCount: completed,
+              })
+              stageOutput.push({
+                itemKey,
+                path: payload.path,
+                artifactId: payload.artifactId,
+                printId: payload.printId,
+                prompt,
+                sourceArtifactIds: payload.sourceArtifactIds,
+              })
+            },
+          )
+          .then(
+            (result) => {
+              stageOutput.end()
+              return result
+            },
+            (error: unknown) => {
+              stageOutput.fail(error)
+              throw error
+            },
+          )
+
+        let extractResult: GenerationRunResult
+        try {
+          for await (const item of stageOutput) {
+            yield item
+          }
+          extractResult = await extractResultPromise
+        } catch (error) {
+          await extractResultPromise.catch(() => undefined)
+          throw error
+        }
 
         failed = extractResult.failed
         service.appendGenerationFailureLog(context.runId, 'extract', '提取', extractResult)
@@ -3345,11 +4143,6 @@ export class PipelineService {
           },
         })
         service.emitRunProgress(db, context.runId, 'running', 'extract', stats, '提取完成')
-        stageOutput.end()
-
-        for await (const item of stageOutput) {
-          yield item
-        }
       }
       return stage(input)
     }
@@ -3417,6 +4210,8 @@ export class PipelineService {
             sourceArtifactIds: item.sourceArtifactIds,
           })
 
+          let generationResultReturned = false
+          let fatalResultObserved = false
           try {
             let result: GenerationRunResult
             if (context.config.matting.mode === 'mixed') {
@@ -3464,6 +4259,12 @@ export class PipelineService {
                 ),
               )
             }
+            generationResultReturned = true
+            const fatalError = fatalGenerationResultError(result, 'matting')
+            if (fatalError) {
+              fatalResultObserved = true
+              throw fatalError
+            }
             const output = usableGenerationImages(result, '抠图')[0]
             if (!output) {
               throw new AppErrorClass('HTTP_4XX', '抠图未产生结果', false)
@@ -3508,6 +4309,9 @@ export class PipelineService {
               sourceArtifactIds: item.sourceArtifactIds,
             } satisfies PipelinePrintStreamItem
           } catch (error) {
+            if (!generationResultReturned || fatalResultObserved) {
+              throw error
+            }
             failed += 1
             service.upsertPipelineItem(db, {
               runId: context.runId,
@@ -3540,37 +4344,12 @@ export class PipelineService {
           sourceFailed: sourceFailedRef.value,
         }
         if (queued > 0 && completed === 0 && failed > 0) {
-          const error = new AppErrorClass(
-            'HTTP_4XX',
-            '抠图全部失败，请检查抠图云机或工作流后重试',
-            false,
-            outputJson,
-          )
-          pipelineStore.updatePipelineStepCompletedWithInput(db, {
-            runId: context.runId,
-            stepKey: 'matting',
-            inputCount: queued,
-            outputCount: completed,
-            outputJson,
+          service.appendLog(context.runId, {
+            level: 'warn',
+            step_key: 'matting',
+            message: '抠图全部失败，本次没有可继续的印花',
+            details: outputJson,
           })
-          pipelineStore.updatePipelineStepFailed(db, {
-            runId: context.runId,
-            stepKey: 'matting',
-            status: 'failed',
-            errorJson: {
-              message: appErrorMessage(error),
-              ...outputJson,
-            },
-          })
-          service.emitRunProgress(
-            db,
-            context.runId,
-            'failed',
-            'matting',
-            stats,
-            appErrorMessage(error),
-          )
-          throw error
         }
         pipelineStore.updatePipelineStepCompletedWithInput(db, {
           runId: context.runId,
@@ -3730,9 +4509,11 @@ export class PipelineService {
           throw new AppErrorClass('HTTP_4XX', '侵权检测需要选择 Skill 和模型', false)
         }
         const taskId = `${runId}-detection`
-        active.currentCancel = () => {
+        const cancelKey = `legacy:detection:${taskId}`
+        const cancel = () => {
           detectionService.cancelTask(taskId)
         }
+        this.setCancelHandler(active, cancelKey, cancel)
         this.appendLog(runId, {
           level: 'info',
           step_key: 'detection',
@@ -3744,24 +4525,30 @@ export class PipelineService {
             allowReview: config.allowReview ?? true,
           },
         })
-        const result = await detectionService.runDetectionBatch({
-          imagePaths: prints.map((image) => image.path),
-          imageInputs: prints.map((image) => ({
-            path: image.path,
-            ...(image.artifactId ? { artifactId: image.artifactId } : {}),
-            ...(image.printId ? { printId: image.printId } : {}),
-          })),
-          skillId: config.skillId,
-          model: config.model,
-          taskId,
-          ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
-          ...(config.variables ? { variables: config.variables } : {}),
-          ...(config.threshold ? { threshold: config.threshold } : {}),
-          ...(config.preprocess ? { preprocess: config.preprocess } : {}),
-          ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
-          ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
-        })
-        active.currentCancel = null
+        let result: Awaited<ReturnType<typeof detectionService.runDetectionBatch>>
+        try {
+          result = await detectionService.runDetectionBatch({
+            imagePaths: prints.map((image) => image.path),
+            imageInputs: prints.map((image) => ({
+              path: image.path,
+              ...(image.artifactId ? { artifactId: image.artifactId } : {}),
+              ...(image.printId ? { printId: image.printId } : {}),
+            })),
+            skillId: config.skillId,
+            model: config.model,
+            taskId,
+            ...(config.skillVersion ? { skillVersion: config.skillVersion } : {}),
+            ...(config.variables ? { variables: config.variables } : {}),
+            ...(config.threshold ? { threshold: config.threshold } : {}),
+            ...(config.preprocess ? { preprocess: config.preprocess } : {}),
+            ...(config.concurrency !== undefined ? { concurrency: config.concurrency } : {}),
+            ...(config.maxRetries !== undefined ? { maxRetries: config.maxRetries } : {}),
+          })
+        } finally {
+          if (active.cancelHandlers.get(cancelKey) === cancel) {
+            this.setCancelHandler(active, cancelKey, null)
+          }
+        }
         const allowReview = config.allowReview ?? true
         const output = this.allowedDetectionImages(result, allowReview)
         const passed: PipelineResultImage[] = []
@@ -3876,7 +4663,9 @@ export class PipelineService {
         const taskId = `${runId}-photoshop`
         const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
         const cancelFilePath = join(taskDir, 'cancel.flag')
-        active.currentCancel = () => writeFile(cancelFilePath, String(Date.now()), 'utf8')
+        const cancelKey = `legacy:photoshop:${taskId}`
+        const cancel = () => writeFile(cancelFilePath, String(Date.now()), 'utf8')
+        this.setCancelHandler(active, cancelKey, cancel)
         let completed = false
         try {
           const photoshopPrints = await preparePhotoshopPrints(
@@ -3924,7 +4713,9 @@ export class PipelineService {
             },
           }
         } finally {
-          active.currentCancel = null
+          if (active.cancelHandlers.get(cancelKey) === cancel) {
+            this.setCancelHandler(active, cancelKey, null)
+          }
           if (completed) {
             await tempFileManager.cleanupTask('photoshop', taskId)
           } else {
@@ -3963,19 +4754,27 @@ export class PipelineService {
         for (const [index, batchDir] of batchDirs.entries()) {
           this.assertCanAcceptMoreWork(active)
           const taskId = `${runId}-title-${index + 1}`
-          active.currentCancel = () => {
+          const cancelKey = `legacy:title:${taskId}`
+          const cancel = () => {
             titleService.cancelTask(taskId)
           }
-          const result = await titleService.runTitleBatch({
-            ...config.title,
-            batchDir,
-            taskId,
-          })
+          this.setCancelHandler(active, cancelKey, cancel)
+          let result: TitleBatchResult
+          try {
+            result = await titleService.runTitleBatch({
+              ...config.title,
+              batchDir,
+              taskId,
+            })
+          } finally {
+            if (active.cancelHandlers.get(cancelKey) === cancel) {
+              this.setCancelHandler(active, cancelKey, null)
+            }
+          }
           results.push(result)
           stats.titleSucceeded += result.succeeded
           stats.titleFailed += result.failed
         }
-        active.currentCancel = null
         const totalSucceeded = results.reduce((sum, item) => sum + item.succeeded, 0)
         const totalSkipped = results.reduce((sum, item) => sum + item.skipped, 0)
         const totalFailed = results.reduce((sum, item) => sum + item.failed, 0)

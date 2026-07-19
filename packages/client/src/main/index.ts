@@ -10,7 +10,12 @@ import {
   markActiveListingRunsInterrupted,
   registerListingRunnerIpc,
 } from '../modules/listing/runner'
-import { countRunningTasks, installQuitGuard, installSingleInstanceLock } from './app-lifecycle'
+import {
+  countRunningTasks,
+  initializeWorkbenchAfterPipelineCleanup,
+  installQuitGuard,
+  installSingleInstanceLock,
+} from './app-lifecycle'
 import { browserProfileLocks, registerBrowserProfileLockIpc } from './lib/browser-profile-lock'
 import { registerChenyuInstanceIpc } from './lib/chenyu-instance-service'
 import { registerCollectionClickIpc } from './lib/collection-click-service'
@@ -188,11 +193,10 @@ function ipcError(error: unknown, fallbackCode: string) {
 }
 
 if (hasSingleInstanceLock) {
-  app.whenReady().then(() => {
+  app.whenReady().then(async () => {
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       callback(rendererContentSecurityPolicyResponse(details, app.isPackaged))
     })
-    void pipelineService.markPersistedRunningRunsInterrupted().catch(() => null)
     try {
       runNativeSmoke()
     } catch {
@@ -265,32 +269,51 @@ if (hasSingleInstanceLock) {
     registerCustomerAuthIpc(customerAuthService)
     registerOnboardingIpc()
     registerLocalImageProtocolHandler()
-    withCustomerAuthorizedIpcHandlers(ipcMain, customerAuthService, () => {
-      registerChenyuInstanceIpc()
-      registerBrowserProfileLockIpc()
-      registerGenerationLocalConfigIpc()
-      registerComfyuiWorkflowCacheIpc()
-      registerSkillCacheIpc()
-      registerTempFileIpc()
-      registerCollectionConfigIpc()
-      registerCollectionSessionIpc()
-      registerCollectionClickIpc()
-      registerCollectionImageIndexIpc()
-      registerTitleIpc()
-      registerDetectionConfigIpc()
-      registerDetectionIpc()
-      registerGenerationIpc()
-      registerVideoGenerationIpc()
-      registerPipelineIpc()
-      registerListingRunnerIpc()
-      registerPhotoshopIpc()
-    })
-    void tempFileManager.cleanupOrphans().catch(() => null)
-    tempFileManager.startPeriodicCleanup()
-    void cleanupDiagnosticLogs().catch(() => null)
-    diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
-    const appIconPath = applyAppIcon()
-    createMainWindow(appIconPath)
+    let appIconPath: string | undefined
+    try {
+      await initializeWorkbenchAfterPipelineCleanup({
+        cleanupPersistedPipelineRuns: () => pipelineService.markPersistedRunningRunsInterrupted(),
+        registerBusinessIpc: () => {
+          withCustomerAuthorizedIpcHandlers(ipcMain, customerAuthService, () => {
+            registerChenyuInstanceIpc()
+            registerBrowserProfileLockIpc()
+            registerGenerationLocalConfigIpc()
+            registerComfyuiWorkflowCacheIpc()
+            registerSkillCacheIpc()
+            registerTempFileIpc()
+            registerCollectionConfigIpc()
+            registerCollectionSessionIpc()
+            registerCollectionClickIpc()
+            registerCollectionImageIndexIpc()
+            registerTitleIpc()
+            registerDetectionConfigIpc()
+            registerDetectionIpc()
+            registerGenerationIpc()
+            registerVideoGenerationIpc()
+            registerPipelineIpc()
+            registerListingRunnerIpc()
+            registerPhotoshopIpc()
+          })
+          void tempFileManager.cleanupOrphans().catch(() => null)
+          tempFileManager.startPeriodicCleanup()
+          void cleanupDiagnosticLogs().catch(() => null)
+          diagnosticLogCleanupTimer = startDiagnosticLogCleanupTimer()
+        },
+        createWindow: () => {
+          appIconPath = applyAppIcon()
+          createMainWindow(appIconPath)
+        },
+      })
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      console.error('Workbench startup initialization failed', error)
+      dialog.showErrorBox(
+        'Workbench 启动失败',
+        `无法完成上次完整任务的中断清理，Workbench 未启动。\n\n${detail}\n\n请检查工作区是否可访问、磁盘空间与数据库文件权限，关闭占用工作区数据库的程序后重试。`,
+      )
+      app.quit()
+      return
+    }
     void customerAuthService.verify().catch(() => null)
 
     app.on('activate', () => {

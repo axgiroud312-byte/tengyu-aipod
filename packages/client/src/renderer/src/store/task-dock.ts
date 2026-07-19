@@ -7,11 +7,13 @@ type TaskDockState = {
   completeTaskRuns: PipelineRunRecord[]
   expanded: boolean
   lightweightTasks: LightweightTaskSummary[]
+  openRunRequestRevision: number
   selectedRunId: string | null
   softStoppingRunIds: string[]
   markRunSoftStopping: (runId: string) => void
   patchCompleteTaskRunStatus: (runId: string, status: PipelineRunStatus) => void
   replaceCompleteTaskRuns: (runs: PipelineRunRecord[]) => void
+  requestCompleteTaskRun: (runId: string) => void
   selectCompleteTaskRun: (runId: string | null) => void
   setExpanded: (expanded: boolean) => void
   upsertCompleteTaskRun: (run: PipelineRunRecord) => void
@@ -34,6 +36,7 @@ export const useTaskDockStore = create<TaskDockState>()(
       completeTaskRuns: [],
       expanded: defaultTaskDockExpanded(),
       lightweightTasks: [],
+      openRunRequestRevision: 0,
       selectedRunId: null,
       softStoppingRunIds: [],
       markRunSoftStopping: (runId) =>
@@ -53,6 +56,11 @@ export const useTaskDockStore = create<TaskDockState>()(
               : state.softStoppingRunIds.filter((id) => id !== runId),
         })),
       replaceCompleteTaskRuns: (completeTaskRuns) => set({ completeTaskRuns }),
+      requestCompleteTaskRun: (selectedRunId) =>
+        set((state) => ({
+          selectedRunId,
+          openRunRequestRevision: state.openRunRequestRevision + 1,
+        })),
       selectCompleteTaskRun: (selectedRunId) => set({ selectedRunId }),
       setExpanded: (expanded) => set({ expanded }),
       upsertCompleteTaskRun: (nextRun) =>

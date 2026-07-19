@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button'
 import { getDefaultWorkbenchRoute, isWorkbenchRoute } from '@/layout/navigation'
 import { formatIpcError } from '@tengyu-aipod/shared'
-import type { PipelineRunDetail } from '@tengyu-aipod/shared'
+import type { PipelineRunDetail, PipelineRunRecord } from '@tengyu-aipod/shared'
 import { AlertTriangle, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router-dom'
@@ -20,14 +20,21 @@ function runUpdatedAt(detail: PipelineRunDetail) {
 }
 
 async function mostRecentlyUpdatedRunningRunId() {
-  const runningRuns = (await window.api.pipeline.listRuns()).filter(
-    (run) => run.status === 'running',
-  )
-  const details = await Promise.all(
+  let runningRuns: PipelineRunRecord[]
+  try {
+    runningRuns = (await window.api.pipeline.listRuns()).filter((run) => run.status === 'running')
+  } catch {
+    return null
+  }
+  const details = await Promise.allSettled(
     runningRuns.map((run) => window.api.pipeline.getRun({ run_id: run.id })),
   )
   let selected: PipelineRunDetail | null = null
-  for (const detail of details) {
+  for (const result of details) {
+    if (result.status !== 'fulfilled') {
+      continue
+    }
+    const detail = result.value
     if (detail && (!selected || runUpdatedAt(detail) > runUpdatedAt(selected))) {
       selected = detail
     }

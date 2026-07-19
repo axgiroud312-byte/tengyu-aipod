@@ -38,7 +38,7 @@ describe('PipelineRunControls', () => {
     expect(onRefresh).toHaveBeenCalledTimes(1)
     expect(onOpenLog).toHaveBeenCalledTimes(1)
     expect(onCancel).not.toHaveBeenCalled()
-    expect(screen.getByRole('button', { name: '取消当前完整任务' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: '取消当前完整任务' })).toBeNull()
     expect(screen.getByText('完整任务已启动')).toBeTruthy()
   })
 
@@ -68,5 +68,28 @@ describe('PipelineRunControls', () => {
     expect(screen.getByText('请选择 PSD 模板')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: '前往 PS 套版配置' }))
     expect(onResolveLaunchBlock).toHaveBeenCalledTimes(1)
+  })
+
+  it('disables launch while the IPC submission is still pending', () => {
+    render(
+      createElement(PipelineRunControls, {
+        canStart: true,
+        cancelLoading: false,
+        currentRunId: null,
+        logCount: 0,
+        message: '正在提交完整任务',
+        onCancel: vi.fn(),
+        onOpenLog: vi.fn(),
+        onRefresh: vi.fn(),
+        onStart: vi.fn(),
+        running: false,
+        starting: true,
+      }),
+    )
+
+    expect(
+      (screen.getByRole('button', { name: '启动完整任务' }) as HTMLButtonElement).disabled,
+    ).toBe(true)
+    expect(screen.queryByRole('button', { name: '日志 0' })).toBeNull()
   })
 })

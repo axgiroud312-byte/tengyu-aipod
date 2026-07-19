@@ -18,6 +18,7 @@ describe('PipelineStatusAlerts', () => {
 
     expect(screen.getByText('PS 套版 v1 仅支持 Windows，当前电脑不能启动完整任务。')).toBeTruthy()
     expect(screen.getByText('完整任务启动失败')).toBeTruthy()
+    expect(screen.getByRole('alert').getAttribute('aria-live')).toBe('polite')
   })
 
   it('renders nothing when there are no notices', () => {

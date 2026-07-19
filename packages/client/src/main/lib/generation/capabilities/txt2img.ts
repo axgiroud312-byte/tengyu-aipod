@@ -11,9 +11,9 @@ import { normalizeGenerationLocalConfig } from '../../generation-local-config'
 import { type GenerateRequest, GrsaiAdapter } from '../../grsai-adapter'
 import { getSecret } from '../../keychain'
 import { visibleImageNamingEnabled } from '../../user-visible-filename'
+import { generationFailureFromError } from '../failures'
 import {
   type GenerationServiceDependencies,
-  appErrorMessage,
   assertLocalComfyuiWorkflowExists,
   clampInt,
   comfyuiInstanceLocks,
@@ -201,13 +201,15 @@ async function runTxt2imgTask(
     ...(diagnostics ? { diagnosticsLogPath: diagnostics.path } : {}),
   }
   let outputIndex = input.filenameStartIndex ?? 0
+  let fatalFailureObserved = false
 
   try {
     await mkdir(outputFolder, { recursive: true })
     await Promise.all(
       prompts.map((prompt, index) =>
         controller.run(`${taskId}-${index}`, async () => {
-          if (isGenerationCancelled(taskId)) {
+          const inputIndex = input.inputIndexes?.[index] ?? index
+          if (fatalFailureObserved || isGenerationCancelled(taskId)) {
             return
           }
           emit({
@@ -242,7 +244,7 @@ async function runTxt2imgTask(
               throw new AppErrorClass('GRSAI_FAILED', 'Grsai 未返回结果图', true)
             }
             controller.onResponse(200)
-            for (const image of response.images) {
+            for (const [responseIndex, image] of response.images.entries()) {
               const printId = newPrintId()
               const currentOutputIndex = outputIndex
               outputIndex += 1
@@ -287,6 +289,8 @@ async function runTxt2imgTask(
                 artifactId: artifact.artifactId,
                 prompt,
                 sourceArtifactIds: [],
+                inputIndex,
+                outputIndex: responseIndex,
               })
             }
           } catch (error) {
@@ -299,7 +303,9 @@ async function runTxt2imgTask(
               error: errorForDiagnosticLog(error),
             })
             result.failed += 1
-            result.failures.push({ prompt, error: appErrorMessage(error) })
+            const failure = generationFailureFromError({ prompt }, error)
+            result.failures.push(failure)
+            fatalFailureObserved ||= failure.fatal === true
           } finally {
             emit({
               task_id: taskId,
@@ -396,11 +402,13 @@ export async function runComfyuiTxt2imgBatch(
       const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
       const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
       let outputIndex = input.filenameStartIndex ?? 0
+      let fatalFailureObserved = false
 
       await Promise.all(
         prompts.map((prompt, index) =>
           controller.run(`${taskId}-${index}`, async () => {
-            if (isGenerationCancelled(taskId)) {
+            const inputIndex = input.inputIndexes?.[index] ?? index
+            if (fatalFailureObserved || isGenerationCancelled(taskId)) {
               return
             }
             emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
@@ -436,7 +444,7 @@ export async function runComfyuiTxt2imgBatch(
                 throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 文生图失败', true)
               }
               outputIndex += response.images.length
-              for (const image of response.images) {
+              for (const [responseIndex, image] of response.images.entries()) {
                 const printId = image.print_id ?? newPrintId()
                 const completedImage = {
                   prompt,
@@ -454,6 +462,8 @@ export async function runComfyuiTxt2imgBatch(
                   artifactId: completedImage.artifactId,
                   prompt: completedImage.prompt,
                   sourceArtifactIds: [],
+                  inputIndex,
+                  outputIndex: responseIndex,
                 })
               }
             } catch (error) {
@@ -467,7 +477,9 @@ export async function runComfyuiTxt2imgBatch(
                 })
                 .catch(() => null)
               result.failed += 1
-              result.failures.push({ prompt, error: appErrorMessage(error) })
+              const failure = generationFailureFromError({ prompt }, error)
+              result.failures.push(failure)
+              fatalFailureObserved ||= failure.fatal === true
             } finally {
               emitTxt2imgProgress(result, taskId, prompts.length, emit, prompt)
             }

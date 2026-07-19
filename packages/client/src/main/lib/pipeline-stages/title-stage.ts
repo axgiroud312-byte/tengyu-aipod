@@ -13,18 +13,27 @@ import type {
 import * as pipelineStore from '../pipeline/store'
 import type { SqliteDatabase } from '../sqlite'
 import {
+  type TitleProcessingSession,
   appErrorMessage,
   assignTitleKeywordGroups,
   joinTitleWithKeywordGroup,
   normalizeTitleKeywordGroups,
   readExistingTitles,
-  registerSkuTitle,
+  registerSkuTitles,
   resolveTitleXlsxPath,
   scanSkuFolders,
   titleService,
   toXlsxWriteError,
   writeTitlesXlsx,
 } from '../title-service'
+import { isPathInsideWorkbench } from '../workbench-path-guard'
+import {
+  listPendingTitleWrites,
+  pendingTitleBatchName,
+  pendingTitleMap,
+  removePendingTitleWrite,
+  savePendingTitleWrite,
+} from './title-pending-writes'
 
 type TitleStageDependencies = {
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>
@@ -53,7 +62,10 @@ type BatchState = {
   batchDir: string
   xlsxPath: string
   existingTitles: Map<string, string>
+  skuCodes: Set<string>
   generatedBaseTitles: Map<string, string>
+  lastFlushedTitles: Map<string, string>
+  registeredTitles: Map<string, string>
   pendingFlush: boolean
   warnedLocked: boolean
 }
@@ -62,6 +74,8 @@ type PendingTitleItem = {
   item: PipelinePrintStreamItem
   batchState: BatchState
 }
+
+const TITLE_FLUSH_BATCH_SIZE = 20
 
 function insertRunningStep(
   db: Pick<SqliteDatabase, 'prepare'>,
@@ -103,11 +117,31 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         return existing
       }
       const xlsxPath = await resolveTitleXlsxPath(batchDir, config.titleFileName)
+      const skuCodes = new Set<string>()
+      try {
+        for (const folder of await scanSkuFolders(batchDir)) {
+          skuCodes.add(folder.skuCode)
+        }
+      } catch (error) {
+        if (
+          !(
+            typeof error === 'object' &&
+            error !== null &&
+            'code' in error &&
+            error.code === 'ENOENT'
+          )
+        ) {
+          throw error
+        }
+      }
       const state: BatchState = {
         batchDir,
         xlsxPath,
         existingTitles: await readExistingTitles(xlsxPath),
+        skuCodes,
         generatedBaseTitles: new Map(),
+        lastFlushedTitles: new Map(),
+        registeredTitles: new Map(),
         pendingFlush: false,
         warnedLocked: false,
       }
@@ -116,11 +150,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
     }
 
     const buildGeneratedTitles = async (state: BatchState) => {
-      const skuFolders = await scanSkuFolders(state.batchDir)
-      const assignments = assignTitleKeywordGroups(
-        skuFolders.map((folder) => folder.skuCode),
-        keywordGroups,
-      )
+      const assignments = assignTitleKeywordGroups(Array.from(state.skuCodes), keywordGroups)
       const generatedTitles = new Map<string, string>()
       for (const [skuCode, baseTitle] of state.generatedBaseTitles) {
         generatedTitles.set(
@@ -135,39 +165,109 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
       return generatedTitles
     }
 
+    const titlePersistenceError = (state: BatchState, message: string, error: unknown) =>
+      new AppErrorClass(
+        error instanceof AppErrorClass ? error.code : 'HTTP_5XX',
+        message,
+        error instanceof AppErrorClass ? error.retryable : true,
+        {
+          kind: 'title_persistence_fatal',
+          batchDir: state.batchDir,
+          xlsxPath: state.xlsxPath,
+          cause: appErrorMessage(error),
+        },
+        error,
+      )
+
+    const persistPendingTitles = async (
+      state: BatchState,
+      generatedTitles: Map<string, string>,
+      session: TitleProcessingSession,
+    ) => {
+      if (generatedTitles.size === 0) {
+        return
+      }
+      try {
+        await savePendingTitleWrite(dependencies.workbenchRoot, {
+          runId: context.runId,
+          batchDir: state.batchDir,
+          xlsxPath: state.xlsxPath,
+          titles: Object.fromEntries(generatedTitles),
+          language: config.language,
+          platform: config.platform,
+          model: session.model,
+          skill: {
+            id: session.skill.id,
+            version: session.skill.version,
+          },
+          generatedAt: Date.now(),
+        })
+      } catch (error) {
+        throw titlePersistenceError(
+          state,
+          '标题暂存写入失败，已停止标题阶段以避免生成结果丢失',
+          error,
+        )
+      }
+    }
+
     const registerGeneratedTitles = async (
       state: BatchState,
       generatedTitles: Map<string, string>,
+      session: TitleProcessingSession,
     ) => {
       if (generatedTitles.size === 0 || process.env.TENGYU_SKIP_TITLE_DB_REGISTER === '1') {
         return
       }
+      const changedTitles = new Map(
+        Array.from(generatedTitles.entries()).filter(
+          ([skuCode, title]) => state.registeredTitles.get(skuCode) !== title,
+        ),
+      )
+      if (changedTitles.size === 0) {
+        return
+      }
       const generatedAt = Date.now()
-      for (const [skuCode, title] of generatedTitles) {
-        await registerSkuTitle(dependencies.db, {
-          batchDir: state.batchDir,
-          skuCode,
-          title,
-          language: config.language,
-          platform: config.platform,
-          skill: session.skill,
-          model: session.model,
-          generatedAt,
-        })
+      registerSkuTitles(dependencies.db, {
+        templateBatch: basename(state.batchDir),
+        titles: changedTitles,
+        language: config.language,
+        platform: config.platform,
+        skill: session.skill,
+        model: session.model,
+        generatedAt,
+      })
+      for (const [skuCode, title] of changedTitles) {
+        state.registeredTitles.set(skuCode, title)
       }
     }
 
     const flushBatchState = async (
       state: BatchState,
-      reason: 'item' | 'final',
-      session: Awaited<ReturnType<typeof titleService.createProcessingSession>>,
+      reason: 'batch' | 'final',
+      session: TitleProcessingSession,
     ): Promise<boolean> => {
       const generatedTitles = await buildGeneratedTitles(state)
       try {
         await writeTitlesXlsx(state.xlsxPath, generatedTitles, state.existingTitles)
-        await registerGeneratedTitles(state, generatedTitles)
+        await registerGeneratedTitles(state, generatedTitles, session)
+        state.lastFlushedTitles = new Map(generatedTitles)
         state.pendingFlush = false
         state.warnedLocked = false
+        await removePendingTitleWrite(dependencies.workbenchRoot, {
+          runId: context.runId,
+          batchDir: state.batchDir,
+        }).catch((error) => {
+          dependencies.appendLog(context.runId, {
+            level: 'warn',
+            step_key: 'title',
+            message: '标题已写入，但待补写记录清理失败',
+            details: {
+              batchDir: state.batchDir,
+              error: appErrorMessage(error),
+            },
+          })
+        })
         if (reason === 'final') {
           await session.appendDiagnosticLog({
             type: 'decision',
@@ -184,6 +284,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         const mapped = toXlsxWriteError(error)
         if (mapped instanceof AppErrorClass && mapped.code === 'XLSX_LOCKED') {
           state.pendingFlush = true
+          await persistPendingTitles(state, generatedTitles, session)
           if (!state.warnedLocked) {
             state.warnedLocked = true
             dependencies.appendLog(context.runId, {
@@ -207,26 +308,83 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
               reason,
             },
           })
-          if (reason === 'final') {
-            throw mapped
-          }
           return false
         }
-        throw mapped
+        throw titlePersistenceError(state, '标题文件写入失败，已保留暂存结果', mapped)
       }
       return true
     }
 
-    let session: Awaited<ReturnType<typeof titleService.createProcessingSession>>
+    const retryPendingWrites = async () => {
+      const pendingWrites = await listPendingTitleWrites(dependencies.workbenchRoot)
+      for (const pending of pendingWrites) {
+        if (
+          !(await isPathInsideWorkbench(dependencies.workbenchRoot, pending.xlsxPath, 'listing'))
+        ) {
+          dependencies.appendLog(context.runId, {
+            level: 'warn',
+            step_key: 'title',
+            message: '待补写标题路径不在工作区，已保留暂存记录',
+            details: { batchDir: pending.batchDir, xlsxPath: pending.xlsxPath },
+          })
+          continue
+        }
+
+        try {
+          const titles = pendingTitleMap(pending)
+          const existingTitles = await readExistingTitles(pending.xlsxPath)
+          await writeTitlesXlsx(pending.xlsxPath, titles, existingTitles)
+          if (process.env.TENGYU_SKIP_TITLE_DB_REGISTER !== '1') {
+            registerSkuTitles(dependencies.db, {
+              templateBatch: pendingTitleBatchName(pending),
+              titles,
+              language: pending.language,
+              platform: pending.platform,
+              skill: pending.skill,
+              model: pending.model,
+              generatedAt: pending.generatedAt,
+            })
+          }
+          await removePendingTitleWrite(dependencies.workbenchRoot, pending)
+          dependencies.appendLog(context.runId, {
+            level: 'info',
+            step_key: 'title',
+            message: '标题待补写已完成',
+            details: {
+              batchDir: pending.batchDir,
+              xlsxPath: pending.xlsxPath,
+              recoveredCount: titles.size,
+            },
+          })
+        } catch (error) {
+          dependencies.appendLog(context.runId, {
+            level: 'warn',
+            step_key: 'title',
+            message: '标题待补写仍未完成，已保留暂存记录',
+            details: {
+              batchDir: pending.batchDir,
+              xlsxPath: pending.xlsxPath,
+              error: appErrorMessage(toXlsxWriteError(error)),
+            },
+          })
+        }
+      }
+    }
 
     return async function* titleStage(input: AsyncIterable<PipelinePrintStreamItem>) {
-      session = await titleService.createProcessingSession({
-        ...config,
-        batchDir:
-          context.config.photoshop.outputRoot ??
-          join(dependencies.workbenchRoot, WORKBENCH_DIRECTORIES.listing),
-        taskId: `${context.runId}-title-stream`,
-      })
+      const sessionState: { current: TitleProcessingSession | null } = { current: null }
+      const ensureSession = async () => {
+        if (!sessionState.current) {
+          sessionState.current = await titleService.createProcessingSession({
+            ...config,
+            batchDir:
+              context.config.photoshop.outputRoot ??
+              join(dependencies.workbenchRoot, WORKBENCH_DIRECTORIES.listing),
+            taskId: `${context.runId}-title-stream`,
+          })
+        }
+        return sessionState.current
+      }
 
       let queued = 0
       let completed = 0
@@ -300,6 +458,19 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         }
       }
 
+      const pendingCountForState = (state: BatchState) =>
+        pendingTitleItems.filter((pending) => pending.batchState === state).length
+
+      const hasUnflushedChanges = async (state: BatchState) => {
+        const generatedTitles = await buildGeneratedTitles(state)
+        if (generatedTitles.size !== state.lastFlushedTitles.size) {
+          return true
+        }
+        return Array.from(generatedTitles.entries()).some(
+          ([skuCode, title]) => state.lastFlushedTitles.get(skuCode) !== title,
+        )
+      }
+
       insertRunningStep(dependencies.db, context.runId, 0, 0)
       dependencies.appendLog(context.runId, {
         level: 'info',
@@ -314,126 +485,164 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
           existingStrategy: config.existingStrategy ?? 'skip',
         },
       })
+      await retryPendingWrites()
 
+      let streamFailed = false
+      let streamError: unknown
       try {
-        for await (const item of input) {
-          dependencies.assertNotCancelled()
-          queued += 1
-          insertRunningStep(dependencies.db, context.runId, queued, completed + skipped)
-          dependencies.emitRunningProgress(context.runId, '标题流处理中')
+        try {
+          for await (const item of input) {
+            dependencies.assertNotCancelled()
+            queued += 1
+            insertRunningStep(dependencies.db, context.runId, queued, completed + skipped)
+            dependencies.emitRunningProgress(context.runId, '标题流处理中')
 
-          const batchDir = batchDirFromProductImage(item.path)
-          const skuCode = skuCodeFromProductImage(item.path)
-          const batchState = await getBatchState(batchDir)
+            const batchDir = batchDirFromProductImage(item.path)
+            const skuCode = skuCodeFromProductImage(item.path)
+            const batchState = await getBatchState(batchDir)
+            batchState.skuCodes.add(skuCode)
 
-          dependencies.upsertPipelineItem({
-            runId: context.runId,
-            itemKey: item.itemKey,
-            stepKey: 'title',
-            status: 'running',
-            sourcePath: item.path,
-            artifactId: item.artifactId,
-            printId: item.printId,
-            sourceArtifactIds: item.sourceArtifactIds,
-          })
+            dependencies.upsertPipelineItem({
+              runId: context.runId,
+              itemKey: item.itemKey,
+              stepKey: 'title',
+              status: 'running',
+              sourcePath: item.path,
+              artifactId: item.artifactId,
+              printId: item.printId,
+              sourceArtifactIds: item.sourceArtifactIds,
+            })
 
-          try {
-            if (
-              (config.existingStrategy ?? 'skip') === 'skip' &&
-              batchState.existingTitles.has(skuCode)
-            ) {
-              skipped += 1
+            try {
+              if (
+                (config.existingStrategy ?? 'skip') === 'skip' &&
+                batchState.existingTitles.has(skuCode)
+              ) {
+                skipped += 1
+                dependencies.upsertPipelineItem({
+                  runId: context.runId,
+                  itemKey: item.itemKey,
+                  stepKey: 'title',
+                  status: 'skipped',
+                  sourcePath: item.path,
+                  outputPath: batchState.xlsxPath,
+                  artifactId: item.artifactId,
+                  printId: item.printId,
+                  sourceArtifactIds: item.sourceArtifactIds,
+                  completed: true,
+                })
+                pipelineStore.updatePipelineStepOutputCount(dependencies.db, {
+                  runId: context.runId,
+                  stepKey: 'title',
+                  outputCount: completed + skipped,
+                })
+                yield item
+                continue
+              }
+
+              const activeSession = await ensureSession()
+              dependencies.setCurrentCancel(() => {
+                titleService.cancelTask(activeSession.taskId)
+              })
+              const result = await activeSession.generateSku({
+                skuCode,
+                skuFolder: dirname(item.path),
+              })
+              dependencies.setCurrentCancel(null)
+
+              if (result.status === 'failed') {
+                if (result.fatal) {
+                  throw new AppErrorClass(
+                    result.appErrorCode ?? 'HTTP_4XX',
+                    result.error,
+                    result.retryable ?? false,
+                    {
+                      ...result.errorDetails,
+                      kind: 'title_provider_fatal',
+                    },
+                  )
+                }
+                throw new AppErrorClass('HTTP_4XX', result.error, false)
+              }
+
+              batchState.generatedBaseTitles.set(skuCode, result.baseTitle)
+              try {
+                await persistPendingTitles(
+                  batchState,
+                  await buildGeneratedTitles(batchState),
+                  activeSession,
+                )
+              } catch (error) {
+                batchState.generatedBaseTitles.delete(skuCode)
+                throw error
+              }
+              pendingTitleItems.push({ item, batchState })
+              const pendingCount = pendingCountForState(batchState)
+              if (
+                pendingCount < TITLE_FLUSH_BATCH_SIZE ||
+                pendingCount % TITLE_FLUSH_BATCH_SIZE !== 0
+              ) {
+                continue
+              }
+
+              const flushed = await flushBatchState(batchState, 'batch', activeSession)
+              if (!flushed) {
+                continue
+              }
+
+              yield* completePendingItemsForState(batchState)
+            } catch (error) {
+              dependencies.setCurrentCancel(null)
+              if (
+                !sessionState.current ||
+                (error instanceof AppErrorClass &&
+                  (error.details?.kind === 'title_provider_fatal' ||
+                    error.details?.kind === 'title_persistence_fatal'))
+              ) {
+                throw error
+              }
+              failed += 1
+              keepFailedTemp = true
+              dependencies.stats.titleFailed = failed
               dependencies.upsertPipelineItem({
                 runId: context.runId,
                 itemKey: item.itemKey,
                 stepKey: 'title',
-                status: 'skipped',
+                status: 'failed',
                 sourcePath: item.path,
                 outputPath: batchState.xlsxPath,
                 artifactId: item.artifactId,
                 printId: item.printId,
                 sourceArtifactIds: item.sourceArtifactIds,
+                errorMessage: appErrorMessage(error),
                 completed: true,
               })
-              pipelineStore.updatePipelineStepOutputCount(dependencies.db, {
-                runId: context.runId,
-                stepKey: 'title',
-                outputCount: completed + skipped,
+              dependencies.appendLog(context.runId, {
+                level: 'warn',
+                step_key: 'title',
+                message: '单货号标题生成失败，已跳过',
+                details: {
+                  itemKey: item.itemKey,
+                  skuCode,
+                  batchDir,
+                  error: appErrorMessage(error),
+                },
               })
-              yield item
-              continue
             }
-
-            dependencies.setCurrentCancel(() => {
-              titleService.cancelTask(session.taskId)
-            })
-            const result = await session.generateSku({
-              skuCode,
-              skuFolder: dirname(item.path),
-            })
-            dependencies.setCurrentCancel(null)
-
-            if (result.status === 'failed') {
-              throw new AppErrorClass('HTTP_4XX', result.error, false)
-            }
-
-            batchState.generatedBaseTitles.set(skuCode, result.baseTitle)
-            pendingTitleItems.push({ item, batchState })
-            try {
-              const flushed = await flushBatchState(batchState, 'item', session)
-              if (!flushed) {
-                continue
-              }
-            } catch (error) {
-              batchState.generatedBaseTitles.delete(skuCode)
-              const pendingIndex = pendingTitleItems.findIndex(
-                (pending) =>
-                  pending.item.itemKey === item.itemKey && pending.batchState === batchState,
-              )
-              if (pendingIndex !== -1) {
-                pendingTitleItems.splice(pendingIndex, 1)
-              }
-              throw error
-            }
-
-            yield* completePendingItemsForState(batchState)
-          } catch (error) {
-            failed += 1
-            keepFailedTemp = true
-            dependencies.stats.titleFailed = failed
-            dependencies.setCurrentCancel(null)
-            dependencies.upsertPipelineItem({
-              runId: context.runId,
-              itemKey: item.itemKey,
-              stepKey: 'title',
-              status: 'failed',
-              sourcePath: item.path,
-              outputPath: batchState.xlsxPath,
-              artifactId: item.artifactId,
-              printId: item.printId,
-              sourceArtifactIds: item.sourceArtifactIds,
-              errorMessage: appErrorMessage(error),
-              completed: true,
-            })
-            dependencies.appendLog(context.runId, {
-              level: 'warn',
-              step_key: 'title',
-              message: '单货号标题生成失败，已跳过',
-              details: {
-                itemKey: item.itemKey,
-                skuCode,
-                batchDir,
-                error: appErrorMessage(error),
-              },
-            })
           }
+        } catch (error) {
+          streamFailed = true
+          streamError = error
         }
 
         for (const state of batchStates.values()) {
           const hasPendingItems = pendingTitleItems.some((pending) => pending.batchState === state)
           if (hasPendingItems) {
             try {
-              await flushBatchState(state, 'final', session)
+              if (!sessionState.current) {
+                throw new AppErrorClass('HTTP_5XX', '标题会话未初始化，无法写入生成结果', true)
+              }
+              await flushBatchState(state, 'final', sessionState.current)
               yield* completePendingItemsForState(state)
             } catch (error) {
               failPendingItemsForState(state, error)
@@ -457,8 +666,11 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
             continue
           }
 
-          if (state.generatedBaseTitles.size > 0) {
-            await flushBatchState(state, 'final', session).catch((error) => {
+          if (state.generatedBaseTitles.size > 0 && (await hasUnflushedChanges(state))) {
+            if (!sessionState.current) {
+              throw new AppErrorClass('HTTP_5XX', '标题会话未初始化，无法补写生成结果', true)
+            }
+            await flushBatchState(state, 'final', sessionState.current).catch((error) => {
               dependencies.appendLog(context.runId, {
                 level: 'warn',
                 step_key: 'title',
@@ -470,6 +682,10 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
               })
             })
           }
+        }
+
+        if (streamFailed) {
+          throw streamError
         }
 
         pipelineStore.updatePipelineStepCompletedWithInput(dependencies.db, {
@@ -487,7 +703,9 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
           },
         })
       } finally {
-        await session.close({ keepFailedTemp: keepFailedTemp || failed > 0 })
+        if (sessionState.current) {
+          await sessionState.current.close({ keepFailedTemp: keepFailedTemp || failed > 0 })
+        }
       }
     }
   }

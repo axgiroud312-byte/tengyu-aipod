@@ -4,6 +4,7 @@ import { createRequire } from 'node:module'
 import { basename, dirname, extname, isAbsolute, join, relative } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
+  type AppError,
   AppErrorClass,
   type RiskLevel,
   type Skill,
@@ -168,6 +169,10 @@ export type DetectionImageResult =
       status: 'failed'
       errorCode: DetectionErrorCode
       error: string
+      fatal?: boolean | undefined
+      appErrorCode?: AppError['code'] | undefined
+      retryable?: boolean | undefined
+      errorDetails?: Record<string, unknown> | undefined
     }
 
 export type DetectionBatchResult = {
@@ -905,6 +910,21 @@ function detectionErrorCode(error: unknown): DetectionErrorCode {
   return 'llm_failed'
 }
 
+function isFatalDetectionError(error: unknown) {
+  if (!(error instanceof AppErrorClass)) {
+    return false
+  }
+  if (error.details?.kind === 'llm_parse_failed') {
+    return false
+  }
+  const status = error.details?.status
+  return (
+    error.code === 'BAILIAN_QUOTA_EXCEEDED' ||
+    (error.code === 'HTTP_4XX' &&
+      (status === undefined || (typeof status === 'number' && status >= 400 && status < 500)))
+  )
+}
+
 type IndexedImage = {
   index: number
   image: DetectionImageInput
@@ -1427,6 +1447,7 @@ export class DetectionService {
       const results: Array<DetectionImageResult | undefined> = Array.from({
         length: imageInputs.length,
       })
+      let fatalProviderError = false
       const emitProgress = (currentImage?: string) => {
         dependencies.emitProgress?.({
           ...progress,
@@ -1456,6 +1477,9 @@ export class DetectionService {
             diagnostics,
           })
           results[item.index] = result
+          if (result.status === 'failed' && result.fatal) {
+            fatalProviderError = true
+          }
           progress.processed += 1
           if (result.status === 'success') {
             progress.succeeded += 1
@@ -1466,7 +1490,7 @@ export class DetectionService {
           }
           emitProgress(basename(item.image.path))
         },
-        () => !this.isCancelled(taskId),
+        () => !this.isCancelled(taskId) && !fatalProviderError,
       )
 
       keepFailedTemp = progress.failed > 0
@@ -1812,6 +1836,7 @@ export class DetectionService {
         itemKey,
         error: errorForDiagnosticLog(error),
       })
+      const fatal = isFatalDetectionError(error)
       return {
         imagePath,
         thumbnailUrl: fileUrl(imagePath),
@@ -1820,6 +1845,14 @@ export class DetectionService {
         status: 'failed',
         errorCode: detectionErrorCode(error),
         error: appErrorMessage(error),
+        ...(fatal ? { fatal: true } : {}),
+        ...(fatal && error instanceof AppErrorClass
+          ? {
+              appErrorCode: error.code,
+              retryable: error.retryable,
+              ...(error.details ? { errorDetails: error.details } : {}),
+            }
+          : {}),
       }
     } finally {
       db.close()

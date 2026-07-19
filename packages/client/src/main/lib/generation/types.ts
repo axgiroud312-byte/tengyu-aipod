@@ -1,4 +1,4 @@
-import type { GenerationCapability } from '@tengyu-aipod/shared'
+import type { AppError, GenerationCapability } from '@tengyu-aipod/shared'
 import type { PromptReferenceImage } from '../prompt-generator-service'
 
 export type Txt2imgPromptDraft = {
@@ -32,6 +32,7 @@ export type Txt2imgRunInput = {
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
   filenameStartIndex?: number | undefined
+  inputIndexes?: number[] | undefined
 }
 
 export type ComfyuiInstanceRunInput = {
@@ -51,6 +52,7 @@ export type ComfyuiTxt2imgRunInput = ComfyuiInstanceRunInput & {
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
   filenameStartIndex?: number | undefined
+  inputIndexes?: number[] | undefined
 }
 
 export type GenerationProgress = {
@@ -74,13 +76,23 @@ export type GenerationRunImage = {
   printId?: string | undefined
 }
 
+export type GenerationRunFailure = {
+  prompt: string
+  error: string
+  sourcePath?: string | undefined
+  fatal?: boolean | undefined
+  appErrorCode?: AppError['code'] | undefined
+  retryable?: boolean | undefined
+  errorDetails?: Record<string, unknown> | undefined
+}
+
 export type GenerationRunResult = {
   taskId: string
   total: number
   succeeded: number
   failed: number
   images: GenerationRunImage[]
-  failures: Array<{ prompt: string; error: string; sourcePath?: string }>
+  failures: GenerationRunFailure[]
   cancelled?: boolean | undefined
   diagnosticsLogPath?: string | undefined
 }
@@ -92,7 +104,10 @@ export type GenerationImageCompletePayload = {
   printId: string
   artifactId?: string | undefined
   prompt?: string | undefined
+  sourcePath?: string | undefined
   sourceArtifactIds: string[]
+  inputIndex?: number | undefined
+  outputIndex?: number | undefined
 }
 
 export type GenerationTaskEvent =
@@ -181,6 +196,8 @@ export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   filenamePrefix?: string | undefined
   filenameSeparator?: string | undefined
   filenameStartIndex?: number | undefined
+  inputIndexes?: number[] | undefined
+  outputIndexes?: number[] | undefined
 }
 
 export type ComfyuiExtractRunInput = ComfyuiInstanceRunInput & {

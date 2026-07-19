@@ -45,7 +45,7 @@ export function Sidebar({ collapsed, onToggleCollapsed }: SidebarProps) {
   return (
     <aside
       className={cn(
-        'relative z-20 flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-150',
+        'relative z-50 flex h-screen shrink-0 flex-col border-r bg-card transition-[width] duration-150',
         collapsed ? 'w-14' : 'w-[188px]',
       )}
     >

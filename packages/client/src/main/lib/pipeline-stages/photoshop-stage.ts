@@ -29,6 +29,22 @@ import { readyMicroBatches } from './ready-micro-batches'
 
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const MAX_READY_PHOTOSHOP_BATCH_SIZE = 16
+const FATAL_PHOTOSHOP_ERROR_CODES: ReadonlySet<string> = new Set([
+  'INVALID_INPUT',
+  'PS_COM_FAILED',
+  'PS_NOT_INSTALLED',
+  'PS_NOT_RUNNING',
+  'PS_UNSUPPORTED_PLATFORM',
+  'TEMPLATE_SCAN_FAILED',
+])
+const FATAL_FILESYSTEM_ERROR_CODES: ReadonlySet<string> = new Set([
+  'EACCES',
+  'EMFILE',
+  'ENFILE',
+  'ENOSPC',
+  'EPERM',
+  'EROFS',
+])
 
 type PromiseMutexLike = {
   runExclusive<T>(fn: () => Promise<T>): Promise<T>
@@ -61,6 +77,38 @@ type PhotoshopStageDependencies = {
 }
 
 type PhotoshopResultGroup = PhotoshopBatchResult['result_groups'][number]
+
+function errorCode(error: unknown): string | null {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code
+  }
+  return null
+}
+
+function isFatalPhotoshopStageError(
+  error: unknown,
+  phase: 'waiting-preparation' | 'batch-execution',
+) {
+  const code = errorCode(error)
+  if (
+    code !== null &&
+    (FATAL_FILESYSTEM_ERROR_CODES.has(code) || (phase === 'batch-execution' && code === 'ENOENT'))
+  ) {
+    return true
+  }
+  if (!(error instanceof AppErrorClass)) {
+    return false
+  }
+  if (error.code === 'JSX_EXEC_FAILED') {
+    return typeof error.details?.group_index !== 'number'
+  }
+  return FATAL_PHOTOSHOP_ERROR_CODES.has(error.code)
+}
 
 function safePathSegment(value: string) {
   return value.replace(/[\\/:*?"<>|]/g, '_').trim() || '完整任务'
@@ -304,6 +352,7 @@ export function createPhotoshopStage(
             waitingFolderPath = prepared.waitingFolder
             preparedItems.push({ item, prepared })
           } catch (error) {
+            const fatal = isFatalPhotoshopStageError(error, 'waiting-preparation')
             failed += 1
             dependencies.upsertPipelineItem({
               runId: context.runId,
@@ -318,14 +367,19 @@ export function createPhotoshopStage(
               completed: true,
             })
             dependencies.appendLog(context.runId, {
-              level: 'warn',
+              level: fatal ? 'error' : 'warn',
               step_key: 'photoshop',
-              message: '等待套版准备失败，已跳过当前印花',
+              message: fatal
+                ? '等待套版准备无法继续，PS 套版已停止'
+                : '等待套版准备失败，已跳过当前印花',
               details: {
                 itemKey: item.itemKey,
                 error: error instanceof Error ? error.message : String(error),
               },
             })
+            if (fatal) {
+              throw error
+            }
           }
         }
 
@@ -397,14 +451,20 @@ export function createPhotoshopStage(
               const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
               const group = groupsBySku.get(prepared.skuCode)
               const firstOutputPath = group?.outputs[0]
-              if (!group || !firstOutputPath) {
+              if (!group || group.status === 'failed' || group.error || !firstOutputPath) {
                 keepTempOnFailure = true
                 failed += 1
-                const error = new AppErrorClass('HTTP_5XX', 'PS 套版未返回输出结果', true, {
-                  taskId,
-                  templatePath,
-                  skuCode: prepared.skuCode,
-                })
+                const error = new AppErrorClass(
+                  group?.error ? 'JSX_EXEC_FAILED' : 'HTTP_5XX',
+                  group?.error ?? 'PS 套版未返回输出结果',
+                  !group?.error,
+                  {
+                    taskId,
+                    templatePath,
+                    skuCode: prepared.skuCode,
+                    ...(group ? { groupIndex: group.group_index } : {}),
+                  },
+                )
                 dependencies.upsertPipelineItem({
                   runId: context.runId,
                   itemKey: stageItemKey,
@@ -466,6 +526,7 @@ export function createPhotoshopStage(
             }
           } catch (error) {
             keepTempOnFailure = true
+            const fatal = isFatalPhotoshopStageError(error, 'batch-execution')
             for (const { item, prepared } of pending) {
               const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
               failed += 1
@@ -481,17 +542,32 @@ export function createPhotoshopStage(
                 errorMessage: error instanceof Error ? error.message : String(error),
                 completed: true,
               })
+              if (!fatal) {
+                dependencies.appendLog(context.runId, {
+                  level: 'warn',
+                  step_key: 'photoshop',
+                  message: '单货号套版失败，已跳过',
+                  details: {
+                    itemKey: stageItemKey,
+                    templatePath,
+                    skuCode: prepared.skuCode,
+                    error: error instanceof Error ? error.message : String(error),
+                  },
+                })
+              }
+            }
+            if (fatal) {
               dependencies.appendLog(context.runId, {
-                level: 'warn',
+                level: 'error',
                 step_key: 'photoshop',
-                message: '单货号套版失败，已跳过',
+                message: 'Photoshop 无法继续执行，PS 套版已停止',
                 details: {
-                  itemKey: stageItemKey,
+                  taskId,
                   templatePath,
-                  skuCode: prepared.skuCode,
                   error: error instanceof Error ? error.message : String(error),
                 },
               })
+              throw error
             }
           } finally {
             dependencies.setCurrentCancel(null)

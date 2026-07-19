@@ -8,10 +8,10 @@ import { normalizeGenerationLocalConfig } from '../../generation-local-config'
 import { type GenerateRequest, GrsaiAdapter } from '../../grsai-adapter'
 import { getSecret } from '../../keychain'
 import { skillCacheManager } from '../../skill-cache'
+import { generationFailureFromError } from '../failures'
 import {
   type GenerationDatabase,
   type GenerationServiceDependencies,
-  appErrorMessage,
   assertInsideFolder,
   assertLocalComfyuiWorkflowExists,
   clampInt,
@@ -168,6 +168,7 @@ export async function runExtractBatch(
   let diagnostics: Awaited<ReturnType<typeof createGenerationDiagnostics>> | null = null
   const emit = createGenerationProgressEmitter(dependencies)
   let outputIndex = input.filenameStartIndex ?? 0
+  let fatalFailureObserved = false
 
   try {
     const settings = normalizeGenerationLocalConfig((await readAppConfig()).generation)
@@ -209,7 +210,7 @@ export async function runExtractBatch(
     await Promise.all(
       sourceImagePaths.map((sourceImagePath, sourceIndex) =>
         controller.run(`${taskId}-${sourceIndex}`, async () => {
-          if (isGenerationCancelled(taskId)) {
+          if (fatalFailureObserved || isGenerationCancelled(taskId)) {
             return
           }
           assertInsideFolder(sourceImagePath, sourceFolder)
@@ -247,7 +248,7 @@ export async function runExtractBatch(
             }
 
             controller.onResponse(200)
-            for (const image of response.images) {
+            for (const [responseIndex, image] of response.images.entries()) {
               const printId = newPrintId()
               const currentOutputIndex = outputIndex
               outputIndex += 1
@@ -292,7 +293,10 @@ export async function runExtractBatch(
                 printId: artifact.printId,
                 artifactId: artifact.artifactId,
                 prompt,
+                sourcePath: sourceImagePath,
                 sourceArtifactIds: [sourceIdentity.artifactId],
+                inputIndex: sourceIndex,
+                outputIndex: responseIndex,
               })
             }
           } catch (error) {
@@ -307,11 +311,12 @@ export async function runExtractBatch(
               })
               .catch(() => null)
             result.failed += 1
-            result.failures.push({
-              prompt,
-              sourcePath: sourceImagePath,
-              error: appErrorMessage(error),
-            })
+            const failure = generationFailureFromError(
+              { prompt, sourcePath: sourceImagePath },
+              error,
+            )
+            result.failures.push(failure)
+            fatalFailureObserved ||= failure.fatal === true
           } finally {
             emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
           }
@@ -401,9 +406,10 @@ export async function runComfyuiExtractBatch(
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
       let outputIndex = input.filenameStartIndex ?? 0
+      let fatalFailureObserved = false
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
-        if (isGenerationCancelled(taskId)) {
+        if (fatalFailureObserved || isGenerationCancelled(taskId)) {
           break
         }
         emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
@@ -444,7 +450,7 @@ export async function runComfyuiExtractBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 提取失败', true)
           }
           outputIndex += response.images.length
-          for (const image of response.images) {
+          for (const [responseIndex, image] of response.images.entries()) {
             const completedImage = {
               prompt,
               url: image.url,
@@ -461,7 +467,10 @@ export async function runComfyuiExtractBatch(
               printId: completedImage.printId ?? sourceIdentity.printId,
               artifactId: completedImage.artifactId,
               prompt: completedImage.prompt,
+              sourcePath: sourceImagePath,
               sourceArtifactIds: [sourceIdentity.artifactId],
+              inputIndex: index,
+              outputIndex: responseIndex,
             })
           }
         } catch (error) {
@@ -475,11 +484,9 @@ export async function runComfyuiExtractBatch(
             })
             .catch(() => null)
           result.failed += 1
-          result.failures.push({
-            prompt,
-            sourcePath: sourceImagePath,
-            error: appErrorMessage(error),
-          })
+          const failure = generationFailureFromError({ prompt, sourcePath: sourceImagePath }, error)
+          result.failures.push(failure)
+          fatalFailureObserved ||= failure.fatal === true
         } finally {
           emitExtractProgress(result, sourceImagePaths.length, taskId, emit, prompt)
         }

@@ -26,8 +26,29 @@ import {
   CircleStop,
   Clock3,
 } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { useLocation, useNavigate } from 'react-router-dom'
+
+function collapseTaskDockOverlay(setExpanded: (expanded: boolean) => void) {
+  if (window.matchMedia(`(max-width: ${TASK_DOCK_OVERLAY_MAX_WIDTH}px)`).matches) {
+    setExpanded(false)
+  }
+}
+
+function useTaskDockOverlayMode() {
+  const query = `(max-width: ${TASK_DOCK_OVERLAY_MAX_WIDTH}px)`
+  const [overlay, setOverlay] = useState(() => window.matchMedia(query).matches)
+
+  useEffect(() => {
+    const media = window.matchMedia(query)
+    const update = () => setOverlay(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [query])
+
+  return overlay
+}
 
 function runStatus(run: PipelineRunRecord, softStopping: boolean) {
   if (softStopping) {
@@ -75,6 +96,7 @@ function lightweightStatus(task: LightweightTaskSummary) {
 
 function LightweightTaskButton({ task }: { task: LightweightTaskSummary }) {
   const navigate = useNavigate()
+  const setExpanded = useTaskDockStore((state) => state.setExpanded)
   const status = lightweightStatus(task)
   const StatusIcon = status.icon
   const countText = task.counts
@@ -87,7 +109,10 @@ function LightweightTaskButton({ task }: { task: LightweightTaskSummary }) {
     <button
       aria-label={`打开轻量任务 ${task.title}`}
       className="w-full rounded-md border border-transparent px-3 py-3 text-left outline-none transition-colors motion-reduce:transition-none hover:border-border hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-primary"
-      onClick={() => navigate(task.route)}
+      onClick={() => {
+        navigate(task.route)
+        collapseTaskDockOverlay(setExpanded)
+      }}
       type="button"
     >
       <span className="block truncate text-sm font-medium">{task.title}</span>
@@ -118,31 +143,54 @@ export function TaskDockScrim() {
       aria-label={t('关闭任务坞')}
       className="task-dock-scrim"
       onClick={() => setExpanded(false)}
+      tabIndex={-1}
       type="button"
     />
   )
 }
 
 export function TaskDock() {
+  const location = useLocation()
   const navigate = useNavigate()
   const [loadError, setLoadError] = useState<string | null>(null)
   const expanded = useTaskDockStore((state) => state.expanded)
+  const overlay = useTaskDockOverlayMode()
   const lightweightTasks = useTaskDockStore((state) => state.lightweightTasks)
   const runs = useTaskDockStore((state) => state.completeTaskRuns)
   const selectedRunId = useTaskDockStore((state) => state.selectedRunId)
   const softStoppingRunIds = useTaskDockStore((state) => state.softStoppingRunIds)
   const patchRunStatus = useTaskDockStore((state) => state.patchCompleteTaskRunStatus)
   const replaceRuns = useTaskDockStore((state) => state.replaceCompleteTaskRuns)
-  const selectRun = useTaskDockStore((state) => state.selectCompleteTaskRun)
+  const requestRun = useTaskDockStore((state) => state.requestCompleteTaskRun)
   const setExpanded = useTaskDockStore((state) => state.setExpanded)
   const upsertRun = useTaskDockStore((state) => state.upsertCompleteTaskRun)
   const upsertLightweightTask = useTaskDockStore((state) => state.upsertLightweightTask)
+  const previousPathnameRef = useRef(location.pathname)
+  const dockRef = useRef<HTMLElement>(null)
+  const closeButtonRef = useRef<HTMLButtonElement>(null)
+  const runActivityRevisionRef = useRef(0)
+  const runListRequestRevisionRef = useRef(0)
 
   const refreshRuns = useCallback(async () => {
+    const requestRevision = ++runListRequestRevisionRef.current
+    const activityRevision = runActivityRevisionRef.current
     try {
-      replaceRuns(await window.api.pipeline.listRuns())
+      const nextRuns = await window.api.pipeline.listRuns()
+      if (
+        requestRevision !== runListRequestRevisionRef.current ||
+        activityRevision !== runActivityRevisionRef.current
+      ) {
+        return
+      }
+      replaceRuns(nextRuns)
       setLoadError(null)
     } catch (error) {
+      if (
+        requestRevision !== runListRequestRevisionRef.current ||
+        activityRevision !== runActivityRevisionRef.current
+      ) {
+        return
+      }
       const message = formatIpcError(error)
       if (message === '请先在设置里选择工作区' || message === 'AppError: 请先在设置里选择工作区') {
         replaceRuns([])
@@ -159,6 +207,7 @@ export function TaskDock() {
 
   useEffect(() => {
     const offProgress = window.api.pipeline.onProgress((progress) => {
+      runActivityRevisionRef.current += 1
       const runExists = useTaskDockStore
         .getState()
         .completeTaskRuns.some((run) => run.id === progress.run_id)
@@ -169,10 +218,18 @@ export function TaskDock() {
       }
     })
     const offCompleted = window.api.pipeline.onCompleted((event) => {
+      runActivityRevisionRef.current += 1
       if (event.ok) {
         upsertRun(event.result.run)
       } else {
-        patchRunStatus(event.run_id, 'failed')
+        const runExists = useTaskDockStore
+          .getState()
+          .completeTaskRuns.some((run) => run.id === event.run_id)
+        if (runExists) {
+          patchRunStatus(event.run_id, 'failed')
+        } else {
+          void refreshRuns()
+        }
       }
     })
     return () => {
@@ -255,6 +312,45 @@ export function TaskDock() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [expanded, setExpanded])
 
+  useEffect(() => {
+    if (!expanded || !overlay) {
+      return
+    }
+    const shell = dockRef.current?.closest('.workbench-shell')
+    if (!shell) {
+      return
+    }
+    const background = Array.from(shell.children).filter(
+      (element): element is HTMLElement =>
+        element instanceof HTMLElement && element.dataset.workbenchRegion === 'central',
+    )
+    const previousInert = background.map((element) => element.inert)
+    for (const element of background) {
+      element.inert = true
+    }
+    closeButtonRef.current?.focus()
+
+    return () => {
+      for (const [index, element] of background.entries()) {
+        element.inert = previousInert[index] ?? false
+      }
+      requestAnimationFrame(() => {
+        const expandButton = document.querySelector<HTMLButtonElement>(
+          '[data-workbench-region="task-dock"][data-state="collapsed"] button',
+        )
+        expandButton?.focus()
+      })
+    }
+  }, [expanded, overlay])
+
+  useEffect(() => {
+    const previousPathname = previousPathnameRef.current
+    previousPathnameRef.current = location.pathname
+    if (previousPathname !== location.pathname && expanded) {
+      collapseTaskDockOverlay(setExpanded)
+    }
+  }, [expanded, location.pathname, setExpanded])
+
   let runningCount = 0
   let exceptionCount = 0
   for (const run of runs) {
@@ -322,6 +418,7 @@ export function TaskDock() {
       className="flex h-full w-[310px] shrink-0 flex-col border-l bg-card"
       data-state="expanded"
       data-workbench-region="task-dock"
+      ref={dockRef}
     >
       <header className="flex items-start justify-between gap-3 border-b px-4 py-4">
         <div className="min-w-0">
@@ -332,6 +429,7 @@ export function TaskDock() {
           aria-label="折叠任务坞"
           className="flex size-8 shrink-0 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary"
           onClick={() => setExpanded(false)}
+          ref={closeButtonRef}
           title="折叠任务坞"
           type="button"
         >
@@ -366,8 +464,9 @@ export function TaskDock() {
                         }`}
                         key={run.id}
                         onClick={() => {
-                          selectRun(run.id)
+                          requestRun(run.id)
                           navigate('/pipeline')
+                          collapseTaskDockOverlay(setExpanded)
                         }}
                         type="button"
                       >
@@ -383,7 +482,10 @@ export function TaskDock() {
                 {runs.length > 12 ? (
                   <button
                     className="mt-2 w-full rounded-md px-3 py-2 text-left text-xs font-medium text-primary outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-primary"
-                    onClick={() => navigate('/pipeline/runs')}
+                    onClick={() => {
+                      navigate('/pipeline/runs')
+                      collapseTaskDockOverlay(setExpanded)
+                    }}
                     type="button"
                   >
                     {t('查看全部 {count} 条运行记录').replace('{count}', String(runs.length))}

@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { access, readdir, rm, stat } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { access, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { basename, dirname, join, resolve } from 'node:path'
 import {
+  type AppError,
   AppErrorClass,
   type Skill,
   type SkillSummary,
@@ -99,6 +100,10 @@ export type TitleSkuResult =
       error: string
       imagePath?: string | undefined
       warning?: string | undefined
+      fatal?: boolean | undefined
+      appErrorCode?: AppError['code'] | undefined
+      retryable?: boolean | undefined
+      errorDetails?: Record<string, unknown> | undefined
     }
   | {
       skuCode: string
@@ -163,6 +168,10 @@ export type TitleGeneratedSkuResult =
       error: string
       imagePath?: string | undefined
       warning?: string | undefined
+      fatal?: boolean | undefined
+      appErrorCode?: AppError['code'] | undefined
+      retryable?: boolean | undefined
+      errorDetails?: Record<string, unknown> | undefined
     }
 
 type TitleProcessingResources = {
@@ -208,6 +217,7 @@ const IMAGE_EXTENSIONS = /\.(?:jpe?g|png|webp)$/i
 const DEFAULT_MODEL = 'qwen3.6-flash'
 const DEFAULT_TITLE_FILE_BASENAME = '标题'
 const LEGACY_TITLE_FILE_BASENAME = 'titles'
+const titleXlsxWriteQueues = new Map<string, Promise<void>>()
 const PLATFORM_TITLE_MAX_LEN: Record<string, number> = {
   temu: 150,
   shein: 200,
@@ -589,33 +599,67 @@ export async function readExistingTitles(xlsxPath: string): Promise<Map<string, 
   return titles
 }
 
+function titleXlsxWriteLockKey(xlsxPath: string) {
+  const absolutePath = resolve(xlsxPath)
+  return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
+}
+
+async function withTitleXlsxWriteLock<T>(xlsxPath: string, operation: () => Promise<T>) {
+  const key = titleXlsxWriteLockKey(xlsxPath)
+  const previous = titleXlsxWriteQueues.get(key) ?? Promise.resolve()
+  let release: () => void = () => undefined
+  const current = new Promise<void>((resolveCurrent) => {
+    release = resolveCurrent
+  })
+  const tail = previous.then(() => current)
+  titleXlsxWriteQueues.set(key, tail)
+
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (titleXlsxWriteQueues.get(key) === tail) {
+      titleXlsxWriteQueues.delete(key)
+    }
+  }
+}
+
 export async function writeTitlesXlsx(
   xlsxPath: string,
   generatedTitles: Map<string, string>,
   existingTitles: Map<string, string>,
 ) {
-  try {
-    const workbook = new ExcelJS.Workbook()
-    const sheet = workbook.addWorksheet('Sheet')
-    sheet.columns = [
-      { header: '货号', key: 'sku', width: 30 },
-      { header: '标题', key: 'title', width: 60 },
-    ]
+  return withTitleXlsxWriteLock(xlsxPath, async () => {
+    try {
+      const workbook = new ExcelJS.Workbook()
+      const sheet = workbook.addWorksheet('Sheet')
+      sheet.columns = [
+        { header: '货号', key: 'sku', width: 30 },
+        { header: '标题', key: 'title', width: 60 },
+      ]
 
-    const merged = new Map(existingTitles)
-    for (const [sku, title] of generatedTitles) {
-      merged.set(sku, title)
+      const merged = new Map(existingTitles)
+      for (const [sku, title] of await readExistingTitles(xlsxPath)) {
+        merged.set(sku, title)
+      }
+      for (const [sku, title] of generatedTitles) {
+        merged.set(sku, title)
+      }
+
+      const rows = Array.from(merged.entries()).sort(([left], [right]) =>
+        naturalCompare(left, right),
+      )
+      for (const [sku, title] of rows) {
+        sheet.addRow({ sku, title })
+      }
+
+      await mkdir(dirname(xlsxPath), { recursive: true })
+      await workbook.xlsx.writeFile(xlsxPath)
+    } catch (error) {
+      throw toXlsxWriteError(error)
     }
-
-    const rows = Array.from(merged.entries()).sort(([left], [right]) => naturalCompare(left, right))
-    for (const [sku, title] of rows) {
-      sheet.addRow({ sku, title })
-    }
-
-    await workbook.xlsx.writeFile(xlsxPath)
-  } catch (error) {
-    throw toXlsxWriteError(error)
-  }
+  })
 }
 
 export function toXlsxWriteError(error: unknown) {
@@ -773,6 +817,18 @@ function canRetry(error: unknown) {
   return true
 }
 
+function isFatalTitleProviderError(error: unknown) {
+  if (!(error instanceof AppErrorClass)) {
+    return false
+  }
+  const status = error.details?.status
+  return (
+    error.code === 'BAILIAN_QUOTA_EXCEEDED' ||
+    (error.code === 'HTTP_4XX' &&
+      (status === undefined || (typeof status === 'number' && status >= 400 && status < 500)))
+  )
+}
+
 async function withRetries<T>(maxRetries: number, operation: () => Promise<T>) {
   let attempt = 0
   let lastError: unknown = null
@@ -815,14 +871,14 @@ function openWorkbenchDatabase(workbenchRoot: string) {
   return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
 
-function registerSkuTitles(
+export function registerSkuTitles(
   db: Pick<SqliteDatabase, 'exec' | 'prepare'>,
   input: {
     templateBatch: string
     titles: Map<string, string>
     language: string
     platform: string
-    skill: SkillSummary
+    skill: Pick<SkillSummary, 'id' | 'version'>
     model: string
     generatedAt: number
   },
@@ -1637,12 +1693,21 @@ export class TitleService {
         itemKey: input.skuFolder.skuCode,
         error: errorForDiagnosticLog(error),
       })
+      const fatal = isFatalTitleProviderError(error)
       return {
         skuCode: input.skuFolder.skuCode,
         status: 'failed',
         error: appErrorMessage(error),
         imagePath: selection.imagePath,
         ...(selection.warning ? { warning: selection.warning } : {}),
+        ...(fatal ? { fatal: true } : {}),
+        ...(fatal && error instanceof AppErrorClass
+          ? {
+              appErrorCode: error.code,
+              retryable: error.retryable,
+              ...(error.details ? { errorDetails: error.details } : {}),
+            }
+          : {}),
       }
     }
   }

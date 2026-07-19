@@ -16,6 +16,7 @@ export function PipelineRunControls({
   onResolveLaunchBlock,
   onStart,
   running,
+  starting = false,
 }: {
   canStart: boolean
   cancelLoading: boolean
@@ -30,6 +31,7 @@ export function PipelineRunControls({
   onResolveLaunchBlock?: () => void
   onStart: () => void
   running: boolean
+  starting?: boolean
 }) {
   return (
     <section
@@ -37,23 +39,27 @@ export function PipelineRunControls({
       className="sticky bottom-0 z-20 -mx-6 -mb-6 flex flex-wrap items-center justify-between gap-3 border-t bg-card/95 px-6 py-4 shadow-[0_-12px_24px_-22px_rgb(15_23_42_/_0.35)] backdrop-blur supports-[backdrop-filter]:bg-card/90"
     >
       <div className="flex min-w-0 flex-wrap items-center gap-2">
-        <Button
-          aria-label={t('取消当前完整任务')}
-          disabled={!running || !currentRunId || cancelLoading}
-          onClick={onCancel}
-          variant={running ? 'destructive' : 'outline'}
-        >
-          <Square className="mr-2 h-4 w-4" />
-          取消
-        </Button>
+        {currentRunId ? (
+          <Button
+            aria-label={t('取消当前完整任务')}
+            disabled={!running || cancelLoading}
+            onClick={onCancel}
+            variant={running ? 'destructive' : 'outline'}
+          >
+            <Square className="mr-2 h-4 w-4" />
+            取消
+          </Button>
+        ) : null}
         <Button onClick={onRefresh} variant="ghost">
           <RefreshCw className="mr-2 h-4 w-4" />
           刷新选项
         </Button>
-        <Button onClick={onOpenLog} variant="secondary">
-          <Settings2 className="mr-2 h-4 w-4" />
-          日志 {logCount}
-        </Button>
+        {logCount > 0 ? (
+          <Button onClick={onOpenLog} variant="secondary">
+            <Settings2 className="mr-2 h-4 w-4" />
+            日志 {logCount}
+          </Button>
+        ) : null}
         <span className="text-sm text-muted-foreground">{message}</span>
       </div>
       <div className="flex min-w-0 flex-wrap items-center justify-end gap-3">
@@ -75,7 +81,7 @@ export function PipelineRunControls({
             ) : null}
           </div>
         ) : null}
-        <Button disabled={!canStart} onClick={onStart} title={launchDisabledReason}>
+        <Button disabled={!canStart || starting} onClick={onStart} title={launchDisabledReason}>
           <Play className="mr-2 h-4 w-4" />
           启动完整任务
         </Button>

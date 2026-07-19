@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Skill } from '@tengyu-aipod/shared'
+import { AppErrorClass, type Skill } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type ChenyuInstanceInfo, ChenyuInstanceStatus } from './chenyu-cloud-client'
 import {
@@ -439,6 +439,46 @@ describe('generation Grsai paid image service', () => {
     ).rejects.toThrow('pipeline item persistence failed')
   })
 
+  it('stops queued generation after a strict completion callback cannot persist an item', async () => {
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'https://example.test/strict-callback.png' }],
+    })
+    const result = await runTxt2imgBatch(
+      {
+        prompts: ['first callback fails', 'must not be submitted'],
+        model: 'gpt-image-2',
+        aspectRatio: '1024x1024',
+        concurrency: 1,
+        taskId: 'txt-strict-callback-fatal',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-grsai',
+        openDatabase: createFakeDb().openDatabase,
+        createGrsaiAdapter: () => ({ generate }),
+        downloadImage: vi.fn().mockResolvedValue(Buffer.from('strict-callback-image')),
+        strictImageComplete: true,
+        onImageComplete: async () => {
+          throw new Error('pipeline item persistence failed')
+        },
+      },
+    )
+
+    expect(result.total).toBe(2)
+    expect(result.failed).toBe(1)
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        error: 'pipeline item persistence failed',
+        fatal: true,
+        appErrorCode: 'HTTP_5XX',
+        retryable: true,
+        errorDetails: expect.objectContaining({ kind: 'generation_callback_fatal' }),
+      }),
+    ])
+    expect(generate).toHaveBeenCalledOnce()
+  })
+
   it('calls onImageComplete in completion order before the Grsai batch resolves', async () => {
     const fakeDb = createFakeDb()
     const first = createDeferred<{
@@ -697,6 +737,90 @@ describe('generation Grsai paid image service', () => {
       expect.stringMatching(/^pri_/),
     ])
   })
+
+  it('keeps retryable Grsai job failures item-scoped', async () => {
+    const generate = vi
+      .fn()
+      .mockRejectedValueOnce(
+        new AppErrorClass('GRSAI_FAILED', 'Grsai generation job failed', true, {
+          kind: 'failed',
+          provider: 'grsai',
+        }),
+      )
+      .mockResolvedValueOnce({
+        status: 'succeeded',
+        images: [{ url: 'https://example.test/second-item.png' }],
+      })
+    const result = await runTxt2imgBatch(
+      {
+        prompts: ['item-scoped failure', 'second item succeeds'],
+        model: 'gpt-image-2',
+        aspectRatio: '1024x1024',
+        concurrency: 1,
+        taskId: 'txt-grsai-item-failure',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-grsai',
+        openDatabase: createFakeDb().openDatabase,
+        createGrsaiAdapter: () => ({ generate }),
+        downloadImage: vi.fn().mockResolvedValue(Buffer.from('second-item-image')),
+      },
+    )
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        error: 'Grsai generation job failed',
+        appErrorCode: 'GRSAI_FAILED',
+        retryable: true,
+      }),
+    ])
+    expect(result.failures[0]).not.toHaveProperty('fatal', true)
+    expect(result).toMatchObject({ total: 2, succeeded: 1, failed: 1 })
+    expect(result.images).toHaveLength(1)
+    expect(generate).toHaveBeenCalledTimes(2)
+  })
+
+  it('marks exhausted provider rate limits as fatal while preserving retryability', async () => {
+    const generate = vi.fn().mockRejectedValue(
+      new AppErrorClass('HTTP_429', 'Grsai rate limit exhausted', true, {
+        kind: 'network',
+        provider: 'grsai',
+        status: 429,
+      }),
+    )
+    const result = await runTxt2imgBatch(
+      {
+        prompts: ['provider-scoped failure', 'must not be submitted'],
+        model: 'gpt-image-2',
+        aspectRatio: '1024x1024',
+        concurrency: 1,
+        taskId: 'txt-grsai-provider-failure',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-grsai',
+        openDatabase: createFakeDb().openDatabase,
+        createGrsaiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        error: 'Grsai rate limit exhausted',
+        fatal: true,
+        appErrorCode: 'HTTP_429',
+        retryable: true,
+        errorDetails: expect.objectContaining({
+          kind: 'network',
+          provider: 'grsai',
+          status: 429,
+        }),
+      }),
+    ])
+    expect(result).toMatchObject({ total: 2, succeeded: 0, failed: 1 })
+    expect(generate).toHaveBeenCalledOnce()
+  })
 })
 
 describe('generation extract service', () => {
@@ -910,6 +1034,44 @@ describe('generation comfyui service', () => {
         sourceArtifactIds: [],
       }),
     ])
+  })
+
+  it('marks a stopped ComfyUI instance as a fatal provider failure', async () => {
+    const generate = vi.fn().mockRejectedValue(
+      new AppErrorClass('CHENYU_INSTANCE_DOWN', 'default instance stopped', false, {
+        provider: 'comfyui-chenyu',
+        status: 'stopped',
+      }),
+    )
+    const result = await runComfyuiTxt2imgBatch(
+      {
+        prompts: ['should not be retried for every prompt', 'must not be submitted'],
+        workflowId: 'txt2img-v1',
+        taskId: 'txt2img-comfy-instance-down',
+        concurrency: 1,
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: createFakeDb().openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        error: 'default instance stopped',
+        fatal: true,
+        appErrorCode: 'CHENYU_INSTANCE_DOWN',
+        retryable: false,
+        errorDetails: expect.objectContaining({
+          provider: 'comfyui-chenyu',
+          status: 'stopped',
+        }),
+      }),
+    ])
+    expect(result).toMatchObject({ total: 2, succeeded: 0, failed: 1 })
+    expect(generate).toHaveBeenCalledOnce()
   })
 
   it('advances ComfyUI txt2img visible filename indexes by actual output count', async () => {
@@ -2072,6 +2234,43 @@ describe('generation comfyui matting service', () => {
         }),
       }),
     )
+  })
+
+  it('stops a matting batch after the first fatal provider failure', async () => {
+    const firstPath = join(tempRoot, 'fatal-matting', 'first.png')
+    const secondPath = join(tempRoot, 'fatal-matting', 'second.png')
+    await createImage(firstPath, 'first-image')
+    await createImage(secondPath, 'second-image')
+    const generate = vi.fn().mockRejectedValue(
+      new AppErrorClass('CHENYU_INSTANCE_DOWN', 'matting instance stopped', false, {
+        provider: 'comfyui-chenyu',
+        status: 'stopped',
+      }),
+    )
+
+    const result = await runComfyuiMattingBatch(
+      {
+        sourceImagePaths: [firstPath, secondPath],
+        workflowId: 'matting-v1',
+        taskId: 'matting-fatal-provider-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: createFakeDb().openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result).toMatchObject({ total: 2, succeeded: 0, failed: 1 })
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        fatal: true,
+        appErrorCode: 'CHENYU_INSTANCE_DOWN',
+        sourcePath: expect.any(String),
+      }),
+    ])
+    expect(generate).toHaveBeenCalledOnce()
   })
 
   it('runs extract then matting on the same ComfyUI instance and cleans temporary extract outputs', async () => {

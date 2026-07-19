@@ -1,6 +1,10 @@
-import type { PipelineTaskEvent } from '@tengyu-aipod/shared'
+import type { PipelineProgress, PipelineTaskEvent } from '@tengyu-aipod/shared'
 import { describe, expect, it } from 'vitest'
-import { shouldApplyPipelineCompletedEvent } from './pipeline-completion-events'
+import {
+  mergePipelineProgress,
+  shouldApplyPipelineCompletedEvent,
+  shouldApplyPipelineProgress,
+} from './pipeline-completion-events'
 
 function completedEvent(runId: string): PipelineTaskEvent {
   return {
@@ -39,8 +43,8 @@ describe('pipeline completed event filtering', () => {
     )
   })
 
-  it('accepts completed events when no current run is selected', () => {
-    expect(shouldApplyPipelineCompletedEvent(null, completedEvent('run-any'))).toBe(true)
+  it('ignores completed events when no current run is selected', () => {
+    expect(shouldApplyPipelineCompletedEvent(null, completedEvent('run-any'))).toBe(false)
   })
 
   it('filters failed completed events by run id too', () => {
@@ -51,5 +55,38 @@ describe('pipeline completed event filtering', () => {
         error: 'failed',
       }),
     ).toBe(false)
+  })
+})
+
+describe('pipeline progress event filtering', () => {
+  const progress = { run_id: 'run-current' } as PipelineProgress
+
+  it('only accepts progress for the selected run', () => {
+    expect(shouldApplyPipelineProgress(null, progress)).toBe(false)
+    expect(shouldApplyPipelineProgress('run-other', progress)).toBe(false)
+    expect(shouldApplyPipelineProgress('run-current', progress)).toBe(true)
+  })
+
+  it('keeps prior optional payload sections for a lightweight update of the same run', () => {
+    const previous = {
+      ...progress,
+      items: [{ id: 'item-1' }],
+      result_sections: [{ key: 'source_images' }],
+      logs: [{ id: 'log-1' }],
+      preview_images: [{ step_key: 'source' }],
+    } as unknown as PipelineProgress
+    const next = { ...progress, message: '状态更新' }
+
+    expect(mergePipelineProgress(previous, next)).toMatchObject({
+      message: '状态更新',
+      items: previous.items,
+      result_sections: previous.result_sections,
+      logs: previous.logs,
+      preview_images: previous.preview_images,
+    })
+    expect(mergePipelineProgress(previous, { ...next, run_id: 'run-other' })).toEqual({
+      ...next,
+      run_id: 'run-other',
+    })
   })
 })

@@ -18,6 +18,7 @@ import type {
 } from './types'
 
 export type PipelineStoreDb = Pick<SqliteDatabase, 'prepare'>
+type TransactionalPipelineStoreDb = Pick<SqliteDatabase, 'exec' | 'prepare'>
 
 export type UpsertPipelineItemInput = {
   runId: string
@@ -329,6 +330,32 @@ export function markPersistedRunningPipelineItemsInterrupted(
   ).run(input.completedAt, input.updatedAt)
 }
 
+export function markPersistedRunningPipelineStateInterrupted(
+  db: TransactionalPipelineStoreDb,
+  completedAt: number,
+) {
+  db.exec('BEGIN IMMEDIATE')
+  try {
+    markPersistedRunningPipelineRunsInterrupted(db, completedAt)
+    markPersistedRunningPipelineStepsInterrupted(db, {
+      completedAt,
+      updatedAt: completedAt,
+    })
+    markPersistedRunningPipelineItemsInterrupted(db, {
+      completedAt,
+      updatedAt: completedAt,
+    })
+    db.exec('COMMIT')
+  } catch (error) {
+    try {
+      db.exec('ROLLBACK')
+    } catch {
+      // Preserve the update error that caused the cleanup transaction to fail.
+    }
+    throw error
+  }
+}
+
 export function markPipelineRunInterrupted(
   db: PipelineStoreDb,
   input: {
@@ -384,6 +411,56 @@ export function markPipelineRunRunningItemsInterrupted(
       WHERE run_id = ? AND status = 'running'
     `,
   ).run(input.completedAt, input.updatedAt, input.runId)
+}
+
+export function markPipelineRunRunningStepsTerminal(
+  db: PipelineStoreDb,
+  input: {
+    runId: string
+    status: Extract<PipelineStepStatus, 'cancelled' | 'failed'>
+    errorMessage: string
+    completedAt: number
+    updatedAt: number
+  },
+) {
+  db.prepare(
+    `
+      UPDATE pipeline_steps
+      SET status = ?,
+          error_json = ?,
+          completed_at = COALESCE(completed_at, ?),
+          updated_at = ?
+      WHERE run_id = ? AND status = 'running'
+    `,
+  ).run(
+    input.status,
+    JSON.stringify({ message: input.errorMessage }),
+    input.completedAt,
+    input.updatedAt,
+    input.runId,
+  )
+}
+
+export function markPipelineRunRunningItemsTerminal(
+  db: PipelineStoreDb,
+  input: {
+    runId: string
+    status: Extract<PipelineItemStatus, 'failed' | 'interrupted'>
+    errorMessage: string
+    completedAt: number
+    updatedAt: number
+  },
+) {
+  db.prepare(
+    `
+      UPDATE pipeline_items
+      SET status = ?,
+          error_message = COALESCE(error_message, ?),
+          completed_at = COALESCE(completed_at, ?),
+          updated_at = ?
+      WHERE run_id = ? AND status = 'running'
+    `,
+  ).run(input.status, input.errorMessage, input.completedAt, input.updatedAt, input.runId)
 }
 
 export function upsertPipelineItem(db: PipelineStoreDb, input: UpsertPipelineItemInput) {

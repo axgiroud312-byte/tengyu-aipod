@@ -7,9 +7,9 @@ import { normalizeGenerationLocalConfig } from '../../generation-local-config'
 import { type GenerateRequest, GrsaiAdapter } from '../../grsai-adapter'
 import { getSecret } from '../../keychain'
 import { skillCacheManager } from '../../skill-cache'
+import { generationFailureFromError } from '../failures'
 import {
   type GenerationServiceDependencies,
-  appErrorMessage,
   assertLocalComfyuiWorkflowExists,
   clampInt,
   comfyuiInstanceLocks,
@@ -345,9 +345,10 @@ export async function runComfyuiExtractMattingBatch(
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
       let outputIndex = input.filenameStartIndex ?? 0
+      let fatalFailureObserved = false
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
-        if (isGenerationCancelled(taskId)) {
+        if (fatalFailureObserved || isGenerationCancelled(taskId)) {
           break
         }
         emitMattingProgress(result, taskId, sourceImagePaths.length, emit)
@@ -454,6 +455,8 @@ export async function runComfyuiExtractMattingBatch(
             artifactId: completedImage.artifactId,
             prompt: completedImage.prompt,
             sourceArtifactIds: [sourceIdentity.artifactId],
+            inputIndex: index,
+            outputIndex: 0,
           })
         } catch (error) {
           await diagnostics
@@ -466,11 +469,12 @@ export async function runComfyuiExtractMattingBatch(
             })
             .catch(() => null)
           result.failed += 1
-          result.failures.push({
-            prompt: extractPrompt,
-            sourcePath: sourceImagePath,
-            error: appErrorMessage(error),
-          })
+          const failure = generationFailureFromError(
+            { prompt: extractPrompt, sourcePath: sourceImagePath },
+            error,
+          )
+          result.failures.push(failure)
+          fatalFailureObserved ||= failure.fatal === true
         } finally {
           emitMattingProgress(result, taskId, sourceImagePaths.length, emit)
         }
@@ -551,9 +555,10 @@ export async function runComfyuiMattingBatch(
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
       let outputIndex = input.filenameStartIndex ?? 0
+      let fatalFailureObserved = false
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
-        if (isGenerationCancelled(taskId)) {
+        if (fatalFailureObserved || isGenerationCancelled(taskId)) {
           break
         }
         emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
@@ -588,7 +593,7 @@ export async function runComfyuiMattingBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 抠图失败', true)
           }
           outputIndex += response.images.length
-          for (const image of response.images) {
+          for (const [responseIndex, image] of response.images.entries()) {
             const completedImage = {
               prompt,
               url: image.url,
@@ -606,6 +611,8 @@ export async function runComfyuiMattingBatch(
               artifactId: completedImage.artifactId,
               prompt: completedImage.prompt,
               sourceArtifactIds: [artifactId],
+              inputIndex: index,
+              outputIndex: responseIndex,
             })
           }
         } catch (error) {
@@ -619,11 +626,12 @@ export async function runComfyuiMattingBatch(
             })
             .catch(() => null)
           result.failed += 1
-          result.failures.push({
-            prompt: input.prompt?.trim() ?? '',
-            error: appErrorMessage(error),
-            sourcePath: artifactId,
-          })
+          const failure = generationFailureFromError(
+            { prompt: input.prompt?.trim() ?? '', sourcePath: artifactId },
+            error,
+          )
+          result.failures.push(failure)
+          fatalFailureObserved ||= failure.fatal === true
         } finally {
           emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
         }
@@ -720,9 +728,10 @@ export async function runMixedMattingBatch(
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
       let outputIndex = input.filenameStartIndex ?? 0
+      let fatalFailureObserved = false
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
-        if (isGenerationCancelled(taskId)) {
+        if (fatalFailureObserved || isGenerationCancelled(taskId)) {
           break
         }
         emitMattingProgress(result, taskId, sourceArtifactIds.length, emit)
@@ -804,7 +813,7 @@ export async function runMixedMattingBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 混合抠图失败', true)
           }
           outputIndex += response.images.length
-          for (const image of response.images) {
+          for (const [responseIndex, image] of response.images.entries()) {
             const completedImage = {
               prompt,
               url: image.url,
@@ -822,6 +831,8 @@ export async function runMixedMattingBatch(
               artifactId: completedImage.artifactId,
               prompt: completedImage.prompt,
               sourceArtifactIds: [artifactId],
+              inputIndex: index,
+              outputIndex: responseIndex,
             })
           }
         } catch (error) {
@@ -835,11 +846,12 @@ export async function runMixedMattingBatch(
             })
             .catch(() => null)
           result.failed += 1
-          result.failures.push({
-            prompt: input.prompt?.trim() ?? '',
-            error: appErrorMessage(error),
-            sourcePath: artifactId,
-          })
+          const failure = generationFailureFromError(
+            { prompt: input.prompt?.trim() ?? '', sourcePath: artifactId },
+            error,
+          )
+          result.failures.push(failure)
+          fatalFailureObserved ||= failure.fatal === true
         } finally {
           if (maskPath) {
             await rm(maskPath, { force: true })

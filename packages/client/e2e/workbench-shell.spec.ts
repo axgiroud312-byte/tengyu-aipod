@@ -11,7 +11,7 @@ import {
   expect,
   test,
 } from '@playwright/test'
-import type { PipelineProgress, PipelineTaskEvent } from '@tengyu-aipod/shared'
+import type { PipelineProgress, PipelineRunDetail, PipelineTaskEvent } from '@tengyu-aipod/shared'
 import sharp from 'sharp'
 import { openCollectionDatabase as openWorkbenchDatabase } from '../src/main/lib/collection-record-store'
 
@@ -1138,7 +1138,450 @@ test.describe('production-first Workbench shell', () => {
     await expect(page).toHaveURL(/#\/pipeline$/)
     await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
     await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(page.getByRole('tab', { name: '运行展示' })).toBeVisible()
     await expect(page.locator('[data-content-width="constrained"]')).toBeVisible()
+    await expect(page.getByRole('textbox', { name: '任务名' })).toBeVisible()
+    await expect(page.getByRole('textbox', { name: '印花货号' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: '印花类型' })).toBeVisible()
+    await expect(page.getByRole('combobox', { name: '提取方式' })).toBeVisible()
+  })
+
+  test('enters task settings when startup run snapshots cannot be loaded', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-startup-run-snapshot-failure'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-startup-run-snapshot-failure')
+
+    await enterPreparedWorkbench(page, workbenchRoot, async () => {
+      seedRunningCompleteTasks(workbenchRoot)
+      await app?.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('pipeline:get-run')
+        ipcMain.handle('pipeline:get-run', () => {
+          throw new Error('fixture startup snapshot failure')
+        })
+      })
+    })
+
+    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toHaveCount(0)
+  })
+
+  test('restores a healthy startup run when another run snapshot fails', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-partial-startup-run-snapshot-failure'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-partial-startup-run-snapshot-failure')
+
+    await enterPreparedWorkbench(page, workbenchRoot, async () => {
+      seedRunningCompleteTasks(workbenchRoot)
+      const healthyDetail = await page.evaluate(() =>
+        window.api.pipeline.getRun({ run_id: 'run-most-recently-updated' }),
+      )
+      if (!healthyDetail) {
+        throw new Error('fixture healthy run detail is missing')
+      }
+      await app?.evaluate(({ ipcMain }, detail) => {
+        ipcMain.removeHandler('pipeline:get-run')
+        ipcMain.handle('pipeline:get-run', (_event, input: { run_id: string }) => {
+          if (input.run_id === 'run-newer-created') {
+            throw new Error('fixture single startup snapshot failure')
+          }
+          return input.run_id === detail.run.id ? detail : null
+        })
+      }, healthyDetail)
+    })
+
+    await expect(page.getByRole('tab', { name: '运行展示' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(
+      page.getByText('Most recently updated task', { exact: true }).first(),
+    ).toBeVisible()
+    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toHaveCount(0)
+  })
+
+  test('enters task settings when the startup run list cannot be loaded', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-startup-run-list-failure'),
+    })
+    const page = await app.firstWindow()
+
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-startup-run-list-failure'), () =>
+      app?.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('pipeline:list-runs')
+        ipcMain.handle('pipeline:list-runs', () => {
+          throw new Error('fixture startup run list failure')
+        })
+      }),
+    )
+
+    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toHaveCount(0)
+  })
+
+  test('keeps task settings visible when an unselected run reports progress', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-unselected-progress'),
+    })
+    const page = await app.firstWindow()
+
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-unselected-progress'))
+    await installPipelineEventHarness(app)
+    await emitPipelineProgress(app, theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 1 }))
+
+    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '运行详情' })).toHaveCount(0)
+  })
+
+  test('keeps independent settings usable when an unrelated option request fails', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-partial-pipeline-options'),
+    })
+    const page = await app.firstWindow()
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-partial-pipeline-options'), () =>
+      app?.evaluate(({ ipcMain }) => {
+        ipcMain.removeHandler('title:list-languages')
+        ipcMain.handle('title:list-languages', () => {
+          throw new Error('fixture title language failure')
+        })
+      }),
+    )
+
+    await expect(page.getByText(/部分配置加载失败：.*标题语言/)).toBeVisible()
+    await page.getByRole('textbox', { name: '方案名称' }).fill('局部配置可用')
+    await expect(page.getByRole('button', { name: '保存执行方案' })).toBeEnabled()
+  })
+
+  test('recovers from a selected run whose snapshot cannot be loaded', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-missing-run-snapshot'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-missing-run-snapshot')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
+    await app.evaluate(({ ipcMain }) => {
+      ipcMain.removeHandler('pipeline:get-run')
+      ipcMain.handle('pipeline:get-run', () => null)
+    })
+
+    await expandTaskDockIfCollapsed(page)
+    await page
+      .getByRole('complementary', { name: '任务坞' })
+      .getByRole('button', { name: '打开完整任务 Later created task' })
+      .click()
+
+    await expect(page.getByRole('heading', { name: '无法读取运行展示' })).toBeVisible()
+    await page.getByRole('button', { name: '返回任务设置' }).click()
+    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+  })
+
+  test('does not let a stale run snapshot overwrite resumed progress', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-resume-snapshot-race'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-resume-snapshot-race')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
+    await installPipelineEventHarness(app)
+    const staleDetail = await page.evaluate(() =>
+      window.api.pipeline.getRun({ run_id: 'run-interrupted' }),
+    )
+    expect(staleDetail?.run.status).toBe('interrupted')
+    await app.evaluate(({ ipcMain }, detail) => {
+      const state = globalThis as typeof globalThis & {
+        __resolveStalePipelineRun?: () => void
+        __stalePipelineRunRequested?: boolean
+      }
+      ipcMain.removeHandler('pipeline:get-run')
+      ipcMain.handle('pipeline:get-run', () => {
+        state.__stalePipelineRunRequested = true
+        return new Promise((resolve) => {
+          state.__resolveStalePipelineRun = () => resolve(detail)
+        })
+      })
+    }, staleDetail)
+
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '运行记录', exact: true })
+      .click()
+    await page.getByRole('button', { name: '从中断处继续' }).click()
+    await expect
+      .poll(() =>
+        app?.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __stalePipelineRunRequested?: boolean
+              }
+            ).__stalePipelineRunRequested ?? false,
+        ),
+      )
+      .toBe(true)
+
+    const runningProgress = theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 1 })
+    runningProgress.run_id = 'run-interrupted'
+    runningProgress.steps = runningProgress.steps.map((step) => ({
+      ...step,
+      id: step.id.replace('run-most-recently-updated', 'run-interrupted'),
+      run_id: 'run-interrupted',
+    }))
+    runningProgress.items = runningProgress.items?.map((item) => ({
+      ...item,
+      id: item.id.replace('run-most-recently-updated', 'run-interrupted'),
+      run_id: 'run-interrupted',
+    }))
+    await emitPipelineProgress(app, runningProgress)
+    await app.evaluate(() => {
+      const state = globalThis as typeof globalThis & {
+        __resolveStalePipelineRun?: () => void
+      }
+      state.__resolveStalePipelineRun?.()
+    })
+
+    await expect(page.getByRole('button', { name: '停止任务' })).toBeVisible()
+    await expect(page.getByText('运行中', { exact: true }).first()).toBeVisible()
+  })
+
+  test('does not let a stale snapshot rejection clear a newer completion event', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-stale-snapshot-rejection'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-stale-snapshot-rejection')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
+    const newerDetail = await page.evaluate(() =>
+      window.api.pipeline.getRun({ run_id: 'run-newer-created' }),
+    )
+    expect(newerDetail).not.toBeNull()
+
+    await app.evaluate(({ ipcMain }) => {
+      const state = globalThis as typeof globalThis & {
+        __rejectStalePipelineRun?: () => void
+        __stalePipelineRunRejectionRequested?: boolean
+      }
+      ipcMain.removeHandler('pipeline:get-run')
+      ipcMain.handle('pipeline:get-run', () => {
+        state.__stalePipelineRunRejectionRequested = true
+        return new Promise((_resolve, reject) => {
+          state.__rejectStalePipelineRun = () => reject(new Error('stale snapshot rejection'))
+        })
+      })
+    })
+
+    await expandTaskDockIfCollapsed(page)
+    await page
+      .getByRole('complementary', { name: '任务坞' })
+      .getByRole('button', { name: '打开完整任务 Later created task' })
+      .click()
+    await expect
+      .poll(() =>
+        app?.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __stalePipelineRunRejectionRequested?: boolean
+              }
+            ).__stalePipelineRunRejectionRequested ?? false,
+        ),
+      )
+      .toBe(true)
+
+    if (!newerDetail) {
+      throw new Error('fixture run detail is missing')
+    }
+    await emitPipelineCompleted(app, { ok: true, result: newerDetail })
+    await app.evaluate(() => {
+      const state = globalThis as typeof globalThis & {
+        __rejectStalePipelineRun?: () => void
+      }
+      state.__rejectStalePipelineRun?.()
+    })
+    await page.waitForTimeout(100)
+
+    await expect(page.getByRole('heading', { name: '运行详情' })).toBeVisible()
+    await expect(page.getByRole('heading', { name: '无法读取运行展示' })).toHaveCount(0)
+    await expect(page.getByText('Later created task', { exact: true }).first()).toBeVisible()
+  })
+
+  test('hydrates the authoritative run when completion arrives before start returns', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-fast-pipeline-failure'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-fast-pipeline-failure')
+    const sourceFolder = join(workbenchRoot, '01-采集工作区', 'fast-failure-source')
+    await enterPreparedWorkbench(page, workbenchRoot, async () => {
+      await page.evaluate((folder) => {
+        const common = {
+          name: 'Fast failure task',
+          printSkuCode: '',
+          filenameSeparator: '-',
+          printMode: 'local',
+        }
+        window.sessionStorage.setItem(
+          'tengyu-aipod:pipeline-drafts',
+          JSON.stringify({
+            state: {
+              sourceMode: 'collection',
+              sourceDrafts: {
+                collection: { ...common, sourceFolder: folder },
+                txt2img: { ...common, promptRequirement: '' },
+                img2img: {
+                  ...common,
+                  sourceFolder: '',
+                  promptRequirement: '',
+                  referenceImages: [],
+                },
+                existing_prints: { ...common, sourceFolder: '', startStep: 'photoshop' },
+              },
+            },
+            version: 0,
+          }),
+        )
+        for (const [key, value] of Object.entries({
+          extractSkillId: 'extract-skill@@1',
+          mattingEnabled: false,
+          detectionEnabled: false,
+          photoshopEnabled: false,
+          titleEnabled: false,
+        })) {
+          window.sessionStorage.setItem(`tengyu-aipod:full-task:${key}`, JSON.stringify(value))
+        }
+      }, sourceFolder)
+      await app?.evaluate(({ ipcMain }) => {
+        const state = globalThis as typeof globalThis & {
+          __fastFailureRunDetail?: unknown
+        }
+        ipcMain.removeHandler('skill:list')
+        ipcMain.handle('skill:list', (_event, filter: { module?: string }) =>
+          filter?.module === 'generation'
+            ? [
+                {
+                  id: 'extract-skill',
+                  module: 'generation',
+                  category: 'extract-paid-model',
+                  platform: null,
+                  language: null,
+                  version: '1',
+                  enabled: true,
+                  recommendedModel: null,
+                  notes: null,
+                },
+              ]
+            : [],
+        )
+        ipcMain.removeHandler('title:list-languages')
+        ipcMain.handle('title:list-languages', () => {
+          throw new Error('fixture unrelated title language failure')
+        })
+        ipcMain.removeHandler('pipeline:run')
+        ipcMain.handle('pipeline:run', (event, config) => {
+          const now = Date.now()
+          const runId = 'run-completed-before-start-returned'
+          state.__fastFailureRunDetail = {
+            run: {
+              id: runId,
+              name: 'Fast failure task',
+              source_mode: 'collection',
+              status: 'failed',
+              config_json: JSON.stringify(config),
+              stats_json: JSON.stringify({
+                sourceImages: 0,
+                prints: 0,
+                detectionPass: 0,
+                detectionReview: 0,
+                detectionBlock: 0,
+                photoshopGroups: 0,
+                titleSucceeded: 0,
+                titleFailed: 0,
+              }),
+              result_sections_json: '[]',
+              logs_json: '[]',
+              error_summary: '来源配置已失效，完整任务未能启动',
+              created_at: now,
+              started_at: now,
+              completed_at: now,
+            },
+            steps: [],
+            items: [],
+            result_sections: [],
+            logs: [],
+          }
+          event.sender.send('pipeline:completed', {
+            ok: false,
+            run_id: runId,
+            error: '来源配置已失效，完整任务未能启动',
+          })
+          return runId
+        })
+        ipcMain.removeHandler('pipeline:get-run')
+        ipcMain.handle('pipeline:get-run', () => state.__fastFailureRunDetail ?? null)
+      })
+    })
+
+    const startButton = page.getByRole('button', { name: '启动完整任务' })
+    await expect(page.getByText(/部分配置加载失败：.*标题语言/)).toBeVisible()
+    await expect(startButton).toBeEnabled()
+    await startButton.click()
+
+    await expect(page.getByText('运行失败', { exact: true }).first()).toBeVisible()
+    await expect(page.getByText('来源配置已失效，完整任务未能启动').first()).toBeVisible()
+    await expect(page.getByRole('button', { name: '停止任务' })).toHaveCount(0)
+    await page.getByRole('tab', { name: '任务设置' }).click()
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '取消当前完整任务' })).toHaveCount(0)
+    await expect(page.getByText('来源配置已失效，完整任务未能启动').first()).toBeVisible()
   })
 
   test('uses the production entry instead of a previously visited tool route', async () => {
@@ -1184,12 +1627,10 @@ test.describe('production-first Workbench shell', () => {
     await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
 
     await expect(page).toHaveURL(/#\/pipeline$/)
-    await expect(
-      page
-        .getByText('Most recently updated task', { exact: true })
-        .locator('xpath=..')
-        .getByText('当前', { exact: true }),
-    ).toBeVisible()
+    await expect(page.getByRole('tab', { name: '运行展示' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
     await expect(page.getByText('文生图产出', { exact: true })).toBeVisible()
     await expect(page.getByRole('heading', { name: '运行详情' })).toBeVisible()
     await expect(page.getByRole('button', { name: '停止任务' })).toBeVisible()
@@ -1213,6 +1654,7 @@ test.describe('production-first Workbench shell', () => {
         .locator('xpath=../..')
         .getByText('Later created task', { exact: true }),
     ).toBeVisible()
+    await expandTaskDockIfCollapsed(page)
     await expect(
       taskDock.getByRole('button', { name: '打开完整任务 Later created task' }),
     ).toHaveAttribute('aria-current', 'true')
@@ -1237,6 +1679,105 @@ test.describe('production-first Workbench shell', () => {
         .getByRole('complementary', { name: '任务坞' })
         .getByRole('button', { name: '展开任务坞，2 个运行中，1 个异常' }),
     ).toBeVisible()
+  })
+
+  test('keeps a newer terminal task event when an older task list resolves later', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-task-dock-list-race'),
+    })
+    const page = await app.firstWindow()
+    const workbenchRoot = join(tempRoot, 'workbench-task-dock-list-race')
+    await enterPreparedWorkbench(page, workbenchRoot, () => seedRunningCompleteTasks(workbenchRoot))
+    const sourceDetail = await page.evaluate(() =>
+      window.api.pipeline.getRun({ run_id: 'run-newer-created' }),
+    )
+    if (!sourceDetail) {
+      throw new Error('fixture run detail is missing')
+    }
+    const raceRunId = 'run-task-dock-list-race'
+    const raceDetail: PipelineRunDetail = {
+      ...sourceDetail,
+      run: {
+        ...sourceDetail.run,
+        id: raceRunId,
+        name: 'Task dock list race',
+        status: 'completed',
+        completed_at: Date.now(),
+      },
+      steps: sourceDetail.steps.map((step) => ({
+        ...step,
+        id: `${step.id}-race`,
+        run_id: raceRunId,
+        status: 'completed',
+      })),
+      items: sourceDetail.items?.map((item) => ({
+        ...item,
+        id: `${item.id}-race`,
+        run_id: raceRunId,
+      })),
+    }
+
+    await app.evaluate(({ ipcMain }) => {
+      const state = globalThis as typeof globalThis & {
+        __resolveStaleTaskDockList?: () => void
+        __staleTaskDockListRequested?: boolean
+      }
+      ipcMain.removeHandler('pipeline:list-runs')
+      ipcMain.handle('pipeline:list-runs', () => {
+        state.__staleTaskDockListRequested = true
+        return new Promise((resolve) => {
+          state.__resolveStaleTaskDockList = () => resolve([])
+        })
+      })
+    })
+
+    const unknownProgress = theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 1 })
+    unknownProgress.run_id = raceRunId
+    unknownProgress.steps = unknownProgress.steps.map((step) => ({
+      ...step,
+      id: `${step.id}-race`,
+      run_id: raceRunId,
+    }))
+    unknownProgress.items = unknownProgress.items?.map((item) => ({
+      ...item,
+      id: `${item.id}-race`,
+      run_id: raceRunId,
+    }))
+    await emitPipelineProgress(app, unknownProgress)
+    await expect
+      .poll(() =>
+        app?.evaluate(
+          () =>
+            (
+              globalThis as typeof globalThis & {
+                __staleTaskDockListRequested?: boolean
+              }
+            ).__staleTaskDockListRequested ?? false,
+        ),
+      )
+      .toBe(true)
+
+    await emitPipelineCompleted(app, { ok: true, result: raceDetail })
+    const taskDock = await expandTaskDockIfCollapsed(page)
+    const raceTask = taskDock.getByRole('button', {
+      name: '打开完整任务 Task dock list race',
+    })
+    await expect(raceTask).toBeVisible()
+    await expect(raceTask.getByText('已完成', { exact: true })).toBeVisible()
+
+    await app.evaluate(() => {
+      const state = globalThis as typeof globalThis & {
+        __resolveStaleTaskDockList?: () => void
+      }
+      state.__resolveStaleTaskDockList?.()
+    })
+    await page.waitForTimeout(100)
+
+    await expect(raceTask).toBeVisible()
+    await expect(raceTask.getByText('已完成', { exact: true })).toBeVisible()
   })
 
   test('streams the newest result into the theater while isolating item failures', async () => {
@@ -1284,6 +1825,7 @@ test.describe('production-first Workbench shell', () => {
     await page.getByRole('button', { name: '查看 印花 1', exact: true }).focus()
     await expectScreenshotContainsColor(canvas, { red: 37, green: 99, blue: 235 })
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -1319,8 +1861,21 @@ test.describe('production-first Workbench shell', () => {
     })
     await expect(page.getByText('运行失败', { exact: true })).toBeVisible()
     await expect(selectedDockTask.getByText('失败', { exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: '按此方案再建任务' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '按此方案再建任务' })).toBeVisible()
     await expect(page.getByRole('button', { name: '停止任务' })).toHaveCount(0)
+    await page.getByRole('tab', { name: '任务设置' }).click()
+    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '取消当前完整任务' })).toHaveCount(0)
+    for (const stageSwitch of ['启用抠图', '启用侵权检测', '启用 PS 套版', '启用标题生成']) {
+      await expect(page.getByRole('switch', { name: stageSwitch })).toBeVisible()
+    }
+    await expandTaskDockIfCollapsed(page)
+    await selectedDockTask.click()
+    await expect(page.getByRole('tab', { name: '运行展示' })).toHaveAttribute(
+      'data-state',
+      'active',
+    )
+    await expect(page.getByRole('heading', { name: '运行详情' })).toBeVisible()
 
     const completedProgress = theaterProgress({
       baseUrl: mockServer.baseUrl,
@@ -1373,7 +1928,16 @@ test.describe('production-first Workbench shell', () => {
     await page.getByRole('button', { name: '按此方案再建任务' }).click()
     await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
     await expect(page.getByRole('tab', { name: '文生图' })).toHaveAttribute('data-state', 'active')
-    await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    const promptRequirement = page.getByRole('button', { name: '印花要求', exact: true })
+    await expect(promptRequirement).toBeVisible()
+    await promptRequirement.focus()
+    await page.keyboard.press('Enter')
+    await expect(page.getByRole('textbox', { name: '印花要求', exact: true })).toBeFocused()
+    await page.keyboard.press('Escape')
+    await expect(promptRequirement).toBeFocused()
+    await page.keyboard.press('Enter')
+    await page.getByRole('button', { name: '收起', exact: true }).click()
+    await expect(promptRequirement).toBeFocused()
     await expect(page.getByRole('switch', { name: '启用抠图' })).toBeChecked()
     await expect(
       page.getByText('并发', { exact: true }).locator('xpath=..').getByRole('spinbutton'),
@@ -1384,6 +1948,7 @@ test.describe('production-first Workbench shell', () => {
       )
       .toBe('null')
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -1505,7 +2070,7 @@ test.describe('production-first Workbench shell', () => {
     })
     const page = await app.firstWindow()
     await enterPreparedWorkbench(page, join(tempRoot, 'workbench-narrow-default-shell'))
-    await page.setViewportSize({ width: 1280, height: 720 })
+    await page.setViewportSize({ width: 1100, height: 700 })
     await page.evaluate(() => window.localStorage.removeItem('tengyu-aipod:task-dock'))
     await page.reload()
 
@@ -1617,6 +2182,7 @@ test.describe('production-first Workbench shell', () => {
     expect(poolBox?.height ?? 0).toBeGreaterThanOrEqual(520)
 
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -1870,6 +2436,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(results.getByText('诊断日志：C:\\logs\\detection-ui-run.jsonl')).toBeVisible()
 
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -2080,6 +2647,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(inputAndSettings.getByText('SKU-001', { exact: true })).toBeVisible()
 
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -2148,6 +2716,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(task.getByText('4 / 4 · 失败 1', { exact: true })).toBeVisible()
 
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -2787,6 +3356,7 @@ test.describe('production-first Workbench shell', () => {
         exact: true,
       })
       .click()
+    await expandTaskDockIfCollapsed(page)
     await taskDock.getByRole('button', { name: '打开轻量任务 标题生成任务' }).click()
     await expect(page).toHaveURL(/#\/title$/)
     await expect(page.getByLabel('标题额外要求')).toHaveValue('保留当前标题页状态')
@@ -2813,6 +3383,28 @@ test.describe('production-first Workbench shell', () => {
     await expect(
       page.getByRole('banner').getByRole('link', { name: '设置', exact: true }),
     ).toHaveCount(0)
+  })
+
+  test('keeps sidebar navigation reachable while the task dock overlays content', async () => {
+    const mockServer = await startMockServer()
+    closeMockServer = mockServer.close
+    app = await launchApp({
+      serverUrl: mockServer.baseUrl,
+      userDataDir: join(tempRoot, 'user-data-task-dock-sidebar-navigation'),
+    })
+    const page = await app.firstWindow()
+    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-task-dock-sidebar-navigation'))
+    await page.setViewportSize({ width: 1280, height: 720 })
+
+    const taskDock = await expandTaskDockIfCollapsed(page)
+    await expect(page.getByRole('button', { name: '关闭任务坞' })).toBeVisible()
+    await page
+      .getByRole('navigation', { name: 'Workbench 主导航' })
+      .getByRole('link', { name: '设置', exact: true })
+      .click({ timeout: 2_000 })
+
+    await expect(page).toHaveURL(/#\/settings$/)
+    await expect(taskDock).toHaveAttribute('data-state', 'collapsed')
   })
 
   test('keeps the sidebar and task dock responsive, persistent, and keyboard accessible', async () => {
@@ -2849,6 +3441,8 @@ test.describe('production-first Workbench shell', () => {
     const stopTaskButton = page.getByRole('button', { name: '停止任务' })
     await expect(stopTaskButton).toBeVisible()
     await expect(page.getByRole('button', { name: '关闭任务坞' })).toBeVisible()
+    await expect(taskDock.getByRole('button', { name: '折叠任务坞' })).toBeFocused()
+    await expect(central).toHaveAttribute('inert', '')
     const stageItems = page.getByRole('list', { name: '完整任务阶段' }).getByRole('listitem')
     const stageBoxes = await Promise.all(
       Array.from({ length: 5 }, (_, index) => stageItems.nth(index).boundingBox()),
@@ -2859,9 +3453,11 @@ test.describe('production-first Workbench shell', () => {
       name: '展开任务坞，2 个运行中，1 个异常',
     })
     await expect(expandDockButton).toBeVisible()
+    await expect(central).not.toHaveAttribute('inert')
     await expandDockButton.focus()
     await page.keyboard.press('Enter')
-    await expect(taskDock.getByRole('button', { name: '折叠任务坞' })).toBeVisible()
+    await expect(taskDock.getByRole('button', { name: '折叠任务坞' })).toBeFocused()
+    await expect(central).toHaveAttribute('inert', '')
 
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await expect(
@@ -2869,6 +3465,7 @@ test.describe('production-first Workbench shell', () => {
     ).toHaveCSS('transition-property', 'none')
 
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -2883,6 +3480,7 @@ test.describe('production-first Workbench shell', () => {
 
     await page.getByRole('button', { name: '折叠任务坞' }).click()
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -2920,6 +3518,7 @@ test.describe('production-first Workbench shell', () => {
     }
 
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },
@@ -2948,6 +3547,7 @@ test.describe('production-first Workbench shell', () => {
 
     await taskDock.getByRole('button', { name: '折叠任务坞' }).click()
     for (const viewport of [
+      { width: 1100, height: 700 },
       { width: 1280, height: 720 },
       { width: 1440, height: 900 },
       { width: 1920, height: 1080 },

@@ -4,6 +4,7 @@ import { type DiagnosticLogWriter, errorForDiagnosticLog } from '../../diagnosti
 import type { GenerateRequest } from '../../grsai-adapter'
 import { getSecret } from '../../keychain'
 import { promptGeneratorService } from '../../prompt-generator-service'
+import { generationFailureFromError } from '../failures'
 import {
   type GenerationServiceDependencies,
   appErrorMessage,
@@ -306,9 +307,11 @@ export async function runComfyuiImg2imgBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
       let outputIndex = input.filenameStartIndex ?? 0
       const promptMode = comfyuiImg2imgPromptMode(input)
+      let fatalFailureObserved = false
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
-        if (isGenerationCancelled(taskId)) {
+        const inputIndex = input.inputIndexes?.[index] ?? index
+        if (fatalFailureObserved || isGenerationCancelled(taskId)) {
           break
         }
         emitImg2imgProgress(result, taskId, result.total, emit)
@@ -361,7 +364,7 @@ export async function runComfyuiImg2imgBatch(
             throw response.error ?? new AppErrorClass('HTTP_5XX', 'ComfyUI 图生图失败', true)
           }
           outputIndex += response.images.length
-          for (const image of response.images) {
+          for (const [responseIndex, image] of response.images.entries()) {
             const completedImage = {
               prompt: image.prompt ?? (preserveWorkflowPrompt ? '工作流默认提示词' : prompt),
               url: image.url,
@@ -378,6 +381,8 @@ export async function runComfyuiImg2imgBatch(
               artifactId: completedImage.artifactId,
               prompt: completedImage.prompt,
               sourceArtifactIds: [artifactId],
+              inputIndex,
+              outputIndex: input.outputIndexes?.[responseIndex] ?? responseIndex,
             })
           }
           if (response.images.length < batchSize) {
@@ -400,11 +405,15 @@ export async function runComfyuiImg2imgBatch(
             })
             .catch(() => null)
           result.failed += batchSize
-          result.failures.push({
-            prompt: promptMode === 'workflow' ? '工作流默认提示词' : (input.prompt?.trim() ?? ''),
-            error: appErrorMessage(error),
-            sourcePath: artifactId,
-          })
+          const failure = generationFailureFromError(
+            {
+              prompt: promptMode === 'workflow' ? '工作流默认提示词' : (input.prompt?.trim() ?? ''),
+              sourcePath: artifactId,
+            },
+            error,
+          )
+          result.failures.push(failure)
+          fatalFailureObserved ||= failure.fatal === true
         } finally {
           emitImg2imgProgress(result, taskId, result.total, emit)
         }

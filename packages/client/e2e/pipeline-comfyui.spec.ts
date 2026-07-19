@@ -847,12 +847,19 @@ test.describe('pipeline comfyui real probe', () => {
     await prepareApp(page, workbenchRoot)
     await reloadPipelinePageWithOptionMocks(page)
 
-    for (const stage of ['任务起点', '抠图', '侵权检测', 'PS 套版', '标题生成']) {
-      await expect(page.getByRole('group', { name: `${stage}阶段` })).toBeVisible()
+    const stageItems = page.getByRole('list', { name: '完整任务阶段' }).getByRole('listitem')
+    const stageEditNames = [
+      '编辑任务起点',
+      '编辑抠图',
+      '编辑侵权检测',
+      '编辑 PS 套版',
+      '编辑标题生成',
+    ]
+    await expect(stageItems).toHaveCount(stageEditNames.length)
+    for (const [index, name] of stageEditNames.entries()) {
+      await expect(stageItems.nth(index).getByRole('button', { name })).toBeVisible()
     }
-    await expect(page.getByRole('group', { name: '任务起点阶段' }).getByRole('switch')).toHaveCount(
-      0,
-    )
+    await expect(stageItems.first().getByRole('switch')).toHaveCount(0)
     await expect(page.getByRole('switch', { name: '启用抠图' })).toBeVisible()
     await page.getByRole('button', { name: '编辑侵权检测' }).focus()
     await page.keyboard.press('Enter')
@@ -901,7 +908,7 @@ test.describe('pipeline comfyui real probe', () => {
 
     await page.getByRole('tab', { name: '文生图' }).click()
     await expect(fieldTextbox(page, '任务名')).toHaveValue('')
-    await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '印花要求', exact: true })).toBeVisible()
     await fieldTextbox(page, '任务名').fill('文生图任务')
     await fieldTextbox(page, '印花货号').fill('TXT')
     await fieldTextbox(page, '分隔符').fill('+')
@@ -910,13 +917,13 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(page.getByText('提示词先走百炼，再送入晨羽文生图工作流。')).toBeVisible()
     await expect(page.getByText('文生图工作流', { exact: true })).toBeVisible()
     await expect(page.getByText('晨羽实例', { exact: true }).first()).toBeVisible()
-    await page.getByRole('button', { name: '点击填写印花要求' }).click()
+    await page.getByRole('button', { name: '印花要求', exact: true }).click()
     await page.getByPlaceholder('例如：圣诞元素、不要文字、适合儿童 T 恤').fill('文生图印花要求')
     await page.getByRole('button', { name: '收起' }).click()
 
     await page.getByRole('tab', { name: '图生图' }).click()
     await expect(fieldTextbox(page, '任务名')).toHaveValue('')
-    await expect(page.getByRole('button', { name: '点击填写印花要求' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '印花要求', exact: true })).toBeVisible()
     await fieldTextbox(page, '任务名').fill('图生图任务')
     await fieldTextbox(page, '印花货号').fill('IMG')
     await fieldTextbox(page, '分隔符').fill('~')
@@ -930,7 +937,7 @@ test.describe('pipeline comfyui real probe', () => {
         mimeType: 'image/png',
         buffer: Buffer.from('reference-image'),
       })
-    await page.getByRole('button', { name: '点击填写印花要求' }).click()
+    await page.getByRole('button', { name: '印花要求', exact: true }).click()
     await page.getByPlaceholder('例如：圣诞元素、不要文字、适合儿童 T 恤').fill('图生图印花要求')
     await page.getByRole('button', { name: '收起' }).click()
     await fieldCombobox(page, '生图方式').click()
@@ -996,7 +1003,9 @@ test.describe('pipeline comfyui real probe', () => {
     await expect(fieldTextbox(page, '印花货号')).toHaveValue('TXT')
     await expect(fieldTextbox(page, '分隔符')).toHaveValue('+')
     await expect(fieldCombobox(page, '印花类型')).toContainText('局部印花')
-    await expect(page.getByRole('button', { name: '文生图印花要求' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '印花要求', exact: true })).toContainText(
+      '文生图印花要求',
+    )
 
     await page.getByRole('tab', { name: '图生图' }).click()
     await expect(fieldTextbox(page, '任务名')).toHaveValue('图生图任务')
@@ -1007,7 +1016,9 @@ test.describe('pipeline comfyui real probe', () => {
     await fieldCombobox(page, '生图方式').click()
     await page.getByRole('option', { name: 'Grsai' }).click()
     await expect(page.getByAltText('reference.png')).toBeVisible()
-    await expect(page.getByRole('button', { name: '图生图印花要求' })).toBeVisible()
+    await expect(page.getByRole('button', { name: '印花要求', exact: true })).toContainText(
+      '图生图印花要求',
+    )
 
     await page.getByRole('tab', { name: '已有印花' }).click()
     await expect(fieldTextbox(page, '任务名')).toHaveValue('已有印花任务')
@@ -1049,8 +1060,10 @@ test.describe('pipeline comfyui real probe', () => {
       const launchedConfig = await readPipelineLaunchConfig(app, launchIndex)
       expect(launchedConfig?.source.mode).toBe(expectedMode)
       expect(launchedConfig?.name).toBe(expectedName)
-      await expect(page.getByText('完整任务运行中').first()).toBeVisible()
-      await expect(page.getByText(expectedName, { exact: true })).toBeVisible()
+      await expect(page.getByRole('tab', { name: '运行展示' })).toHaveAttribute(
+        'data-state',
+        'active',
+      )
       await expect(fieldTextbox(page, '任务名')).toHaveCount(0)
       await expect(page.getByRole('button', { name: '启动完整任务' })).toHaveCount(0)
 

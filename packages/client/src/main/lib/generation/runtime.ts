@@ -985,7 +985,16 @@ export async function emitImageComplete(
       path: payload.path,
     })
     if (dependencies.strictImageComplete) {
-      throw error
+      throw new AppErrorClass(
+        error instanceof AppErrorClass ? error.code : 'HTTP_5XX',
+        appErrorMessage(error),
+        error instanceof AppErrorClass ? error.retryable : true,
+        {
+          ...(error instanceof AppErrorClass ? error.details : {}),
+          kind: 'generation_callback_fatal',
+        },
+        error,
+      )
     }
   }
 }

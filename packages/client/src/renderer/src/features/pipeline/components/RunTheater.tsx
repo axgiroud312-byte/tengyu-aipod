@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { t } from '@/locale/t'
 import type { PipelineProgress, PipelineRunConfig } from '@tengyu-aipod/shared'
-import { CopyPlus, ScrollText, Square } from 'lucide-react'
+import { ArrowLeft, CopyPlus, ScrollText, Square } from 'lucide-react'
 import type { PipelineRailViewModel } from '../pipeline-progress-view-model'
 import type { PipelineConfigStage, PipelineValidationIssue } from '../types'
 import { PipelineRail } from './PipelineRail'
@@ -107,6 +107,7 @@ export function RunTheater({
   onLogOpenChange,
   onCancel,
   onCreateAnother,
+  onOpenSettings,
   onSelectStage,
   progress,
   railView,
@@ -121,6 +122,7 @@ export function RunTheater({
   onLogOpenChange: (open: boolean) => void
   onCancel: () => void
   onCreateAnother: () => void
+  onOpenSettings: () => void
   onSelectStage: (stage: PipelineConfigStage) => void
   progress: PipelineProgress | null
   railView: PipelineRailViewModel
@@ -169,11 +171,17 @@ export function RunTheater({
               <Square className="mr-2 h-4 w-4" />
               停止任务
             </Button>
-          ) : status === 'completed' ? (
-            <Button onClick={onCreateAnother} type="button">
-              <CopyPlus className="mr-2 h-4 w-4" />
-              按此方案再建任务
-            </Button>
+          ) : status ? (
+            <>
+              <Button onClick={onOpenSettings} type="button" variant="outline">
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                返回任务设置
+              </Button>
+              <Button onClick={onCreateAnother} type="button">
+                <CopyPlus className="mr-2 h-4 w-4" />
+                按此方案再建任务
+              </Button>
+            </>
           ) : null}
         </div>
       </header>

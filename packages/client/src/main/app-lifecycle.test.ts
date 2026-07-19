@@ -1,5 +1,10 @@
 import { describe, expect, it, vi } from 'vitest'
-import { countRunningTasks, installQuitGuard, installSingleInstanceLock } from './app-lifecycle'
+import {
+  countRunningTasks,
+  initializeWorkbenchAfterPipelineCleanup,
+  installQuitGuard,
+  installSingleInstanceLock,
+} from './app-lifecycle'
 
 function createMockApp() {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
@@ -16,6 +21,41 @@ function createMockApp() {
 }
 
 describe('app lifecycle', () => {
+  it('waits for persisted pipeline cleanup before registering IPC or creating a window', async () => {
+    let finishCleanup: (() => void) | undefined
+    const cleanupGate = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    const events: string[] = []
+
+    const initialization = initializeWorkbenchAfterPipelineCleanup({
+      cleanupPersistedPipelineRuns: async () => {
+        events.push('cleanup-started')
+        await cleanupGate
+        events.push('cleanup-completed')
+      },
+      registerBusinessIpc: () => {
+        events.push('ipc-registered')
+      },
+      createWindow: () => {
+        events.push('window-created')
+      },
+    })
+
+    await Promise.resolve()
+    expect(events).toEqual(['cleanup-started'])
+
+    finishCleanup?.()
+    await initialization
+
+    expect(events).toEqual([
+      'cleanup-started',
+      'cleanup-completed',
+      'ipc-registered',
+      'window-created',
+    ])
+  })
+
   it('quits immediately when another instance already owns the lock', () => {
     const { app } = createMockApp()
     app.requestSingleInstanceLock.mockReturnValue(false)

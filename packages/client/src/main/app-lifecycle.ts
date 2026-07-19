@@ -31,6 +31,20 @@ type QuitDialog = {
   }): Promise<{ response: number }>
 }
 
+export async function initializeWorkbenchAfterPipelineCleanup({
+  cleanupPersistedPipelineRuns,
+  registerBusinessIpc,
+  createWindow,
+}: {
+  cleanupPersistedPipelineRuns: () => Promise<void>
+  registerBusinessIpc: () => void
+  createWindow: () => void
+}) {
+  await cleanupPersistedPipelineRuns()
+  registerBusinessIpc()
+  createWindow()
+}
+
 export function installSingleInstanceLock({
   app,
   getWindows,

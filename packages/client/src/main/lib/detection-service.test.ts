@@ -1,7 +1,7 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import type { Skill } from '@tengyu-aipod/shared'
+import { AppErrorClass, type Skill } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   type DetectionBatchConfig,
@@ -624,6 +624,63 @@ describe('DetectionService', () => {
     })
     expect(visionCompletion).toHaveBeenCalledTimes(1)
     expect(result.results).toHaveLength(1)
+  })
+
+  it('stops scheduling later images after a fatal provider configuration error', async () => {
+    const imagePaths = Array.from({ length: 6 }, (_, index) =>
+      join(tempRoot, 'inputs', `fatal-${index}.png`),
+    )
+    await Promise.all(imagePaths.map((path, index) => createImage(path, `fatal-${index}`)))
+    const fakeDb = createFakeDb()
+    const visionCompletion = vi
+      .fn()
+      .mockRejectedValue(
+        new AppErrorClass('HTTP_4XX', '阿里云百炼 API Key 无效', false, { status: 401 }),
+      )
+    const preprocess = vi.fn(async (options: { taskId: string; inputName?: string }) => {
+      const outputPath = join(
+        workbenchRoot,
+        '.workbench',
+        'tmp',
+        'detection',
+        options.taskId,
+        `${options.inputName ?? 'image'}_processed.jpg`,
+      )
+      await mkdir(dirname(outputPath), { recursive: true })
+      await writeFile(outputPath, 'processed')
+      return {
+        outputPath,
+        mimeType: 'image/jpeg',
+        sizeBytes: 9,
+        dataUrl: 'data:image/jpeg;base64,cHJvY2Vzc2Vk',
+      }
+    })
+    const service = new DetectionService()
+
+    const result = await service.runDetectionBatch(
+      {
+        imagePaths,
+        skillId: 'infringement-v2',
+        model: 'qwen3.6-flash',
+        concurrency: 2,
+        maxRetries: 0,
+        taskId: 'fatal-provider-config',
+      } satisfies DetectionBatchConfig,
+      {
+        skillCache: { getSkill: vi.fn().mockResolvedValue(detectionSkill()) },
+        createBailianAdapter: () => ({ visionCompletion }),
+        preprocessPool: { process: preprocess, close: vi.fn() },
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'sk-test',
+        openDatabase: fakeDb.openDatabase,
+        tempFileManager: createTempFileManager(),
+      },
+    )
+
+    expect(visionCompletion).toHaveBeenCalledTimes(2)
+    expect(result.results).toHaveLength(2)
+    expect(result.results.every((item) => item.status === 'failed' && item.fatal)).toBe(true)
+    expect(result.failed).toBe(2)
   })
 
   it('skips cached detections for the same image, model, skill, and version', async () => {

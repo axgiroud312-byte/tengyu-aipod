@@ -236,11 +236,41 @@ export function createDetectionStage(
           for (const { item } of indexedItems) {
             markFailed(item, message)
           }
+          throw error
         } finally {
           dependencies.setCurrentCancel(null)
         }
 
         if (batchResult) {
+          const fatalResult = batchResult.results.find(
+            (detectionItem) => detectionItem.status === 'failed' && detectionItem.fatal,
+          )
+          if (fatalResult && fatalResult.status === 'failed') {
+            const resultsByPath = new Map(
+              batchResult.results.map((detectionItem) => [detectionItem.imagePath, detectionItem]),
+            )
+            for (const { item } of indexedItems) {
+              const itemResult = resultsByPath.get(item.path)
+              if (itemResult && itemResult.status !== 'failed') {
+                continue
+              }
+              markFailed(
+                item,
+                itemResult?.status === 'failed' ? itemResult.error : fatalResult.error,
+                itemResult?.status === 'failed' ? itemResult.errorCode : fatalResult.errorCode,
+              )
+            }
+            throw new AppErrorClass(
+              fatalResult.appErrorCode ?? 'HTTP_4XX',
+              fatalResult.error,
+              fatalResult.retryable ?? false,
+              {
+                ...fatalResult.errorDetails,
+                kind: 'detection_provider_fatal',
+                errorCode: fatalResult.errorCode,
+              },
+            )
+          }
           const remainingResults = [...batchResult.results]
           for (const { displayIndex, item } of indexedItems) {
             const resultIndex = remainingResults.findIndex(
