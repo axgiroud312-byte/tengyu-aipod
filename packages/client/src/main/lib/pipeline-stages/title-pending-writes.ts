@@ -51,6 +51,33 @@ function pendingTitleWritePath(workbenchRoot: string, runId: string, batchDir: s
   return join(pendingTitleWritesDirectory(workbenchRoot, runId), `${batchHash}.json`)
 }
 
+function filesystemErrorCode(error: unknown) {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code
+  }
+  return null
+}
+
+function pendingDirectoryReadError(path: string, error: unknown) {
+  const filesystemCode = filesystemErrorCode(error)
+  return new AppErrorClass(
+    'HTTP_5XX',
+    `无法读取标题待补写目录，请检查工作区权限和目录状态后重试：${path}`,
+    false,
+    {
+      operation: 'listPendingTitleWrites',
+      path,
+      ...(filesystemCode ? { filesystemCode } : {}),
+    },
+    error,
+  )
+}
+
 export async function savePendingTitleWrite(workbenchRoot: string, input: PendingTitleWriteInput) {
   const filePath = pendingTitleWritePath(workbenchRoot, input.runId, input.batchDir)
   const directory = pendingTitleWritesDirectory(workbenchRoot, input.runId)
@@ -93,14 +120,15 @@ async function readPendingRecord(filePath: string): Promise<PendingTitleWriteRec
 }
 
 export async function listPendingTitleWrites(workbenchRoot: string) {
+  const root = pendingRoot(workbenchRoot)
   let runEntries: Dirent[]
   try {
-    runEntries = await readdir(pendingRoot(workbenchRoot), { withFileTypes: true })
+    runEntries = await readdir(root, { withFileTypes: true })
   } catch (error) {
-    if (typeof error === 'object' && error !== null && 'code' in error && error.code === 'ENOENT') {
+    if (filesystemErrorCode(error) === 'ENOENT') {
       return []
     }
-    throw error
+    throw pendingDirectoryReadError(root, error)
   }
 
   const records: PendingTitleWriteRecord[] = []
@@ -113,15 +141,10 @@ export async function listPendingTitleWrites(workbenchRoot: string) {
     try {
       files = await readdir(directory, { withFileTypes: true })
     } catch (error) {
-      if (
-        typeof error === 'object' &&
-        error !== null &&
-        'code' in error &&
-        error.code === 'ENOENT'
-      ) {
+      if (filesystemErrorCode(error) === 'ENOENT') {
         continue
       }
-      throw error
+      throw pendingDirectoryReadError(directory, error)
     }
     for (const file of files) {
       if (!file.isFile() || !file.name.endsWith('.json')) {

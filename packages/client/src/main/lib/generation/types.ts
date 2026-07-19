@@ -110,6 +110,15 @@ export type GenerationImageCompletePayload = {
   outputIndex?: number | undefined
 }
 
+export type GenerationPromptResolvedPayload = {
+  taskId: string
+  capability: 'img2img'
+  inputIndex: number
+  sourcePath: string
+  sourceArtifactId: string
+  prompt: string
+}
+
 export type GenerationTaskEvent =
   | { ok: true; result: GenerationRunResult }
   | { ok: false; taskId: string; error: string }
@@ -182,6 +191,7 @@ export type ComfyuiImg2imgRunInput = ComfyuiInstanceRunInput & {
   workflowVersion?: string | undefined
   promptMode?: 'ai' | 'workflow' | 'manual' | undefined
   prompt?: string | undefined
+  resolvedPrompt?: string | undefined
   promptSkillId?: string | undefined
   promptSkillVersion?: string | undefined
   promptModel?: string | undefined

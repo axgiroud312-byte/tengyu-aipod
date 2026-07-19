@@ -72,4 +72,24 @@ describe('pending title writes', () => {
     await expect(listPendingTitleWrites(workbenchRoot)).rejects.toThrow(filePath)
     await expect(readFile(filePath, 'utf8')).resolves.toBe('{not-json')
   })
+
+  it('classifies a non-missing pending directory read failure with path context', async () => {
+    const workbenchRoot = await mkdtemp(join(tmpdir(), 'tengyu-pending-title-read-'))
+    tempRoots.push(workbenchRoot)
+    const pendingRunsPath = join(workbenchRoot, '.workbench', 'pipeline-runs')
+    await mkdir(join(workbenchRoot, '.workbench'), { recursive: true })
+    await writeFile(pendingRunsPath, 'not a directory', 'utf8')
+
+    await expect(listPendingTitleWrites(workbenchRoot)).rejects.toMatchObject({
+      name: 'AppError',
+      code: 'HTTP_5XX',
+      message: `无法读取标题待补写目录，请检查工作区权限和目录状态后重试：${pendingRunsPath}`,
+      retryable: false,
+      details: {
+        operation: 'listPendingTitleWrites',
+        path: pendingRunsPath,
+        filesystemCode: 'ENOTDIR',
+      },
+    })
+  })
 })

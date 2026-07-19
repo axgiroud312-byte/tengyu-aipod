@@ -60,6 +60,7 @@ import type {
   GenerationDebugLogLevel,
   GenerationImageCompletePayload,
   GenerationProgress,
+  GenerationPromptResolvedPayload,
   GenerationRunResult,
   GenerationTaskEvent,
   Img2imgReferencePayload,
@@ -99,6 +100,7 @@ export type GenerationServiceDependencies = {
   emitProgress?: (progress: GenerationProgress) => void
   emitDebugLog?: (entry: GenerationDebugLogEntry) => void
   onImageComplete?: (image: GenerationImageCompletePayload) => void | Promise<void>
+  onPromptResolved?: (payload: GenerationPromptResolvedPayload) => void | Promise<void>
   strictImageComplete?: boolean | undefined
   tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>
 }
@@ -996,6 +998,39 @@ export async function emitImageComplete(
         error,
       )
     }
+  }
+}
+
+export async function emitPromptResolved(
+  dependencies: Pick<GenerationServiceDependencies, 'onPromptResolved' | 'emitDebugLog'>,
+  payload: GenerationPromptResolvedPayload,
+) {
+  if (!dependencies.onPromptResolved) {
+    return
+  }
+  try {
+    await dependencies.onPromptResolved(payload)
+  } catch (error) {
+    createGenerationDebugLogger(dependencies, {
+      taskId: payload.taskId,
+      capability: payload.capability,
+    })('提示词持久化回调失败', 'error', {
+      operation: 'onPromptResolved',
+      error: appErrorMessage(error),
+      sourceIndex: payload.inputIndex,
+      sourceImage: payload.sourcePath,
+      artifactId: payload.sourceArtifactId,
+    })
+    throw new AppErrorClass(
+      error instanceof AppErrorClass ? error.code : 'HTTP_5XX',
+      appErrorMessage(error),
+      error instanceof AppErrorClass ? error.retryable : true,
+      {
+        ...(error instanceof AppErrorClass ? error.details : {}),
+        kind: 'generation_callback_fatal',
+      },
+      error,
+    )
   }
 }
 

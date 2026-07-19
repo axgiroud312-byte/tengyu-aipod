@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { copyFile, mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
 import { basename, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import {
@@ -22,6 +22,7 @@ import {
   type PipelineRunStats,
   type PipelineRuntimeLogEntry,
   type PipelineSourceConfig,
+  type PipelineSourceManifestItem,
   type PipelineTaskEvent,
   WORKBENCH_DIRECTORIES,
   isPipelineRunConfig,
@@ -330,6 +331,31 @@ function imageFileExtension(path: string) {
 
 function naturalCompare(left: string, right: string) {
   return left.localeCompare(right, 'zh-CN', { numeric: true, sensitivity: 'base' })
+}
+
+function sourceManifestItemKey(prefix: string, folder: string, imagePath: string) {
+  const relativePath = relative(resolve(folder), resolve(imagePath))
+    .split(sep)
+    .join('/')
+    .normalize('NFC')
+  const pathIdentity = process.platform === 'win32' ? relativePath.toLowerCase() : relativePath
+  const digest = createHash('sha256').update(pathIdentity).digest('hex').slice(0, 32)
+  return `${prefix}-${digest}`
+}
+
+function buildSourceManifest(
+  prefix: string,
+  folder: string,
+  paths: readonly string[],
+): PipelineSourceManifestItem[] {
+  return paths.map((path) => ({
+    itemKey: sourceManifestItemKey(prefix, folder, path),
+    path,
+  }))
+}
+
+function generatedSourceOutputItemKey(sourceItemKey: string, outputIndex: number) {
+  return `${sourceItemKey}-${outputIndex + 1}`
 }
 
 function mimeTypeFromPath(path: string) {
@@ -1014,7 +1040,7 @@ async function resolvePrompts(
   printMode: PipelineRunConfig['printMode'],
   referenceImages?: Array<{ base64: string; mime_type: string }>,
 ) {
-  if (prompt.mode === 'manual') {
+  if (prompt.mode === 'manual' || prompt.prompts?.length) {
     return ensurePromptList(prompt.prompts)
   }
   if (!prompt.requirement?.trim()) {
@@ -1250,6 +1276,7 @@ export class PipelineService {
       activePrintSkuLock = this.acquirePrintSkuLock(runId, parsedConfig)
       await this.assertRunConfigPaths(workbenchRoot, parsedConfig)
       const resumeState = this.buildResumeState(detail)
+      this.assertSourceManifestCanResume(parsedConfig, resumeState)
       this.assertGenerationSourceCanResume(parsedConfig, resumeState)
       await this.assertResumeDiskState(runId, parsedConfig, detail)
 
@@ -1619,44 +1646,85 @@ export class PipelineService {
     runId: string,
     config: PipelineRunConfig,
   ): Promise<PipelineRunConfig> {
+    let normalizedConfig = config
     if (
-      config.source.mode !== 'img2img' ||
-      config.source.provider !== 'grsai' ||
-      !config.source.referenceImages?.length
+      config.source.mode === 'img2img' &&
+      config.source.provider === 'grsai' &&
+      config.source.referenceImages?.length
     ) {
-      return config
-    }
+      const referenceFolder = join(
+        workbenchRoot,
+        WORKBENCH_DIRECTORIES.metadata,
+        PIPELINE_RUNS_FOLDER,
+        safePathSegment(runId),
+        'references',
+      )
+      await mkdir(referenceFolder, { recursive: true })
+      const referenceImagePaths = await Promise.all(
+        config.source.referenceImages.map(
+          async (image: PipelineReferenceImageInput, index: number) => {
+            const baseName = safePathSegment(basename(image.name, extname(image.name)))
+            const targetPath = join(
+              referenceFolder,
+              `${String(index + 1).padStart(2, '0')}-${baseName}${referenceImageExtension(image)}`,
+            )
+            await writeFile(targetPath, decodeReferenceImageBase64(image.base64))
+            return targetPath
+          },
+        ),
+      )
 
-    const referenceFolder = join(
-      workbenchRoot,
-      WORKBENCH_DIRECTORIES.metadata,
-      PIPELINE_RUNS_FOLDER,
-      safePathSegment(runId),
-      'references',
-    )
-    await mkdir(referenceFolder, { recursive: true })
-    const referenceImagePaths = await Promise.all(
-      config.source.referenceImages.map(
-        async (image: PipelineReferenceImageInput, index: number) => {
-          const baseName = safePathSegment(basename(image.name, extname(image.name)))
-          const targetPath = join(
-            referenceFolder,
-            `${String(index + 1).padStart(2, '0')}-${baseName}${referenceImageExtension(image)}`,
-          )
-          await writeFile(targetPath, decodeReferenceImageBase64(image.base64))
-          return targetPath
+      const { referenceImages: _referenceImages, ...sourceWithoutUploads } = config.source
+      normalizedConfig = {
+        ...config,
+        source: {
+          ...sourceWithoutUploads,
+          referenceImagePaths,
         },
-      ),
-    )
-
-    const { referenceImages: _referenceImages, ...sourceWithoutUploads } = config.source
-    return {
-      ...config,
-      source: {
-        ...sourceWithoutUploads,
-        referenceImagePaths,
-      },
+      }
     }
+
+    const source = normalizedConfig.source
+    if (source.mode === 'collection') {
+      const paths = await scanImageFiles(source.sourceFolder)
+      if (paths.length === 0) {
+        throw new AppErrorClass('HTTP_4XX', '采集目录里没有可提取的图片', false)
+      }
+      return {
+        ...normalizedConfig,
+        source: {
+          ...source,
+          sourceManifest: buildSourceManifest('source', source.sourceFolder, paths),
+        },
+      }
+    }
+    if (source.mode === 'existing_prints') {
+      const paths = await scanImageFiles(source.printFolder)
+      if (paths.length === 0) {
+        throw new AppErrorClass('HTTP_4XX', '印花目录里没有可套版图片', false)
+      }
+      return {
+        ...normalizedConfig,
+        source: {
+          ...source,
+          sourceManifest: buildSourceManifest('existing-print', source.printFolder, paths),
+        },
+      }
+    }
+    if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
+      const paths = await scanImageFiles(source.sourceFolder)
+      if (paths.length === 0) {
+        throw new AppErrorClass('HTTP_4XX', '图生图图片文件夹里没有可用图片', false)
+      }
+      return {
+        ...normalizedConfig,
+        source: {
+          ...source,
+          sourceManifest: buildSourceManifest('img2img', source.sourceFolder, paths),
+        },
+      }
+    }
+    return normalizedConfig
   }
 
   private async assertRunConfigPaths(workbenchRoot: string, config: PipelineRunConfig) {
@@ -1724,6 +1792,20 @@ export class PipelineService {
       config,
       stats: DEFAULT_STATS,
     })
+  }
+
+  private persistResolvedAiPromptPlan(
+    db: Pick<SqliteDatabase, 'prepare'>,
+    runId: string,
+    config: PipelineRunConfig,
+    prompts: string[],
+  ) {
+    const source = config.source
+    if ((source.mode !== 'txt2img' && source.mode !== 'img2img') || source.prompt?.mode !== 'ai') {
+      return
+    }
+    source.prompt.prompts = [...prompts]
+    pipelineStore.updatePipelineRunConfig(db, { runId, config })
   }
 
   private completeRun(
@@ -1861,7 +1943,28 @@ export class PipelineService {
     if (resumeState.completedSourceStep) {
       return
     }
-    if (source.prompt?.mode === 'ai') {
+    if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
+      if (source.prompt?.mode === 'ai') {
+        const promptBySourceKey = source.prompt.resolvedPromptsBySourceKey ?? {}
+        const sourceManifest = source.sourceManifest ?? []
+        const completedSourceItems = resumeState.completedItemsByStep.get('source') ?? []
+        const missingPromptSnapshot = completedSourceItems.some((item) => {
+          const sourceItem = sourceManifest.find((manifestItem) =>
+            item.item_key.startsWith(`${manifestItem.itemKey}-`),
+          )
+          return !sourceItem || !promptBySourceKey[sourceItem.itemKey]?.trim()
+        })
+        if (missingPromptSnapshot) {
+          throw new AppErrorClass(
+            'HTTP_4XX',
+            'AI 提示词未保存，无法安全续跑生成阶段，请使用已生成印花从“已有印花来源”新建完整任务',
+            false,
+          )
+        }
+      }
+      return
+    }
+    if (source.prompt?.mode === 'ai' && !source.prompt.prompts?.some((prompt) => prompt.trim())) {
       throw new AppErrorClass(
         'HTTP_4XX',
         'AI 提示词未保存，无法安全续跑生成阶段，请使用已生成印花从“已有印花来源”新建完整任务',
@@ -1874,6 +1977,49 @@ export class PipelineService {
       throw new AppErrorClass(
         'HTTP_4XX',
         '该完整任务缺少可精确续跑的生成槽位记录，无法安全续跑，请使用已生成印花从“已有印花来源”新建完整任务',
+        false,
+      )
+    }
+  }
+
+  private assertSourceManifestCanResume(
+    config: PipelineRunConfig,
+    resumeState: PipelineResumeState,
+  ) {
+    const source = config.source
+    if (
+      source.mode !== 'collection' &&
+      source.mode !== 'existing_prints' &&
+      !(source.mode === 'img2img' && source.provider === 'comfyui-chenyu')
+    ) {
+      return
+    }
+    if (!source.sourceManifest?.length) {
+      if (resumeState.completedSourceStep) {
+        return
+      }
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        '该完整任务缺少冻结来源清单，无法安全续跑，请从原来源重新启动新的完整任务',
+        false,
+      )
+    }
+
+    const sourceManifest = source.sourceManifest
+    const manifestKeys = new Set(sourceManifest.map((item) => item.itemKey))
+    const completedSourceItems = resumeState.completedItemsByStep.get('source') ?? []
+    const hasUnknownKey = completedSourceItems.some((item) => {
+      if (source.mode !== 'img2img') {
+        return !manifestKeys.has(item.item_key)
+      }
+      return !sourceManifest.some((manifestItem) =>
+        item.item_key.startsWith(`${manifestItem.itemKey}-`),
+      )
+    })
+    if (hasUnknownKey) {
+      throw new AppErrorClass(
+        'HTTP_4XX',
+        '该完整任务的来源身份记录不完整，无法安全续跑，请从原来源重新启动新的完整任务',
         false,
       )
     }
@@ -3488,69 +3634,84 @@ export class PipelineService {
     resumeState?: PipelineResumeState | undefined,
   ): Promise<StreamingSourceProducerResult> {
     const source = config.source
-    if (source.mode === 'collection') {
-      const sourcePaths = await scanImageFiles(source.sourceFolder)
-      if (sourcePaths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '采集目录里没有可提取的图片', false)
+    const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
+    const completedSourceStep = resumeState?.completedSourceStep
+    if (completedSourceStep && completedSourceCount >= completedSourceStep.output_count) {
+      const total = Math.max(
+        completedSourceStep.input_count,
+        completedSourceStep.output_count,
+        completedSourceCount,
+      )
+      callbacks.onPlannedCount?.(total)
+      return {
+        taskId: `${runId}-${source.mode}-source`,
+        total,
+        succeeded: completedSourceCount,
+        failed: Math.max(0, total - completedSourceCount),
+        images: [],
+        failures: [],
+        itemCount: completedSourceCount,
       }
-      callbacks.onPlannedCount?.(sourcePaths.length)
-      for (const [index, sourcePath] of sourcePaths.entries()) {
+    }
+    if (source.mode === 'collection') {
+      const sourceManifest = source.sourceManifest
+      if (!sourceManifest?.length) {
+        throw new AppErrorClass('HTTP_5XX', '完整任务缺少冻结采集来源清单', true)
+      }
+      callbacks.onPlannedCount?.(sourceManifest.length)
+      for (const sourceItem of sourceManifest) {
         this.assertCanAcceptMoreWork(active)
-        const itemKey = `source-${index + 1}`
-        if (resumeState?.completedSourceKeys.has(itemKey)) {
+        if (resumeState?.completedSourceKeys.has(sourceItem.itemKey)) {
           continue
         }
         onItem({
-          itemKey,
-          path: sourcePath,
+          itemKey: sourceItem.itemKey,
+          path: sourceItem.path,
           sourceArtifactIds: [],
         })
       }
       return {
         taskId: `${runId}-collection-source`,
-        total: sourcePaths.length,
-        succeeded: sourcePaths.length,
+        total: sourceManifest.length,
+        succeeded: sourceManifest.length,
         failed: 0,
         images: [],
         failures: [],
-        itemCount: sourcePaths.length,
+        itemCount: sourceManifest.length,
       }
     }
     if (source.mode === 'existing_prints') {
-      const paths = await scanImageFiles(source.printFolder)
-      if (paths.length === 0) {
-        throw new AppErrorClass('HTTP_4XX', '印花目录里没有可套版图片', false)
+      const sourceManifest = source.sourceManifest
+      if (!sourceManifest?.length) {
+        throw new AppErrorClass('HTTP_5XX', '完整任务缺少冻结已有印花来源清单', true)
       }
-      callbacks.onPlannedCount?.(paths.length)
-      for (const [index, path] of paths.entries()) {
+      callbacks.onPlannedCount?.(sourceManifest.length)
+      for (const sourceItem of sourceManifest) {
         this.assertCanAcceptMoreWork(active)
-        const itemKey = `existing-print-${index + 1}`
-        if (resumeState?.completedSourceKeys.has(itemKey)) {
+        if (resumeState?.completedSourceKeys.has(sourceItem.itemKey)) {
           continue
         }
         onItem({
-          itemKey,
-          path,
+          itemKey: sourceItem.itemKey,
+          path: sourceItem.path,
           sourceArtifactIds: [],
         })
       }
       return {
         taskId: `${runId}-existing-prints-source`,
-        total: paths.length,
-        succeeded: paths.length,
+        total: sourceManifest.length,
+        succeeded: sourceManifest.length,
         failed: 0,
-        images: paths.map((path) => ({
+        images: sourceManifest.map((item) => ({
           prompt: '',
           url: '',
-          localPath: path,
+          localPath: item.path,
         })),
         failures: [],
-        itemCount: paths.length,
+        itemCount: sourceManifest.length,
       }
     }
     if (source.mode === 'txt2img') {
-      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
-      const completedSourceStep = resumeState?.completedSourceStep
       if (completedSourceStep && completedSourceCount >= completedSourceStep.output_count) {
         const total = Math.max(
           completedSourceStep.input_count,
@@ -3569,6 +3730,7 @@ export class PipelineService {
         }
       }
       const prompts = await resolvePrompts(source.prompt, 'txt2img', config.printMode)
+      this.persistResolvedAiPromptPlan(db, runId, config, prompts)
       callbacks.onPlannedCount?.(prompts.length)
       if (source.provider === 'comfyui-chenyu') {
         const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
@@ -3604,9 +3766,6 @@ export class PipelineService {
                 {
                   strictImageComplete: true,
                   onImageComplete: async (payload) => {
-                    if (this.stopAcceptingMoreWork(active)) {
-                      return
-                    }
                     itemCount += 1
                     onItem({
                       itemKey: generatedSourceItemKey('txt2img', payload),
@@ -3672,9 +3831,6 @@ export class PipelineService {
           {
             strictImageComplete: true,
             onImageComplete: async (payload) => {
-              if (this.stopAcceptingMoreWork(active)) {
-                return
-              }
               itemCount += 1
               onItem({
                 itemKey: generatedSourceItemKey('txt2img', payload),
@@ -3702,27 +3858,32 @@ export class PipelineService {
       }
     }
     if (source.mode === 'img2img' && source.provider === 'comfyui-chenyu') {
-      const sourcePaths = await scanImageFiles(source.sourceFolder)
+      const sourceManifest = source.sourceManifest
+      if (!sourceManifest?.length) {
+        throw new AppErrorClass('HTTP_5XX', '完整任务缺少冻结图生图来源清单', true)
+      }
+      const aiPromptConfig = source.prompt?.mode === 'ai' ? source.prompt : null
       const batchSize = source.comfyui.batchSize ?? 1
-      const completedSourceCount = resumeState?.completedItemsByStep.get('source')?.length ?? 0
-      callbacks.onPlannedCount?.(sourcePaths.length * batchSize)
+      callbacks.onPlannedCount?.(sourceManifest.length * batchSize)
       const queue = this.comfyuiQueueForInstance(source.comfyui.instanceUuid)
       const aggregate: GenerationRunResult = {
         taskId: `${runId}-img2img`,
-        total: sourcePaths.length * batchSize,
+        total: sourceManifest.length * batchSize,
         succeeded: completedSourceCount,
         failed: 0,
         images: [],
         failures: [],
       }
       let itemCount = completedSourceCount
-      for (const [index, sourcePath] of sourcePaths.entries()) {
+      for (const [index, sourceItem] of sourceManifest.entries()) {
         const pendingOutputIndexes = Array.from(
           { length: batchSize },
           (_, outputIndex) => outputIndex,
         ).filter(
           (outputIndex) =>
-            !resumeState?.completedSourceKeys.has(`img2img-${index + 1}-${outputIndex + 1}`),
+            !resumeState?.completedSourceKeys.has(
+              generatedSourceOutputItemKey(sourceItem.itemKey, outputIndex),
+            ),
         )
         const outputBatches =
           resumeState && pendingOutputIndexes.length < batchSize
@@ -3737,11 +3898,12 @@ export class PipelineService {
           const taskId = resumeState
             ? `${runId}-img2img-${index + 1}-${firstOutputIndex + 1}`
             : `${runId}-img2img-${index + 1}`
+          const resolvedPrompt = aiPromptConfig?.resolvedPromptsBySourceKey?.[sourceItem.itemKey]
           const result = await this.withGenerationCancel(active, taskId, async () =>
             queue.runExclusive(() =>
               runComfyuiImg2imgBatch(
                 {
-                  sourceImagePaths: [sourcePath],
+                  sourceImagePaths: [sourceItem.path],
                   workflowId: source.comfyui.workflowId,
                   taskId,
                   outputTaskName: taskName,
@@ -3752,16 +3914,53 @@ export class PipelineService {
                   ...comfyuiImg2imgOptionalFields(source.comfyui),
                   batchSize: outputIndexes.length,
                   ...comfyuiImg2imgPromptFields(source.prompt, config.printMode),
+                  ...(resolvedPrompt !== undefined ? { resolvedPrompt } : {}),
                 },
                 {
                   strictImageComplete: true,
+                  ...(aiPromptConfig
+                    ? {
+                        onPromptResolved: async (payload) => {
+                          if (
+                            payload.inputIndex !== index ||
+                            resolve(payload.sourcePath) !== resolve(sourceItem.path)
+                          ) {
+                            throw new AppErrorClass(
+                              'HTTP_5XX',
+                              '图生图提示词来源与冻结来源清单不一致，已停止任务',
+                              false,
+                              {
+                                expectedInputIndex: index,
+                                actualInputIndex: payload.inputIndex,
+                                expectedSourcePath: sourceItem.path,
+                                actualSourcePath: payload.sourcePath,
+                              },
+                            )
+                          }
+                          const resolvedPrompt = payload.prompt.trim()
+                          if (!resolvedPrompt) {
+                            throw new AppErrorClass(
+                              'HTTP_5XX',
+                              '图生图提示词为空，无法保存后继续生图',
+                              false,
+                              { sourceItemKey: sourceItem.itemKey },
+                            )
+                          }
+                          aiPromptConfig.resolvedPromptsBySourceKey = {
+                            ...aiPromptConfig.resolvedPromptsBySourceKey,
+                            [sourceItem.itemKey]: resolvedPrompt,
+                          }
+                          pipelineStore.updatePipelineRunConfig(db, { runId, config })
+                        },
+                      }
+                    : {}),
                   onImageComplete: async (payload) => {
-                    if (this.stopAcceptingMoreWork(active)) {
-                      return
-                    }
                     itemCount += 1
                     onItem({
-                      itemKey: generatedSourceItemKey('img2img', payload),
+                      itemKey: generatedSourceOutputItemKey(
+                        sourceItem.itemKey,
+                        payload.outputIndex ?? 0,
+                      ),
                       path: payload.path,
                       artifactId: payload.artifactId,
                       printId: payload.printId,
@@ -3805,6 +4004,7 @@ export class PipelineService {
         config.printMode,
         promptReferences,
       )
+      this.persistResolvedAiPromptPlan(db, runId, config, prompts)
       callbacks.onPlannedCount?.(prompts.length)
       if (!source.grsai) {
         throw new AppErrorClass('HTTP_4XX', '图生图缺少 Grsai 配置', false)
@@ -3846,9 +4046,6 @@ export class PipelineService {
           {
             strictImageComplete: true,
             onImageComplete: async (payload) => {
-              if (this.stopAcceptingMoreWork(active)) {
-                return
-              }
               itemCount += 1
               onItem({
                 itemKey: generatedSourceItemKey('img2img', payload),

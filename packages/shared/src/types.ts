@@ -40,6 +40,12 @@ export interface PipelinePromptConfig {
   skillId?: string
   skillVersion?: string
   model?: string
+  resolvedPromptsBySourceKey?: Record<string, string>
+}
+
+export interface PipelineSourceManifestItem {
+  itemKey: string
+  path: string
 }
 
 export interface PipelineComfyuiWorkflowConfig {
@@ -83,6 +89,7 @@ export type PipelineSourceConfig =
       mode: 'collection'
       sourceFolder: string
       extract: PipelineExtractConfig
+      sourceManifest?: PipelineSourceManifestItem[]
     }
   | {
       mode: 'txt2img'
@@ -112,11 +119,13 @@ export type PipelineSourceConfig =
       sourceFolder: string
       prompt?: PipelinePromptConfig
       comfyui: PipelineComfyuiImg2imgConfig
+      sourceManifest?: PipelineSourceManifestItem[]
     }
   | {
       mode: 'existing_prints'
       printFolder: string
       startStep?: PipelineStartStep
+      sourceManifest?: PipelineSourceManifestItem[]
     }
 
 export interface PipelineMattingConfig {

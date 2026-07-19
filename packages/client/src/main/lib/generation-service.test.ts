@@ -1945,6 +1945,130 @@ describe('generation comfyui img2img service', () => {
     expect(text).not.toContain('bailian-key')
   })
 
+  it('persists each resolved ComfyUI img2img AI prompt before submitting generation', async () => {
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'prompt-source.png')
+    await createImage(printPath, 'prompt-source-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'prompt-source-artifact',
+        print_id: 'pri_prompt_source',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+    const events: string[] = []
+    const generatePrompts = vi
+      .spyOn(promptGeneratorService, 'generatePrompts')
+      .mockImplementation(async () => {
+        events.push('prompt-resolved')
+        return ['persisted before submit']
+      })
+    const generate = vi.fn().mockImplementation(async () => {
+      events.push('generation-submitted')
+      return {
+        status: 'succeeded',
+        images: [{ url: 'file:///must-not-exist.png', local_path: '/must-not-exist.png' }],
+      }
+    })
+    const onPromptResolved = vi.fn().mockImplementation(async () => {
+      events.push('prompt-persisted')
+      throw new Error('prompt plan persistence failed')
+    })
+
+    const result = await runComfyuiImg2imgBatch(
+      {
+        sourceArtifactIds: ['prompt-source-artifact'],
+        workflowId: 'img2img-v1',
+        promptMode: 'ai',
+        promptSkillId: 'img2img-local-reference',
+        promptModel: 'qwen3-vl-flash',
+        taskId: 'img2img-strict-prompt-callback-task',
+        inputIndexes: [37],
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async (key) => (key === 'chenyu' ? 'cy-key' : 'bailian-key'),
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+        onPromptResolved,
+      },
+    )
+
+    expect(generatePrompts).toHaveBeenCalledOnce()
+    expect(onPromptResolved).toHaveBeenCalledWith({
+      taskId: 'img2img-strict-prompt-callback-task',
+      capability: 'img2img',
+      inputIndex: 37,
+      sourcePath: printPath,
+      sourceArtifactId: 'prompt-source-artifact',
+      prompt: 'persisted before submit',
+    })
+    expect(events).toEqual(['prompt-resolved', 'prompt-persisted'])
+    expect(generate).not.toHaveBeenCalled()
+    expect(result).toMatchObject({ total: 1, succeeded: 0, failed: 1 })
+    expect(result.failures).toEqual([
+      expect.objectContaining({
+        error: 'prompt plan persistence failed',
+        fatal: true,
+        appErrorCode: 'HTTP_5XX',
+        retryable: true,
+        errorDetails: expect.objectContaining({ kind: 'generation_callback_fatal' }),
+      }),
+    ])
+  })
+
+  it('reuses a persisted ComfyUI img2img AI prompt without resolving or persisting it again', async () => {
+    const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'resumed-prompt.png')
+    await createImage(printPath, 'resumed-prompt-image')
+    const fakeDb = createFakeDb()
+    fakeDb.rowsBySql.set('artifacts', [
+      {
+        id: 'resumed-prompt-artifact',
+        print_id: 'pri_resumed_prompt',
+        step: 'extract',
+        file_path: printPath,
+      },
+    ])
+    const generatePrompts = vi
+      .spyOn(promptGeneratorService, 'generatePrompts')
+      .mockResolvedValue(['new prompt that must not be requested'])
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///resumed-result.png', local_path: '/resumed-result.png' }],
+    })
+    const onPromptResolved = vi.fn()
+
+    const result = await runComfyuiImg2imgBatch(
+      {
+        sourceArtifactIds: ['resumed-prompt-artifact'],
+        workflowId: 'img2img-v1',
+        promptMode: 'ai',
+        resolvedPrompt: 'persisted AI prompt',
+        promptSkillId: 'img2img-local-reference',
+        promptModel: 'qwen3-vl-flash',
+        taskId: 'img2img-resumed-prompt-task',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async (key) => (key === 'chenyu' ? 'cy-key' : 'bailian-key'),
+        openDatabase: fakeDb.openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+        onPromptResolved,
+      },
+    )
+
+    expect(result).toMatchObject({ total: 1, succeeded: 1, failed: 0 })
+    expect(generatePrompts).not.toHaveBeenCalled()
+    expect(onPromptResolved).not.toHaveBeenCalled()
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        prompt: 'persisted AI prompt',
+        options: expect.objectContaining({ promptMode: 'ai' }),
+      }),
+    )
+  })
+
   it('registers arbitrary folder images before running ComfyUI img2img', async () => {
     const printPath = join(tempRoot, 'external-prints', 'print.png')
     await createImage(printPath, 'print-image')

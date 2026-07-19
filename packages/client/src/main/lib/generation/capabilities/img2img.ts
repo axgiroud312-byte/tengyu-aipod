@@ -22,6 +22,7 @@ import {
   emitComfyuiRequestLog,
   emitImageComplete,
   emitImg2imgProgress,
+  emitPromptResolved,
   finishGenerationResultWithDiagnostics,
   generationImageIdentity,
   generationTaskId,
@@ -63,6 +64,18 @@ async function resolveComfyuiImg2imgPromptForSource(
       throw new AppErrorClass('HTTP_4XX', '请填写图生图提示词', false, {
         provider: 'comfyui-chenyu',
         promptMode,
+      })
+    }
+    return prompt
+  }
+  if (input.resolvedPrompt !== undefined) {
+    const prompt = input.resolvedPrompt.trim()
+    if (!prompt) {
+      throw new AppErrorClass('HTTP_4XX', '已保存的图生图提示词为空，无法安全续跑', false, {
+        provider: 'comfyui-chenyu',
+        promptMode,
+        sourceIndex: context.sourceIndex,
+        sourceArtifactId: source.artifactId,
       })
     }
     return prompt
@@ -324,6 +337,16 @@ export async function runComfyuiImg2imgBatch(
             dependencies,
             debug,
           })
+          if (promptMode === 'ai' && input.resolvedPrompt === undefined) {
+            await emitPromptResolved(dependencies, {
+              taskId,
+              capability: 'img2img',
+              inputIndex,
+              sourcePath: source.imagePath,
+              sourceArtifactId: source.artifactId,
+              prompt,
+            })
+          }
           const preserveWorkflowPrompt = promptMode === 'workflow'
           const filenameIndex = outputIndex
           emitComfyuiRequestLog(debug, {

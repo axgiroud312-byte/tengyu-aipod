@@ -10,6 +10,12 @@ const promptConfigSchema = z.object({
   skillId: z.string().optional(),
   skillVersion: z.string().optional(),
   model: z.string().optional(),
+  resolvedPromptsBySourceKey: z.record(z.string()).optional(),
+})
+
+const sourceManifestItemSchema = z.object({
+  itemKey: z.string().min(1),
+  path: z.string().min(1),
 })
 
 const comfyuiImg2imgPromptConfigSchema = promptConfigSchema.extend({
@@ -57,6 +63,7 @@ const sourceSchema = z.union([
     mode: z.literal('collection'),
     sourceFolder: z.string(),
     extract: extractSchema,
+    sourceManifest: z.array(sourceManifestItemSchema).optional(),
   }),
   z.object({
     mode: z.literal('txt2img'),
@@ -86,11 +93,13 @@ const sourceSchema = z.union([
     sourceFolder: z.string(),
     prompt: comfyuiImg2imgPromptConfigSchema.optional(),
     comfyui: comfyuiImg2imgWorkflowSchema,
+    sourceManifest: z.array(sourceManifestItemSchema).optional(),
   }),
   z.object({
     mode: z.literal('existing_prints'),
     printFolder: z.string(),
     startStep: z.enum(['matting', 'detection', 'photoshop']).optional(),
+    sourceManifest: z.array(sourceManifestItemSchema).optional(),
   }),
 ])
 

@@ -45,6 +45,14 @@ type GenerationBatchDependencies = {
     inputIndex?: number
     outputIndex?: number
   }) => void | Promise<void>
+  onPromptResolved?: (payload: {
+    taskId: string
+    capability: 'img2img'
+    inputIndex: number
+    sourcePath: string
+    sourceArtifactId: string
+    prompt: string
+  }) => void | Promise<void>
 }
 
 type Txt2imgMockInput = {
@@ -65,6 +73,7 @@ type ComfyuiMockInput = {
   filenameStartIndex?: number
   inputIndexes?: number[]
   outputIndexes?: number[]
+  resolvedPrompt?: string
 }
 
 function mockGenerationOutputPath(capabilityFolder: string, taskName: string, index: number) {
@@ -634,6 +643,39 @@ function updateRunStatusForTest(runId: string, status: 'running' | 'interrupted'
         WHERE id = ?
       `,
     ).run(status, Date.now(), runId)
+  } finally {
+    db.close()
+  }
+}
+
+function rewriteRunConfigForTest(
+  runId: string,
+  rewrite: (config: PipelineRunConfig) => PipelineRunConfig,
+) {
+  const db = openWorkbenchDatabase(workbenchDatabasePath(mocks.workbenchRoot))
+  try {
+    const row = db.prepare('SELECT config_json FROM pipeline_runs WHERE id = ?').get(runId) as
+      | { config_json?: unknown }
+      | undefined
+    if (typeof row?.config_json !== 'string') {
+      throw new Error(`missing pipeline config for ${runId}`)
+    }
+    const config = JSON.parse(row.config_json) as PipelineRunConfig
+    db.prepare('UPDATE pipeline_runs SET config_json = ? WHERE id = ?').run(
+      JSON.stringify(rewrite(config)),
+      runId,
+    )
+  } finally {
+    db.close()
+  }
+}
+
+function markSourceStepInterruptedForTest(runId: string) {
+  const db = openWorkbenchDatabase(workbenchDatabasePath(mocks.workbenchRoot))
+  try {
+    db.prepare(
+      "UPDATE pipeline_steps SET status = 'interrupted' WHERE run_id = ? AND step_key = 'source'",
+    ).run(runId)
   } finally {
     db.close()
   }
@@ -2951,14 +2993,23 @@ describe('PipelineService', () => {
     expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
   })
 
-  it('rejects partial AI-prompt generation resume without regenerating prompts', async () => {
+  it('persists and reuses the AI prompt plan when resuming partial txt2img generation', async () => {
     const completedPath = join(mocks.workbenchRoot, 'resume-ai-prompt-source.png')
+    const resumedPath = join(mocks.workbenchRoot, 'resume-ai-prompt-source-2.png')
     vi.mocked(generateTxt2imgPrompts).mockResolvedValueOnce([
       { id: '00000000-0000-4000-8000-000000000001', text: 'p1', selected: true },
       { id: '00000000-0000-4000-8000-000000000002', text: 'p2', selected: true },
     ])
     mocks.runTxt2imgBatch.mockImplementationOnce(
       async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        const persisted = await service.getRun('run-resume-ai-prompt-source')
+        const persistedConfig = JSON.parse(persisted?.run.config_json ?? '{}') as PipelineRunConfig
+        expect(persistedConfig.source.mode).toBe('txt2img')
+        expect(
+          persistedConfig.source.mode === 'txt2img'
+            ? persistedConfig.source.prompt.prompts
+            : undefined,
+        ).toEqual(['p1', 'p2'])
         await createPrint(completedPath)
         await dependencies?.onImageComplete?.({
           taskId: input.taskId ?? 'run-resume-ai-prompt-source',
@@ -2999,14 +3050,150 @@ describe('PipelineService', () => {
         title: { ...baseConfig('/unused').title, enabled: false },
       }),
     ).rejects.toThrow('AI generation worker exited')
-    vi.mocked(generateTxt2imgPrompts).mockClear()
-    mocks.runTxt2imgBatch.mockClear()
-
-    await expect(service.resumeRun('run-resume-ai-prompt-source')).rejects.toThrow(
-      'AI 提示词未保存',
+    vi.mocked(generateTxt2imgPrompts).mockReset()
+    vi.mocked(generateTxt2imgPrompts).mockRejectedValue(
+      new Error('prompt generator must not run while resuming a saved plan'),
     )
+    mocks.runTxt2imgBatch.mockClear()
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        expect(input.prompts).toEqual(['p2'])
+        expect(input.inputIndexes).toEqual([1])
+        await createPrint(resumedPath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-resume-ai-prompt-source',
+          capability: 'txt2img',
+          path: resumedPath,
+          printId: 'pri-ai-prompt-source-2',
+          artifactId: 'art-ai-prompt-source-2',
+          prompt: 'p2',
+          sourceArtifactIds: [],
+          inputIndex: 1,
+          outputIndex: 0,
+        })
+        return {
+          taskId: input.taskId ?? 'run-resume-ai-prompt-source',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [],
+          failures: [],
+        }
+      },
+    )
+
+    const resumed = await service.resumeRun('run-resume-ai-prompt-source')
+
+    expect(resumed.run.status).toBe('completed')
     expect(generateTxt2imgPrompts).not.toHaveBeenCalled()
-    expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
+    expect(mocks.runTxt2imgBatch).toHaveBeenCalledOnce()
+  })
+
+  it('persists and reuses the AI prompt plan when resuming partial Grsai img2img generation', async () => {
+    const sourceFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'resume-grsai-img2img-ai',
+    )
+    const referencePath = join(sourceFolder, 'reference.png')
+    const completedPath = join(mocks.workbenchRoot, 'resume-grsai-img2img-ai-1.png')
+    const resumedPath = join(mocks.workbenchRoot, 'resume-grsai-img2img-ai-2.png')
+    await createPrint(referencePath)
+    vi.mocked(generateTxt2imgPrompts).mockResolvedValueOnce([
+      { id: '00000000-0000-4000-8000-000000000011', text: 'img-p1', selected: true },
+      { id: '00000000-0000-4000-8000-000000000012', text: 'img-p2', selected: true },
+    ])
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        expect(input.capability).toBe('img2img')
+        const persisted = await service.getRun('run-resume-grsai-img2img-ai')
+        const persistedConfig = JSON.parse(persisted?.run.config_json ?? '{}') as PipelineRunConfig
+        expect(
+          persistedConfig.source.mode === 'img2img' && persistedConfig.source.provider === 'grsai'
+            ? persistedConfig.source.prompt.prompts
+            : undefined,
+        ).toEqual(['img-p1', 'img-p2'])
+        await createPrint(completedPath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-resume-grsai-img2img-ai',
+          capability: 'img2img',
+          path: completedPath,
+          printId: 'pri-resume-grsai-img2img-ai-1',
+          artifactId: 'art-resume-grsai-img2img-ai-1',
+          prompt: 'img-p1',
+          sourceArtifactIds: [],
+          inputIndex: 0,
+          outputIndex: 0,
+        })
+        throw new Error('Grsai img2img worker exited')
+      },
+    )
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    await expect(
+      service.runPipeline('run-resume-grsai-img2img-ai', {
+        ...baseConfig('/unused'),
+        source: {
+          mode: 'img2img',
+          provider: 'grsai',
+          sourceFolder,
+          prompt: {
+            mode: 'ai',
+            requirement: 'two floral reference variations',
+            count: 2,
+            skillId: 'img2img-local-reference',
+            model: 'qwen3-vl-flash',
+          },
+          sendReferenceImages: false,
+          grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
+        },
+        photoshop: {
+          ...baseConfig('/unused').photoshop,
+          enabled: false,
+          templates: [],
+        },
+        title: { ...baseConfig('/unused').title, enabled: false },
+      }),
+    ).rejects.toThrow('Grsai img2img worker exited')
+
+    vi.mocked(generateTxt2imgPrompts).mockReset()
+    vi.mocked(generateTxt2imgPrompts).mockRejectedValue(
+      new Error('prompt generator must not run while resuming a saved img2img plan'),
+    )
+    mocks.runTxt2imgBatch.mockClear()
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        expect(input.capability).toBe('img2img')
+        expect(input.prompts).toEqual(['img-p2'])
+        expect(input.inputIndexes).toEqual([1])
+        await createPrint(resumedPath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-resume-grsai-img2img-ai',
+          capability: 'img2img',
+          path: resumedPath,
+          printId: 'pri-resume-grsai-img2img-ai-2',
+          artifactId: 'art-resume-grsai-img2img-ai-2',
+          prompt: 'img-p2',
+          sourceArtifactIds: [],
+          inputIndex: 1,
+          outputIndex: 0,
+        })
+        return {
+          taskId: input.taskId ?? 'run-resume-grsai-img2img-ai',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [],
+          failures: [],
+        }
+      },
+    )
+
+    const resumed = await service.resumeRun('run-resume-grsai-img2img-ai')
+
+    expect(resumed.run.status).toBe('completed')
+    expect(generateTxt2imgPrompts).not.toHaveBeenCalled()
+    expect(mocks.runTxt2imgBatch).toHaveBeenCalledOnce()
   })
 
   it('resumes only missing img2img output keys across multiple inputs', async () => {
@@ -3145,11 +3332,23 @@ describe('PipelineService', () => {
         outputIndexes: [1],
       }),
     ])
+    const resumedConfig = JSON.parse(resumed.run.config_json) as PipelineRunConfig
+    const sourceManifest =
+      resumedConfig.source.mode === 'img2img' && resumedConfig.source.provider === 'comfyui-chenyu'
+        ? (resumedConfig.source.sourceManifest ?? [])
+        : []
     expect(
       (resumed.items ?? [])
         .filter((item) => item.step_key === 'source' && item.status === 'completed')
         .map((item) => item.item_key),
-    ).toEqual(expect.arrayContaining(['img2img-1-1', 'img2img-1-2', 'img2img-2-1', 'img2img-2-2']))
+    ).toEqual(
+      expect.arrayContaining([
+        `${sourceManifest[0]?.itemKey}-1`,
+        `${sourceManifest[0]?.itemKey}-2`,
+        `${sourceManifest[1]?.itemKey}-1`,
+        `${sourceManifest[1]?.itemKey}-2`,
+      ]),
+    )
   })
 
   it('does not regenerate AI prompts when all txt2img source items were completed before resume', async () => {
@@ -4396,18 +4595,24 @@ describe('PipelineService', () => {
 
     const detail = await service.getRun('run-stable-collection-extract-keys')
     const extractItems = (detail?.items ?? []).filter((item) => item.step_key === 'extract')
+    const persistedConfig = JSON.parse(detail?.run.config_json ?? '{}') as PipelineRunConfig
+    const sourceManifest =
+      persistedConfig.source.mode === 'collection'
+        ? (persistedConfig.source.sourceManifest ?? [])
+        : []
+    const sourceKeyByPath = new Map(sourceManifest.map((item) => [item.path, item.itemKey]))
     expect(extractItems).toHaveLength(2)
     expect(extractItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          item_key: 'source-1',
+          item_key: sourceKeyByPath.get(firstSourcePath),
           status: 'completed',
           source_path: firstSourcePath,
           output_path: firstExtractPath,
           print_id: 'pri-extracted-a',
         }),
         expect.objectContaining({
-          item_key: 'source-2',
+          item_key: sourceKeyByPath.get(secondSourcePath),
           status: 'completed',
           source_path: secondSourcePath,
           output_path: secondExtractPath,
@@ -4546,6 +4751,17 @@ describe('PipelineService', () => {
     interruptRelease.resolve()
     const interrupted = await firstRun
     expect(interrupted.run.status).toBe('interrupted')
+    const interruptedConfig = JSON.parse(interrupted.run.config_json) as {
+      source: { sourceManifest?: Array<{ itemKey: string; path: string }> }
+    }
+    const sourceManifest = interruptedConfig.source.sourceManifest ?? []
+    expect(sourceManifest.map((item) => item.path)).toEqual([firstSourcePath, secondSourcePath])
+    expect(sourceManifest.map((item) => item.itemKey)).toEqual([
+      expect.stringMatching(/^source-[0-9a-f]{32}$/),
+      expect.stringMatching(/^source-[0-9a-f]{32}$/),
+    ])
+
+    await createPrint(join(sourceFolder, '000-new-source.png'))
 
     const resumed = await service.resumeRun('run-resume-collection-extract')
     expect(resumed.run.status).toBe('completed')
@@ -4554,19 +4770,272 @@ describe('PipelineService', () => {
     expect(extractItems).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          item_key: 'source-1',
+          item_key: sourceManifest[0]?.itemKey,
           status: 'completed',
           source_path: firstSourcePath,
           output_path: firstExtractPath,
         }),
         expect.objectContaining({
-          item_key: 'source-2',
+          item_key: sourceManifest[1]?.itemKey,
           status: 'completed',
           source_path: secondSourcePath,
           output_path: secondExtractPath,
         }),
       ]),
     )
+  })
+
+  it('keeps the frozen existing-print manifest when the source directory order changes', async () => {
+    const printFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'resume-existing-manifest',
+    )
+    const firstPath = join(printFolder, 'a.png')
+    const secondPath = join(printFolder, 'b.png')
+    await createPrint(firstPath)
+    await createPrint(secondPath)
+    mocks.runBatch.mockImplementation(async (prints, _templates, config) => {
+      const result = createPhotoshopBatchResult(prints, config)
+      await Promise.all(result.outputs.map((outputPath) => createTitleProductImage(outputPath)))
+      return result
+    })
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const firstRun = await service.runPipeline('run-resume-existing-manifest', {
+      ...baseConfig(printFolder),
+      title: { ...baseConfig(printFolder).title, enabled: false },
+    })
+    const firstConfig = JSON.parse(firstRun.run.config_json) as PipelineRunConfig
+    expect(
+      firstConfig.source.mode === 'existing_prints'
+        ? firstConfig.source.sourceManifest?.map((item) => item.path)
+        : undefined,
+    ).toEqual([firstPath, secondPath])
+
+    updateRunStatusForTest('run-resume-existing-manifest', 'interrupted')
+    await createPrint(join(printFolder, '000-new.png'))
+    const resumed = await service.resumeRun('run-resume-existing-manifest')
+
+    expect(resumed.run.status).toBe('completed')
+    expect(
+      (resumed.items ?? [])
+        .filter((item) => item.step_key === 'source' && item.status === 'completed')
+        .map((item) => item.output_path),
+    ).toEqual(expect.arrayContaining([firstPath, secondPath]))
+    expect(
+      (resumed.items ?? []).filter(
+        (item) => item.step_key === 'source' && item.status === 'completed',
+      ),
+    ).toHaveLength(2)
+  })
+
+  it('reuses completed legacy folder-source outputs but refuses an unsafe partial legacy run', async () => {
+    const printFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'resume-legacy-existing-manifest',
+    )
+    await createPrint(join(printFolder, 'a.png'))
+    await createPrint(join(printFolder, 'b.png'))
+    mocks.runBatch.mockImplementation(async (prints, _templates, config) => {
+      const result = createPhotoshopBatchResult(prints, config)
+      await Promise.all(result.outputs.map((outputPath) => createTitleProductImage(outputPath)))
+      return result
+    })
+    const runId = 'run-resume-legacy-existing-manifest'
+    const service = new PipelineService() as ResumeCapablePipelineService
+    await service.runPipeline(runId, {
+      ...baseConfig(printFolder),
+      title: { ...baseConfig(printFolder).title, enabled: false },
+    })
+    rewriteRunConfigForTest(runId, (config) => {
+      if (config.source.mode !== 'existing_prints') {
+        throw new Error('expected existing print source')
+      }
+      const { sourceManifest: _sourceManifest, ...legacySource } = config.source
+      return { ...config, source: legacySource }
+    })
+
+    updateRunStatusForTest(runId, 'interrupted')
+    await expect(service.resumeRun(runId)).resolves.toMatchObject({
+      run: expect.objectContaining({ status: 'completed' }),
+    })
+
+    updateRunStatusForTest(runId, 'failed')
+    markSourceStepInterruptedForTest(runId)
+    await expect(service.resumeRun(runId)).rejects.toThrow('缺少冻结来源清单')
+  })
+
+  it('does not resubmit ComfyUI img2img when its frozen source directory order changes', async () => {
+    const sourceFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'resume-comfyui-img2img-manifest',
+    )
+    const firstSourcePath = join(sourceFolder, 'a.png')
+    const secondSourcePath = join(sourceFolder, 'b.png')
+    await createPrint(firstSourcePath)
+    await createPrint(secondSourcePath)
+    const runManifestImg2img = async (
+      input: ComfyuiMockInput,
+      dependencies?: GenerationBatchDependencies,
+    ) => {
+      const inputIndex = input.inputIndexes?.[0] ?? 0
+      const sourcePath = input.sourceImagePaths?.[0] ?? ''
+      const outputPath = join(mocks.workbenchRoot, `manifest-img2img-${inputIndex + 1}.png`)
+      await createPrint(outputPath)
+      await dependencies?.onImageComplete?.({
+        taskId: input.taskId ?? `run-manifest-img2img-${inputIndex + 1}`,
+        capability: 'img2img',
+        path: outputPath,
+        printId: `pri-manifest-img2img-${inputIndex + 1}`,
+        artifactId: `art-manifest-img2img-${inputIndex + 1}`,
+        sourcePath,
+        sourceArtifactIds: [],
+        inputIndex,
+        outputIndex: 0,
+      })
+      return {
+        taskId: input.taskId ?? `run-manifest-img2img-${inputIndex + 1}`,
+        total: 1,
+        succeeded: 1,
+        failed: 0,
+        images: [],
+        failures: [],
+      }
+    }
+    mocks.runComfyuiImg2imgBatch.mockImplementationOnce(runManifestImg2img)
+    mocks.runComfyuiImg2imgBatch.mockImplementationOnce(runManifestImg2img)
+
+    const runId = 'run-resume-comfyui-img2img-manifest'
+    const service = new PipelineService() as ResumeCapablePipelineService
+    const firstRun = await service.runPipeline(runId, {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder,
+        prompt: { mode: 'workflow' },
+        comfyui: { workflowId: 'wf-img2img', instanceUuid: 'instance-img2img' },
+      },
+      photoshop: { ...baseConfig('/unused').photoshop, enabled: false, templates: [] },
+      title: { ...baseConfig('/unused').title, enabled: false },
+    })
+    const firstConfig = JSON.parse(firstRun.run.config_json) as PipelineRunConfig
+    expect(
+      firstConfig.source.mode === 'img2img' && firstConfig.source.provider === 'comfyui-chenyu'
+        ? firstConfig.source.sourceManifest?.map((item) => item.path)
+        : undefined,
+    ).toEqual([firstSourcePath, secondSourcePath])
+
+    updateRunStatusForTest(runId, 'interrupted')
+    await createPrint(join(sourceFolder, '000-new.png'))
+    mocks.runComfyuiImg2imgBatch.mockClear()
+    const resumed = await service.resumeRun(runId)
+
+    expect(resumed.run.status).toBe('completed')
+    expect(mocks.runComfyuiImg2imgBatch).not.toHaveBeenCalled()
+    expect(
+      (resumed.items ?? []).filter(
+        (item) => item.step_key === 'source' && item.status === 'completed',
+      ),
+    ).toHaveLength(2)
+  })
+
+  it('persists and reuses each ComfyUI img2img AI prompt before resuming its source item', async () => {
+    const sourceFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'resume-comfyui-source-prompt',
+    )
+    const sourcePath = join(sourceFolder, 'source.png')
+    const outputPath = join(mocks.workbenchRoot, 'resume-comfyui-source-prompt.png')
+    await createPrint(sourcePath)
+    mocks.runComfyuiImg2imgBatch.mockImplementationOnce(
+      async (input: ComfyuiMockInput, dependencies?: GenerationBatchDependencies) => {
+        const inputIndex = input.inputIndexes?.[0] ?? 0
+        await dependencies?.onPromptResolved?.({
+          taskId: input.taskId ?? 'run-resume-comfyui-source-prompt',
+          capability: 'img2img',
+          inputIndex,
+          sourcePath,
+          sourceArtifactId: 'art-source-prompt',
+          prompt: 'persisted source prompt',
+        })
+        const persisted = await service.getRun('run-resume-comfyui-source-prompt')
+        const persistedConfig = JSON.parse(persisted?.run.config_json ?? '{}') as PipelineRunConfig
+        if (
+          persistedConfig.source.mode !== 'img2img' ||
+          persistedConfig.source.provider !== 'comfyui-chenyu'
+        ) {
+          throw new Error('expected ComfyUI img2img source')
+        }
+        const sourceItemKey = persistedConfig.source.sourceManifest?.[0]?.itemKey ?? ''
+        expect(persistedConfig.source.prompt?.resolvedPromptsBySourceKey?.[sourceItemKey]).toBe(
+          'persisted source prompt',
+        )
+        throw new Error('ComfyUI img2img worker exited after prompt persistence')
+      },
+    )
+
+    const service = new PipelineService() as ResumeCapablePipelineService
+    await expect(
+      service.runPipeline('run-resume-comfyui-source-prompt', {
+        ...baseConfig('/unused'),
+        source: {
+          mode: 'img2img',
+          provider: 'comfyui-chenyu',
+          sourceFolder,
+          prompt: {
+            mode: 'ai',
+            requirement: 'new floral print',
+            skillId: 'img2img-local-reference',
+            model: 'qwen3-vl-flash',
+          },
+          comfyui: { workflowId: 'wf-img2img', instanceUuid: 'instance-img2img' },
+        },
+        photoshop: { ...baseConfig('/unused').photoshop, enabled: false, templates: [] },
+        title: { ...baseConfig('/unused').title, enabled: false },
+      }),
+    ).rejects.toThrow('worker exited after prompt persistence')
+
+    mocks.runComfyuiImg2imgBatch.mockClear()
+    mocks.runComfyuiImg2imgBatch.mockImplementationOnce(
+      async (input: ComfyuiMockInput, dependencies?: GenerationBatchDependencies) => {
+        expect(input.resolvedPrompt).toBe('persisted source prompt')
+        const resolvedPrompt = input.resolvedPrompt
+        if (!resolvedPrompt) {
+          throw new Error('expected persisted source prompt')
+        }
+        await createPrint(outputPath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-resume-comfyui-source-prompt',
+          capability: 'img2img',
+          path: outputPath,
+          printId: 'pri-resume-comfyui-source-prompt',
+          artifactId: 'art-resume-comfyui-source-prompt',
+          prompt: resolvedPrompt,
+          sourcePath,
+          sourceArtifactIds: ['art-source-prompt'],
+          inputIndex: input.inputIndexes?.[0] ?? 0,
+          outputIndex: 0,
+        })
+        return {
+          taskId: input.taskId ?? 'run-resume-comfyui-source-prompt',
+          total: 1,
+          succeeded: 1,
+          failed: 0,
+          images: [],
+          failures: [],
+        }
+      },
+    )
+
+    const resumed = await service.resumeRun('run-resume-comfyui-source-prompt')
+
+    expect(resumed.run.status).toBe('completed')
+    expect(mocks.runComfyuiImg2imgBatch).toHaveBeenCalledOnce()
   })
 
   it('streams txt2img outputs into matting without waiting for the whole source batch', async () => {
@@ -4955,6 +5424,185 @@ describe('PipelineService', () => {
     expect(cancellationObserved).toBe(true)
     await expect(runPromise).rejects.toThrow('阿里云百炼 API Key 无效')
     expect(mocks.runComfyuiTxt2imgBatch).toHaveBeenCalledTimes(1)
+  })
+
+  it('persists a late in-flight source completion without routing it until resume', async () => {
+    const firstSourceEmitted = createDeferred<void>()
+    const releaseLateSource = createDeferred<void>()
+    const firstSourcePath = join(mocks.workbenchRoot, 'late-source-first.png')
+    const lateSourcePath = join(mocks.workbenchRoot, 'late-source-second.png')
+
+    mocks.runTxt2imgBatch.mockImplementationOnce(
+      async (input: Txt2imgMockInput, dependencies?: GenerationBatchDependencies) => {
+        await createPrint(firstSourcePath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-late-source-txt2img',
+          capability: 'txt2img',
+          path: firstSourcePath,
+          printId: 'pri-late-source-first',
+          artifactId: 'art-late-source-first',
+          prompt: 'first',
+          sourceArtifactIds: [],
+          inputIndex: 0,
+          outputIndex: 0,
+        })
+        firstSourceEmitted.resolve()
+
+        await releaseLateSource.promise
+        await createPrint(lateSourcePath)
+        await dependencies?.onImageComplete?.({
+          taskId: input.taskId ?? 'run-late-source-txt2img',
+          capability: 'txt2img',
+          path: lateSourcePath,
+          printId: 'pri-late-source-second',
+          artifactId: 'art-late-source-second',
+          prompt: 'second',
+          sourceArtifactIds: [],
+          inputIndex: 1,
+          outputIndex: 0,
+        })
+
+        return {
+          taskId: input.taskId ?? 'run-late-source-txt2img',
+          total: 2,
+          succeeded: 2,
+          failed: 0,
+          images: [
+            {
+              prompt: 'first',
+              url: 'file://late-source-first.png',
+              localPath: firstSourcePath,
+              artifactId: 'art-late-source-first',
+              printId: 'pri-late-source-first',
+            },
+            {
+              prompt: 'second',
+              url: 'file://late-source-second.png',
+              localPath: lateSourcePath,
+              artifactId: 'art-late-source-second',
+              printId: 'pri-late-source-second',
+            },
+          ],
+          failures: [],
+        }
+      },
+    )
+    mocks.runDetectionBatch.mockResolvedValueOnce({
+      taskId: 'run-late-source-detection',
+      total: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+      results: [
+        {
+          imagePath: firstSourcePath,
+          thumbnailUrl: '',
+          status: 'failed',
+          errorCode: 'llm_failed',
+          error: '阿里云百炼 API Key 无效',
+          fatal: true,
+          appErrorCode: 'HTTP_4XX',
+        },
+      ],
+    })
+
+    const service = new PipelineService()
+    const runPromise = service.runPipeline('run-late-source', {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['first', 'second'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+          concurrency: 2,
+        },
+      },
+      matting: {
+        enabled: false,
+        mode: 'comfyui',
+      },
+      detection: {
+        enabled: true,
+        skillId: 'infringement-detection',
+        model: 'qwen3.6-flash',
+        concurrency: 1,
+      },
+      photoshop: {
+        ...baseConfig('/unused').photoshop,
+        enabled: false,
+        templates: [],
+      },
+      title: {
+        ...baseConfig('/unused').title,
+        enabled: false,
+      },
+    })
+    void runPromise.catch(() => undefined)
+
+    await firstSourceEmitted.promise
+    await vi.waitUntil(() => mocks.runDetectionBatch.mock.calls.length === 1)
+    await vi.waitUntil(() =>
+      mocks.requestGenerationCancel.mock.calls.some(
+        ([taskId]) => taskId === 'run-late-source-txt2img',
+      ),
+    )
+    releaseLateSource.resolve()
+
+    await expect(runPromise).rejects.toThrow('阿里云百炼 API Key 无效')
+    expect(mocks.runDetectionBatch).toHaveBeenCalledOnce()
+    expect(mocks.runDetectionBatch.mock.calls[0]?.[0]).toMatchObject({
+      imagePaths: [firstSourcePath],
+    })
+
+    const failed = await service.getRun('run-late-source')
+    expect(
+      (failed?.items ?? [])
+        .filter((item) => item.step_key === 'source' && item.status === 'completed')
+        .map((item) => ({
+          itemKey: item.item_key,
+          outputPath: item.output_path,
+        })),
+    ).toEqual([
+      { itemKey: 'txt2img-1-1', outputPath: firstSourcePath },
+      { itemKey: 'txt2img-2-1', outputPath: lateSourcePath },
+    ])
+
+    mocks.runTxt2imgBatch.mockClear()
+    mocks.runDetectionBatch.mockReset()
+    mocks.runDetectionBatch.mockImplementation(
+      async (input: { taskId?: string; imagePaths: string[] }) => ({
+        taskId: input.taskId ?? 'run-late-source-resumed-detection',
+        total: input.imagePaths.length,
+        succeeded: input.imagePaths.length,
+        failed: 0,
+        skipped: 0,
+        results: input.imagePaths.map((imagePath) => {
+          const isLateSource = imagePath === lateSourcePath
+          return {
+            imagePath,
+            thumbnailUrl: '',
+            artifactId: isLateSource ? 'art-late-source-second' : 'art-late-source-first',
+            printId: isLateSource ? 'pri-late-source-second' : 'pri-late-source-first',
+            status: 'success' as const,
+            riskScore: 0,
+            riskLevel: 'pass' as const,
+            reason: '低风险',
+            outputPath: imagePath,
+            cached: false,
+          }
+        }),
+      }),
+    )
+
+    const resumed = await service.resumeRun('run-late-source')
+
+    expect(resumed.run.status).toBe('completed')
+    expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
+    expect(mocks.runDetectionBatch.mock.calls.flatMap((call) => call[0]?.imagePaths ?? [])).toEqual(
+      expect.arrayContaining([firstSourcePath, lateSourcePath]),
+    )
   })
 
   it('preserves the pipeline error when final state flushing also fails', async () => {

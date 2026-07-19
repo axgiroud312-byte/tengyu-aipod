@@ -66,6 +66,7 @@ export type {
   GenerationImageSource,
   GenerationProgress,
   GenerationPromptInput,
+  GenerationPromptResolvedPayload,
   GenerationRunFailure,
   GenerationRunImage,
   GenerationRunResult,

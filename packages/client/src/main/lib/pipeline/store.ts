@@ -220,6 +220,16 @@ export function insertPipelineRun(
   )
 }
 
+export function updatePipelineRunConfig(
+  db: PipelineStoreDb,
+  input: { runId: string; config: PipelineRunConfig },
+) {
+  db.prepare('UPDATE pipeline_runs SET config_json = ? WHERE id = ?').run(
+    JSON.stringify(input.config),
+    input.runId,
+  )
+}
+
 export function updatePipelineRunCompleted(
   db: PipelineStoreDb,
   input: {
