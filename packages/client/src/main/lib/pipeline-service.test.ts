@@ -6758,6 +6758,101 @@ describe('PipelineService', () => {
     )
   })
 
+  it.each([
+    {
+      label: 'resolved txt2img prompts',
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: {
+          mode: 'ai',
+          requirement: 'floral print',
+          count: 1,
+          prompts: ['forged resolved prompt'],
+        },
+        grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
+      },
+    },
+    {
+      label: 'resolved img2img prompts',
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder: '/source',
+        prompt: {
+          mode: 'ai',
+          requirement: 'floral print',
+          resolvedPromptsBySourceKey: { forged: 'forged source prompt' },
+        },
+        comfyui: { workflowId: 'wf' },
+      },
+    },
+    {
+      label: 'collection source manifests',
+      source: {
+        mode: 'collection',
+        sourceFolder: '/source',
+        extract: { provider: 'grsai', skillId: 'extract-skill' },
+        sourceManifest: [{ itemKey: 'forged', path: '/source/forged.png' }],
+      },
+    },
+    {
+      label: 'ComfyUI img2img source manifests',
+      source: {
+        mode: 'img2img',
+        provider: 'comfyui-chenyu',
+        sourceFolder: '/source',
+        comfyui: { workflowId: 'wf' },
+        sourceManifest: [{ itemKey: 'forged', path: '/source/forged.png' }],
+      },
+    },
+    {
+      label: 'existing print source manifests',
+      source: {
+        mode: 'existing_prints',
+        printFolder: '/prints',
+        sourceManifest: [{ itemKey: 'forged', path: '/prints/forged.png' }],
+      },
+    },
+    {
+      label: 'persisted Grsai reference image paths',
+      source: {
+        mode: 'img2img',
+        provider: 'grsai',
+        referenceImagePaths: ['/references/forged.png'],
+        prompt: { mode: 'manual', prompts: ['floral print'] },
+        grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
+      },
+    },
+  ])('rejects $label at the IPC launch boundary', async ({ source }) => {
+    registerPipelineIpc()
+    const handler = mocks.ipcHandlers.get('pipeline:run')
+    if (!handler) {
+      throw new Error('pipeline:run handler was not registered')
+    }
+
+    await expect(
+      handler(
+        {},
+        {
+          ...baseConfig('/unused'),
+          source,
+          photoshop: {
+            ...baseConfig('/unused').photoshop,
+            enabled: false,
+            templates: [],
+          },
+          title: {
+            ...baseConfig('/unused').title,
+            enabled: false,
+          },
+        },
+      ),
+    ).rejects.toThrow('完整任务启动参数包含内部恢复数据')
+    expect(pipelineService.getActiveRunCount()).toBe(0)
+    expect(mocks.sentEvents.some((event) => event.channel === 'pipeline:completed')).toBe(false)
+  })
+
   it('rejects invalid pipeline paths before returning an orphan run id at the IPC boundary', async () => {
     const outsideSource = join(mocks.workbenchRoot, 'outside-ipc-source')
     await createPrint(join(outsideSource, 'source.png'))
@@ -6800,14 +6895,14 @@ describe('PipelineService', () => {
     expect(mocks.sentEvents.some((event) => event.channel === 'pipeline:completed')).toBe(false)
   })
 
-  it('rejects print sku codes that are empty after filename sanitization at the IPC schema boundary', () => {
+  it('rejects print sku codes that are empty after filename sanitization at the IPC schema boundary', async () => {
     registerPipelineIpc()
     const handler = mocks.ipcHandlers.get('pipeline:run')
     if (!handler) {
       throw new Error('pipeline:run handler was not registered')
     }
 
-    expect(() =>
+    await expect(
       handler(
         {},
         {
@@ -6815,7 +6910,7 @@ describe('PipelineService', () => {
           printSkuCode: '\u0001 . ',
         },
       ),
-    ).toThrow('完整任务参数无效')
+    ).rejects.toThrow('完整任务参数无效')
   })
 
   it('rejects empty resume run ids at the IPC schema boundary', () => {

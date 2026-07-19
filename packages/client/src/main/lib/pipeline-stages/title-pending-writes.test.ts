@@ -82,7 +82,7 @@ describe('pending title writes', () => {
 
     await expect(listPendingTitleWrites(workbenchRoot)).rejects.toMatchObject({
       name: 'AppError',
-      code: 'HTTP_5XX',
+      code: 'WORKSPACE_IO_FAILED',
       message: `无法读取标题待补写目录，请检查工作区权限和目录状态后重试：${pendingRunsPath}`,
       retryable: false,
       details: {

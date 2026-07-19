@@ -66,7 +66,7 @@ function filesystemErrorCode(error: unknown) {
 function pendingDirectoryReadError(path: string, error: unknown) {
   const filesystemCode = filesystemErrorCode(error)
   return new AppErrorClass(
-    'HTTP_5XX',
+    'WORKSPACE_IO_FAILED',
     `无法读取标题待补写目录，请检查工作区权限和目录状态后重试：${path}`,
     false,
     {

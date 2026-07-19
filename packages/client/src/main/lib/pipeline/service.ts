@@ -298,6 +298,46 @@ const pipelineRunConfigSchema = pipelineRunConfigBaseSchema.superRefine((config,
   }
 })
 
+const INTERNAL_RECOVERY_METADATA_MESSAGE = '完整任务启动参数包含内部恢复数据'
+const pipelineLaunchConfigSchema = pipelineRunConfigSchema.superRefine((config, context) => {
+  const source = config.source
+  if ('sourceManifest' in source && source.sourceManifest !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: INTERNAL_RECOVERY_METADATA_MESSAGE,
+      path: ['source', 'sourceManifest'],
+    })
+  }
+  if (
+    source.mode === 'img2img' &&
+    source.provider === 'grsai' &&
+    source.referenceImagePaths !== undefined
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: INTERNAL_RECOVERY_METADATA_MESSAGE,
+      path: ['source', 'referenceImagePaths'],
+    })
+  }
+  if (source.mode !== 'txt2img' && source.mode !== 'img2img') {
+    return
+  }
+  if (source.prompt?.mode === 'ai' && source.prompt.prompts !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: INTERNAL_RECOVERY_METADATA_MESSAGE,
+      path: ['source', 'prompt', 'prompts'],
+    })
+  }
+  if (source.prompt?.resolvedPromptsBySourceKey !== undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: INTERNAL_RECOVERY_METADATA_MESSAGE,
+      path: ['source', 'prompt', 'resolvedPromptsBySourceKey'],
+    })
+  }
+})
+
 function openWorkbenchDatabase(workbenchRoot: string) {
   return openWorkbenchDatabaseFile(workbenchDatabasePath(workbenchRoot))
 }
@@ -721,6 +761,20 @@ function parsePipelineRunConfig(input: unknown): PipelineRunConfig {
   return parsed.data
 }
 
+function parsePipelineLaunchConfig(input: unknown): PipelineRunConfig {
+  const parsed = pipelineLaunchConfigSchema.safeParse(input)
+  if (!parsed.success || !isPipelineRunConfig(parsed.data)) {
+    const issues = parsed.success ? [] : parsed.error.issues
+    const recoveryIssue = issues.find(
+      (issue) => issue.message === INTERNAL_RECOVERY_METADATA_MESSAGE,
+    )
+    throw new AppErrorClass('INVALID_INPUT', recoveryIssue?.message ?? '完整任务参数无效', false, {
+      issues,
+    })
+  }
+  return parsed.data
+}
+
 function parsePipelineRunIdInput(input: unknown) {
   const parsed = z.object({ run_id: z.string().min(1) }).safeParse(input)
   if (!parsed.success) {
@@ -1111,8 +1165,8 @@ export class PipelineService {
     return created
   }
 
-  async startRun(config: PipelineRunConfig) {
-    const parsedConfig = parsePipelineRunConfig(config)
+  async startRun(config: unknown) {
+    const parsedConfig = parsePipelineLaunchConfig(config)
     const runId = randomUUID()
     const startKey = this.acquireFireAndForgetStartKey(runId, parsedConfig)
     let prepared: PreparedPipelineRun
@@ -4999,7 +5053,7 @@ export const pipelineService = new PipelineService()
 
 export function registerPipelineIpc() {
   ipcMain.handle('pipeline:run', (_event, input: unknown) => {
-    return pipelineService.startRun(parsePipelineRunConfig(input))
+    return pipelineService.startRun(input)
   })
   ipcMain.handle('pipeline:resume', (_event, input: unknown) => {
     return pipelineService.startResume(parsePipelineRunIdInput(input).run_id)
