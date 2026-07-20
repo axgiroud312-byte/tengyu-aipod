@@ -52,20 +52,21 @@ export function AdvancedSettings({
                   className="block space-y-2 text-sm font-medium"
                   htmlFor={fieldIds.podKeyword}
                 >
-                  <span>POD 名称关键词</span>
+                  <span>固定 POD</span>
                   <div className="flex gap-2">
                     <Input
+                      disabled
                       id={fieldIds.podKeyword}
                       onChange={(event) =>
                         onUpdateConfig({ pod_search_keyword: event.target.value })
                       }
-                      value={config.pod_search_keyword ?? ''}
+                      value="杭州慎思comfyui镜像"
                     />
                     <Button
-                      aria-label="自动发现 POD"
+                      aria-label="刷新固定 POD"
                       disabled={discovering}
                       onClick={onDiscoverPod}
-                      title="自动发现 POD"
+                      title="刷新固定 POD"
                       type="button"
                       variant="secondary"
                     >
@@ -78,18 +79,20 @@ export function AdvancedSettings({
                   </div>
                 </label>
                 <label className="block space-y-2 text-sm font-medium" htmlFor={fieldIds.podUuid}>
-                  <span>手动 POD UUID</span>
+                  <span>POD UUID（只读）</span>
                   <Input
+                    disabled
                     id={fieldIds.podUuid}
                     onChange={(event) => onUpdateConfig({ pod_uuid: event.target.value })}
-                    placeholder="自动获取失败时手动填写"
+                    placeholder="刷新后自动获取"
                     value={config.pod_uuid ?? ''}
                   />
                 </label>
                 <label className="block space-y-2 text-sm font-medium" htmlFor={fieldIds.podTags}>
-                  <span>手动版本列表</span>
+                  <span>可用版本（只读）</span>
                   <textarea
                     className="min-h-20 w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                    disabled
                     id={fieldIds.podTags}
                     onChange={(event) => onTagsTextChange(event.target.value)}
                     placeholder={'4.64\n4.633'}

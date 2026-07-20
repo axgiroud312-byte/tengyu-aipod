@@ -110,8 +110,9 @@ interface ComfyuiProvider {
   name: string
   cloud_service: 'chenyu'             // 当前只支持晨羽
   api_key_keychain_id: string         // 本地密钥存储里的 key（生产环境走 OS keychain）
-  fixed_pod: {
-    pod_uuid: string                   // 杭州慎思 POD，主界面不让用户编辑
+  pod_selection: {
+    pod_uuid: string                   // 杭州慎思 comfyui 镜像的 API 实际 UUID
+    pod_title: string
     default_pod_tag: string
     default_gpu_uuid: string
   }
@@ -896,58 +897,64 @@ Grsai 自动重试次数在设置页“本地生图设置”里配置，范围 `
   说明：主界面不展示余额，只判断 API Key 是否可用。
 
 创建云机（默认收起）：
-  摘要：创建杭州慎思云机 · {默认版本} · {默认 GPU}
+  摘要：创建晨羽云机 · {版本} · {GPU}
   展开后：
-    固定 POD UUID（只读展示）
+    POD：杭州慎思comfyui镜像（唯一可选）
     POD 版本：[select]
     GPU：[select]
+    云机名称：[input]
     [创建云机]
 
 高级设置（默认收起）：
-  POD 自动发现
-  手动维护固定 POD UUID / 版本列表
+  刷新杭州慎思 POD 及版本（只读）
   定时关机分钟数
   高级实例操作：重启 / 销毁
 
 实例管理（主工作区）：
   当前 API Key 下的全部实例
-  每行展示：实例 UUID、状态、ComfyUI 地址、开机、关机、设为默认云机
+  每行展示：可编辑云机名称、实例 UUID、状态、ComfyUI 地址、开机、关机、设为默认云机
 ```
 
 主列表不展示余额、预估费用、重启、销毁。危险操作只放高级设置。
 
 ### 9.2 创建固定杭州慎思 POD 实例
 
-创建入口只服务当前配置的固定 POD，不让普通用户在主界面改 POD UUID。
+创建入口从 `/pod/list` 查询并只保留标题精确匹配 `杭州慎思comfyui镜像` 的 POD；版本来自该 POD 的 `pod_tag`。主进程创建接口会重新查询并校验 POD UUID，不能通过 IPC 传入其他 POD。创建接口不接收实例名称，因此实例运行后再调用 `/instance/update_title`。
 
 ```ts
-async function createFixedPodInstance(input: {
+async function createPodInstance(input: {
+    podUuid: string // 必须匹配杭州慎思comfyui镜像的实际 UUID
+  podTitle?: string
   podTag?: string
+  instanceTitle?: string
   gpuUuid?: string
   gpuNums?: number
   autoShutdownMinutes?: number | null
 }) {
   const settings = await readChenyuSettings()
-  const podUuid = settings.config.pod_uuid
   const podTag = input.podTag ?? settings.config.default_pod_tag
   const gpuUuid = input.gpuUuid ?? settings.config.default_gpu_uuid
 
   const created = await chenyu.createByPod({
-    pod_uuid: podUuid,
+    pod_uuid: input.podUuid,
     pod_tag: podTag,
     gpu_uuid: gpuUuid,
     gpu_nums: input.gpuNums ?? 1,
   })
 
-  if (input.autoShutdownMinutes) {
-    await chenyu.setShutdownTimer({
-      instance_uuid: created.instance_uuid,
-      enable: true,
-      shutdown_time: Math.floor(Date.now() / 1000) + input.autoShutdownMinutes * 60,
-    })
-  }
-
   const ready = await pollUntilRunningAndResolveComfyuiUrl(created.instance_uuid)
+  await Promise.all([
+    input.instanceTitle
+      ? chenyu.updateTitle({ instance_uuid: created.instance_uuid, title: input.instanceTitle })
+      : Promise.resolve(),
+    input.autoShutdownMinutes
+      ? chenyu.setShutdownTimer({
+          instance_uuid: created.instance_uuid,
+          enable: true,
+          shutdown_time: Math.floor(Date.now() / 1000) + input.autoShutdownMinutes * 60,
+        })
+      : Promise.resolve(),
+  ])
   return saveAsDefaultCloudMachine(ready)
 }
 ```
@@ -1220,18 +1227,20 @@ CREATE TABLE comfyui_instances (
 'chenyu:save-settings'                → { apiKey?, config } → ChenyuSettingsSnapshot
 'chenyu:test-connection'              → ChenyuBalance         // UI 只消费成功/失败，不展示余额
 'chenyu:discover-pod'                 → { keyword? } → ChenyuPodDiscoveryResult
+'chenyu:list-pods'                    → { keyword? } → ChenyuPod[]
 'chenyu:list-gpus'                    → ChenyuGpu[]
 'chenyu:list-instances'               → ChenyuManagedInstance[]
-'chenyu:create-fixed-pod-instance'    → { podTag?, gpuUuid?, gpuNums?, autoShutdownMinutes? }
+'chenyu:create-pod-instance'          → { podUuid, podTitle?, podTag?, instanceTitle?, gpuUuid?, gpuNums?, autoShutdownMinutes? }
                                       → ComfyuiInstanceSummary
-'chenyu:startup-instance'             → { instanceUuid, gpuUuid?, gpuNums? } → ChenyuInstanceInfo
-'chenyu:shutdown-instance'            → { instanceUuid } → ChenyuInstanceInfo
+'chenyu:startup-instance'             → { instanceUuid, gpuUuid?, gpuNums? } → { ok: true }
+'chenyu:shutdown-instance'            → { instanceUuid } → { ok: true }
+'chenyu:rename-instance'              → { instanceUuid, title } → { ok: true }
 'chenyu:set-active-instance'          → { instanceUuid, comfyuiUrl? } → ComfyuiInstanceSummary
 'chenyu:get-active-instance'          → ComfyuiInstanceSummary | null
 'chenyu:refresh-active-instance'      → ComfyuiInstanceSummary | null
 
 // 高级设置折叠区才暴露
-'chenyu:restart-instance'             → { instanceUuid } → ChenyuInstanceInfo
+'chenyu:restart-instance'             → { instanceUuid } → { ok: true }
 'chenyu:destroy-instance'             → { instanceUuid } → { ok: true }
 ```
 
@@ -1267,7 +1276,7 @@ CREATE TABLE comfyui_instances (
 - ComfyUI 图生图逐张生成 prompt，并确保“一张图对应一条 prompt”
 - ComfyUI 图生图 AI 写 prompt 失败时只失败当前图片，不影响其他图片
 - ComfyUI 图生图只覆盖第一个非负面提示词输入框，保留其他正向/负向 prompt
-- 晨羽固定 POD 实例创建、开机、关机、设为默认云机
+- 晨羽杭州慎思 POD 版本选择、实例创建与命名、开机、关机、设为默认云机；其他 POD 必须拒绝
 - 晨羽实例列表要把本地默认云机保存的 ComfyUI 地址合并到对应运行中实例，保证生图页和完整任务页可选
 - 没有运行中云机时，ComfyUI 生图提示先去设置页开机，不自动开机
 - 工作流注入参数后的 ComfyUI 提交

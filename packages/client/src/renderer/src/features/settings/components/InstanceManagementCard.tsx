@@ -2,7 +2,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Loader2, Power, PowerOff, RefreshCw } from 'lucide-react'
+import { Loader2, Power, PowerOff, RefreshCw, Save } from 'lucide-react'
 import { type ChenyuInstance, type InstanceAction, statusClassName, statusText } from '../types'
 
 export function InstanceManagementCard({
@@ -10,23 +10,29 @@ export function InstanceManagementCard({
   instances,
   refreshing,
   statusOverrides,
+  titleDrafts,
   urlDrafts,
   onRefresh,
+  onRename,
   onSetDefault,
   onShutdown,
   onStartup,
   onUpdateUrl,
+  onUpdateTitle,
 }: {
   busyInstance: { uuid: string; action: InstanceAction } | null
   instances: ChenyuInstance[]
   refreshing: boolean
   statusOverrides: Record<string, ChenyuInstance['statusName']>
+  titleDrafts: Record<string, string>
   urlDrafts: Record<string, string>
   onRefresh: () => void
+  onRename: (instance: ChenyuInstance) => void
   onSetDefault: (instance: ChenyuInstance) => void
   onShutdown: (instance: ChenyuInstance) => void
   onStartup: (instance: ChenyuInstance) => void
   onUpdateUrl: (instanceUuid: string, value: string) => void
+  onUpdateTitle: (instanceUuid: string, value: string) => void
 }) {
   return (
     <Card>
@@ -59,6 +65,7 @@ export function InstanceManagementCard({
                 instance.comfyuiUrl ??
                 instance.serverUrls[0] ??
                 ''
+              const titleDraft = titleDrafts[instance.instanceUuid] ?? instance.title
               const canSetDefault = Boolean(instance.comfyuiUrl || urlDraft.trim())
               return (
                 <div
@@ -67,6 +74,37 @@ export function InstanceManagementCard({
                 >
                   <div className="space-y-4">
                     <div className="min-w-0 flex-1 space-y-3">
+                      <div className="space-y-1">
+                        <p className="text-xs font-medium text-muted-foreground">云机名称</p>
+                        <div className="flex gap-2">
+                          <Input
+                            aria-label="云机名称"
+                            className="h-9"
+                            maxLength={64}
+                            onChange={(event) =>
+                              onUpdateTitle(instance.instanceUuid, event.target.value)
+                            }
+                            value={titleDraft}
+                          />
+                          <Button
+                            aria-label="保存云机名称"
+                            className="h-9 w-9 shrink-0 p-0"
+                            disabled={
+                              busy || !titleDraft.trim() || titleDraft.trim() === instance.title
+                            }
+                            onClick={() => onRename(instance)}
+                            title="保存云机名称"
+                            type="button"
+                            variant="outline"
+                          >
+                            {busy && busyInstance?.action === 'rename' ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Save className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
+                      </div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="text-xs font-medium text-muted-foreground">实例 UUID</span>
                         {instance.isCurrent ? <Badge className="shrink-0">默认云机</Badge> : null}

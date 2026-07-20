@@ -414,20 +414,20 @@ export class ChenyuCloudClient {
     }
   }
 
-  async startup(input: ChenyuStartupInput) {
-    return this.post<ChenyuInstanceInfo>('/instance/startup', input)
+  startup(input: ChenyuStartupInput) {
+    return this.postAction('/instance/startup', input)
   }
 
-  async shutdown(instance_uuid: string) {
-    return this.post<ChenyuInstanceInfo>('/instance/shutdown', { instance_uuid })
+  shutdown(instance_uuid: string) {
+    return this.postAction('/instance/shutdown', { instance_uuid })
   }
 
-  async restart(instance_uuid: string) {
-    return this.post<ChenyuInstanceInfo>('/instance/restart', { instance_uuid })
+  restart(instance_uuid: string) {
+    return this.postAction('/instance/restart', { instance_uuid })
   }
 
-  async setShutdownTimer(input: ChenyuShutdownTimerInput) {
-    return this.post<ChenyuInstanceInfo>('/instance/shutdown_timer', input)
+  setShutdownTimer(input: ChenyuShutdownTimerInput) {
+    return this.postAction('/instance/shutdown_timer', input)
   }
 
   setIdleClose(input: ChenyuIdleCloseInput) {
@@ -442,8 +442,8 @@ export class ChenyuCloudClient {
     return this.postAction('/instance/save_image', { instance_uuid })
   }
 
-  async destroy(instance_uuid: string) {
-    return this.post<ChenyuInstanceInfo>('/instance/destroy', { instance_uuid })
+  destroy(instance_uuid: string) {
+    return this.postAction('/instance/destroy', { instance_uuid })
   }
 
   async getBalance() {

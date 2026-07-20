@@ -1,6 +1,7 @@
 export type ChenyuSettingsSnapshot = Awaited<ReturnType<typeof window.api.chenyu.getSettings>>
 export type ChenyuConfig = ChenyuSettingsSnapshot['config']
 export type ChenyuGpu = Awaited<ReturnType<typeof window.api.chenyu.listGpus>>[number]
+export type ChenyuPod = Awaited<ReturnType<typeof window.api.chenyu.listPods>>[number]
 export type ChenyuInstance = Awaited<ReturnType<typeof window.api.chenyu.listInstances>>[number]
 export type GenerationSettingsSnapshot = Awaited<
   ReturnType<typeof window.api.generationSettings.get>
@@ -10,7 +11,7 @@ export type WorkspaceState = Awaited<ReturnType<typeof window.api.workspace.getS
 export type SkillSyncResult = Awaited<ReturnType<typeof window.api.skill.refresh>>
 export type LocalWorkflowSummary = Awaited<ReturnType<typeof window.api.workflow.listLocal>>[number]
 export type ConnectionStatus = 'unchecked' | 'checking' | 'connected' | 'failed'
-export type InstanceAction = 'startup' | 'shutdown' | 'restart' | 'active'
+export type InstanceAction = 'startup' | 'shutdown' | 'restart' | 'active' | 'rename'
 export type SettingsTab = 'general' | 'models' | 'chenyu'
 
 export const DEFAULT_GPU_NUMS = 1
@@ -24,6 +25,7 @@ export const fieldIds = {
   podUuid: 'chenyu-pod-uuid',
   podTags: 'chenyu-pod-tags',
   podVersion: 'chenyu-pod-version',
+  instanceTitle: 'chenyu-instance-title',
   gpu: 'chenyu-gpu',
   shutdown: 'chenyu-shutdown-minutes',
 }

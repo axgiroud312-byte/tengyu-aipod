@@ -40,6 +40,7 @@ export type ComfyuiInstanceSummary = ComfyuiInstanceRecord & {
 export type CreateComfyuiInstanceInput = {
   pod: ChenyuPod
   gpu: ChenyuGpu
+  instanceTitle?: string
   podTag?: string
   gpuNums?: number
   autoShutdownMinutes?: number | null
@@ -57,6 +58,7 @@ export type ComfyuiInstanceManagerDependencies = {
     | 'restart'
     | 'destroy'
     | 'setShutdownTimer'
+    | 'updateTitle'
     | 'getBalance'
   >
   now?: () => number
@@ -133,14 +135,26 @@ export class ComfyuiInstanceManager {
     }
 
     const created = await this.dependencies.chenyu.createByPod(payload)
-    if (autoShutdownAt) {
-      await this.dependencies.chenyu.setShutdownTimer({
-        instance_uuid: created.instance_uuid,
-        enable: true,
-        shutdown_time: autoShutdownAt,
-      })
-    }
     const { info: latest, comfyuiUrl } = await this.waitForReadyInstance(created)
+    const readyActions: Promise<unknown>[] = []
+    if (input.instanceTitle?.trim()) {
+      readyActions.push(
+        this.dependencies.chenyu.updateTitle({
+          instance_uuid: created.instance_uuid,
+          title: input.instanceTitle.trim(),
+        }),
+      )
+    }
+    if (autoShutdownAt) {
+      readyActions.push(
+        this.dependencies.chenyu.setShutdownTimer({
+          instance_uuid: created.instance_uuid,
+          enable: true,
+          shutdown_time: autoShutdownAt,
+        }),
+      )
+    }
+    await Promise.all(readyActions)
 
     const record: ComfyuiInstanceRecord = {
       provider: 'chenyu',

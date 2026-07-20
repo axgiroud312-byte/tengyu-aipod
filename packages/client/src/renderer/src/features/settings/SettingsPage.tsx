@@ -41,6 +41,7 @@ export function SettingsPage({
     connectionError,
     connectionStatus,
     createOpen,
+    createInstanceTitle,
     creating,
     currentVersion,
     deleteLogsOpen,
@@ -59,10 +60,12 @@ export function SettingsPage({
     grsaiApiKey,
     importingWorkflow,
     instanceUrlDrafts,
+    instanceTitleDrafts,
     instances,
     loading,
     message,
     openingLogs,
+    pods,
     refreshing,
     saving,
     savingBitBrowserBaseUrl,
@@ -89,6 +92,7 @@ export function SettingsPage({
     openLogsDirectory,
     refreshRemoteData,
     removeLocalWorkflow,
+    renameInstance,
     runInstanceAction,
     saveBitBrowserSettings,
     saveGenerationSettings,
@@ -99,6 +103,7 @@ export function SettingsPage({
     setBailianApiKey,
     setBitBrowserBaseUrl,
     setCreateOpen,
+    setCreateInstanceTitle,
     setDeleteLogsOpen,
     setDestroyConfirm,
     setDestroyTarget,
@@ -106,9 +111,11 @@ export function SettingsPage({
     setWorkflowDirectoryPath,
     setWorkspaceDraft,
     syncBackendConfig,
+    selectPod,
     updateConfig,
     updateGenerationConfig,
     updateInstanceUrlDraft,
+    updateInstanceTitleDraft,
     updateTagsText,
   } = actions
 
@@ -294,8 +301,12 @@ export function SettingsPage({
                     effectiveGpuName={effectiveGpuName}
                     effectiveGpuUuid={effectiveGpuUuid}
                     gpus={gpus}
+                    instanceTitle={createInstanceTitle}
+                    pods={pods}
                     onCreate={() => void createInstance()}
                     onCreateOpenChange={setCreateOpen}
+                    onInstanceTitleChange={setCreateInstanceTitle}
+                    onSelectPod={selectPod}
                     onUpdateConfig={updateConfig}
                   />
                   <AdvancedSettings
@@ -320,12 +331,15 @@ export function SettingsPage({
                   instances={instances}
                   refreshing={refreshing}
                   statusOverrides={statusOverrides}
+                  titleDrafts={instanceTitleDrafts}
                   urlDrafts={instanceUrlDrafts}
                   onRefresh={() => void refreshRemoteData()}
+                  onRename={(instance) => void renameInstance(instance)}
                   onSetDefault={(instance) => void runInstanceAction(instance, 'active')}
                   onShutdown={(instance) => void runInstanceAction(instance, 'shutdown')}
                   onStartup={(instance) => void runInstanceAction(instance, 'startup')}
                   onUpdateUrl={updateInstanceUrlDraft}
+                  onUpdateTitle={updateInstanceTitleDraft}
                 />
               </div>
             </section>

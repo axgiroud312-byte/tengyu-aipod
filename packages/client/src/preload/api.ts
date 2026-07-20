@@ -38,7 +38,7 @@ import type {
   ChenyuWorkflowMarketList,
 } from '../main/lib/chenyu-cloud-client'
 import type {
-  ChenyuCreateFixedPodInstanceInput,
+  ChenyuCreatePodInstanceInput,
   ChenyuManagedInstance,
   ChenyuPodDiscoveryResult,
   ChenyuSaveSettingsInput,
@@ -254,29 +254,26 @@ export const api = {
       }>,
     discoverPod: (input?: { keyword?: string }) =>
       ipcRenderer.invoke('chenyu:discover-pod', input) as Promise<ChenyuPodDiscoveryResult>,
+    listPods: (input?: { keyword?: string }) =>
+      ipcRenderer.invoke('chenyu:list-pods', input) as Promise<
+        import('../main/lib/chenyu-cloud-client').ChenyuPod[]
+      >,
     listGpus: () =>
       ipcRenderer.invoke('chenyu:list-gpus') as Promise<
         import('../main/lib/chenyu-cloud-client').ChenyuGpu[]
       >,
     listInstances: () =>
       ipcRenderer.invoke('chenyu:list-instances') as Promise<ChenyuManagedInstance[]>,
-    createFixedPodInstance: (input: ChenyuCreateFixedPodInstanceInput) =>
-      ipcRenderer.invoke(
-        'chenyu:create-fixed-pod-instance',
-        input,
-      ) as Promise<ComfyuiInstanceSummary>,
+    createPodInstance: (input: ChenyuCreatePodInstanceInput) =>
+      ipcRenderer.invoke('chenyu:create-pod-instance', input) as Promise<ComfyuiInstanceSummary>,
     startupInstance: (input: { instanceUuid: string; gpuUuid?: string; gpuNums?: number }) =>
-      ipcRenderer.invoke('chenyu:startup-instance', input) as Promise<
-        import('../main/lib/chenyu-cloud-client').ChenyuInstanceInfo
-      >,
+      ipcRenderer.invoke('chenyu:startup-instance', input) as Promise<{ ok: true }>,
     shutdownInstance: (input: { instanceUuid: string }) =>
-      ipcRenderer.invoke('chenyu:shutdown-instance', input) as Promise<
-        import('../main/lib/chenyu-cloud-client').ChenyuInstanceInfo
-      >,
+      ipcRenderer.invoke('chenyu:shutdown-instance', input) as Promise<{ ok: true }>,
     restartInstance: (input: { instanceUuid: string }) =>
-      ipcRenderer.invoke('chenyu:restart-instance', input) as Promise<
-        import('../main/lib/chenyu-cloud-client').ChenyuInstanceInfo
-      >,
+      ipcRenderer.invoke('chenyu:restart-instance', input) as Promise<{ ok: true }>,
+    renameInstance: (input: { instanceUuid: string; title: string }) =>
+      ipcRenderer.invoke('chenyu:rename-instance', input) as Promise<{ ok: true }>,
     destroyInstance: (input: { instanceUuid: string }) =>
       ipcRenderer.invoke('chenyu:destroy-instance', input) as Promise<{ ok: true }>,
     setActiveInstance: (input: { instanceUuid: string; comfyuiUrl?: string }) =>

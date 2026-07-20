@@ -50,8 +50,11 @@ export type ChenyuManagedInstance = {
   raw: ChenyuInstanceInfo
 }
 
-export type ChenyuCreateFixedPodInstanceInput = {
+export type ChenyuCreatePodInstanceInput = {
+  podUuid?: string | undefined
+  podTitle?: string | undefined
   podTag?: string | undefined
+  instanceTitle?: string | undefined
   gpuUuid?: string | undefined
   gpuNums?: number | undefined
   autoShutdownMinutes?: number | null | undefined
@@ -60,6 +63,7 @@ export type ChenyuCreateFixedPodInstanceInput = {
 const DEFAULT_GPU_NUMS = 1
 const POD_DISCOVERY_PAGE_SIZE = 50
 const GPU_PAGE_SIZE = 100
+export const ALLOWED_CHENYU_POD_TITLE = '杭州慎思comfyui镜像'
 const rawChenyuConfigSchema = z.object({
   pod_search_keyword: z.string().optional(),
   pod_title: z.string().optional(),
@@ -115,17 +119,29 @@ const chenyuSaveSettingsInputSchema = z
     return result
   })
 const chenyuDiscoverPodInputSchema = z.object({ keyword: z.string().optional() }).optional()
-const chenyuCreateFixedPodInstanceInputSchema = z
+const chenyuCreatePodInstanceInputSchema = z
   .object({
+    podUuid: z.string().optional(),
+    podTitle: z.string().optional(),
     podTag: z.string().optional(),
+    instanceTitle: z.string().optional(),
     gpuUuid: z.string().optional(),
     gpuNums: z.number().optional(),
     autoShutdownMinutes: z.number().nullable().optional(),
   })
-  .transform((input): ChenyuCreateFixedPodInstanceInput => {
-    const result: ChenyuCreateFixedPodInstanceInput = {}
+  .transform((input): ChenyuCreatePodInstanceInput => {
+    const result: ChenyuCreatePodInstanceInput = {}
+    if (input.podUuid !== undefined) {
+      result.podUuid = input.podUuid
+    }
+    if (input.podTitle !== undefined) {
+      result.podTitle = input.podTitle
+    }
     if (input.podTag !== undefined) {
       result.podTag = input.podTag
+    }
+    if (input.instanceTitle !== undefined) {
+      result.instanceTitle = input.instanceTitle
     }
     if (input.gpuUuid !== undefined) {
       result.gpuUuid = input.gpuUuid
@@ -157,6 +173,10 @@ const chenyuStartupInstanceInputSchema = z
     return result
   })
 const chenyuInstanceUuidInputSchema = z.object({ instanceUuid: z.string() })
+const chenyuRenameInstanceInputSchema = z.object({
+  instanceUuid: z.string(),
+  title: z.string().trim().min(1),
+})
 const chenyuSetActiveInstanceInputSchema = z.object({
   instanceUuid: z.string(),
   comfyuiUrl: z.string().optional(),
@@ -198,29 +218,12 @@ export async function testChenyuConnection() {
   return client.getBalance()
 }
 
-export async function discoverChenyuPod(keyword?: string): Promise<ChenyuPodDiscoveryResult> {
+export async function discoverChenyuPod(_keyword?: string): Promise<ChenyuPodDiscoveryResult> {
   const client = await requireChenyuClient()
-  const settings = await readChenyuSettings()
-  const name = (
-    keyword ??
-    settings.config.pod_search_keyword ??
-    settings.config.pod_title ??
-    ''
-  ).trim()
-  if (!name) {
-    throw new AppErrorClass('HTTP_4XX', '请先填写 POD 名称关键词', false, {
-      provider: 'comfyui-chenyu',
-    })
-  }
-
-  const result = await client.listPods({
-    page: 1,
-    page_size: POD_DISCOVERY_PAGE_SIZE,
-    name,
-  })
-  const selected = selectBestPod(result.items, name)
+  const pods = await allowedChenyuPods(client)
+  const selected = pods[0] ?? null
   return {
-    pods: result.items,
+    pods,
     selected,
     tags: selected?.pod_tag ?? [],
   }
@@ -230,6 +233,11 @@ export async function listChenyuGpus() {
   const client = await requireChenyuClient()
   const result = await client.listGpus({ page: 1, page_size: GPU_PAGE_SIZE })
   return result.items
+}
+
+export async function listChenyuPods(_name?: string) {
+  const client = await requireChenyuClient()
+  return allowedChenyuPods(client)
 }
 
 export async function listChenyuInstances() {
@@ -242,19 +250,26 @@ export async function listChenyuInstances() {
   return result.items.map((item) => mapManagedInstance(item, current, settings.config))
 }
 
-export async function createFixedPodInstance(input: ChenyuCreateFixedPodInstanceInput) {
+export async function createPodInstance(input: ChenyuCreatePodInstanceInput) {
   const client = await requireChenyuClient()
   const settings = await readChenyuSettings()
-  const podUuid = settings.config.pod_uuid?.trim()
-  if (!podUuid) {
-    throw new AppErrorClass('HTTP_4XX', '请先配置杭州慎思 POD UUID', false, {
+  const allowedPod = await requireAllowedChenyuPod(client)
+  const requestedPodUuid = (input.podUuid ?? settings.config.pod_uuid ?? '').trim()
+  if (requestedPodUuid && requestedPodUuid !== allowedPod.uuid) {
+    throw new AppErrorClass('INVALID_INPUT', `只允许使用${ALLOWED_CHENYU_POD_TITLE}`, false, {
       provider: 'comfyui-chenyu',
     })
   }
+  const podUuid = allowedPod.uuid
 
   const podTag = (input.podTag ?? settings.config.default_pod_tag ?? '').trim()
   if (!podTag) {
     throw new AppErrorClass('HTTP_4XX', '请先选择 POD 版本', false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+  if (allowedPod.pod_tag?.length && !allowedPod.pod_tag.includes(podTag)) {
+    throw new AppErrorClass('INVALID_INPUT', '所选版本不属于指定 POD，请重新选择', false, {
       provider: 'comfyui-chenyu',
     })
   }
@@ -271,10 +286,11 @@ export async function createFixedPodInstance(input: ChenyuCreateFixedPodInstance
   return manager.createInstance({
     pod: {
       uuid: podUuid,
-      title: settings.config.pod_title ?? '杭州慎思 POD',
+      title: allowedPod.title,
       pod_tag: [podTag],
     },
     gpu,
+    ...(input.instanceTitle?.trim() ? { instanceTitle: input.instanceTitle.trim() } : {}),
     podTag,
     gpuNums: input.gpuNums ?? settings.config.default_gpu_nums ?? DEFAULT_GPU_NUMS,
     autoShutdownMinutes:
@@ -282,6 +298,11 @@ export async function createFixedPodInstance(input: ChenyuCreateFixedPodInstance
         ? (settings.config.auto_shutdown_minutes ?? null)
         : input.autoShutdownMinutes,
   })
+}
+
+export async function renameChenyuInstance(instanceUuid: string, title: string) {
+  const client = await requireChenyuClient()
+  return client.updateTitle({ instance_uuid: instanceUuid, title })
 }
 
 export async function startupChenyuInstance(input: {
@@ -351,12 +372,28 @@ export function registerChenyuInstanceIpc() {
     ),
   )
   ipcMain.handle('chenyu:list-gpus', () => listChenyuGpus())
+  ipcMain.handle('chenyu:list-pods', (_event, input: unknown) => {
+    const parsed = parseChenyuIpcInput(
+      chenyuDiscoverPodInputSchema,
+      input,
+      '晨羽 POD 查询参数不正确',
+    )
+    return listChenyuPods(parsed?.keyword)
+  })
   ipcMain.handle('chenyu:list-instances', () => listChenyuInstances())
-  ipcMain.handle('chenyu:create-fixed-pod-instance', (_event, input: unknown) =>
-    createFixedPodInstance(
-      parseChenyuIpcInput(chenyuCreateFixedPodInstanceInputSchema, input, '晨羽创建云机参数不正确'),
+  ipcMain.handle('chenyu:create-pod-instance', (_event, input: unknown) =>
+    createPodInstance(
+      parseChenyuIpcInput(chenyuCreatePodInstanceInputSchema, input, '晨羽创建云机参数不正确'),
     ),
   )
+  ipcMain.handle('chenyu:rename-instance', (_event, input: unknown) => {
+    const parsed = parseChenyuIpcInput(
+      chenyuRenameInstanceInputSchema,
+      input,
+      '晨羽云机名称参数不正确',
+    )
+    return renameChenyuInstance(parsed.instanceUuid, parsed.title)
+  })
   ipcMain.handle('chenyu:startup-instance', (_event, input: unknown) =>
     startupChenyuInstance(
       parseChenyuIpcInput(chenyuStartupInstanceInputSchema, input, '晨羽启动云机参数不正确'),
@@ -440,14 +477,23 @@ function normalizeConfig(config: ChenyuConfig): ChenyuConfig {
   }
 }
 
-function selectBestPod(pods: ChenyuPod[], keyword: string) {
-  const normalized = keyword.toLowerCase()
-  return (
-    pods.find((pod) => pod.title.toLowerCase() === normalized) ??
-    pods.find((pod) => pod.title.toLowerCase().includes(normalized)) ??
-    pods[0] ??
-    null
-  )
+async function allowedChenyuPods(client: Pick<ChenyuCloudClient, 'listPods'>) {
+  const result = await client.listPods({
+    page: 1,
+    page_size: POD_DISCOVERY_PAGE_SIZE,
+    name: ALLOWED_CHENYU_POD_TITLE,
+  })
+  return result.items.filter((pod) => pod.title.trim() === ALLOWED_CHENYU_POD_TITLE)
+}
+
+async function requireAllowedChenyuPod(client: Pick<ChenyuCloudClient, 'listPods'>) {
+  const pod = (await allowedChenyuPods(client))[0]
+  if (!pod) {
+    throw new AppErrorClass('HTTP_4XX', `未找到指定 POD：${ALLOWED_CHENYU_POD_TITLE}`, false, {
+      provider: 'comfyui-chenyu',
+    })
+  }
+  return pod
 }
 
 function mapManagedInstance(

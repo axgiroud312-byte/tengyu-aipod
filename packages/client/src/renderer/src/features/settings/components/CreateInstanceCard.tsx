@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Cloud, Loader2, Server } from 'lucide-react'
-import { type ChenyuConfig, type ChenyuGpu, fieldIds } from '../types'
+import { type ChenyuConfig, type ChenyuGpu, type ChenyuPod, fieldIds } from '../types'
 
 export function CreateInstanceCard({
   apiKeyConfigured,
@@ -19,8 +19,12 @@ export function CreateInstanceCard({
   effectiveGpuName,
   effectiveGpuUuid,
   gpus,
+  instanceTitle,
+  pods,
   onCreate,
   onCreateOpenChange,
+  onInstanceTitleChange,
+  onSelectPod,
   onUpdateConfig,
 }: {
   apiKeyConfigured: boolean
@@ -31,15 +35,21 @@ export function CreateInstanceCard({
   effectiveGpuName: string
   effectiveGpuUuid: string
   gpus: ChenyuGpu[]
+  instanceTitle: string
+  pods: ChenyuPod[]
   onCreate: () => void
   onCreateOpenChange: (open: boolean) => void
+  onInstanceTitleChange: (title: string) => void
+  onSelectPod: (podUuid: string) => void
   onUpdateConfig: (patch: Partial<ChenyuConfig>) => void
 }) {
+  const selectedPod = pods.find((pod) => pod.uuid === config.pod_uuid)
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>创建云机</CardTitle>
-        <CardDescription>创建固定杭州慎思 POD 的新实例。</CardDescription>
+        <CardDescription>使用杭州慎思 ComfyUI POD 创建并命名新的云机。</CardDescription>
       </CardHeader>
       <CardContent>
         <Accordion
@@ -53,7 +63,7 @@ export function CreateInstanceCard({
               <div className="flex min-w-0 items-center gap-3">
                 <Server className="h-4 w-4 shrink-0 text-primary" />
                 <div className="min-w-0 text-left">
-                  <p className="font-medium">创建杭州慎思云机</p>
+                  <p className="font-medium">创建晨羽云机</p>
                   <p className="truncate text-xs text-muted-foreground">
                     {currentVersion || '未选版本'} · {effectiveGpuName || '未选 GPU'}
                   </p>
@@ -61,7 +71,25 @@ export function CreateInstanceCard({
               </div>
             </AccordionTrigger>
             <AccordionContent className="space-y-4">
-              <ReadOnlyField label="固定 POD UUID" value={config.pod_uuid ?? '未配置'} />
+              <label className="block space-y-2 text-sm font-medium" htmlFor={fieldIds.podUuid}>
+                <span>POD</span>
+                <select
+                  className="h-10 w-full rounded-md border bg-background px-3 text-sm"
+                  disabled={!pods.length}
+                  id={fieldIds.podUuid}
+                  onChange={(event) => onSelectPod(event.target.value)}
+                  value={selectedPod?.uuid ?? ''}
+                >
+                  <option value="">
+                    {pods.length ? '请选择 POD' : '未找到杭州慎思comfyui镜像'}
+                  </option>
+                  {pods.map((pod) => (
+                    <option key={pod.uuid} value={pod.uuid}>
+                      {pod.title}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <label className="block space-y-2 text-sm font-medium" htmlFor={fieldIds.podVersion}>
                 <span>版本</span>
                 {config.pod_tags?.length ? (
@@ -85,6 +113,19 @@ export function CreateInstanceCard({
                     value={currentVersion}
                   />
                 )}
+              </label>
+              <label
+                className="block space-y-2 text-sm font-medium"
+                htmlFor={fieldIds.instanceTitle}
+              >
+                <span>云机名称</span>
+                <Input
+                  id={fieldIds.instanceTitle}
+                  maxLength={64}
+                  onChange={(event) => onInstanceTitleChange(event.target.value)}
+                  placeholder="例如：主力生图 4090"
+                  value={instanceTitle}
+                />
               </label>
               <label className="block space-y-2 text-sm font-medium" htmlFor={fieldIds.gpu}>
                 <span>显卡</span>
@@ -118,7 +159,13 @@ export function CreateInstanceCard({
               </label>
               <Button
                 className="w-full"
-                disabled={creating || !apiKeyConfigured}
+                disabled={
+                  creating ||
+                  !apiKeyConfigured ||
+                  !selectedPod ||
+                  !currentVersion.trim() ||
+                  !effectiveGpuUuid.trim()
+                }
                 onClick={onCreate}
                 type="button"
               >
@@ -134,16 +181,5 @@ export function CreateInstanceCard({
         </Accordion>
       </CardContent>
     </Card>
-  )
-}
-
-function ReadOnlyField({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="space-y-2 text-sm">
-      <p className="font-medium">{label}</p>
-      <div className="min-h-10 rounded-md border bg-muted/30 px-3 py-2 font-mono text-xs">
-        {value}
-      </div>
-    </div>
   )
 }

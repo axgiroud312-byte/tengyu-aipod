@@ -119,6 +119,7 @@ function manager(
       restart: vi.fn(),
       destroy: vi.fn(),
       setShutdownTimer: vi.fn(),
+      updateTitle: vi.fn(),
       getBalance: vi.fn(),
       ...chenyu,
     },
@@ -138,16 +139,18 @@ describe('ComfyuiInstanceManager', () => {
       status: ChenyuInstanceStatus.Initializing,
     })
     const setShutdownTimer = vi.fn().mockResolvedValue({ instance_uuid: 'inst-1' })
+    const updateTitle = vi.fn().mockResolvedValue({ ok: true })
     const getInstanceInfo = vi.fn().mockResolvedValue({
       instance_uuid: 'inst-1',
       status: ChenyuInstanceStatus.Running,
       server_map: serverMap(),
     })
-    const service = manager({ createByPod, setShutdownTimer, getInstanceInfo })
+    const service = manager({ createByPod, setShutdownTimer, updateTitle, getInstanceInfo })
 
     const result = await service.createInstance({
       pod: { uuid: 'pod-1', title: 'ComfyUI Default', pod_tag: ['latest'], price: { hour: 2 } },
       gpu: { gpu_uuid: 'gpu-1', gpu_name: 'RTX 4090', status: 1, price: { hour: 5 } },
+      instanceTitle: '主力生图云机',
     })
 
     expect(createByPod).toHaveBeenCalledWith({
@@ -161,6 +164,13 @@ describe('ComfyuiInstanceManager', () => {
       enable: true,
       shutdown_time: 1_700_003_600,
     })
+    expect(updateTitle).toHaveBeenCalledWith({
+      instance_uuid: 'inst-1',
+      title: '主力生图云机',
+    })
+    expect(getInstanceInfo.mock.invocationCallOrder[0]).toBeLessThan(
+      setShutdownTimer.mock.invocationCallOrder[0] ?? Number.MAX_SAFE_INTEGER,
+    )
     expect(result).toMatchObject({
       instanceUuid: 'inst-1',
       comfyuiUrl: 'https://comfy.example',

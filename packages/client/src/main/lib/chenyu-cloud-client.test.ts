@@ -186,7 +186,7 @@ describe('ChenyuCloudClient', () => {
       server.use(
         http.post(`${CHENYU_BASE_URL}${path}`, async ({ request }) => {
           requests.push({ path, body: await request.json() })
-          return ok({ instance_uuid: 'inst-1', status: ChenyuInstanceStatus.Running })
+          return HttpResponse.json({ code: 0, msg: 'success' })
         }),
       )
     }
@@ -206,15 +206,19 @@ describe('ChenyuCloudClient', () => {
       instance_uuid: 'inst-1',
       server_map: [{ url: 'https://comfy.example' }],
     })
-    await client.startup({ instance_uuid: 'inst-1', gpu_uuid: 'gpu-2', gpu_nums: 2 })
-    await client.shutdown('inst-1')
-    await client.restart('inst-1')
-    await client.setShutdownTimer({
-      instance_uuid: 'inst-1',
-      enable: true,
-      shutdown_time: 1_703_232_000,
-    })
-    await client.destroy('inst-1')
+    await expect(
+      client.startup({ instance_uuid: 'inst-1', gpu_uuid: 'gpu-2', gpu_nums: 2 }),
+    ).resolves.toEqual({ ok: true })
+    await expect(client.shutdown('inst-1')).resolves.toEqual({ ok: true })
+    await expect(client.restart('inst-1')).resolves.toEqual({ ok: true })
+    await expect(
+      client.setShutdownTimer({
+        instance_uuid: 'inst-1',
+        enable: true,
+        shutdown_time: 1_703_232_000,
+      }),
+    ).resolves.toEqual({ ok: true })
+    await expect(client.destroy('inst-1')).resolves.toEqual({ ok: true })
 
     expect(requests).toEqual([
       {

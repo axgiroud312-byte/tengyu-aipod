@@ -149,7 +149,7 @@ sequenceDiagram
 | **统一编排** | `packages/client/src/main/lib/generation-service.ts` ← 主调度 + `generation:debug-log` 运行期日志事件<br/>`generation-concurrency.ts` ← 并发控制（共享给所有 provider）<br/>`prompt-generator-service.ts` ← 提示词生成（百炼） |
 | **Grsai 路径**（付费） | `grsai-adapter.ts`（节点切换 / 重试 / 异步轮询） |
 | **ComfyUI 路径** | `comfyui-instance-manager.ts` ← 实例生命周期<br/>`comfyui-chenyu-adapter.ts` ← 晨羽智云<br/>`comfy-http-client.ts` ← HTTP 直连<br/>`chenyu-cloud-client.ts` ← 晨羽 API<br/>`comfyui-workflow-cache.ts` ← 工作流缓存 |
-| **晨羽设置** | `SettingsPage.tsx` ← API Key 连接状态、固定杭州慎思 POD 创建、全部实例开关机、设为默认云机 |
+| **晨羽设置** | `SettingsPage.tsx` ← API Key 连接状态、杭州慎思 POD 版本选择、实例命名、全部实例开关机、设为默认云机 |
 | **图像预处理** | `preprocess-pool.ts` |
 | **UI 工作台** | `packages/client/src/renderer/src/components/generation-workbench.tsx` ← 生图主界面 + 日志弹窗<br/>`packages/client/src/renderer/src/features/generation/generation-debug-log.ts` ← 命令行式日志格式化 |
 | **Spec** | `docs/spec/03-generation.md` |

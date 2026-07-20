@@ -4,6 +4,7 @@ import {
   type ChenyuConfig,
   type ChenyuGpu,
   type ChenyuInstance,
+  type ChenyuPod,
   type ChenyuSettingsSnapshot,
   type ConnectionStatus,
   DEFAULT_GPU_NUMS,
@@ -57,7 +58,9 @@ export function useSettingsPageModel({
   const [connectionError, setConnectionError] = useState<string | null>(null)
   const [tagsText, setTagsText] = useState('')
   const [gpus, setGpus] = useState<ChenyuGpu[]>([])
+  const [pods, setPods] = useState<ChenyuPod[]>([])
   const [instances, setInstances] = useState<ChenyuInstance[]>([])
+  const [createInstanceTitle, setCreateInstanceTitle] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [refreshing, setRefreshing] = useState(false)
@@ -80,6 +83,7 @@ export function useSettingsPageModel({
   const [openingLogs, setOpeningLogs] = useState(false)
   const [exportingLogs, setExportingLogs] = useState(false)
   const [instanceUrlDrafts, setInstanceUrlDrafts] = useState<Record<string, string>>({})
+  const [instanceTitleDrafts, setInstanceTitleDrafts] = useState<Record<string, string>>({})
   const [activeSettingsTab, setActiveSettingsTab] = useState<SettingsTab>('general')
 
   const currentVersion = config.default_pod_tag ?? ''
@@ -178,11 +182,25 @@ export function useSettingsPageModel({
     setConnectionError(null)
     try {
       await window.api.chenyu.testConnection()
-      const [nextGpus, nextInstances] = await Promise.all([
+      const [podsResult, gpusResult, instancesResult] = await Promise.allSettled([
+        window.api.chenyu.listPods(),
         window.api.chenyu.listGpus(),
         window.api.chenyu.listInstances(),
       ])
+      if (gpusResult.status === 'rejected') {
+        throw gpusResult.reason
+      }
+      if (instancesResult.status === 'rejected') {
+        throw instancesResult.reason
+      }
+      const nextGpus = gpusResult.value
+      const nextInstances = instancesResult.value
       setConnectionStatus('connected')
+      if (podsResult.status === 'fulfilled') {
+        setPods(podsResult.value)
+      } else {
+        setError(errorMessage(podsResult.reason, 'POD 列表加载失败，请使用搜索或手动填写 UUID'))
+      }
       setGpus(nextGpus)
       setInstances(nextInstances)
       if (!nextConfig.default_gpu_uuid) {
@@ -213,6 +231,22 @@ export function useSettingsPageModel({
       pod_tags: tags,
       default_pod_tag: config.default_pod_tag || tags[0] || '',
     })
+  }
+
+  function selectPod(podUuid: string) {
+    const pod = pods.find((item) => item.uuid === podUuid)
+    if (!pod) {
+      updateConfig({ pod_uuid: podUuid })
+      return
+    }
+    const tags = pod.pod_tag ?? []
+    updateConfig({
+      pod_title: pod.title,
+      pod_uuid: pod.uuid,
+      pod_tags: tags,
+      default_pod_tag: tags[0] ?? '',
+    })
+    setTagsText(tags.join('\n'))
   }
 
   async function saveSettings() {
@@ -467,9 +501,10 @@ export function useSettingsPageModel({
         config.pod_search_keyword ? { keyword: config.pod_search_keyword } : undefined,
       )
       if (!result.selected) {
-        setError('没有搜索到匹配的 POD，可以手动填写 POD UUID 和版本')
+        setError('未找到杭州慎思comfyui镜像，请确认晨羽账号权限后重试')
         return
       }
+      setPods(result.pods)
       const tags = result.tags
       updateConfig({
         pod_title: result.selected.title,
@@ -480,7 +515,7 @@ export function useSettingsPageModel({
       setTagsText(tags.join('\n'))
       setMessage(`已发现 POD：${result.selected.title}`)
     } catch (nextError) {
-      setError(errorMessage(nextError, '自动发现 POD 失败'))
+      setError(errorMessage(nextError, '刷新杭州慎思 POD 失败'))
     } finally {
       setDiscovering(false)
     }
@@ -501,13 +536,17 @@ export function useSettingsPageModel({
           auto_shutdown_minutes: config.auto_shutdown_minutes ?? null,
         },
       })
-      await window.api.chenyu.createFixedPodInstance({
+      await window.api.chenyu.createPodInstance({
+        podUuid: config.pod_uuid,
+        podTitle: config.pod_title,
         podTag: currentVersion,
+        instanceTitle: createInstanceTitle,
         gpuUuid: effectiveGpuUuid,
         gpuNums: DEFAULT_GPU_NUMS,
         autoShutdownMinutes: config.auto_shutdown_minutes ?? null,
       })
       setMessage('实例已创建，并已设为默认云机')
+      setCreateInstanceTitle('')
       setCreateOpen(false)
       await refreshRemoteData()
     } catch (nextError) {
@@ -570,6 +609,25 @@ export function useSettingsPageModel({
     }
   }
 
+  async function renameInstance(instance: ChenyuInstance) {
+    const title = (instanceTitleDrafts[instance.instanceUuid] ?? instance.title).trim()
+    if (!title || title === instance.title) {
+      return
+    }
+    setBusyInstance({ uuid: instance.instanceUuid, action: 'rename' })
+    setError(null)
+    setMessage(null)
+    try {
+      await window.api.chenyu.renameInstance({ instanceUuid: instance.instanceUuid, title })
+      setMessage('云机名称已更新')
+      await refreshInstancesOnly()
+    } catch (nextError) {
+      setError(errorMessage(nextError, '更新云机名称失败'))
+    } finally {
+      setBusyInstance(null)
+    }
+  }
+
   async function pollInstanceStatus(
     instanceUuid: string,
     options: {
@@ -622,6 +680,10 @@ export function useSettingsPageModel({
     }))
   }
 
+  function updateInstanceTitleDraft(instanceUuid: string, title: string) {
+    setInstanceTitleDrafts((current) => ({ ...current, [instanceUuid]: title }))
+  }
+
   function currentInstanceUrl(instance: ChenyuInstance) {
     return (
       instanceUrlDrafts[instance.instanceUuid] ??
@@ -663,6 +725,7 @@ export function useSettingsPageModel({
       connectionError,
       connectionStatus,
       createOpen,
+      createInstanceTitle,
       creating,
       currentVersion,
       deleteLogsOpen,
@@ -681,10 +744,12 @@ export function useSettingsPageModel({
       grsaiApiKey,
       importingWorkflow,
       instanceUrlDrafts,
+      instanceTitleDrafts,
       instances,
       loading,
       message,
       openingLogs,
+      pods,
       refreshing,
       saving,
       savingBitBrowserBaseUrl,
@@ -711,6 +776,7 @@ export function useSettingsPageModel({
       openLogsDirectory,
       refreshRemoteData,
       removeLocalWorkflow,
+      renameInstance,
       runInstanceAction,
       saveBitBrowserSettings,
       saveGenerationSettings,
@@ -721,6 +787,7 @@ export function useSettingsPageModel({
       setBailianApiKey,
       setBitBrowserBaseUrl,
       setCreateOpen,
+      setCreateInstanceTitle,
       setDeleteLogsOpen,
       setDestroyConfirm,
       setDestroyTarget,
@@ -728,9 +795,11 @@ export function useSettingsPageModel({
       setWorkflowDirectoryPath,
       setWorkspaceDraft,
       syncBackendConfig,
+      selectPod,
       updateConfig,
       updateGenerationConfig,
       updateInstanceUrlDraft,
+      updateInstanceTitleDraft,
       updateTagsText,
     },
   }
