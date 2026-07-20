@@ -1,8 +1,8 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, extname, join, resolve } from 'node:path'
+import { basename, extname, isAbsolute, join, resolve } from 'node:path'
 import { type ElectronApplication, type Page, _electron as electron, test } from '@playwright/test'
 import {
   type PipelineRunConfig,
@@ -28,6 +28,7 @@ type LiveFailureKind =
   | 'xlsx-check'
   | 'image-check'
   | 'cleanup-check'
+type LiveCleanupFailureKind = Extract<LiveFailureKind, 'cleanup-check'>
 
 type LiveRound = {
   id: `R${string}`
@@ -60,6 +61,7 @@ type SafeRunSnapshot = {
   run: {
     id: string
     status: PipelineRunStatus
+    errorSummary: string | null
     createdAt: number
     startedAt: number | null
     completedAt: number | null
@@ -75,8 +77,8 @@ type LivePreflight = {
   visionModel: string
   chenyuInstanceUuid: string
   workflows: {
-    txt2img: { id: string; name: string; version: string }
-    img2img: { id: string; name: string; version: string }
+    txt2img: { id: string; name: string; version: string } | null
+    img2img: { id: string; name: string; version: string } | null
   }
 }
 
@@ -103,6 +105,9 @@ type LiveReport = {
   template: string
   status: PipelineRunStatus | 'unknown'
   failureKind: LiveFailureKind | null
+  cleanupFailureKind: LiveCleanupFailureKind | null
+  errorMessage: string | null
+  runErrorSummary: string | null
   startedAt: string
   completedAt: string
   durationMs: number | null
@@ -118,10 +123,49 @@ type TempBaseline = {
   title: Set<string>
 }
 
+type TitleWorkbookSnapshot = Readonly<{
+  rowCount: number
+  titlesBySku: ReadonlyMap<string, string>
+}>
+
+type TitleOutputPaths = Readonly<{
+  batchDirectory: string
+  skuDirectory: string
+  workbookPath: string
+}>
+
+type TitleWorkbookValidation = Readonly<{
+  totalRows: number
+  expectedTitles: ReadonlyMap<string, string>
+}>
+
+type SuccessfulPrintReport = Readonly<{
+  schemaVersion: 2
+  round: string
+  printId: string
+  skuCode: string
+  template: string
+}>
+
+type SuccessfulReportHistory = Readonly<{
+  printIds: ReadonlySet<string>
+  templateSkuCodes: readonly string[]
+}>
+
+type PhotoshopRecordedOutputs = Readonly<{
+  paths: readonly string[]
+  hashesByPath: ReadonlyMap<string, string>
+}>
+
 type WaitResult = {
   failureKind: Extract<LiveFailureKind, 'pipeline-status' | 'stall' | 'timeout'> | null
+  errorMessage: string | null
   snapshot: SafeRunSnapshot | null
 }
+
+type SafeRunReadResult =
+  | { ok: true; snapshot: SafeRunSnapshot | null; errorMessage: null }
+  | { ok: false; snapshot: null; errorMessage: string | null }
 
 type LiveAppState = {
   app: ElectronApplication
@@ -132,6 +176,8 @@ type LiveAppState = {
 
 const RUN_LIVE_PIPELINE = process.env.TENGYU_LIVE_PIPELINE === '1'
 const ROUND_FILTER = process.env.TENGYU_LIVE_PIPELINE_ROUND?.trim().toUpperCase() ?? ''
+const LIVE_USER_DATA_DIR = process.env.TENGYU_ELECTRON_USER_DATA_DIR?.trim() ?? ''
+const LIVE_CHENYU_INSTANCE_UUID = process.env.TENGYU_LIVE_CHENYU_INSTANCE_UUID?.trim() ?? ''
 const WORKBENCH_ROOT = join(homedir(), 'Desktop', 'pod套版测试')
 const TEMPLATE_ROOT = join(homedir(), 'Desktop', '定制模板')
 const REFERENCE_FOLDER = join(
@@ -185,14 +231,33 @@ const ALL_ROUNDS: LiveRound[] = [
 const SELECTED_ROUNDS = ROUND_FILTER
   ? ALL_ROUNDS.filter((round) => round.id === ROUND_FILTER)
   : ALL_ROUNDS
+const SELECTED_REQUIREMENTS = {
+  chenyu: SELECTED_ROUNDS.some((round) => round.provider === 'comfyui-chenyu'),
+  chenyuImg2img: SELECTED_ROUNDS.some(
+    (round) => round.provider === 'comfyui-chenyu' && round.sourceMode === 'img2img',
+  ),
+  chenyuTxt2img: SELECTED_ROUNDS.some(
+    (round) => round.provider === 'comfyui-chenyu' && round.sourceMode === 'txt2img',
+  ),
+  grsai: SELECTED_ROUNDS.some((round) => round.provider === 'grsai'),
+  img2img: SELECTED_ROUNDS.some((round) => round.sourceMode === 'img2img'),
+  txt2img: SELECTED_ROUNDS.some((round) => round.sourceMode === 'txt2img'),
+}
 
 if (ROUND_FILTER && SELECTED_ROUNDS.length === 0) {
   throw new Error(`Unknown live pipeline round: ${ROUND_FILTER}`)
 }
 
 class LivePipelineFailure extends Error {
-  constructor(readonly kind: LiveFailureKind) {
-    super(kind)
+  readonly errorMessage: string | null
+
+  constructor(
+    readonly kind: LiveFailureKind,
+    errorMessage: string | null = null,
+  ) {
+    const safeMessage = sanitizeReportMessage(errorMessage)
+    super(safeMessage ? `${kind}: ${safeMessage}` : kind)
+    this.errorMessage = safeMessage
   }
 }
 
@@ -212,51 +277,91 @@ test.describe
     let app: ElectronApplication | null = null
     let page: Page
     let preflight: LivePreflight
+    let lastWrittenReport: LiveReport | null = null
     const observedPrintIds = new Set<string>()
 
     test.beforeAll(async () => {
-      await validateLocalInputs()
+      const startedAt = new Date()
+      const round = requireValue(SELECTED_ROUNDS[0], 'preflight-config')
       try {
+        await validateLocalInputs()
         app = await launchLiveApp()
         page = await withTimeout(app.firstWindow(), APP_RESTART_TIMEOUT_MS)
+        await assertLiveUserData(app)
+        await assertLiveCustomerAuthorized(page)
         await assertStaleRunInterrupted(page)
         preflight = await readLivePreflight(page)
       } catch (error) {
+        const failureKind =
+          error instanceof LivePipelineFailure ? error.kind : ('preflight-api' as const)
+        const errorMessage =
+          error instanceof LivePipelineFailure ? error.errorMessage : sanitizeReportMessage(error)
+        let cleanupFailureKind: LiveCleanupFailureKind | null = null
         if (app) {
-          await closeLiveApp(app).catch(() => null)
+          await closeLiveApp(app).catch(() => {
+            cleanupFailureKind = 'cleanup-check'
+          })
         }
         app = null
+        await writePreflightFailureReport({
+          cleanupFailureKind,
+          errorMessage,
+          failureKind,
+          round,
+          startedAt,
+        }).catch(() => null)
         if (error instanceof LivePipelineFailure) {
           throw error
         }
-        throw new LivePipelineFailure('preflight-api')
+        throw new LivePipelineFailure(failureKind, errorMessage)
       }
     })
 
     test.afterAll(async () => {
-      if (app) {
-        await closeLiveApp(app).catch(() => null)
-      }
+      const currentApp = app
       app = null
+      if (!currentApp) {
+        return
+      }
+      try {
+        await closeLiveApp(currentApp)
+      } catch (error) {
+        const cleanupErrorMessage = sanitizeReportMessage(error)
+        if (lastWrittenReport) {
+          lastWrittenReport = {
+            ...lastWrittenReport,
+            cleanupFailureKind: 'cleanup-check',
+            errorMessage: lastWrittenReport.errorMessage ?? cleanupErrorMessage,
+            failureKind: lastWrittenReport.failureKind ?? 'cleanup-check',
+          }
+          await writeSafeReport(lastWrittenReport).catch(() => null)
+        }
+        throw new LivePipelineFailure('cleanup-check', cleanupErrorMessage)
+      }
     })
 
     for (const round of SELECTED_ROUNDS) {
       test(`${round.id} ${round.provider} ${round.sourceMode}`, async () => {
         const startedAt = new Date()
-        const skuPrefix = `CTREAL-20260719-${round.id}`
+        const attemptId = `${startedAt.getTime().toString(36)}-${randomUUID().slice(0, 8)}`
+        const skuPrefix = `CTREAL-${round.id}-${attemptId}`
         const skuCode = `${skuPrefix}-0001`
         const templatePath = join(TEMPLATE_ROOT, round.templateFile)
-        const tempBaseline = await readTempBaseline()
-        const reportedPrintIds = await readReportedPrintIds(round)
-        const historicalPrintIds = readHistoricalSourcePrintIds()
         let runId = `not-started-${round.id}-${randomUUID().slice(0, 8)}`
         let snapshot: SafeRunSnapshot | null = null
         let artifacts: ArtifactSummary | null = null
         let failureKind: LiveFailureKind | null = null
+        let cleanupFailureKind: LiveCleanupFailureKind | null = null
+        let errorMessage: string | null = null
         let pipelineStarted = false
         let printId: string | null = null
 
         try {
+          const tempBaseline = await readTempBaseline()
+          const reportHistory = await readSuccessfulReportHistory(round)
+          const historicalPrintIds = readHistoricalSourcePrintIds()
+          const titleOutputPaths = await resolveTitleOutputPaths(templatePath, skuCode)
+          const titleBaseline = await captureTitleWorkbookBaseline(titleOutputPaths, skuCode)
           const config = await buildRoundConfig(round, preflight, skuPrefix, templatePath)
           try {
             runId = await withTimeout(
@@ -264,7 +369,8 @@ test.describe
               IPC_TIMEOUT_MS,
             )
             pipelineStarted = true
-          } catch {
+          } catch (error) {
+            const startErrorMessage = sanitizeReportMessage(error)
             let recovered: LiveAppState
             try {
               recovered = await recoverUnknownStart(
@@ -273,7 +379,8 @@ test.describe
                 startedAt.getTime(),
               )
             } catch {
-              throw new LivePipelineFailure('cleanup-check')
+              cleanupFailureKind = 'cleanup-check'
+              throw new LivePipelineFailure('pipeline-start', startErrorMessage)
             }
             app = recovered.app
             page = recovered.page
@@ -282,20 +389,20 @@ test.describe
               runId = recovered.runId
               pipelineStarted = true
             }
-            throw new LivePipelineFailure('pipeline-start')
+            throw new LivePipelineFailure('pipeline-start', startErrorMessage)
           }
 
           const waitResult = await waitForTerminalRun(page, runId)
           snapshot = waitResult.snapshot
           if (waitResult.failureKind) {
-            throw new LivePipelineFailure(waitResult.failureKind)
+            throw new LivePipelineFailure(waitResult.failureKind, waitResult.errorMessage)
           }
           if (!snapshot || snapshot.run.status !== 'completed') {
             throw new LivePipelineFailure('pipeline-status')
           }
           printId = assertRunContract(snapshot)
           requireLive(!observedPrintIds.has(printId), 'pipeline-status')
-          requireLive(!reportedPrintIds.has(printId), 'pipeline-status')
+          requireLive(!reportHistory.printIds.has(printId), 'pipeline-status')
           requireLive(!historicalPrintIds.has(printId), 'pipeline-status')
           observedPrintIds.add(printId)
           artifacts = await validateArtifacts({
@@ -305,10 +412,16 @@ test.describe
             snapshot,
             tempBaseline,
             templatePath,
+            titleBaseline,
+            titleOutputPaths,
+            expectedSkuCodes: [...reportHistory.templateSkuCodes, skuCode],
           })
         } catch (error) {
           const originalFailureKind =
             error instanceof LivePipelineFailure ? error.kind : ('pipeline-status' as const)
+          errorMessage =
+            error instanceof LivePipelineFailure ? error.errorMessage : sanitizeReportMessage(error)
+          failureKind = originalFailureKind
           if (pipelineStarted && (!snapshot || !TERMINAL_STATUSES.has(snapshot.run.status))) {
             try {
               const settled = await settleOrInterruptRun(
@@ -321,15 +434,16 @@ test.describe
               page = settled.page
               snapshot = settled.snapshot
             } catch {
-              failureKind = 'cleanup-check'
+              cleanupFailureKind = 'cleanup-check'
             }
           }
-          failureKind ??= originalFailureKind
         }
 
         const report = createReport({
           artifacts,
           completedAt: new Date(),
+          cleanupFailureKind,
+          errorMessage,
           failureKind,
           round,
           runId,
@@ -340,9 +454,17 @@ test.describe
           startedAt,
           templatePath,
         })
-        await writeSafeReport(report)
+        try {
+          await writeSafeReport(report)
+          lastWrittenReport = report
+        } catch (error) {
+          if (failureKind) {
+            throw new LivePipelineFailure(failureKind, errorMessage)
+          }
+          throw new LivePipelineFailure('cleanup-check', sanitizeReportMessage(error))
+        }
         if (failureKind) {
-          throw new LivePipelineFailure(failureKind)
+          throw new LivePipelineFailure(failureKind, errorMessage)
         }
       })
     }
@@ -363,12 +485,12 @@ async function launchLiveApp() {
     }
   }
   for (const key of [
-    'TENGYU_ELECTRON_USER_DATA_DIR',
     'TENGYU_SERVER_URL',
     'TENGYU_PHP_AUTH_BASE_URL',
     'TENGYU_BAILIAN_BASE_URL',
     'TENGYU_GRSAI_CN_BASE_URL',
     'TENGYU_GRSAI_GLOBAL_BASE_URL',
+    'TENGYU_SKIP_TITLE_DB_REGISTER',
     'ELECTRON_ENABLE_LOGGING',
     'ELECTRON_ENABLE_STACK_DUMPING',
     'NODE_DEBUG',
@@ -378,6 +500,7 @@ async function launchLiveApp() {
   env.NODE_ENV = 'development'
   env.ELECTRON_DISABLE_SECURITY_WARNINGS = 'true'
   env.OPENAI_LOG = 'off'
+  env.TENGYU_ELECTRON_USER_DATA_DIR = LIVE_USER_DATA_DIR
 
   return electron.launch({
     args: ['out/main/index.js'],
@@ -389,10 +512,15 @@ async function launchLiveApp() {
 
 async function validateLocalInputs() {
   try {
-    const referenceInfo = await stat(REFERENCE_IMAGE)
-    requireLive(referenceInfo.isFile() && referenceInfo.size > 0, 'preflight-config')
-    await assertDecodableImage(REFERENCE_IMAGE)
-    for (const round of ALL_ROUNDS) {
+    requireLive(Boolean(LIVE_USER_DATA_DIR) && isAbsolute(LIVE_USER_DATA_DIR), 'preflight-config')
+    const userDataInfo = await stat(LIVE_USER_DATA_DIR)
+    requireLive(userDataInfo.isDirectory(), 'preflight-config')
+    if (SELECTED_REQUIREMENTS.img2img) {
+      const referenceInfo = await stat(REFERENCE_IMAGE)
+      requireLive(referenceInfo.isFile() && referenceInfo.size > 0, 'preflight-config')
+      await assertDecodableImage(REFERENCE_IMAGE)
+    }
+    for (const round of SELECTED_ROUNDS) {
       const templateInfo = await stat(join(TEMPLATE_ROOT, round.templateFile))
       requireLive(templateInfo.isFile() && templateInfo.size > 0, 'preflight-config')
     }
@@ -404,12 +532,39 @@ async function validateLocalInputs() {
   }
 }
 
+async function assertLiveUserData(app: ElectronApplication) {
+  const actualUserDataDir = await withTimeout(
+    app.evaluate(({ app: electronApp }) => electronApp.getPath('userData')),
+    STATUS_IPC_TIMEOUT_MS,
+  )
+  requireLive(samePath(actualUserDataDir, LIVE_USER_DATA_DIR), 'preflight-config')
+}
+
+async function assertLiveCustomerAuthorized(page: Page) {
+  const state = await withTimeout(
+    page.evaluate(async () => {
+      const auth = await window.api.customerAuth.verify()
+      return { message: auth.message, status: auth.status }
+    }),
+    IPC_TIMEOUT_MS,
+  )
+  if (state.status !== 'active') {
+    throw new LivePipelineFailure(
+      'preflight-config',
+      `Customer authorization status is ${state.status}: ${state.message ?? 'no message'}`,
+    )
+  }
+}
+
 async function assertStaleRunInterrupted(page: Page) {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     const result = await readSafeRunSnapshot(page, STALE_RUN_ID)
     if (!result.ok) {
-      throw new LivePipelineFailure('preflight-api')
+      throw new LivePipelineFailure('preflight-api', result.errorMessage)
+    }
+    if (!result.snapshot) {
+      return
     }
     if (result.snapshot?.run.status === 'interrupted') {
       return
@@ -422,35 +577,35 @@ async function assertStaleRunInterrupted(page: Page) {
 async function readLivePreflight(page: Page): Promise<LivePreflight> {
   const result = await withTimeout(
     page.evaluate(
-      async ({ img2imgWorkflowId, txt2imgWorkflowId }) => {
+      async ({ img2imgWorkflowId, preferredInstanceUuid, requirements, txt2imgWorkflowId }) => {
         const skillRefresh = await window.api.skill.refresh()
         const [
           onboarding,
           auth,
           hasGrsai,
           hasBailian,
-          hasChenyu,
           photoshop,
           generationSettings,
           generationSkills,
           titleSkills,
-          txt2imgWorkflows,
-          img2imgWorkflows,
-          instances,
         ] = await Promise.all([
           window.api.onboarding.getState(),
           window.api.customerAuth.getState(),
-          window.api.keychain.has('grsai'),
+          requirements.grsai ? window.api.keychain.has('grsai') : Promise.resolve(false),
           window.api.keychain.has('bailian'),
-          window.api.keychain.has('chenyu'),
           window.api.photoshop.getStatus(),
           window.api.generationSettings.get(),
           window.api.skill.list({ module: 'generation' }),
           window.api.skill.list({ module: 'title' }),
-          window.api.generation.listComfyuiTxt2imgWorkflows(),
-          window.api.generation.listComfyuiImg2imgWorkflows(),
-          window.api.chenyu.listInstances(),
         ])
+        const hasChenyu = requirements.chenyu ? await window.api.keychain.has('chenyu') : false
+        const txt2imgWorkflows = requirements.chenyuTxt2img
+          ? await window.api.generation.listComfyuiTxt2imgWorkflows()
+          : []
+        const img2imgWorkflows = requirements.chenyuImg2img
+          ? await window.api.generation.listComfyuiImg2imgWorkflows()
+          : []
+        const instances = requirements.chenyu ? await window.api.chenyu.listInstances() : []
         const txt2imgSkill = generationSkills.find(
           (skill) => skill.id === 'txt2img-local-print' && skill.enabled,
         )
@@ -473,8 +628,9 @@ async function readLivePreflight(page: Page): Promise<LivePreflight> {
         const runningInstances = instances.filter(
           (instance) => instance.statusName === 'running' && Boolean(instance.comfyuiUrl),
         )
-        const instance =
-          runningInstances.find((candidate) => candidate.isCurrent) ?? runningInstances[0]
+        const instance = preferredInstanceUuid
+          ? runningInstances.find((candidate) => candidate.instanceUuid === preferredInstanceUuid)
+          : runningInstances.find((candidate) => candidate.isCurrent)
 
         return {
           authActive: auth.status === 'active',
@@ -514,7 +670,12 @@ async function readLivePreflight(page: Page): Promise<LivePreflight> {
           workbenchRoot: onboarding.workbench_root,
         }
       },
-      { img2imgWorkflowId: IMG2IMG_WORKFLOW_ID, txt2imgWorkflowId: TXT2IMG_WORKFLOW_ID },
+      {
+        img2imgWorkflowId: IMG2IMG_WORKFLOW_ID,
+        preferredInstanceUuid: LIVE_CHENYU_INSTANCE_UUID,
+        requirements: SELECTED_REQUIREMENTS,
+        txt2imgWorkflowId: TXT2IMG_WORKFLOW_ID,
+      },
     ),
     IPC_TIMEOUT_MS,
   )
@@ -523,16 +684,29 @@ async function readLivePreflight(page: Page): Promise<LivePreflight> {
   requireLive(result.skillRefreshOk, 'preflight-api')
   requireLive(!result.needsOnboarding, 'preflight-config')
   requireLive(samePath(result.workbenchRoot, WORKBENCH_ROOT), 'preflight-config')
-  requireLive(result.hasGrsai && result.hasBailian && result.hasChenyu, 'preflight-config')
-  requireLive(result.grsaiConfigured && result.bailianConfigured, 'preflight-config')
+  requireLive(result.hasBailian && result.bailianConfigured, 'preflight-config')
   requireLive(result.photoshopConnected, 'preflight-config')
-  requireLive(result.imageModelAvailable, 'preflight-config')
   requireLive(result.titleSkillAvailable, 'preflight-config')
-  requireLive(Boolean(result.txt2imgSkillVersion), 'preflight-config')
-  requireLive(Boolean(result.img2imgSkillVersion), 'preflight-config')
-  requireLive(Boolean(result.textModel && result.visionModel), 'preflight-config')
-  requireLive(Boolean(result.instanceUuid), 'preflight-config')
-  requireLive(Boolean(result.txt2imgWorkflow && result.img2imgWorkflow), 'preflight-config')
+  requireLive(Boolean(result.visionModel), 'preflight-config')
+  if (SELECTED_REQUIREMENTS.grsai) {
+    requireLive(result.hasGrsai && result.grsaiConfigured, 'preflight-config')
+    requireLive(result.imageModelAvailable, 'preflight-config')
+  }
+  if (SELECTED_REQUIREMENTS.chenyu) {
+    requireLive(result.hasChenyu && Boolean(result.instanceUuid), 'preflight-config')
+  }
+  if (SELECTED_REQUIREMENTS.txt2img) {
+    requireLive(Boolean(result.txt2imgSkillVersion && result.textModel), 'preflight-config')
+  }
+  if (SELECTED_REQUIREMENTS.img2img) {
+    requireLive(Boolean(result.img2imgSkillVersion), 'preflight-config')
+  }
+  if (SELECTED_REQUIREMENTS.chenyuTxt2img) {
+    requireLive(Boolean(result.txt2imgWorkflow), 'preflight-config')
+  }
+  if (SELECTED_REQUIREMENTS.chenyuImg2img) {
+    requireLive(Boolean(result.img2imgWorkflow), 'preflight-config')
+  }
 
   return {
     generationSkillVersions: {
@@ -543,8 +717,8 @@ async function readLivePreflight(page: Page): Promise<LivePreflight> {
     visionModel: result.visionModel,
     chenyuInstanceUuid: result.instanceUuid,
     workflows: {
-      img2img: requireValue(result.img2imgWorkflow, 'preflight-config'),
-      txt2img: requireValue(result.txt2imgWorkflow, 'preflight-config'),
+      img2img: result.img2imgWorkflow,
+      txt2img: result.txt2imgWorkflow,
     },
   }
 }
@@ -592,14 +766,15 @@ async function buildRoundConfig(
       grsai: { model: 'gpt-image-2', aspectRatio: '1024x1024', concurrency: 1 },
     }
   } else if (round.sourceMode === 'txt2img') {
+    const workflow = requireValue(preflight.workflows.txt2img, 'preflight-config')
     source = {
       mode: 'txt2img',
       provider: 'comfyui-chenyu',
       prompt,
       comfyui: {
-        workflowId: preflight.workflows.txt2img.id,
-        workflowName: preflight.workflows.txt2img.name,
-        workflowVersion: preflight.workflows.txt2img.version,
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        workflowVersion: workflow.version,
         instanceUuid: preflight.chenyuInstanceUuid,
         width: 1024,
         height: 1024,
@@ -607,15 +782,16 @@ async function buildRoundConfig(
       },
     }
   } else {
+    const workflow = requireValue(preflight.workflows.img2img, 'preflight-config')
     source = {
       mode: 'img2img',
       provider: 'comfyui-chenyu',
       sourceFolder: REFERENCE_FOLDER,
       prompt,
       comfyui: {
-        workflowId: preflight.workflows.img2img.id,
-        workflowName: preflight.workflows.img2img.name,
-        workflowVersion: preflight.workflows.img2img.version,
+        workflowId: workflow.id,
+        workflowName: workflow.name,
+        workflowVersion: workflow.version,
         instanceUuid: preflight.chenyuInstanceUuid,
         width: 1024,
         height: 1024,
@@ -671,7 +847,11 @@ async function waitForTerminalRun(page: Page, runId: string): Promise<WaitResult
   while (Date.now() - startedAt < ROUND_TIMEOUT_MS) {
     const readResult = await readSafeRunSnapshot(page, runId)
     if (!readResult.ok) {
-      return { failureKind: 'pipeline-status', snapshot: lastSnapshot }
+      return {
+        errorMessage: readResult.errorMessage,
+        failureKind: 'pipeline-status',
+        snapshot: lastSnapshot,
+      }
     }
     if (readResult.snapshot) {
       lastSnapshot = readResult.snapshot
@@ -681,16 +861,16 @@ async function waitForTerminalRun(page: Page, runId: string): Promise<WaitResult
         lastChangeAt = Date.now()
       }
       if (TERMINAL_STATUSES.has(readResult.snapshot.run.status)) {
-        return { failureKind: null, snapshot: readResult.snapshot }
+        return { errorMessage: null, failureKind: null, snapshot: readResult.snapshot }
       }
     }
     if (Date.now() - lastChangeAt >= STALL_TIMEOUT_MS) {
-      return { failureKind: 'stall', snapshot: lastSnapshot }
+      return { errorMessage: null, failureKind: 'stall', snapshot: lastSnapshot }
     }
     await delay(POLL_INTERVAL_MS)
   }
 
-  return { failureKind: 'timeout', snapshot: lastSnapshot }
+  return { errorMessage: null, failureKind: 'timeout', snapshot: lastSnapshot }
 }
 
 async function cancelAndSettle(page: Page, runId: string, initialSnapshot: SafeRunSnapshot | null) {
@@ -845,7 +1025,7 @@ async function waitForPersistedTerminalRun(runId: string) {
   throw new LivePipelineFailure('cleanup-check')
 }
 
-async function readSafeRunSnapshot(page: Page, runId: string) {
+async function readSafeRunSnapshot(page: Page, runId: string): Promise<SafeRunReadResult> {
   try {
     const snapshot = await withTimeout(
       page.evaluate(
@@ -874,6 +1054,7 @@ async function readSafeRunSnapshot(page: Page, runId: string) {
             run: {
               id: detail.run.id,
               status: detail.run.status,
+              errorSummary: detail.run.error_summary,
               createdAt: detail.run.created_at,
               startedAt: detail.run.started_at,
               completedAt: detail.run.completed_at,
@@ -903,9 +1084,9 @@ async function readSafeRunSnapshot(page: Page, runId: string) {
       ),
       STATUS_IPC_TIMEOUT_MS,
     )
-    return { ok: true as const, snapshot }
-  } catch {
-    return { ok: false as const, snapshot: null }
+    return { ok: true as const, snapshot, errorMessage: null }
+  } catch (error) {
+    return { ok: false as const, snapshot: null, errorMessage: sanitizeReportMessage(error) }
   }
 }
 
@@ -950,12 +1131,15 @@ function assertRunContract(snapshot: SafeRunSnapshot) {
 }
 
 async function validateArtifacts(input: {
+  expectedSkuCodes: readonly string[]
   round: LiveRound
   runId: string
   skuCode: string
   snapshot: SafeRunSnapshot
   tempBaseline: TempBaseline
   templatePath: string
+  titleBaseline: TitleWorkbookSnapshot
+  titleOutputPaths: TitleOutputPaths
 }): Promise<ArtifactSummary> {
   const runStartedAt = requireValue(input.snapshot.run.startedAt, 'database-check')
   const sourceItem = requireValue(
@@ -965,12 +1149,6 @@ async function validateArtifacts(input: {
   const sourceArtifactId = requireValue(sourceItem.artifactId, 'database-check')
   const sourcePrintId = requireValue(sourceItem.printId, 'database-check')
   const waitingDirectory = join(WORKBENCH_ROOT, '02-印花工作区', '等待套版', input.runId)
-  const batchDirectory = join(
-    WORKBENCH_ROOT,
-    '04-上架工作区',
-    sanitizeTemplateName(input.templatePath),
-  )
-  const skuDirectory = join(batchDirectory, input.skuCode)
   const waitingImages = await listImageFiles(waitingDirectory).catch(() => {
     throw new LivePipelineFailure('image-check')
   })
@@ -981,7 +1159,7 @@ async function validateArtifacts(input: {
   await assertDecodableImage(waitingImage)
 
   const productImages = (
-    await listImageFiles(skuDirectory).catch(() => {
+    await listImageFiles(input.titleOutputPaths.skuDirectory).catch(() => {
       throw new LivePipelineFailure('image-check')
     })
   ).filter((path) => ['.jpg', '.jpeg'].includes(extname(path).toLowerCase()))
@@ -991,22 +1169,29 @@ async function validateArtifacts(input: {
     await assertDecodableImage(imagePath)
   }
 
-  const workbookPath = join(batchDirectory, '标题.xlsx')
-  const expectedSkuCodes = expectedTemplateSkuCodes(input.round)
-  const workbookTitles = await validateTitleWorkbook(workbookPath, expectedSkuCodes, runStartedAt)
+  const workbookValidation = await validateTitleWorkbookPreserved({
+    baseline: input.titleBaseline,
+    currentSkuCode: input.skuCode,
+    expectedSkuCodes: input.expectedSkuCodes,
+    startedAt: runStartedAt,
+    xlsxPath: input.titleOutputPaths.workbookPath,
+  })
   const { pendingTitleWrites, sourceArtifactPath } = await validateDatabase({
     expectedArtifactId: sourceArtifactId,
     expectedPrintId: sourcePrintId,
-    expectedTitles: workbookTitles,
-    expectedXlsxPath: workbookPath,
+    expectedProductImages: productImages,
+    expectedTitles: workbookValidation.expectedTitles,
+    expectedXlsxPath: input.titleOutputPaths.workbookPath,
     round: input.round,
     runId: input.runId,
     skuCode: input.skuCode,
     startedAt: runStartedAt,
     templateBatch: sanitizeTemplateName(input.templatePath),
+    templatePath: input.templatePath,
   })
   await assertFreshFile(sourceArtifactPath, runStartedAt, 'image-check')
   await assertDecodableImage(sourceArtifactPath)
+  await assertSameFileContents(sourceArtifactPath, waitingImage)
 
   const tempAfter = await readTempBaseline()
   const temporaryEntriesRemaining =
@@ -1024,54 +1209,153 @@ async function validateArtifacts(input: {
     productImages: productImages.length,
     printIds: new Set(input.snapshot.items.flatMap((item) => (item.printId ? [item.printId] : [])))
       .size,
-    titleRows: expectedSkuCodes.length,
+    titleRows: workbookValidation.totalRows,
     databaseMatched: true,
     temporaryEntriesRemaining,
     pendingTitleWrites,
   }
 }
 
-async function validateTitleWorkbook(
-  xlsxPath: string,
-  expectedSkuCodes: string[],
-  startedAt: number,
-) {
+async function resolveTitleOutputPaths(
+  templatePath: string,
+  skuCode: string,
+): Promise<TitleOutputPaths> {
+  const batchDirectory = join(WORKBENCH_ROOT, '04-上架工作区', sanitizeTemplateName(templatePath))
+  const preferredWorkbookPath = join(batchDirectory, '标题.xlsx')
+  const legacyWorkbookPath = join(batchDirectory, 'titles.xlsx')
+  const workbookPath = (await pathExists(preferredWorkbookPath))
+    ? preferredWorkbookPath
+    : (await pathExists(legacyWorkbookPath))
+      ? legacyWorkbookPath
+      : preferredWorkbookPath
+  return {
+    batchDirectory,
+    skuDirectory: join(batchDirectory, skuCode),
+    workbookPath,
+  }
+}
+
+async function captureTitleWorkbookBaseline(
+  paths: TitleOutputPaths,
+  skuCode: string,
+): Promise<TitleWorkbookSnapshot> {
+  const baseline = await readTitleWorkbookSnapshot(paths.workbookPath, true, 'preflight-config')
+  if (baseline.titlesBySku.has(skuCode)) {
+    throw new LivePipelineFailure(
+      'preflight-config',
+      `SKU ${skuCode} already exists in the title workbook`,
+    )
+  }
+  if (await pathExists(paths.skuDirectory)) {
+    throw new LivePipelineFailure(
+      'preflight-config',
+      `SKU output path already exists for ${skuCode}`,
+    )
+  }
+
+  const db = openSqliteDatabase(join(WORKBENCH_ROOT, '.workbench', 'workbench.db'))
   try {
-    await assertFreshFile(xlsxPath, startedAt, 'xlsx-check')
-    const workbook = new ExcelJS.Workbook()
-    await workbook.xlsx.readFile(xlsxPath)
-    const sheet = workbook.worksheets[0]
-    requireLive(Boolean(sheet), 'xlsx-check')
-    const titlesBySku = new Map<string, string[]>()
-    sheet?.eachRow((row) => {
-      const skuCode = row.getCell(1).text.trim()
-      if (!expectedSkuCodes.includes(skuCode)) {
-        return
-      }
-      const titles = titlesBySku.get(skuCode) ?? []
-      titles.push(row.getCell(2).text)
-      titlesBySku.set(skuCode, titles)
-    })
-    const titles = new Map<string, string>()
-    for (const skuCode of expectedSkuCodes) {
-      const matchingTitles = titlesBySku.get(skuCode) ?? []
-      requireLive(matchingTitles.length === 1, 'xlsx-check')
-      const title = requireValue(matchingTitles[0], 'xlsx-check')
-      requireLive(Boolean(title.trim()), 'xlsx-check')
-      titles.set(skuCode, title)
+    const existingSku = db.prepare('SELECT code FROM skus WHERE code = ? LIMIT 1').get(skuCode) as
+      | { code: string }
+      | undefined
+    if (existingSku) {
+      throw new LivePipelineFailure(
+        'preflight-config',
+        `SKU ${skuCode} already exists in the workbench database`,
+      )
     }
-    return titles
   } catch (error) {
     if (error instanceof LivePipelineFailure) {
       throw error
     }
-    throw new LivePipelineFailure('xlsx-check')
+    throw new LivePipelineFailure('preflight-config', sanitizeReportMessage(error))
+  } finally {
+    db.close()
   }
+  return baseline
+}
+
+async function readTitleWorkbookSnapshot(
+  xlsxPath: string,
+  allowMissing: boolean,
+  kind: Extract<LiveFailureKind, 'preflight-config' | 'xlsx-check'>,
+): Promise<TitleWorkbookSnapshot> {
+  try {
+    if (!(await pathExists(xlsxPath))) {
+      requireLive(allowMissing, kind)
+      return { rowCount: 0, titlesBySku: new Map() }
+    }
+    const workbook = new ExcelJS.Workbook()
+    await workbook.xlsx.readFile(xlsxPath)
+    const sheet = requireValue(workbook.worksheets[0], kind)
+    const titlesBySku = new Map<string, string>()
+    let rowCount = 0
+    sheet.eachRow((row, rowNumber) => {
+      const rawSkuCode = row.getCell(1).text
+      const title = row.getCell(2).text
+      if (rowNumber === 1 && isTitleWorkbookHeader(rawSkuCode, title)) {
+        return
+      }
+      const skuCode = rawSkuCode.trim()
+      if (!skuCode && !title.trim()) {
+        return
+      }
+      requireLive(Boolean(skuCode) && Boolean(title.trim()), kind)
+      rowCount += 1
+      requireLive(!titlesBySku.has(skuCode), kind)
+      titlesBySku.set(skuCode, title)
+    })
+    requireLive(rowCount === titlesBySku.size, kind)
+    return { rowCount, titlesBySku }
+  } catch (error) {
+    if (error instanceof LivePipelineFailure) {
+      throw error
+    }
+    throw new LivePipelineFailure(kind, sanitizeReportMessage(error))
+  }
+}
+
+async function validateTitleWorkbookPreserved(input: {
+  baseline: TitleWorkbookSnapshot
+  currentSkuCode: string
+  expectedSkuCodes: readonly string[]
+  startedAt: number
+  xlsxPath: string
+}): Promise<TitleWorkbookValidation> {
+  await assertFreshFile(input.xlsxPath, input.startedAt, 'xlsx-check')
+  const after = await readTitleWorkbookSnapshot(input.xlsxPath, false, 'xlsx-check')
+  requireLive(after.rowCount === input.baseline.rowCount + 1, 'xlsx-check')
+  const currentTitle = requireValue(after.titlesBySku.get(input.currentSkuCode), 'xlsx-check')
+  requireLive(Boolean(currentTitle.trim()), 'xlsx-check')
+
+  for (const [skuCode, title] of input.baseline.titlesBySku) {
+    requireLive(after.titlesBySku.get(skuCode) === title, 'xlsx-check')
+  }
+  for (const skuCode of after.titlesBySku.keys()) {
+    requireLive(
+      skuCode === input.currentSkuCode || input.baseline.titlesBySku.has(skuCode),
+      'xlsx-check',
+    )
+  }
+
+  const expectedTitles = new Map<string, string>()
+  for (const skuCode of input.expectedSkuCodes) {
+    expectedTitles.set(skuCode, requireValue(after.titlesBySku.get(skuCode), 'xlsx-check'))
+  }
+  return { totalRows: after.rowCount, expectedTitles }
+}
+
+function isTitleWorkbookHeader(sku: string, title: string) {
+  return (
+    ['sku', 'sku code', '货号'].includes(sku.trim().toLowerCase()) &&
+    ['title', '标题'].includes(title.trim().toLowerCase())
+  )
 }
 
 async function validateDatabase(input: {
   expectedArtifactId: string
   expectedPrintId: string
+  expectedProductImages: readonly string[]
   expectedTitles: ReadonlyMap<string, string>
   expectedXlsxPath: string
   round: LiveRound
@@ -1079,6 +1363,7 @@ async function validateDatabase(input: {
   skuCode: string
   startedAt: number
   templateBatch: string
+  templatePath: string
 }) {
   const db = openSqliteDatabase(join(WORKBENCH_ROOT, '.workbench', 'workbench.db'))
   try {
@@ -1151,7 +1436,7 @@ async function validateDatabase(input: {
 
     const artifact = db
       .prepare(
-        `SELECT id, print_id, step, provider, model_or_workflow, file_path, created_at
+        `SELECT id, print_id, step, provider, model_or_workflow, file_path, file_size, file_hash, created_at
          FROM artifacts
          WHERE id = ?`,
       )
@@ -1163,6 +1448,8 @@ async function validateDatabase(input: {
           provider: string | null
           model_or_workflow: string | null
           file_path: string
+          file_size: number | null
+          file_hash: string | null
           created_at: number
         }
       | undefined
@@ -1179,6 +1466,71 @@ async function validateDatabase(input: {
     requireLive(artifact.model_or_workflow === expectedModelOrWorkflow, 'database-check')
     requireLive(samePath(sourceItem.output_path, artifact.file_path), 'database-check')
     requireLive(artifact.created_at >= input.startedAt, 'database-check')
+    const sourceInfo = await stat(artifact.file_path)
+    requireLive(artifact.file_size === sourceInfo.size, 'database-check')
+    requireLive(artifact.file_hash === (await sha256File(artifact.file_path)), 'database-check')
+
+    const photoshopTaskPattern = `${input.runId}-photoshop-%`
+    const photoshopSteps = db
+      .prepare(
+        `SELECT task_id, module, step, status, attempt, output_json, updated_at
+         FROM workflow_steps
+         WHERE task_id LIKE ?`,
+      )
+      .all(photoshopTaskPattern) as Array<{
+      task_id: string
+      module: string
+      step: string
+      status: string
+      attempt: number
+      output_json: string | null
+      updated_at: number
+    }>
+    requireLive(photoshopSteps.length === 1, 'database-check')
+    const photoshopStep = requireValue(photoshopSteps[0], 'database-check')
+    requireLive(photoshopStep.module === 'photoshop', 'database-check')
+    requireLive(photoshopStep.step === 'group-0', 'database-check')
+    requireLive(photoshopStep.status === 'completed', 'database-check')
+    requireLive(photoshopStep.attempt >= 1, 'database-check')
+    requireLive(photoshopStep.updated_at >= input.startedAt, 'database-check')
+    const recordedOutputs = parsePhotoshopStepOutputs(photoshopStep.output_json)
+    requireLive(samePathSet(recordedOutputs.paths, input.expectedProductImages), 'database-check')
+
+    const mockupArtifacts = db
+      .prepare(
+        `SELECT task_id, step, provider, model_or_workflow, file_path, file_hash, created_at
+         FROM artifacts
+         WHERE task_id LIKE ? AND step = 'mockup'`,
+      )
+      .all(photoshopTaskPattern) as Array<{
+      task_id: string
+      step: string
+      provider: string | null
+      model_or_workflow: string | null
+      file_path: string
+      file_hash: string | null
+      created_at: number
+    }>
+    requireLive(mockupArtifacts.length === input.expectedProductImages.length, 'database-check')
+    for (const mockupArtifact of mockupArtifacts) {
+      requireLive(mockupArtifact.task_id === photoshopStep.task_id, 'database-check')
+      requireLive(mockupArtifact.provider === 'photoshop', 'database-check')
+      requireLive(
+        mockupArtifact.model_or_workflow === basename(input.templatePath),
+        'database-check',
+      )
+      requireLive(mockupArtifact.created_at >= input.startedAt, 'database-check')
+      requireLive(
+        input.expectedProductImages.some((path) => samePath(path, mockupArtifact.file_path)),
+        'database-check',
+      )
+      const outputHash = await sha256File(mockupArtifact.file_path)
+      requireLive(mockupArtifact.file_hash === outputHash, 'database-check')
+      requireLive(
+        recordedOutputs.hashesByPath.get(normalizePath(mockupArtifact.file_path)) === outputHash,
+        'database-check',
+      )
+    }
 
     const skuStatement = db.prepare(
       `SELECT code, title, template_batch, language, platform, title_generated_at
@@ -1220,11 +1572,34 @@ async function validateDatabase(input: {
   }
 }
 
-function expectedTemplateSkuCodes(currentRound: LiveRound) {
-  const currentRoundIndex = ALL_ROUNDS.findIndex((round) => round.id === currentRound.id)
-  return ALL_ROUNDS.slice(0, currentRoundIndex + 1)
-    .filter((round) => round.templateFile === currentRound.templateFile)
-    .map((round) => `CTREAL-20260719-${round.id}-0001`)
+function parsePhotoshopStepOutputs(value: string | null): PhotoshopRecordedOutputs {
+  try {
+    const parsed = JSON.parse(requireValue(value, 'database-check')) as unknown
+    requireLive(typeof parsed === 'object' && parsed !== null, 'database-check')
+    const record = parsed as Record<string, unknown>
+    requireLive(Array.isArray(record.outputs), 'database-check')
+    requireLive(
+      typeof record.output_hashes === 'object' && record.output_hashes !== null,
+      'database-check',
+    )
+    const paths = record.outputs.filter((path): path is string => typeof path === 'string')
+    requireLive(paths.length === record.outputs.length, 'database-check')
+    const hashesByPath = new Map<string, string>()
+    for (const [path, hash] of Object.entries(record.output_hashes)) {
+      requireLive(typeof hash === 'string' && Boolean(hash), 'database-check')
+      hashesByPath.set(normalizePath(path), hash)
+    }
+    requireLive(
+      paths.every((path) => hashesByPath.has(normalizePath(path))),
+      'database-check',
+    )
+    return { paths, hashesByPath }
+  } catch (error) {
+    if (error instanceof LivePipelineFailure) {
+      throw error
+    }
+    throw new LivePipelineFailure('database-check', sanitizeReportMessage(error))
+  }
 }
 
 async function assertDecodableImage(path: string) {
@@ -1260,6 +1635,42 @@ async function assertFreshFile(path: string, startedAt: number, kind: LiveFailur
       throw error
     }
     throw new LivePipelineFailure(kind)
+  }
+}
+
+async function assertSameFileContents(leftPath: string, rightPath: string) {
+  try {
+    const [leftInfo, rightInfo, leftHash, rightHash] = await Promise.all([
+      stat(leftPath),
+      stat(rightPath),
+      sha256File(leftPath),
+      sha256File(rightPath),
+    ])
+    requireLive(leftInfo.size === rightInfo.size, 'image-check')
+    requireLive(leftHash === rightHash, 'image-check')
+  } catch (error) {
+    if (error instanceof LivePipelineFailure) {
+      throw error
+    }
+    throw new LivePipelineFailure('image-check', sanitizeReportMessage(error))
+  }
+}
+
+async function sha256File(path: string) {
+  return createHash('sha256')
+    .update(await readFile(path))
+    .digest('hex')
+}
+
+async function pathExists(path: string) {
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    if (filesystemErrorCode(error) === 'ENOENT') {
+      return false
+    }
+    throw error
   }
 }
 
@@ -1326,7 +1737,9 @@ async function listAllFiles(directory: string): Promise<string[]> {
   return files
 }
 
-async function readReportedPrintIds(currentRound: LiveRound) {
+async function readSuccessfulReportHistory(
+  currentRound: LiveRound,
+): Promise<SuccessfulReportHistory> {
   const reportDirectory = join(WORKBENCH_ROOT, '.workbench')
   const currentRoundIndex = ALL_ROUNDS.findIndex((round) => round.id === currentRound.id)
   const requiredPriorRounds = new Set<string>(
@@ -1334,12 +1747,13 @@ async function readReportedPrintIds(currentRound: LiveRound) {
   )
   const foundPriorRounds = new Set<string>()
   const printIds = new Set<string>()
+  const templateSkuCodes = new Set<string>()
   let entries: Dirent[]
   try {
     entries = await readdir(reportDirectory, { withFileTypes: true })
   } catch (error) {
     if (filesystemErrorCode(error) === 'ENOENT' && requiredPriorRounds.size === 0) {
-      return printIds
+      return { printIds, templateSkuCodes: [] }
     }
     throw new LivePipelineFailure('preflight-config')
   }
@@ -1362,6 +1776,9 @@ async function readReportedPrintIds(currentRound: LiveRound) {
       printIds.add(parsed.printId)
       if (requiredPriorRounds.has(parsed.round)) {
         foundPriorRounds.add(parsed.round)
+        if (parsed.template === currentRound.templateFile) {
+          templateSkuCodes.add(parsed.skuCode)
+        }
       }
     } catch {
       throw new LivePipelineFailure('preflight-config')
@@ -1372,7 +1789,10 @@ async function readReportedPrintIds(currentRound: LiveRound) {
     Array.from(requiredPriorRounds).every((roundId) => foundPriorRounds.has(roundId)),
     'preflight-config',
   )
-  return printIds
+  return {
+    printIds,
+    templateSkuCodes: Array.from(templateSkuCodes).sort((left, right) => left.localeCompare(right)),
+  }
 }
 
 function readHistoricalSourcePrintIds() {
@@ -1391,9 +1811,7 @@ function readHistoricalSourcePrintIds() {
   }
 }
 
-function isSuccessfulPrintReport(
-  value: unknown,
-): value is { schemaVersion: 2; round: string; printId: string } {
+function isSuccessfulPrintReport(value: unknown): value is SuccessfulPrintReport {
   return (
     typeof value === 'object' &&
     value !== null &&
@@ -1401,19 +1819,29 @@ function isSuccessfulPrintReport(
     value.schemaVersion === 2 &&
     'round' in value &&
     typeof value.round === 'string' &&
+    'skuCode' in value &&
+    typeof value.skuCode === 'string' &&
+    Boolean(value.skuCode.trim()) &&
+    'template' in value &&
+    typeof value.template === 'string' &&
+    Boolean(value.template.trim()) &&
     'printId' in value &&
     typeof value.printId === 'string' &&
     /^pri_[A-Za-z0-9_-]+$/.test(value.printId) &&
     'status' in value &&
     value.status === 'completed' &&
     'failureKind' in value &&
-    value.failureKind === null
+    value.failureKind === null &&
+    'cleanupFailureKind' in value &&
+    value.cleanupFailureKind === null
   )
 }
 
 function createReport(input: {
   artifacts: ArtifactSummary | null
   completedAt: Date
+  cleanupFailureKind: LiveCleanupFailureKind | null
+  errorMessage: string | null
   failureKind: LiveFailureKind | null
   round: LiveRound
   runId: string
@@ -1446,6 +1874,9 @@ function createReport(input: {
     template: basename(input.templatePath),
     status: input.snapshot?.run.status ?? 'unknown',
     failureKind: input.failureKind,
+    cleanupFailureKind: input.cleanupFailureKind,
+    errorMessage: sanitizeReportMessage(input.errorMessage),
+    runErrorSummary: sanitizeReportMessage(input.snapshot?.run.errorSummary),
     startedAt: input.startedAt.toISOString(),
     completedAt: input.completedAt.toISOString(),
     durationMs:
@@ -1462,6 +1893,34 @@ function createReport(input: {
     itemStatuses,
     artifacts: input.artifacts,
   }
+}
+
+async function writePreflightFailureReport(input: {
+  cleanupFailureKind: LiveCleanupFailureKind | null
+  errorMessage: string | null
+  failureKind: LiveFailureKind
+  round: LiveRound
+  startedAt: Date
+}) {
+  const skuPrefix = `CTREAL-20260719-${input.round.id}`
+  const runId = `preflight-${input.round.id}-${randomUUID().slice(0, 8)}`
+  await writeSafeReport(
+    createReport({
+      artifacts: null,
+      completedAt: new Date(),
+      cleanupFailureKind: input.cleanupFailureKind,
+      errorMessage: input.errorMessage,
+      failureKind: input.failureKind,
+      printId: null,
+      round: input.round,
+      runId,
+      skuCode: `${skuPrefix}-0001`,
+      skuPrefix,
+      snapshot: null,
+      startedAt: input.startedAt,
+      templatePath: join(TEMPLATE_ROOT, input.round.templateFile),
+    }),
+  )
 }
 
 async function writeSafeReport(report: LiveReport) {
@@ -1505,9 +1964,25 @@ function samePath(left: string | null, right: string) {
   if (!left) {
     return false
   }
-  const normalize = (value: string) =>
-    process.platform === 'win32' ? resolve(value).toLowerCase() : resolve(value)
-  return normalize(left) === normalize(right)
+  return normalizePath(left) === normalizePath(right)
+}
+
+function samePathSet(left: readonly string[], right: readonly string[]) {
+  if (left.length !== right.length) {
+    return false
+  }
+  const leftPaths = new Set(left.map(normalizePath))
+  const rightPaths = new Set(right.map(normalizePath))
+  return (
+    leftPaths.size === left.length &&
+    rightPaths.size === right.length &&
+    Array.from(leftPaths).every((path) => rightPaths.has(path))
+  )
+}
+
+function normalizePath(value: string) {
+  const absolutePath = resolve(value)
+  return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
 }
 
 function filesystemErrorCode(error: unknown) {
@@ -1517,6 +1992,36 @@ function filesystemErrorCode(error: unknown) {
     typeof error.code === 'string'
     ? error.code
     : null
+}
+
+function sanitizeReportMessage(value: unknown): string | null {
+  let message: string | null = null
+  if (typeof value === 'string') {
+    message = value
+  } else if (value instanceof Error) {
+    message = value.message
+  } else if (typeof value === 'object' && value !== null && 'message' in value) {
+    const candidate = value.message
+    if (typeof candidate === 'string') {
+      message = candidate
+    }
+  }
+  if (!message?.trim()) {
+    return null
+  }
+
+  return message
+    .replace(/data:[^\s,;]+(?:;base64)?,[A-Za-z0-9+/_=-]+/gi, '[REDACTED_DATA_URL]')
+    .replace(
+      /\b(authorization|api[_-]?key|token|secret|password|passwd|credential)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|(?:Bearer|Basic)\s+[^\s,;}]+|[^\s,;}]+)/gi,
+      '$1=[REDACTED]',
+    )
+    .replace(/\b(Bearer|Basic)\s+[A-Za-z0-9+/_=.-]+/gi, '$1 [REDACTED]')
+    .replace(/\bsk-[A-Za-z0-9_-]+\b/g, '[REDACTED_KEY]')
+    .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[REDACTED_JWT]')
+    .replace(/\b[A-Za-z0-9_+/=]{32,}\b/g, '[REDACTED_TOKEN]')
+    .trim()
+    .slice(0, 2_000)
 }
 
 function requireLive(condition: unknown, kind: LiveFailureKind): asserts condition {

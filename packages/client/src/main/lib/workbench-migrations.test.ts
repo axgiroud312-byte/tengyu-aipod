@@ -48,7 +48,7 @@ describe('workbench migrations', () => {
     }
   })
 
-  it('migrates an old database without dropping existing data', () => {
+  it('migrates a version 3 database without dropping existing data', () => {
     const db = openSqliteDatabase(join(tempRoot, 'old-workbench.db'))
     try {
       db.exec(`
@@ -114,11 +114,19 @@ describe('workbench migrations', () => {
           scanned_at
         )
         VALUES ('tpl-old', 'C:/templates/mockup.psd', 'tpl-hash', 1000, 1000, '[]', '[]', '[]', 'single', 1, 1000);
+
+        PRAGMA user_version = 3;
       `)
 
       runWorkbenchMigrations(db)
 
       expect(userVersion(db)).toBe(CURRENT_WORKBENCH_SCHEMA_VERSION)
+      expect(tableNames(db)).toContain('pending_title_writes')
+      expect(
+        db
+          .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = ?")
+          .get('idx_pending_title_writes_xlsx_path'),
+      ).toEqual({ name: 'idx_pending_title_writes_xlsx_path' })
       expect(columnNames(db, 'artifacts')).toEqual(
         expect.arrayContaining(['sku_code', 'print_id', 'step', 'model_or_workflow']),
       )
@@ -143,6 +151,30 @@ describe('workbench migrations', () => {
       expect(db.prepare('SELECT scanner_version FROM psd_templates').get()).toEqual({
         scanner_version: 0,
       })
+      db.prepare(
+        `INSERT INTO pending_title_writes (
+          run_id, batch_dir, xlsx_path, titles_json, language, platform, model,
+          skill_id, skill_version, generated_at, updated_at, revision
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).run(
+        'run-old',
+        'C:/outputs/mockup',
+        'C:/outputs/mockup/标题.xlsx',
+        '{"SKU-OLD":"Old title"}',
+        'en',
+        'temu',
+        'qwen-test',
+        'title-test',
+        '1',
+        1000,
+        1000,
+        'revision-old',
+      )
+      expect(
+        db
+          .prepare('SELECT run_id, revision FROM pending_title_writes WHERE run_id = ?')
+          .get('run-old'),
+      ).toEqual({ run_id: 'run-old', revision: 'revision-old' })
     } finally {
       db.close()
     }
