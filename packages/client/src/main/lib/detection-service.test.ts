@@ -300,21 +300,9 @@ describe('detection service utilities', () => {
       score: 100,
       reason: '包含商标',
     })
-    expect(parseDetectionResponse('{"risk": "无侵权风险", "reason": "原创花朵"}')).toEqual({
-      score: 0,
-      riskLevel: 'pass',
-      reason: '原创花朵',
-    })
-    expect(parseDetectionResponse('{"risk": "侵权风险低", "reason": "泛动漫风格"}')).toEqual({
-      score: 50,
-      riskLevel: 'review',
-      reason: '泛动漫风格',
-    })
-    expect(parseDetectionResponse('{"risk": "侵权风险高", "reason": "接近皮卡丘"}')).toEqual({
-      score: 100,
-      riskLevel: 'block',
-      reason: '接近皮卡丘',
-    })
+    expect(parseDetectionResponse('{"risk": "无侵权风险", "reason": "原创花朵"}')).toBeNull()
+    expect(parseDetectionResponse('{"risk": "侵权风险低", "reason": "泛动漫风格"}')).toBeNull()
+    expect(parseDetectionResponse('{"risk": "侵权风险高", "reason": "接近皮卡丘"}')).toBeNull()
     expect(parseDetectionResponse('无法判断')).toBeNull()
   })
 

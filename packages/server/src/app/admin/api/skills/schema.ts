@@ -8,7 +8,7 @@ const skillCacheSegmentSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._+-]*$/, '只能包含字母、数字、点、下划线、加号和连字符')
 
-export const skillInputSchema = z.object({
+const skillFieldsSchema = z.object({
   id: skillCacheSegmentSchema,
   module: z.enum(['generation', 'detection', 'title']),
   category: z.string().nullable().optional(),
@@ -24,9 +24,26 @@ export const skillInputSchema = z.object({
   target_scope: z.enum(['all', 'php_uid_list']).default('all'),
 })
 
-export const skillPatchSchema = skillInputSchema.extend({
-  save_mode: z.enum(['overwrite', 'new_version']),
-})
+function validateDetectionOutputContract(
+  skill: z.infer<typeof skillFieldsSchema>,
+  context: z.RefinementCtx,
+) {
+  if (skill.module === 'detection' && !/risk_score/i.test(skill.system_prompt)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: '侵权检测 Skill 必须要求返回 0-100 的 risk_score',
+      path: ['system_prompt'],
+    })
+  }
+}
+
+export const skillInputSchema = skillFieldsSchema.superRefine(validateDetectionOutputContract)
+
+export const skillPatchSchema = skillFieldsSchema
+  .extend({
+    save_mode: z.enum(['overwrite', 'new_version']),
+  })
+  .superRefine(validateDetectionOutputContract)
 
 export function nullableText(value: string | null | undefined) {
   return value?.trim() || null

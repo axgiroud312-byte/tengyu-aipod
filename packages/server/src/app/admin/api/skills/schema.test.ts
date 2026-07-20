@@ -22,4 +22,25 @@ describe('admin skill input schema', () => {
       false,
     )
   })
+
+  it('requires detection skills to request a numeric risk_score', () => {
+    const detectionSkill = {
+      ...validSkillInput(),
+      id: 'infringement-detection',
+      module: 'detection' as const,
+    }
+
+    expect(
+      skillInputSchema.safeParse({
+        ...detectionSkill,
+        system_prompt: 'Return JSON with risk and reason.',
+      }).success,
+    ).toBe(false)
+    expect(
+      skillInputSchema.safeParse({
+        ...detectionSkill,
+        system_prompt: 'Return JSON with numeric risk_score from 0 to 100 and reason.',
+      }).success,
+    ).toBe(true)
+  })
 })

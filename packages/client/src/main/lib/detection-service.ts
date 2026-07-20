@@ -374,31 +374,6 @@ export function classifyRisk(score: number, threshold?: DetectionThreshold): Ris
 type ParsedDetectionResponse = {
   score: number
   reason: string
-  riskLevel?: RiskLevel
-}
-
-const RISK_LABEL_RESULTS: Record<string, { score: number; riskLevel: RiskLevel }> = {
-  无侵权风险: { score: 0, riskLevel: 'pass' },
-  无风险: { score: 0, riskLevel: 'pass' },
-  pass: { score: 0, riskLevel: 'pass' },
-  通过: { score: 0, riskLevel: 'pass' },
-  侵权风险低: { score: 50, riskLevel: 'review' },
-  疑似: { score: 50, riskLevel: 'review' },
-  review: { score: 50, riskLevel: 'review' },
-  复查: { score: 50, riskLevel: 'review' },
-  侵权风险高: { score: 100, riskLevel: 'block' },
-  高风险: { score: 100, riskLevel: 'block' },
-  block: { score: 100, riskLevel: 'block' },
-  拦截: { score: 100, riskLevel: 'block' },
-  失败: { score: 100, riskLevel: 'block' },
-}
-
-function parseRiskLabel(value: unknown) {
-  if (typeof value !== 'string') {
-    return null
-  }
-  const normalized = value.trim()
-  return RISK_LABEL_RESULTS[normalized] ?? RISK_LABEL_RESULTS[normalized.toLowerCase()] ?? null
 }
 
 export function parseDetectionResponse(text: string): ParsedDetectionResponse | null {
@@ -424,18 +399,6 @@ export function parseDetectionResponse(text: string): ParsedDetectionResponse | 
     }
   }
 
-  const riskMatch = text.match(
-    /(?:risk|risk[_\s-]?level|风险|风险等级)\s*[:：]\s*(无侵权风险|无风险|侵权风险低|疑似|侵权风险高|高风险|pass|review|block)/i,
-  )
-  const risk = parseRiskLabel(riskMatch?.[1])
-  if (risk) {
-    const reasonMatch = text.match(/(?:reason|依据|理由)\s*[:：]\s*([^\n\r]+)/i)
-    return {
-      ...risk,
-      reason: reasonMatch?.[1]?.trim() ?? '',
-    }
-  }
-
   return null
 }
 
@@ -453,16 +416,13 @@ function parseDetectionJson(text: string) {
         : typeof rawScore === 'string'
           ? Number.parseFloat(rawScore)
           : Number.NaN
-    const reason = typeof record.reason === 'string' ? record.reason.trim() : ''
-    if (Number.isFinite(score)) {
-      return {
-        score: clampScore(score),
-        reason,
-      }
+    if (!Number.isFinite(score)) {
+      return null
     }
-
-    const risk = parseRiskLabel(record.risk ?? record.risk_level ?? record.riskLevel)
-    return risk ? { ...risk, reason } : null
+    return {
+      score: clampScore(score),
+      reason: typeof record.reason === 'string' ? record.reason.trim() : '',
+    }
   } catch {
     return null
   }
@@ -1770,7 +1730,7 @@ export class DetectionService {
         }
       })
 
-      const riskLevel = parsed.riskLevel ?? classifyRisk(parsed.score, input.threshold)
+      const riskLevel = classifyRisk(parsed.score, input.threshold)
       const outputPath = detectionOutputPath(
         input.workbenchRoot,
         input.taskId,
