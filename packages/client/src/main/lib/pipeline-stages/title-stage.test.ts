@@ -5,7 +5,12 @@ import { AppErrorClass, type PipelineRunConfig, type PipelineRunStats } from '@t
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PipelinePrintStreamItem, PipelineStageRuntimeContext } from '../pipeline-stage-types'
 import { openSqliteDatabase } from '../sqlite'
-import { listPendingTitleWrites, pendingTitleMap } from './title-pending-writes'
+import { TempFileManager } from '../temp-file-manager'
+import {
+  listPendingTitleWrites,
+  pendingTitleMap,
+  savePendingTitleWrite,
+} from './title-pending-writes'
 import { createTitleStage } from './title-stage'
 
 const mocks = vi.hoisted(() => ({
@@ -45,6 +50,7 @@ const actualTitleFunctions = vi.hoisted(
           generatedTitles: Map<string, string>,
           existingTitles: Map<string, string>,
           workbenchRoot: string,
+          tempFiles?: Pick<TempFileManager, 'createTaskDir' | 'cleanupTask'>,
         ) => Promise<void>)
       | null
   } => ({
@@ -278,6 +284,9 @@ describe('title stage', () => {
       throw new Error('actual title xlsx functions are unavailable')
     }
     const workbenchRoot = await createTestWorkbenchRoot()
+    const xlsxTempFiles = new TempFileManager({
+      rootDir: join(workbenchRoot, '.workbench', 'tmp'),
+    })
     const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
     const xlsxPath = join(batchDir, '标题.xlsx')
     const firstItem: PipelinePrintStreamItem = {
@@ -322,7 +331,13 @@ describe('title stage', () => {
         bothWritesReady.resolve()
       }
       await bothWritesReady.promise
-      await actualWriteTitlesXlsx(path, generatedTitles, existingTitles, workbenchRoot)
+      await actualWriteTitlesXlsx(
+        path,
+        generatedTitles,
+        existingTitles,
+        workbenchRoot,
+        xlsxTempFiles,
+      )
     })
 
     const db = openSqliteDatabase(':memory:')
@@ -799,6 +814,265 @@ describe('title stage', () => {
     } finally {
       db.close()
       await rm(workbenchRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps previously deferred titles when the workbook unlocks after new titles are generated', async () => {
+    const workbenchRoot = await createTestWorkbenchRoot()
+    const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
+    const firstItem: PipelinePrintStreamItem = {
+      itemKey: 'SKU-001',
+      path: join(batchDir, 'SKU-001', '01.jpg'),
+      printId: 'pri-SKU-001',
+      sourceArtifactIds: [],
+    }
+    const secondItem: PipelinePrintStreamItem = {
+      itemKey: 'SKU-002',
+      path: join(batchDir, 'SKU-002', '01.jpg'),
+      printId: 'pri-SKU-002',
+      sourceArtifactIds: [],
+    }
+    mocks.scanSkuFolders.mockResolvedValue([
+      { skuCode: 'SKU-001', path: join(batchDir, 'SKU-001') },
+      { skuCode: 'SKU-002', path: join(batchDir, 'SKU-002') },
+    ])
+    mocks.writeTitlesXlsx
+      .mockRejectedValueOnce(
+        new AppErrorClass('XLSX_LOCKED', '标题文件被 Excel 占用，请关闭后重试', false),
+      )
+      .mockRejectedValueOnce(
+        new AppErrorClass('XLSX_LOCKED', '标题文件被 Excel 占用，请关闭后重试', false),
+      )
+      .mockResolvedValue(undefined)
+
+    const db = openSqliteDatabase(':memory:')
+    const context: PipelineStageRuntimeContext = {
+      runId: 'run-title-unlocks-after-resume',
+      taskName: '标题解锁合并测试',
+      config: pipelineConfig(workbenchRoot),
+      stepKey: 'title',
+      isCancelled: () => false,
+    }
+    const createStage = () =>
+      createTitleStage({
+        db,
+        workbenchRoot,
+        stats: emptyStats(),
+        upsertPipelineItem: vi.fn(),
+        appendLog: vi.fn(),
+        emitRunningProgress: vi.fn(),
+        setCurrentCancel: vi.fn(),
+        assertNotCancelled: vi.fn(),
+      })(context)
+    const consume = async (item: PipelinePrintStreamItem) => {
+      async function* source() {
+        yield item
+      }
+      for await (const _output of createStage()(source(), context)) {
+        // Consume the stage so its final workbook flush completes.
+      }
+    }
+
+    try {
+      await consume(firstItem)
+      await consume(secondItem)
+
+      expect(mocks.writeTitlesXlsx).toHaveBeenCalledTimes(3)
+      expect(mocks.writeTitlesXlsx).toHaveBeenLastCalledWith(
+        join(batchDir, '标题.xlsx'),
+        new Map([
+          ['SKU-001', 'Base SKU-001'],
+          ['SKU-002', 'Base SKU-002'],
+        ]),
+        new Map(),
+        workbenchRoot,
+      )
+      expect(mocks.registerSkuTitles).toHaveBeenLastCalledWith(
+        db,
+        expect.objectContaining({
+          templateBatch: 'shirt',
+          titles: new Map([
+            ['SKU-001', 'Base SKU-001'],
+            ['SKU-002', 'Base SKU-002'],
+          ]),
+        }),
+      )
+      await expect(listPendingTitleWrites(workbenchRoot)).resolves.toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('clears an absorbed older-run sidecar after a newer title for the same SKU is written', async () => {
+    const workbenchRoot = await createTestWorkbenchRoot()
+    const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
+    const xlsxPath = join(batchDir, '标题.xlsx')
+    const item: PipelinePrintStreamItem = {
+      itemKey: 'SKU-001',
+      path: join(batchDir, 'SKU-001', '01.jpg'),
+      printId: 'pri-SKU-001',
+      sourceArtifactIds: [],
+    }
+    await savePendingTitleWrite(workbenchRoot, {
+      runId: 'run-title-older',
+      batchDir,
+      xlsxPath,
+      titles: { 'SKU-001': 'Older title' },
+      language: 'en',
+      platform: 'temu',
+      model: 'qwen3.6-flash',
+      skill: { id: 'title-temu-en', version: '1' },
+      generatedAt: 1,
+    })
+    mocks.scanSkuFolders.mockResolvedValue([
+      { skuCode: 'SKU-001', path: join(batchDir, 'SKU-001') },
+    ])
+    mocks.generateSku.mockResolvedValue({
+      skuCode: 'SKU-001',
+      status: 'success' as const,
+      baseTitle: 'Newer title',
+      imagePath: item.path,
+    })
+    mocks.writeTitlesXlsx
+      .mockRejectedValueOnce(
+        new AppErrorClass('XLSX_LOCKED', '标题文件被 Excel 占用，请关闭后重试', false),
+      )
+      .mockResolvedValue(undefined)
+
+    const db = openSqliteDatabase(':memory:')
+    const context: PipelineStageRuntimeContext = {
+      runId: 'run-title-newer',
+      taskName: '标题跨运行覆盖测试',
+      config: pipelineConfig(workbenchRoot),
+      stepKey: 'title',
+      isCancelled: () => false,
+    }
+    const titleStage = createTitleStage({
+      db,
+      workbenchRoot,
+      stats: emptyStats(),
+      upsertPipelineItem: vi.fn(),
+      appendLog: vi.fn(),
+      emitRunningProgress: vi.fn(),
+      setCurrentCancel: vi.fn(),
+      assertNotCancelled: vi.fn(),
+    })(context)
+    async function* source() {
+      yield item
+    }
+
+    try {
+      for await (const _output of titleStage(source(), context)) {
+        // Consume the stage so the merged workbook write completes.
+      }
+
+      expect(mocks.writeTitlesXlsx).toHaveBeenLastCalledWith(
+        xlsxPath,
+        new Map([['SKU-001', 'Newer title']]),
+        new Map(),
+        workbenchRoot,
+      )
+      expect(mocks.registerSkuTitles).toHaveBeenLastCalledWith(
+        db,
+        expect.objectContaining({
+          templateBatch: 'shirt',
+          titles: new Map([['SKU-001', 'Newer title']]),
+        }),
+      )
+      await expect(listPendingTitleWrites(workbenchRoot)).resolves.toEqual([])
+    } finally {
+      db.close()
+    }
+  })
+
+  it('does not absorb deferred titles from another xlsx in the same batch directory', async () => {
+    const workbenchRoot = await createTestWorkbenchRoot()
+    const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
+    const oldXlsxPath = join(batchDir, '旧标题.xlsx')
+    const currentXlsxPath = join(batchDir, '新标题.xlsx')
+    const item: PipelinePrintStreamItem = {
+      itemKey: 'SKU-NEW',
+      path: join(batchDir, 'SKU-NEW', '01.jpg'),
+      printId: 'pri-SKU-NEW',
+      sourceArtifactIds: [],
+    }
+    await savePendingTitleWrite(workbenchRoot, {
+      runId: 'run-title-old-file',
+      batchDir,
+      xlsxPath: oldXlsxPath,
+      titles: { 'SKU-OLD': 'Old workbook title' },
+      language: 'en',
+      platform: 'temu',
+      model: 'qwen3.6-flash',
+      skill: { id: 'title-temu-en', version: '1' },
+      generatedAt: 1,
+    })
+    mocks.resolveTitleXlsxPath.mockResolvedValue(currentXlsxPath)
+    mocks.scanSkuFolders.mockResolvedValue([
+      { skuCode: 'SKU-NEW', path: join(batchDir, 'SKU-NEW') },
+    ])
+    mocks.generateSku.mockResolvedValue({
+      skuCode: 'SKU-NEW',
+      status: 'success' as const,
+      baseTitle: 'Current workbook title',
+      imagePath: item.path,
+    })
+    mocks.writeTitlesXlsx
+      .mockRejectedValueOnce(
+        new AppErrorClass('XLSX_LOCKED', '标题文件被 Excel 占用，请关闭后重试', false),
+      )
+      .mockResolvedValue(undefined)
+
+    const db = openSqliteDatabase(':memory:')
+    const context: PipelineStageRuntimeContext = {
+      runId: 'run-title-current-file',
+      taskName: '标题文件隔离测试',
+      config: pipelineConfig(workbenchRoot),
+      stepKey: 'title',
+      isCancelled: () => false,
+    }
+    const titleStage = createTitleStage({
+      db,
+      workbenchRoot,
+      stats: emptyStats(),
+      upsertPipelineItem: vi.fn(),
+      appendLog: vi.fn(),
+      emitRunningProgress: vi.fn(),
+      setCurrentCancel: vi.fn(),
+      assertNotCancelled: vi.fn(),
+    })(context)
+    async function* source() {
+      yield item
+    }
+
+    try {
+      for await (const _output of titleStage(source(), context)) {
+        // Consume the stage so the current workbook write completes.
+      }
+
+      expect(mocks.writeTitlesXlsx).toHaveBeenNthCalledWith(
+        1,
+        oldXlsxPath,
+        new Map([['SKU-OLD', 'Old workbook title']]),
+        new Map(),
+        workbenchRoot,
+      )
+      expect(mocks.writeTitlesXlsx).toHaveBeenLastCalledWith(
+        currentXlsxPath,
+        new Map([['SKU-NEW', 'Current workbook title']]),
+        new Map(),
+        workbenchRoot,
+      )
+      const pendingWrites = await listPendingTitleWrites(workbenchRoot)
+      expect(pendingWrites).toHaveLength(1)
+      const pending = pendingWrites[0]
+      if (!pending) {
+        throw new Error('expected the deferred title for the old workbook to remain pending')
+      }
+      expect(pending.xlsxPath).toBe(oldXlsxPath)
+      expect(pendingTitleMap(pending)).toEqual(new Map([['SKU-OLD', 'Old workbook title']]))
+    } finally {
+      db.close()
     }
   })
 

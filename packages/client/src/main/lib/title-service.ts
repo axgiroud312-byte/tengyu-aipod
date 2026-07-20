@@ -629,13 +629,20 @@ export async function writeTitlesXlsx(
   xlsxPath: string,
   generatedTitles: Map<string, string>,
   existingTitles: Map<string, string>,
-  workbenchRoot: string,
+  _workbenchRoot: string,
+  xlsxTempFiles: TitleTempFileManager = tempFileManager,
 ) {
   return withTitleXlsxWriteLock(xlsxPath, async () => {
-    const temporaryDirectory = join(workbenchRoot, '.workbench', 'tmp', 'title-xlsx', randomUUID())
-    const temporaryPath = join(temporaryDirectory, basename(xlsxPath))
+    const temporaryTaskId = `xlsx-${randomUUID()}`
+    let temporaryDirectory = ''
+    let temporaryDirectoryCreated = false
     let replacingTarget = false
+    let operationFailed = false
+    let operationError: unknown
     try {
+      temporaryDirectory = await xlsxTempFiles.createTaskDir('title', temporaryTaskId)
+      temporaryDirectoryCreated = true
+      const temporaryPath = join(temporaryDirectory, basename(xlsxPath))
       const workbook = new ExcelJS.Workbook()
       const sheet = workbook.addWorksheet('Sheet')
       sheet.columns = [
@@ -658,16 +665,27 @@ export async function writeTitlesXlsx(
         sheet.addRow({ sku, title })
       }
 
-      await mkdir(temporaryDirectory, { recursive: true })
       await workbook.xlsx.writeFile(temporaryPath)
       await mkdir(dirname(xlsxPath), { recursive: true })
       replacingTarget = true
       await rename(temporaryPath, xlsxPath)
     } catch (error) {
-      await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => null)
-      throw replacingTarget ? toXlsxWriteError(error) : error
+      operationFailed = true
+      operationError = replacingTarget ? toXlsxWriteError(error) : error
     }
-    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => null)
+    if (temporaryDirectoryCreated) {
+      try {
+        await xlsxTempFiles.cleanupTask('title', temporaryTaskId)
+      } catch (error) {
+        if (!operationFailed) {
+          operationFailed = true
+          operationError = error
+        }
+      }
+    }
+    if (operationFailed) {
+      throw operationError
+    }
   })
 }
 
@@ -764,11 +782,19 @@ export async function selectTitleSkill(
   language: string,
 ) {
   const platformCandidates = platform === 'temu' ? ['temu', 'temu_pop', 'temu_full'] : [platform]
-  for (const candidate of platformCandidates) {
+  const candidates = platformCandidates.map((candidate) => ({ platform: candidate, language }))
+  if (
+    !candidates.some(
+      (candidate) => candidate.platform === 'generic' && candidate.language === 'generic',
+    )
+  ) {
+    candidates.push({ platform: 'generic', language: 'generic' })
+  }
+  for (const candidate of candidates) {
     const summaries = await skillCache.listSkills({
       module: 'title',
-      platform: candidate,
-      language,
+      platform: candidate.platform,
+      language: candidate.language,
     })
     const selected = summaries[0]
     if (selected) {

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { dirname, join, sep } from 'node:path'
 import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
 import ExcelJS from 'exceljs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -19,6 +19,7 @@ import {
   readExistingTitles,
   resolveTitleXlsxPath,
   scanSkuFolders,
+  selectTitleSkill,
   titleXlsxPath,
   toXlsxWriteError,
   writeTitlesXlsx,
@@ -120,6 +121,33 @@ afterEach(async () => {
 })
 
 describe('title service utilities', () => {
+  it('falls back to the generic title skill when no Temu English variant exists', async () => {
+    const genericSummary = summary({
+      id: 'title-generic-generic',
+      platform: 'generic',
+      language: 'generic',
+    })
+    const genericSkill = skill({
+      id: genericSummary.id,
+      platform: genericSummary.platform,
+      language: genericSummary.language,
+    })
+    const listSkills = vi.fn(async (filter: { platform?: string; language?: string }) =>
+      filter.platform === 'generic' && filter.language === 'generic' ? [genericSummary] : [],
+    )
+    const getSkill = vi.fn(async () => genericSkill)
+
+    await expect(selectTitleSkill({ listSkills, getSkill }, 'temu', 'en')).resolves.toEqual(
+      genericSkill,
+    )
+    expect(listSkills).toHaveBeenCalledWith({
+      module: 'title',
+      platform: 'generic',
+      language: 'generic',
+    })
+    expect(getSkill).toHaveBeenCalledWith(genericSummary.id, genericSummary.version)
+  })
+
   it('scans sku folders with natural ordering', async () => {
     const batchDir = join(tempRoot, 'batch')
     await mkdir(join(batchDir, 'SKU10'), { recursive: true })
@@ -255,12 +283,14 @@ describe('title service utilities', () => {
           xlsxPath,
           new Map([['SKU1', 'Replacement title']]),
           new Map([['SKU1', 'Original title']]),
-          tempRoot,
+          workbenchRoot,
         ),
       ).rejects.toBe(ioError)
       await expect(readFile(xlsxPath)).resolves.toEqual(originalContents)
       expect(temporaryPath).not.toBe(xlsxPath)
-      expect(temporaryPath.startsWith(join(tempRoot, '.workbench', 'tmp', 'title-xlsx'))).toBe(true)
+      expect(
+        temporaryPath.startsWith(`${join(workbenchRoot, '.workbench', 'tmp', 'title')}${sep}`),
+      ).toBe(true)
       await expect(stat(temporaryPath)).rejects.toMatchObject({ code: 'ENOENT' })
     } finally {
       writeFileSpy.mockRestore()

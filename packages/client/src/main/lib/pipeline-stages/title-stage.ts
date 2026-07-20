@@ -28,9 +28,11 @@ import {
 } from '../title-service'
 import { isPathInsideWorkbench } from '../workbench-path-guard'
 import {
+  type PendingTitleWriteRecord,
   listPendingTitleWrites,
   pendingTitleBatchName,
   pendingTitleMap,
+  pendingTitleXlsxPathKey,
   removePendingTitleWrite,
   savePendingTitleWrite,
 } from './title-pending-writes'
@@ -62,6 +64,8 @@ type BatchState = {
   batchDir: string
   xlsxPath: string
   existingTitles: Map<string, string>
+  deferredTitles: Map<string, string>
+  absorbedPendingWrites: PendingTitleWriteRecord[]
   skuCodes: Set<string>
   generatedBaseTitles: Map<string, string>
   lastFlushedTitles: Map<string, string>
@@ -122,6 +126,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
 
     const keywordGroups = normalizeTitleKeywordGroups(config.keywordGroups)
     const batchStates = new Map<string, BatchState>()
+    const deferredPendingWritesByXlsxPath = new Map<string, PendingTitleWriteRecord[]>()
 
     const getBatchState = async (batchDir: string) => {
       const existing = batchStates.get(batchDir)
@@ -129,6 +134,15 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         return existing
       }
       const xlsxPath = await resolveTitleXlsxPath(batchDir, config.titleFileName)
+      const absorbedPendingWrites = [
+        ...(deferredPendingWritesByXlsxPath.get(pendingTitleXlsxPathKey(xlsxPath)) ?? []),
+      ]
+      const deferredTitles = new Map<string, string>()
+      for (const pending of absorbedPendingWrites) {
+        for (const [skuCode, title] of pendingTitleMap(pending)) {
+          deferredTitles.set(skuCode, title)
+        }
+      }
       const skuCodes = new Set<string>()
       try {
         for (const folder of await scanSkuFolders(batchDir)) {
@@ -150,6 +164,8 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         batchDir,
         xlsxPath,
         existingTitles: await readExistingTitles(xlsxPath),
+        deferredTitles,
+        absorbedPendingWrites,
         skuCodes,
         generatedBaseTitles: new Map(),
         lastFlushedTitles: new Map(),
@@ -163,7 +179,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
 
     const buildGeneratedTitles = async (state: BatchState) => {
       const assignments = assignTitleKeywordGroups(Array.from(state.skuCodes), keywordGroups)
-      const generatedTitles = new Map<string, string>()
+      const generatedTitles = new Map(state.deferredTitles)
       for (const [skuCode, baseTitle] of state.generatedBaseTitles) {
         generatedTitles.set(
           skuCode,
@@ -279,6 +295,10 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
           dependencies.workbenchRoot,
         )
         await registerGeneratedTitles(state, generatedTitles, session)
+        for (const pending of state.absorbedPendingWrites) {
+          await removePendingTitleWrite(dependencies.workbenchRoot, pending)
+        }
+        state.absorbedPendingWrites = []
         state.lastFlushedTitles = new Map(generatedTitles)
         state.pendingFlush = false
         state.warnedLocked = false
@@ -395,6 +415,10 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
           if (!(mapped instanceof AppErrorClass && mapped.code === 'XLSX_LOCKED')) {
             throw titlePersistenceError(pending, '标题待补写失败，已保留暂存结果', mapped)
           }
+          const xlsxPathKey = pendingTitleXlsxPathKey(pending.xlsxPath)
+          const deferredPendingWrites = deferredPendingWritesByXlsxPath.get(xlsxPathKey) ?? []
+          deferredPendingWrites.push(pending)
+          deferredPendingWritesByXlsxPath.set(xlsxPathKey, deferredPendingWrites)
           dependencies.appendLog(context.runId, {
             level: 'warn',
             step_key: 'title',

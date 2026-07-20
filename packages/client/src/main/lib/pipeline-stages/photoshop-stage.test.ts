@@ -222,6 +222,29 @@ describe('photoshop stage fatal error boundaries', () => {
     expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
   })
 
+  it('stops after a Photoshop mutex timeout instead of waiting once per template', async () => {
+    const timeoutError = new AppErrorClass(
+      'NETWORK_TIMEOUT',
+      'Photoshop 无响应,请检查 PS 后重试',
+      true,
+      { kind: 'photoshop_mutex_timeout', timeout_ms: 600_000 },
+    )
+    const harness = createHarness(
+      'top',
+      ['C:\\templates\\shirt.psd', 'C:\\templates\\hoodie.psd'],
+      async () => {
+        throw timeoutError
+      },
+    )
+
+    await expect(consumeStage(harness.stage, harness.context, sourceItems(1))).rejects.toBe(
+      timeoutError,
+    )
+    expect(harness.runBatch).not.toHaveBeenCalled()
+    expect(tempFileMocks.createTaskDir).toHaveBeenCalledTimes(1)
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+  })
+
   it('uses between-group cancellation so the active Photoshop SKU can finish', async () => {
     const harness = createHarness()
     harness.runBatch.mockImplementationOnce(async (prints, _templates, config) => {

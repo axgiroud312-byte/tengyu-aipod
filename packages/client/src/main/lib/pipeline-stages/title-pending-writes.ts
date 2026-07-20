@@ -64,6 +64,11 @@ function pendingTitleWriteLockKey(filePath: string) {
   return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
 }
 
+export function pendingTitleXlsxPathKey(xlsxPath: string) {
+  const absolutePath = resolve(xlsxPath)
+  return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
+}
+
 async function withPendingTitleWriteLock<T>(filePath: string, operation: () => Promise<T>) {
   const key = pendingTitleWriteLockKey(filePath)
   const previous = pendingTitleWriteQueues.get(key) ?? Promise.resolve()

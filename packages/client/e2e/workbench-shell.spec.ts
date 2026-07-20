@@ -154,6 +154,7 @@ async function enterPreparedWorkbench(
   page: Awaited<ReturnType<ElectronApplication['firstWindow']>>,
   workbenchRoot: string,
   beforeReload?: () => Promise<void> | void,
+  expectWorkbench = true,
 ) {
   await page.getByRole('textbox', { name: '手机号' }).fill('13800000000')
   await page.getByRole('button', { name: '发送验证码' }).click()
@@ -169,7 +170,9 @@ async function enterPreparedWorkbench(
   await page.getByRole('button', { name: '开始使用' }).click()
   await beforeReload?.()
   await page.reload()
-  await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
+  if (expectWorkbench) {
+    await expect(page.getByRole('heading', { name: '完整任务', exact: true })).toBeVisible()
+  }
 }
 
 async function installPipelineEventHarness(app: ElectronApplication) {
@@ -1150,7 +1153,7 @@ test.describe('production-first Workbench shell', () => {
     await expect(page.getByRole('combobox', { name: '提取方式' })).toBeVisible()
   })
 
-  test('enters task settings when startup run snapshots cannot be loaded', async () => {
+  test('shows the workbench error page when startup run snapshots cannot be loaded', async () => {
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -1160,25 +1163,27 @@ test.describe('production-first Workbench shell', () => {
     const page = await app.firstWindow()
     const workbenchRoot = join(tempRoot, 'workbench-startup-run-snapshot-failure')
 
-    await enterPreparedWorkbench(page, workbenchRoot, async () => {
-      seedRunningCompleteTasks(workbenchRoot)
-      await app?.evaluate(({ ipcMain }) => {
-        ipcMain.removeHandler('pipeline:get-run')
-        ipcMain.handle('pipeline:get-run', () => {
-          throw new Error('fixture startup snapshot failure')
+    await enterPreparedWorkbench(
+      page,
+      workbenchRoot,
+      async () => {
+        seedRunningCompleteTasks(workbenchRoot)
+        await app?.evaluate(({ ipcMain }) => {
+          ipcMain.removeHandler('pipeline:get-run')
+          ipcMain.handle('pipeline:get-run', () => {
+            throw new Error('fixture startup snapshot failure')
+          })
         })
-      })
-    })
-
-    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
-      'data-state',
-      'active',
+      },
+      false,
     )
-    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toHaveCount(0)
+
+    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toBeVisible()
+    await expect(page.getByText('fixture startup snapshot failure', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '重试' })).toBeVisible()
   })
 
-  test('restores a healthy startup run when another run snapshot fails', async () => {
+  test('shows the workbench error page when one startup run snapshot fails', async () => {
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -1188,36 +1193,38 @@ test.describe('production-first Workbench shell', () => {
     const page = await app.firstWindow()
     const workbenchRoot = join(tempRoot, 'workbench-partial-startup-run-snapshot-failure')
 
-    await enterPreparedWorkbench(page, workbenchRoot, async () => {
-      seedRunningCompleteTasks(workbenchRoot)
-      const healthyDetail = await page.evaluate(() =>
-        window.api.pipeline.getRun({ run_id: 'run-most-recently-updated' }),
-      )
-      if (!healthyDetail) {
-        throw new Error('fixture healthy run detail is missing')
-      }
-      await app?.evaluate(({ ipcMain }, detail) => {
-        ipcMain.removeHandler('pipeline:get-run')
-        ipcMain.handle('pipeline:get-run', (_event, input: { run_id: string }) => {
-          if (input.run_id === 'run-newer-created') {
-            throw new Error('fixture single startup snapshot failure')
-          }
-          return input.run_id === detail.run.id ? detail : null
-        })
-      }, healthyDetail)
-    })
-
-    await expect(page.getByRole('tab', { name: '运行展示' })).toHaveAttribute(
-      'data-state',
-      'active',
+    await enterPreparedWorkbench(
+      page,
+      workbenchRoot,
+      async () => {
+        seedRunningCompleteTasks(workbenchRoot)
+        const healthyDetail = await page.evaluate(() =>
+          window.api.pipeline.getRun({ run_id: 'run-most-recently-updated' }),
+        )
+        if (!healthyDetail) {
+          throw new Error('fixture healthy run detail is missing')
+        }
+        await app?.evaluate(({ ipcMain }, detail) => {
+          ipcMain.removeHandler('pipeline:get-run')
+          ipcMain.handle('pipeline:get-run', (_event, input: { run_id: string }) => {
+            if (input.run_id === 'run-newer-created') {
+              throw new Error('fixture single startup snapshot failure')
+            }
+            return input.run_id === detail.run.id ? detail : null
+          })
+        }, healthyDetail)
+      },
+      false,
     )
+
+    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toBeVisible()
     await expect(
-      page.getByText('Most recently updated task', { exact: true }).first(),
+      page.getByText('fixture single startup snapshot failure', { exact: true }),
     ).toBeVisible()
-    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toHaveCount(0)
+    await expect(page.getByRole('button', { name: '重试' })).toBeVisible()
   })
 
-  test('enters task settings when the startup run list cannot be loaded', async () => {
+  test('shows the workbench error page when the startup run list cannot be loaded', async () => {
     const mockServer = await startMockServer()
     closeMockServer = mockServer.close
     app = await launchApp({
@@ -1226,21 +1233,22 @@ test.describe('production-first Workbench shell', () => {
     })
     const page = await app.firstWindow()
 
-    await enterPreparedWorkbench(page, join(tempRoot, 'workbench-startup-run-list-failure'), () =>
-      app?.evaluate(({ ipcMain }) => {
-        ipcMain.removeHandler('pipeline:list-runs')
-        ipcMain.handle('pipeline:list-runs', () => {
-          throw new Error('fixture startup run list failure')
-        })
-      }),
+    await enterPreparedWorkbench(
+      page,
+      join(tempRoot, 'workbench-startup-run-list-failure'),
+      () =>
+        app?.evaluate(({ ipcMain }) => {
+          ipcMain.removeHandler('pipeline:list-runs')
+          ipcMain.handle('pipeline:list-runs', () => {
+            throw new Error('fixture startup run list failure')
+          })
+        }),
+      false,
     )
 
-    await expect(page.getByRole('tab', { name: '任务设置' })).toHaveAttribute(
-      'data-state',
-      'active',
-    )
-    await expect(page.getByRole('button', { name: '启动完整任务' })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toHaveCount(0)
+    await expect(page.getByRole('heading', { name: '进入工作台失败' })).toBeVisible()
+    await expect(page.getByText('fixture startup run list failure', { exact: true })).toBeVisible()
+    await expect(page.getByRole('button', { name: '重试' })).toBeVisible()
   })
 
   test('keeps task settings visible when an unselected run reports progress', async () => {

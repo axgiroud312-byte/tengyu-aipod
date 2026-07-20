@@ -1440,7 +1440,12 @@ describe('PipelineService', () => {
       ).resolves.toMatchObject({
         status: 'rejected',
         error: expect.objectContaining({
+          code: 'NETWORK_TIMEOUT',
           message: 'Photoshop 无响应,请检查 PS 后重试',
+          details: {
+            kind: 'photoshop_mutex_timeout',
+            timeout_ms: 10 * 60 * 1000,
+          },
         }),
       })
 
@@ -1460,6 +1465,41 @@ describe('PipelineService', () => {
       releaseHolder.resolve()
       await holder
     }
+  })
+
+  it('fails the run on the first Photoshop mutex timeout', async () => {
+    const printFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'photoshop-mutex-timeout',
+    )
+    await createPrint(join(printFolder, 'print.png'))
+    const timeoutError = new AppErrorClass(
+      'NETWORK_TIMEOUT',
+      'Photoshop 无响应,请检查 PS 后重试',
+      true,
+      { kind: 'photoshop_mutex_timeout', timeout_ms: 10 * 60 * 1000 },
+    )
+    const service = new PipelineService()
+    const mutex = (
+      service as unknown as {
+        photoshopMutex: { runExclusive<T>(operation: () => Promise<T>): Promise<T> }
+      }
+    ).photoshopMutex
+    vi.spyOn(mutex, 'runExclusive').mockRejectedValue(timeoutError)
+    const config = baseConfig(printFolder)
+    config.photoshop.templates = ['C:\\templates\\shirt.psd', 'C:\\templates\\hoodie.psd']
+    config.title.enabled = false
+
+    await expect(service.runPipeline('run-ps-mutex-timeout', config)).rejects.toBe(timeoutError)
+
+    const detail = await service.getRun('run-ps-mutex-timeout')
+    expect(detail?.run).toMatchObject({
+      status: 'failed',
+      error_summary: timeoutError.message,
+    })
+    expect(detail?.steps.find((step) => step.step_key === 'photoshop')?.status).toBe('failed')
+    expect(mocks.runBatch).not.toHaveBeenCalled()
   })
 
   it('completes the title step when every title batch is skipped', async () => {

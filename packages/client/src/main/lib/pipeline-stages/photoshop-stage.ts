@@ -30,6 +30,7 @@ import { readyMicroBatches } from './ready-micro-batches'
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const MAX_READY_PHOTOSHOP_BATCH_SIZE = 16
 const PHOTOSHOP_MUTEX_WAIT_CANCELLED = Symbol('photoshop-mutex-wait-cancelled')
+export const PHOTOSHOP_MUTEX_TIMEOUT_ERROR_KIND = 'photoshop_mutex_timeout'
 const FATAL_PHOTOSHOP_ERROR_CODES: ReadonlySet<string> = new Set([
   'INVALID_INPUT',
   'PS_COM_FAILED',
@@ -104,6 +105,12 @@ function isFatalPhotoshopStageError(
   }
   if (!(error instanceof AppErrorClass)) {
     return false
+  }
+  if (
+    error.code === 'NETWORK_TIMEOUT' &&
+    error.details?.kind === PHOTOSHOP_MUTEX_TIMEOUT_ERROR_KIND
+  ) {
+    return true
   }
   if (error.code === 'JSX_EXEC_FAILED') {
     return typeof error.details?.group_index !== 'number'

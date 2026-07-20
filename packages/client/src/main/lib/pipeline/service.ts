@@ -64,7 +64,10 @@ import type {
   PipelineStageRuntimeContext,
 } from '../pipeline-stage-types'
 import { createDetectionStage } from '../pipeline-stages/detection-stage'
-import { createPhotoshopStage } from '../pipeline-stages/photoshop-stage'
+import {
+  PHOTOSHOP_MUTEX_TIMEOUT_ERROR_KIND,
+  createPhotoshopStage,
+} from '../pipeline-stages/photoshop-stage'
 import { createTitleStage } from '../pipeline-stages/title-stage'
 import type { SqliteDatabase } from '../sqlite'
 import { tempFileManager } from '../temp-file-manager'
@@ -1251,7 +1254,11 @@ export class PipelineService {
   private readonly fireAndForgetResumeRunIds = new Set<string>()
   private readonly photoshopMutex = new PromiseMutex({
     waitTimeoutMs: PHOTOSHOP_MUTEX_TIMEOUT_MS,
-    timeoutError: () => new AppErrorClass('HTTP_5XX', 'Photoshop 无响应,请检查 PS 后重试', true),
+    timeoutError: () =>
+      new AppErrorClass('NETWORK_TIMEOUT', 'Photoshop 无响应,请检查 PS 后重试', true, {
+        kind: PHOTOSHOP_MUTEX_TIMEOUT_ERROR_KIND,
+        timeout_ms: PHOTOSHOP_MUTEX_TIMEOUT_MS,
+      }),
   })
   async startRun(config: unknown) {
     const parsedConfig = parsePipelineLaunchConfig(config)
