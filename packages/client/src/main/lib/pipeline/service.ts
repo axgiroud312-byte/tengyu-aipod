@@ -1255,7 +1255,7 @@ export class PipelineService {
   private readonly photoshopMutex = new PromiseMutex({
     waitTimeoutMs: PHOTOSHOP_MUTEX_TIMEOUT_MS,
     timeoutError: () =>
-      new AppErrorClass('NETWORK_TIMEOUT', 'Photoshop 无响应,请检查 PS 后重试', true, {
+      new AppErrorClass('PS_COM_FAILED', 'Photoshop 无响应,请检查 PS 后重试', true, {
         kind: PHOTOSHOP_MUTEX_TIMEOUT_ERROR_KIND,
         timeout_ms: PHOTOSHOP_MUTEX_TIMEOUT_MS,
       }),

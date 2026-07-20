@@ -1,0 +1,7 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true
+  },
+  "include": ["e2e/pipeline-live.spec.ts", "src/renderer/src/vite-env.d.ts"]
+}

@@ -33,6 +33,7 @@ describe('workbench migrations', () => {
           'detection_config',
           'detection_results',
           'matting_candidates',
+          'pending_title_writes',
           'pipeline_items',
           'pipeline_runs',
           'pipeline_steps',

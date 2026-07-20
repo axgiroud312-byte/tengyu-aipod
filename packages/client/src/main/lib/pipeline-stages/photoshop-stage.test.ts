@@ -224,7 +224,7 @@ describe('photoshop stage fatal error boundaries', () => {
 
   it('stops after a Photoshop mutex timeout instead of waiting once per template', async () => {
     const timeoutError = new AppErrorClass(
-      'NETWORK_TIMEOUT',
+      'PS_COM_FAILED',
       'Photoshop 无响应,请检查 PS 后重试',
       true,
       { kind: 'photoshop_mutex_timeout', timeout_ms: 600_000 },

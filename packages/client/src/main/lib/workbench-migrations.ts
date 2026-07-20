@@ -1,6 +1,6 @@
 import type { SqliteDatabase } from './sqlite'
 
-export const CURRENT_WORKBENCH_SCHEMA_VERSION = 3
+export const CURRENT_WORKBENCH_SCHEMA_VERSION = 4
 
 type MigrationDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'>
 
@@ -199,6 +199,24 @@ CREATE TABLE IF NOT EXISTS pipeline_items (
 CREATE INDEX IF NOT EXISTS idx_pipeline_runs_status ON pipeline_runs(status);
 CREATE INDEX IF NOT EXISTS idx_pipeline_steps_run ON pipeline_steps(run_id);
 CREATE INDEX IF NOT EXISTS idx_pipeline_items_run ON pipeline_items(run_id);
+
+CREATE TABLE IF NOT EXISTS pending_title_writes (
+  run_id TEXT NOT NULL,
+  batch_dir TEXT NOT NULL,
+  xlsx_path TEXT NOT NULL,
+  titles_json TEXT NOT NULL,
+  language TEXT NOT NULL,
+  platform TEXT NOT NULL,
+  model TEXT NOT NULL,
+  skill_id TEXT NOT NULL,
+  skill_version TEXT NOT NULL,
+  generated_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  revision TEXT NOT NULL,
+  PRIMARY KEY(run_id, batch_dir)
+);
+CREATE INDEX IF NOT EXISTS idx_pending_title_writes_xlsx_path
+  ON pending_title_writes(xlsx_path);
 
 CREATE TABLE IF NOT EXISTS psd_templates (
   id TEXT PRIMARY KEY,

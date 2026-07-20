@@ -1440,7 +1440,7 @@ describe('PipelineService', () => {
       ).resolves.toMatchObject({
         status: 'rejected',
         error: expect.objectContaining({
-          code: 'NETWORK_TIMEOUT',
+          code: 'PS_COM_FAILED',
           message: 'Photoshop 无响应,请检查 PS 后重试',
           details: {
             kind: 'photoshop_mutex_timeout',
@@ -1475,7 +1475,7 @@ describe('PipelineService', () => {
     )
     await createPrint(join(printFolder, 'print.png'))
     const timeoutError = new AppErrorClass(
-      'NETWORK_TIMEOUT',
+      'PS_COM_FAILED',
       'Photoshop 无响应,请检查 PS 后重试',
       true,
       { kind: 'photoshop_mutex_timeout', timeout_ms: 10 * 60 * 1000 },

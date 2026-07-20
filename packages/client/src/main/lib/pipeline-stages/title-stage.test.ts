@@ -1,11 +1,11 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { AppErrorClass, type PipelineRunConfig, type PipelineRunStats } from '@tengyu-aipod/shared'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PipelinePrintStreamItem, PipelineStageRuntimeContext } from '../pipeline-stage-types'
-import { openSqliteDatabase } from '../sqlite'
 import { TempFileManager } from '../temp-file-manager'
+import { openWorkbenchDatabase } from '../workbench-db'
 import {
   listPendingTitleWrites,
   pendingTitleMap,
@@ -221,7 +221,7 @@ describe('title stage', () => {
       skuCodes.map((skuCode) => ({ skuCode, path: join(batchDir, skuCode) })),
     )
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const stats = emptyStats()
     const upsertPipelineItem = vi.fn()
     const context: PipelineStageRuntimeContext = {
@@ -340,7 +340,7 @@ describe('title stage', () => {
       )
     })
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const createStage = (runId: string) => {
       const context: PipelineStageRuntimeContext = {
         runId,
@@ -406,7 +406,7 @@ describe('title stage', () => {
     const sourceRequestedNext = createDeferred<void>()
     const releaseSource = createDeferred<void>()
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-durable',
       taskName: '标题持久化测试',
@@ -434,7 +434,7 @@ describe('title stage', () => {
       const iterator = titleStage(source(), context)[Symbol.asyncIterator]()
       const firstOutput = iterator.next()
       await sourceRequestedNext.promise
-      const pendingBeforeFinalFlush = await listPendingTitleWrites(workbenchRoot)
+      const pendingBeforeFinalFlush = await listPendingTitleWrites(db)
 
       releaseSource.resolve()
       await expect(firstOutput).resolves.toEqual({ done: false, value: item })
@@ -443,7 +443,7 @@ describe('title stage', () => {
       expect(pendingBeforeFinalFlush).toHaveLength(1)
       const pendingRecord = pendingBeforeFinalFlush[0]
       if (!pendingRecord) {
-        throw new Error('generated title sidecar is missing')
+        throw new Error('generated pending title record is missing')
       }
       expect(pendingTitleMap(pendingRecord)).toEqual(new Map([['SKU-001', 'Base SKU-001']]))
     } finally {
@@ -466,7 +466,7 @@ describe('title stage', () => {
       { skuCode: 'SKU-001', path: join(batchDir, 'SKU-001') },
     ])
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-cancelled',
       taskName: '标题取消测试',
@@ -502,7 +502,7 @@ describe('title stage', () => {
 
   it('does not create a title processing session when the input stream is empty', async () => {
     const workbenchRoot = await createTestWorkbenchRoot()
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-empty',
       taskName: '标题空输入测试',
@@ -561,7 +561,7 @@ describe('title stage', () => {
       new AppErrorClass('HTTP_4XX', '缺少阿里云百炼 API Key，请先在设置中填写', false),
     )
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-session-failure',
       taskName: '标题启动失败测试',
@@ -616,7 +616,7 @@ describe('title stage', () => {
       appErrorCode: 'HTTP_4XX',
     })
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-provider-failure',
       taskName: '标题鉴权失败测试',
@@ -673,7 +673,7 @@ describe('title stage', () => {
     })
     mocks.writeTitlesXlsx.mockRejectedValueOnce(ioError)
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-io-failure',
       taskName: '标题磁盘错误测试',
@@ -712,7 +712,7 @@ describe('title stage', () => {
         }),
         cause: ioError,
       })
-      const pendingWrites = await listPendingTitleWrites(workbenchRoot)
+      const pendingWrites = await listPendingTitleWrites(db)
       expect(pendingWrites).toHaveLength(1)
       const pending = pendingWrites[0]
       if (!pending) {
@@ -740,7 +740,7 @@ describe('title stage', () => {
       new AppErrorClass('XLSX_LOCKED', '标题文件被 Excel 占用，请关闭后重试', false),
     )
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const firstContext: PipelineStageRuntimeContext = {
       runId: 'run-title-locked',
       taskName: '标题占用测试',
@@ -783,14 +783,13 @@ describe('title stage', () => {
         }),
       )
 
-      const pendingDir = join(
-        workbenchRoot,
-        '.workbench',
-        'pipeline-runs',
-        firstContext.runId,
-        'pending-title-writes',
-      )
-      await expect(readdir(pendingDir)).resolves.toHaveLength(1)
+      const pendingWrites = await listPendingTitleWrites(db)
+      expect(pendingWrites).toHaveLength(1)
+      const pendingWrite = pendingWrites[0]
+      if (!pendingWrite) {
+        throw new Error('locked workbook pending title record is missing')
+      }
+      expect(pendingTitleMap(pendingWrite)).toEqual(new Map([['SKU-001', 'Base SKU-001']]))
 
       const retryContext: PipelineStageRuntimeContext = {
         ...firstContext,
@@ -810,7 +809,7 @@ describe('title stage', () => {
           titles: new Map([['SKU-001', 'Base SKU-001']]),
         }),
       )
-      await expect(readdir(pendingDir)).resolves.toEqual([])
+      await expect(listPendingTitleWrites(db)).resolves.toEqual([])
     } finally {
       db.close()
       await rm(workbenchRoot, { recursive: true, force: true })
@@ -845,7 +844,7 @@ describe('title stage', () => {
       )
       .mockResolvedValue(undefined)
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-unlocks-after-resume',
       taskName: '标题解锁合并测试',
@@ -897,13 +896,13 @@ describe('title stage', () => {
           ]),
         }),
       )
-      await expect(listPendingTitleWrites(workbenchRoot)).resolves.toEqual([])
+      await expect(listPendingTitleWrites(db)).resolves.toEqual([])
     } finally {
       db.close()
     }
   })
 
-  it('clears an absorbed older-run sidecar after a newer title for the same SKU is written', async () => {
+  it('clears an absorbed older-run record after a newer title for the same SKU is written', async () => {
     const workbenchRoot = await createTestWorkbenchRoot()
     const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
     const xlsxPath = join(batchDir, '标题.xlsx')
@@ -913,7 +912,8 @@ describe('title stage', () => {
       printId: 'pri-SKU-001',
       sourceArtifactIds: [],
     }
-    await savePendingTitleWrite(workbenchRoot, {
+    const db = openWorkbenchDatabase(':memory:')
+    await savePendingTitleWrite(db, {
       runId: 'run-title-older',
       batchDir,
       xlsxPath,
@@ -939,7 +939,6 @@ describe('title stage', () => {
       )
       .mockResolvedValue(undefined)
 
-    const db = openSqliteDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-newer',
       taskName: '标题跨运行覆盖测试',
@@ -979,7 +978,7 @@ describe('title stage', () => {
           titles: new Map([['SKU-001', 'Newer title']]),
         }),
       )
-      await expect(listPendingTitleWrites(workbenchRoot)).resolves.toEqual([])
+      await expect(listPendingTitleWrites(db)).resolves.toEqual([])
     } finally {
       db.close()
     }
@@ -996,7 +995,8 @@ describe('title stage', () => {
       printId: 'pri-SKU-NEW',
       sourceArtifactIds: [],
     }
-    await savePendingTitleWrite(workbenchRoot, {
+    const db = openWorkbenchDatabase(':memory:')
+    await savePendingTitleWrite(db, {
       runId: 'run-title-old-file',
       batchDir,
       xlsxPath: oldXlsxPath,
@@ -1023,7 +1023,6 @@ describe('title stage', () => {
       )
       .mockResolvedValue(undefined)
 
-    const db = openSqliteDatabase(':memory:')
     const context: PipelineStageRuntimeContext = {
       runId: 'run-title-current-file',
       taskName: '标题文件隔离测试',
@@ -1063,7 +1062,7 @@ describe('title stage', () => {
         new Map(),
         workbenchRoot,
       )
-      const pendingWrites = await listPendingTitleWrites(workbenchRoot)
+      const pendingWrites = await listPendingTitleWrites(db)
       expect(pendingWrites).toHaveLength(1)
       const pending = pendingWrites[0]
       if (!pending) {
@@ -1099,7 +1098,7 @@ describe('title stage', () => {
       )
       .mockRejectedValueOnce(ioError)
 
-    const db = openSqliteDatabase(':memory:')
+    const db = openWorkbenchDatabase(':memory:')
     const createStage = (context: PipelineStageRuntimeContext) =>
       createTitleStage({
         db,
@@ -1127,7 +1126,7 @@ describe('title stage', () => {
 
     try {
       for await (const _output of createStage(firstContext)(firstSource(), firstContext)) {
-        // The first run leaves a pending sidecar after the workbook lock.
+        // The first run leaves a pending record after the workbook lock.
       }
       const retryContext: PipelineStageRuntimeContext = {
         ...firstContext,
@@ -1151,7 +1150,7 @@ describe('title stage', () => {
         }),
         cause: ioError,
       })
-      const pendingWrites = await listPendingTitleWrites(workbenchRoot)
+      const pendingWrites = await listPendingTitleWrites(db)
       expect(pendingWrites).toHaveLength(1)
       const pending = pendingWrites[0]
       if (!pending) {

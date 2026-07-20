@@ -17,7 +17,7 @@
     "lint": "biome check .",
     "postinstall": "node scripts/check-native-abi.mjs",
     "test": "vitest run",
-    "type-check": "tsc --noEmit"
+    "type-check": "tsc --noEmit && tsc -p tsconfig.live-e2e.json"
   },
   "dependencies": {
     "@radix-ui/react-accordion": "^1.2.12",

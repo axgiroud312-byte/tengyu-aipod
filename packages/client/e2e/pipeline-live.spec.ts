@@ -975,12 +975,8 @@ async function validateArtifacts(input: {
     throw new LivePipelineFailure('image-check')
   })
   requireLive(waitingImages.length === 1, 'image-check')
-  requireLive(
-    basename(requireValue(waitingImages[0], 'image-check'), extname(waitingImages[0])) ===
-      input.skuCode,
-    'image-check',
-  )
   const waitingImage = requireValue(waitingImages[0], 'image-check')
+  requireLive(basename(waitingImage, extname(waitingImage)) === input.skuCode, 'image-check')
   await assertFreshFile(waitingImage, runStartedAt, 'image-check')
   await assertDecodableImage(waitingImage)
 
@@ -996,11 +992,13 @@ async function validateArtifacts(input: {
   }
 
   const workbookPath = join(batchDirectory, '标题.xlsx')
-  const workbookTitle = await validateTitleWorkbook(workbookPath, input.skuCode, runStartedAt)
-  const sourceArtifactPath = await validateDatabase({
+  const expectedSkuCodes = expectedTemplateSkuCodes(input.round)
+  const workbookTitles = await validateTitleWorkbook(workbookPath, expectedSkuCodes, runStartedAt)
+  const { pendingTitleWrites, sourceArtifactPath } = await validateDatabase({
     expectedArtifactId: sourceArtifactId,
     expectedPrintId: sourcePrintId,
-    expectedTitle: workbookTitle,
+    expectedTitles: workbookTitles,
+    expectedXlsxPath: workbookPath,
     round: input.round,
     runId: input.runId,
     skuCode: input.skuCode,
@@ -1016,15 +1014,6 @@ async function validateArtifacts(input: {
     setDifferenceSize(tempAfter.title, input.tempBaseline.title)
   requireLive(temporaryEntriesRemaining === 0, 'cleanup-check')
 
-  const pendingDirectory = join(
-    WORKBENCH_ROOT,
-    '.workbench',
-    'pipeline-runs',
-    input.runId,
-    'pending-title-writes',
-  )
-  const pendingTitleWrites = await countDirectoryFiles(pendingDirectory)
-  requireLive(pendingTitleWrites === 0, 'cleanup-check')
   requireLive((await findRunCancelFlags(input.runId)).length === 0, 'cleanup-check')
 
   return {
@@ -1035,30 +1024,43 @@ async function validateArtifacts(input: {
     productImages: productImages.length,
     printIds: new Set(input.snapshot.items.flatMap((item) => (item.printId ? [item.printId] : [])))
       .size,
-    titleRows: 1,
+    titleRows: expectedSkuCodes.length,
     databaseMatched: true,
     temporaryEntriesRemaining,
     pendingTitleWrites,
   }
 }
 
-async function validateTitleWorkbook(xlsxPath: string, skuCode: string, startedAt: number) {
+async function validateTitleWorkbook(
+  xlsxPath: string,
+  expectedSkuCodes: string[],
+  startedAt: number,
+) {
   try {
     await assertFreshFile(xlsxPath, startedAt, 'xlsx-check')
     const workbook = new ExcelJS.Workbook()
     await workbook.xlsx.readFile(xlsxPath)
     const sheet = workbook.worksheets[0]
     requireLive(Boolean(sheet), 'xlsx-check')
-    const matchingTitles: string[] = []
+    const titlesBySku = new Map<string, string[]>()
     sheet?.eachRow((row) => {
-      if (row.getCell(1).text.trim() === skuCode) {
-        matchingTitles.push(row.getCell(2).text)
+      const skuCode = row.getCell(1).text.trim()
+      if (!expectedSkuCodes.includes(skuCode)) {
+        return
       }
+      const titles = titlesBySku.get(skuCode) ?? []
+      titles.push(row.getCell(2).text)
+      titlesBySku.set(skuCode, titles)
     })
-    requireLive(matchingTitles.length === 1, 'xlsx-check')
-    const title = requireValue(matchingTitles[0], 'xlsx-check')
-    requireLive(Boolean(title.trim()), 'xlsx-check')
-    return title
+    const titles = new Map<string, string>()
+    for (const skuCode of expectedSkuCodes) {
+      const matchingTitles = titlesBySku.get(skuCode) ?? []
+      requireLive(matchingTitles.length === 1, 'xlsx-check')
+      const title = requireValue(matchingTitles[0], 'xlsx-check')
+      requireLive(Boolean(title.trim()), 'xlsx-check')
+      titles.set(skuCode, title)
+    }
+    return titles
   } catch (error) {
     if (error instanceof LivePipelineFailure) {
       throw error
@@ -1070,7 +1072,8 @@ async function validateTitleWorkbook(xlsxPath: string, skuCode: string, startedA
 async function validateDatabase(input: {
   expectedArtifactId: string
   expectedPrintId: string
-  expectedTitle: string
+  expectedTitles: ReadonlyMap<string, string>
+  expectedXlsxPath: string
   round: LiveRound
   runId: string
   skuCode: string
@@ -1100,6 +1103,11 @@ async function validateDatabase(input: {
     requireLive(stepStatuses.get('detection') === 'skipped', 'database-check')
     requireLive(stepStatuses.get('photoshop') === 'completed', 'database-check')
     requireLive(stepStatuses.get('title') === 'completed', 'database-check')
+
+    const pendingTitleWrites = db
+      .prepare('SELECT COUNT(*) AS count FROM pending_title_writes WHERE xlsx_path = ?')
+      .get(input.expectedXlsxPath) as { count: number }
+    requireLive(pendingTitleWrites.count === 0, 'database-check')
 
     const items = db
       .prepare(
@@ -1172,32 +1180,36 @@ async function validateDatabase(input: {
     requireLive(samePath(sourceItem.output_path, artifact.file_path), 'database-check')
     requireLive(artifact.created_at >= input.startedAt, 'database-check')
 
-    const sku = db
-      .prepare(
-        `SELECT code, title, template_batch, language, platform, title_generated_at
-         FROM skus
-         WHERE code = ?`,
-      )
-      .get(input.skuCode) as
-      | {
-          code: string
-          title: string | null
-          template_batch: string | null
-          language: string | null
-          platform: string | null
-          title_generated_at: number | null
-        }
-      | undefined
-    requireLive(sku?.code === input.skuCode, 'database-check')
-    requireLive(sku.title === input.expectedTitle, 'database-check')
-    requireLive(Boolean(sku.title.trim()), 'database-check')
-    requireLive(sku.template_batch === input.templateBatch, 'database-check')
-    requireLive(sku?.language === 'en' && sku.platform === 'temu', 'database-check')
-    requireLive(
-      sku.title_generated_at !== null && sku.title_generated_at >= input.startedAt,
-      'database-check',
+    const skuStatement = db.prepare(
+      `SELECT code, title, template_batch, language, platform, title_generated_at
+       FROM skus
+       WHERE code = ?`,
     )
-    return artifact.file_path
+    for (const [skuCode, expectedTitle] of input.expectedTitles) {
+      const sku = skuStatement.get(skuCode) as
+        | {
+            code: string
+            title: string | null
+            template_batch: string | null
+            language: string | null
+            platform: string | null
+            title_generated_at: number | null
+          }
+        | undefined
+      requireLive(sku?.code === skuCode, 'database-check')
+      requireLive(sku.title === expectedTitle, 'database-check')
+      requireLive(Boolean(sku.title.trim()), 'database-check')
+      requireLive(sku.template_batch === input.templateBatch, 'database-check')
+      requireLive(sku.language === 'en' && sku.platform === 'temu', 'database-check')
+      requireLive(sku.title_generated_at !== null, 'database-check')
+      if (skuCode === input.skuCode) {
+        requireLive(sku.title_generated_at >= input.startedAt, 'database-check')
+      }
+    }
+    return {
+      pendingTitleWrites: pendingTitleWrites.count,
+      sourceArtifactPath: artifact.file_path,
+    }
   } catch (error) {
     if (error instanceof LivePipelineFailure) {
       throw error
@@ -1206,6 +1218,13 @@ async function validateDatabase(input: {
   } finally {
     db.close()
   }
+}
+
+function expectedTemplateSkuCodes(currentRound: LiveRound) {
+  const currentRoundIndex = ALL_ROUNDS.findIndex((round) => round.id === currentRound.id)
+  return ALL_ROUNDS.slice(0, currentRoundIndex + 1)
+    .filter((round) => round.templateFile === currentRound.templateFile)
+    .map((round) => `CTREAL-20260719-${round.id}-0001`)
 }
 
 async function assertDecodableImage(path: string) {
@@ -1274,26 +1293,6 @@ async function listDirectoryNames(directory: string) {
   } catch (error) {
     if (filesystemErrorCode(error) === 'ENOENT') {
       return new Set<string>()
-    }
-    throw new LivePipelineFailure('cleanup-check')
-  }
-}
-
-async function countDirectoryFiles(directory: string) {
-  try {
-    const entries = await readdir(directory, { withFileTypes: true })
-    let count = 0
-    for (const entry of entries) {
-      if (entry.isDirectory()) {
-        count += await countDirectoryFiles(join(directory, entry.name))
-      } else if (entry.isFile()) {
-        count += 1
-      }
-    }
-    return count
-  } catch (error) {
-    if (filesystemErrorCode(error) === 'ENOENT') {
-      return 0
     }
     throw new LivePipelineFailure('cleanup-check')
   }

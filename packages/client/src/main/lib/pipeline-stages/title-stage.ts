@@ -227,7 +227,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         return
       }
       try {
-        await savePendingTitleWrite(dependencies.workbenchRoot, {
+        await savePendingTitleWrite(dependencies.db, {
           runId: context.runId,
           batchDir: state.batchDir,
           xlsxPath: state.xlsxPath,
@@ -296,13 +296,13 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         )
         await registerGeneratedTitles(state, generatedTitles, session)
         for (const pending of state.absorbedPendingWrites) {
-          await removePendingTitleWrite(dependencies.workbenchRoot, pending)
+          await removePendingTitleWrite(dependencies.db, pending)
         }
         state.absorbedPendingWrites = []
         state.lastFlushedTitles = new Map(generatedTitles)
         state.pendingFlush = false
         state.warnedLocked = false
-        await removePendingTitleWrite(dependencies.workbenchRoot, {
+        await removePendingTitleWrite(dependencies.db, {
           runId: context.runId,
           batchDir: state.batchDir,
         }).catch((error) => {
@@ -365,7 +365,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
     }
 
     const retryPendingWrites = async () => {
-      const pendingWrites = await listPendingTitleWrites(dependencies.workbenchRoot)
+      const pendingWrites = await listPendingTitleWrites(dependencies.db)
       for (const pending of pendingWrites) {
         if (
           !(await isPathInsideWorkbench(dependencies.workbenchRoot, pending.xlsxPath, 'listing'))
@@ -399,7 +399,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
               generatedAt: pending.generatedAt,
             })
           }
-          await removePendingTitleWrite(dependencies.workbenchRoot, pending)
+          await removePendingTitleWrite(dependencies.db, pending)
           dependencies.appendLog(context.runId, {
             level: 'info',
             step_key: 'title',

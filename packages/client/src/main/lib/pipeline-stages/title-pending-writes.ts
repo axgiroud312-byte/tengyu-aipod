@@ -1,13 +1,10 @@
-import { createHash, randomUUID } from 'node:crypto'
-import type { Dirent } from 'node:fs'
-import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, join, resolve } from 'node:path'
-import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
+import { randomUUID } from 'node:crypto'
+import { basename, resolve } from 'node:path'
+import { AppErrorClass } from '@tengyu-aipod/shared'
 import { z } from 'zod'
+import type { SqliteDatabase } from '../sqlite'
 
-const PENDING_TITLE_WRITES_FOLDER = 'pending-title-writes'
 const PENDING_TITLE_WRITE_VERSION = 1 as const
-const pendingTitleWriteQueues = new Map<string, Promise<void>>()
 
 const pendingTitleWriteSchema = z.object({
   version: z.literal(PENDING_TITLE_WRITE_VERSION),
@@ -26,42 +23,138 @@ const pendingTitleWriteSchema = z.object({
   updatedAt: z.number().finite(),
 })
 
+const pendingTitleWriteRowSchema = z.object({
+  run_id: z.string().min(1),
+  batch_dir: z.string().min(1),
+  xlsx_path: z.string().min(1),
+  titles_json: z.string(),
+  language: z.string().min(1),
+  platform: z.string().min(1),
+  model: z.string().min(1),
+  skill_id: z.string().min(1),
+  skill_version: z.string().min(1),
+  generated_at: z.number().finite(),
+  updated_at: z.number().finite(),
+  revision: z.string().min(1),
+})
+
 export type PendingTitleWrite = z.infer<typeof pendingTitleWriteSchema>
 
 export type PendingTitleWriteRecord = PendingTitleWrite & {
-  filePath: string
   revision: string
 }
 
 type PendingTitleWriteInput = Omit<PendingTitleWrite, 'version' | 'updatedAt'>
 type PendingTitleWriteRemoval = Pick<PendingTitleWriteRecord, 'runId' | 'batchDir'> &
   Partial<Pick<PendingTitleWriteRecord, 'revision'>>
+type PendingTitleWriteDatabase = Pick<SqliteDatabase, 'exec' | 'prepare'>
 
-function safePathSegment(value: string) {
-  const sanitized = value.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^\.+$/, '')
-  return sanitized.slice(0, 120) || 'run'
+function pendingTitleWriteDatabaseError(
+  operation: 'savePendingTitleWrite' | 'removePendingTitleWrite' | 'listPendingTitleWrites',
+  error: unknown,
+  details?: Record<string, unknown>,
+) {
+  if (error instanceof AppErrorClass) {
+    return error
+  }
+  return new AppErrorClass(
+    'WORKSPACE_IO_FAILED',
+    '无法访问标题待补写记录，请检查工作区数据库权限和磁盘状态后重试',
+    false,
+    { operation, ...details },
+    error,
+  )
 }
 
-function pendingRoot(workbenchRoot: string) {
-  return join(workbenchRoot, WORKBENCH_DIRECTORIES.metadata, 'pipeline-runs')
+function rollbackQuietly(database: Pick<SqliteDatabase, 'exec'>) {
+  try {
+    database.exec('ROLLBACK')
+  } catch {
+    // Preserve the database error that caused the transaction to fail.
+  }
 }
 
-export function pendingTitleWritesDirectory(workbenchRoot: string, runId: string) {
-  return join(pendingRoot(workbenchRoot), safePathSegment(runId), PENDING_TITLE_WRITES_FOLDER)
+function withImmediateTransaction<T>(
+  database: PendingTitleWriteDatabase,
+  operation: 'savePendingTitleWrite' | 'removePendingTitleWrite',
+  details: Record<string, unknown>,
+  execute: () => T,
+): T {
+  let transactionStarted = false
+  try {
+    database.exec('BEGIN IMMEDIATE')
+    transactionStarted = true
+    const result = execute()
+    database.exec('COMMIT')
+    return result
+  } catch (error) {
+    if (transactionStarted) {
+      rollbackQuietly(database)
+    }
+    throw pendingTitleWriteDatabaseError(operation, error, details)
+  }
 }
 
-function pendingTitleWritePath(workbenchRoot: string, runId: string, batchDir: string) {
-  const batchHash = createHash('sha256').update(batchDir).digest('hex').slice(0, 24)
-  return join(pendingTitleWritesDirectory(workbenchRoot, runId), `${batchHash}.json`)
+function parsePendingTitleWriteRow(value: unknown): PendingTitleWriteRecord {
+  try {
+    const row = pendingTitleWriteRowSchema.parse(value)
+    const titles = z.record(z.string(), z.string()).parse(JSON.parse(row.titles_json))
+    return {
+      version: PENDING_TITLE_WRITE_VERSION,
+      runId: row.run_id,
+      batchDir: row.batch_dir,
+      xlsxPath: row.xlsx_path,
+      titles,
+      language: row.language,
+      platform: row.platform,
+      model: row.model,
+      skill: { id: row.skill_id, version: row.skill_version },
+      generatedAt: row.generated_at,
+      updatedAt: row.updated_at,
+      revision: row.revision,
+    }
+  } catch (error) {
+    const row = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+    throw new AppErrorClass(
+      'INVALID_INPUT',
+      '标题待补写数据库记录损坏，请修复工作区数据库后重试',
+      false,
+      {
+        runId: typeof row?.run_id === 'string' ? row.run_id : null,
+        batchDir: typeof row?.batch_dir === 'string' ? row.batch_dir : null,
+      },
+      error,
+    )
+  }
 }
 
-function pendingTitleWriteRevision(contents: string) {
-  return createHash('sha256').update(contents).digest('hex')
-}
-
-function pendingTitleWriteLockKey(filePath: string) {
-  const absolutePath = resolve(filePath)
-  return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
+function readPendingTitleWrite(
+  database: Pick<SqliteDatabase, 'prepare'>,
+  runId: string,
+  batchDir: string,
+) {
+  const row = database
+    .prepare(
+      `
+        SELECT
+          run_id,
+          batch_dir,
+          xlsx_path,
+          titles_json,
+          language,
+          platform,
+          model,
+          skill_id,
+          skill_version,
+          generated_at,
+          updated_at,
+          revision
+        FROM pending_title_writes
+        WHERE run_id = ? AND batch_dir = ?
+      `,
+    )
+    .get(runId, batchDir)
+  return row ? parsePendingTitleWriteRow(row) : null
 }
 
 export function pendingTitleXlsxPathKey(xlsxPath: string) {
@@ -69,257 +162,127 @@ export function pendingTitleXlsxPathKey(xlsxPath: string) {
   return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
 }
 
-async function withPendingTitleWriteLock<T>(filePath: string, operation: () => Promise<T>) {
-  const key = pendingTitleWriteLockKey(filePath)
-  const previous = pendingTitleWriteQueues.get(key) ?? Promise.resolve()
-  let release: () => void = () => undefined
-  const current = new Promise<void>((resolveCurrent) => {
-    release = resolveCurrent
-  })
-  const tail = previous.then(() => current)
-  pendingTitleWriteQueues.set(key, tail)
-
-  await previous
-  try {
-    return await operation()
-  } finally {
-    release()
-    if (pendingTitleWriteQueues.get(key) === tail) {
-      pendingTitleWriteQueues.delete(key)
-    }
-  }
-}
-
-function filesystemErrorCode(error: unknown) {
-  if (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    typeof error.code === 'string'
-  ) {
-    return error.code
-  }
-  return null
-}
-
-function pendingTitleWriteIoError(
-  input: { operation: string; path: string; message: string },
-  error: unknown,
+export async function savePendingTitleWrite(
+  database: PendingTitleWriteDatabase,
+  input: PendingTitleWriteInput,
 ) {
-  const filesystemCode = filesystemErrorCode(error)
-  return new AppErrorClass(
-    'WORKSPACE_IO_FAILED',
-    `${input.message}：${input.path}`,
-    false,
-    {
-      operation: input.operation,
-      path: input.path,
-      ...(filesystemCode ? { filesystemCode } : {}),
+  return withImmediateTransaction(
+    database,
+    'savePendingTitleWrite',
+    { runId: input.runId, batchDir: input.batchDir },
+    () => {
+      const existing = readPendingTitleWrite(database, input.runId, input.batchDir)
+      const value = pendingTitleWriteSchema.parse({
+        ...input,
+        titles: {
+          ...(existing?.titles ?? {}),
+          ...input.titles,
+        },
+        version: PENDING_TITLE_WRITE_VERSION,
+        updatedAt: Date.now(),
+      })
+      const revision = randomUUID()
+      database
+        .prepare(
+          `
+            INSERT INTO pending_title_writes (
+              run_id,
+              batch_dir,
+              xlsx_path,
+              titles_json,
+              language,
+              platform,
+              model,
+              skill_id,
+              skill_version,
+              generated_at,
+              updated_at,
+              revision
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(run_id, batch_dir) DO UPDATE SET
+              xlsx_path = excluded.xlsx_path,
+              titles_json = excluded.titles_json,
+              language = excluded.language,
+              platform = excluded.platform,
+              model = excluded.model,
+              skill_id = excluded.skill_id,
+              skill_version = excluded.skill_version,
+              generated_at = excluded.generated_at,
+              updated_at = excluded.updated_at,
+              revision = excluded.revision
+          `,
+        )
+        .run(
+          value.runId,
+          value.batchDir,
+          value.xlsxPath,
+          JSON.stringify(value.titles),
+          value.language,
+          value.platform,
+          value.model,
+          value.skill.id,
+          value.skill.version,
+          value.generatedAt,
+          value.updatedAt,
+          revision,
+        )
+      return { ...value, revision }
     },
-    error,
   )
-}
-
-function pendingDirectoryReadError(path: string, error: unknown) {
-  return pendingTitleWriteIoError(
-    {
-      operation: 'listPendingTitleWrites',
-      path,
-      message: '无法读取标题待补写目录，请检查工作区权限和目录状态后重试',
-    },
-    error,
-  )
-}
-
-export async function savePendingTitleWrite(workbenchRoot: string, input: PendingTitleWriteInput) {
-  const filePath = pendingTitleWritePath(workbenchRoot, input.runId, input.batchDir)
-  const directory = pendingTitleWritesDirectory(workbenchRoot, input.runId)
-  try {
-    await mkdir(directory, { recursive: true })
-  } catch (error) {
-    throw pendingTitleWriteIoError(
-      {
-        operation: 'createPendingTitleWriteDirectory',
-        path: directory,
-        message: '无法创建标题待补写目录，请检查工作区权限和磁盘空间后重试',
-      },
-      error,
-    )
-  }
-  return withPendingTitleWriteLock(filePath, async () => {
-    const existing = await readPendingRecordIfPresent(filePath)
-    const value: PendingTitleWrite = {
-      ...input,
-      titles: {
-        ...(existing?.titles ?? {}),
-        ...input.titles,
-      },
-      version: PENDING_TITLE_WRITE_VERSION,
-      updatedAt: Date.now(),
-    }
-    const contents = JSON.stringify(value, null, 2)
-    const temporaryPath = `${filePath}.${randomUUID()}.tmp`
-    let operationFailed = false
-    let operationError: unknown
-    try {
-      try {
-        await writeFile(temporaryPath, contents, 'utf8')
-      } catch (error) {
-        throw pendingTitleWriteIoError(
-          {
-            operation: 'writePendingTitleWriteTemporaryFile',
-            path: temporaryPath,
-            message: '无法暂存标题待补写记录，请检查工作区权限和磁盘空间后重试',
-          },
-          error,
-        )
-      }
-      try {
-        await rename(temporaryPath, filePath)
-      } catch (error) {
-        throw pendingTitleWriteIoError(
-          {
-            operation: 'replacePendingTitleWrite',
-            path: filePath,
-            message: '无法保存标题待补写记录，请检查工作区权限和文件占用后重试',
-          },
-          error,
-        )
-      }
-    } catch (error) {
-      operationFailed = true
-      operationError = error
-    }
-    try {
-      await rm(temporaryPath, { force: true })
-    } catch (error) {
-      if (!operationFailed) {
-        operationFailed = true
-        operationError = pendingTitleWriteIoError(
-          {
-            operation: 'cleanupPendingTitleWriteTemporaryFile',
-            path: temporaryPath,
-            message: '无法清理标题待补写临时文件，请检查工作区权限和文件占用后重试',
-          },
-          error,
-        )
-      }
-    }
-    if (operationFailed) {
-      throw operationError
-    }
-    return { ...value, filePath, revision: pendingTitleWriteRevision(contents) }
-  })
 }
 
 export async function removePendingTitleWrite(
-  workbenchRoot: string,
+  database: PendingTitleWriteDatabase,
   record: PendingTitleWriteRemoval,
 ) {
-  const filePath = pendingTitleWritePath(workbenchRoot, record.runId, record.batchDir)
-  return withPendingTitleWriteLock(filePath, async () => {
-    if (record.revision !== undefined) {
-      const current = await readPendingRecordIfPresent(filePath)
-      if (!current || current.revision !== record.revision) {
+  return withImmediateTransaction(
+    database,
+    'removePendingTitleWrite',
+    { runId: record.runId, batchDir: record.batchDir },
+    () => {
+      if (record.revision !== undefined) {
+        database
+          .prepare(
+            'DELETE FROM pending_title_writes WHERE run_id = ? AND batch_dir = ? AND revision = ?',
+          )
+          .run(record.runId, record.batchDir, record.revision)
         return
       }
-    }
-    try {
-      await rm(filePath, { force: true })
-    } catch (error) {
-      throw pendingTitleWriteIoError(
-        {
-          operation: 'removePendingTitleWrite',
-          path: filePath,
-          message: '无法删除标题待补写记录，请检查工作区权限和文件占用后重试',
-        },
-        error,
+      database
+        .prepare('DELETE FROM pending_title_writes WHERE run_id = ? AND batch_dir = ?')
+        .run(record.runId, record.batchDir)
+    },
+  )
+}
+
+export async function listPendingTitleWrites(database: Pick<SqliteDatabase, 'prepare'>) {
+  try {
+    return database
+      .prepare(
+        `
+          SELECT
+            run_id,
+            batch_dir,
+            xlsx_path,
+            titles_json,
+            language,
+            platform,
+            model,
+            skill_id,
+            skill_version,
+            generated_at,
+            updated_at,
+            revision
+          FROM pending_title_writes
+          ORDER BY updated_at, run_id, batch_dir
+        `,
       )
-    }
-  })
-}
-
-async function readPendingRecord(filePath: string): Promise<PendingTitleWriteRecord> {
-  let contents: string
-  try {
-    contents = await readFile(filePath, 'utf8')
+      .all()
+      .map(parsePendingTitleWriteRow)
   } catch (error) {
-    throw pendingTitleWriteIoError(
-      {
-        operation: 'readPendingTitleWrite',
-        path: filePath,
-        message: '无法读取标题待补写记录，请检查工作区权限和文件状态后重试',
-      },
-      error,
-    )
+    throw pendingTitleWriteDatabaseError('listPendingTitleWrites', error)
   }
-
-  try {
-    const parsed = pendingTitleWriteSchema.parse(JSON.parse(contents))
-    return { ...parsed, filePath, revision: pendingTitleWriteRevision(contents) }
-  } catch (error) {
-    throw new AppErrorClass(
-      'INVALID_INPUT',
-      `待补写标题记录损坏，请检查或移走后重试：${filePath}`,
-      false,
-      { filePath },
-      error,
-    )
-  }
-}
-
-async function readPendingRecordIfPresent(filePath: string) {
-  try {
-    return await readPendingRecord(filePath)
-  } catch (error) {
-    if (
-      error instanceof AppErrorClass &&
-      error.code === 'WORKSPACE_IO_FAILED' &&
-      error.details?.filesystemCode === 'ENOENT'
-    ) {
-      return null
-    }
-    throw error
-  }
-}
-
-export async function listPendingTitleWrites(workbenchRoot: string) {
-  const root = pendingRoot(workbenchRoot)
-  let runEntries: Dirent[]
-  try {
-    runEntries = await readdir(root, { withFileTypes: true })
-  } catch (error) {
-    if (filesystemErrorCode(error) === 'ENOENT') {
-      return []
-    }
-    throw pendingDirectoryReadError(root, error)
-  }
-
-  const records: PendingTitleWriteRecord[] = []
-  for (const runEntry of runEntries) {
-    if (!runEntry.isDirectory()) {
-      continue
-    }
-    const directory = join(pendingRoot(workbenchRoot), runEntry.name, PENDING_TITLE_WRITES_FOLDER)
-    let files: Dirent[]
-    try {
-      files = await readdir(directory, { withFileTypes: true })
-    } catch (error) {
-      if (filesystemErrorCode(error) === 'ENOENT') {
-        continue
-      }
-      throw pendingDirectoryReadError(directory, error)
-    }
-    for (const file of files) {
-      if (!file.isFile() || !file.name.endsWith('.json')) {
-        continue
-      }
-      const record = await readPendingRecord(join(directory, file.name))
-      records.push(record)
-    }
-  }
-
-  return records.sort((left, right) => left.updatedAt - right.updatedAt)
 }
 
 export function pendingTitleMap(record: PendingTitleWriteRecord) {
