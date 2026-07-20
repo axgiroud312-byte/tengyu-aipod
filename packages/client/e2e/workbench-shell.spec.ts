@@ -1802,6 +1802,7 @@ test.describe('production-first Workbench shell', () => {
     await installPipelineEventHarness(app)
 
     const canvas = page.getByRole('region', { name: '最终成果主画布' })
+    const resultWall = page.getByRole('region', { name: '成果墙' })
     const firstProgress = theaterProgress({ baseUrl: mockServer.baseUrl, imageCount: 1 })
     await expect
       .poll(async () => {
@@ -1839,6 +1840,24 @@ test.describe('production-first Workbench shell', () => {
       { width: 1920, height: 1080 },
     ]) {
       await page.setViewportSize(viewport)
+      const [canvasBox, resultWallBox] = await Promise.all([
+        canvas.boundingBox(),
+        resultWall.boundingBox(),
+      ])
+      expect(canvasBox).not.toBeNull()
+      expect(resultWallBox).not.toBeNull()
+      if (canvasBox && resultWallBox) {
+        const horizontalOverlap =
+          Math.min(canvasBox.x + canvasBox.width, resultWallBox.x + resultWallBox.width) -
+          Math.max(canvasBox.x, resultWallBox.x)
+        const verticalOverlap =
+          Math.min(canvasBox.y + canvasBox.height, resultWallBox.y + resultWallBox.height) -
+          Math.max(canvasBox.y, resultWallBox.y)
+        expect(
+          horizontalOverlap > 1 && verticalOverlap > 1,
+          `最终成果区域重叠：canvas=${JSON.stringify(canvasBox)} wall=${JSON.stringify(resultWallBox)}`,
+        ).toBe(false)
+      }
       await attachScreenshot(page, testInfo, `run-theater-${viewport.width}x${viewport.height}`)
     }
 

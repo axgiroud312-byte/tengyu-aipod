@@ -271,12 +271,12 @@ export function PipelineResultsPanel({
         <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(360px,0.9fr)]">
           <section
             aria-label="最终成果主画布"
-            className="relative min-h-[360px] max-h-[560px] aspect-video overflow-hidden rounded-md border border-zinc-800 bg-zinc-950"
+            className="relative h-[clamp(300px,38vh,420px)] min-w-0 overflow-hidden rounded-md border border-zinc-800 bg-zinc-950"
           >
             {heroImagePath ? (
               <button
                 aria-label={`放大查看 ${heroTitle}`}
-                className="group block h-full min-h-[360px] w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
+                className="group block h-full w-full focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-white"
                 onClick={() => {
                   if (selectedSection && selectedImage) {
                     openLightbox(selectedSection, selectedImage)
@@ -286,7 +286,7 @@ export function PipelineResultsPanel({
               >
                 <img
                   alt={heroTitle}
-                  className="h-full min-h-[360px] w-full object-contain"
+                  className="h-full w-full object-contain"
                   loading="lazy"
                   src={pipelineRawImageSrc(heroImagePath)}
                 />
@@ -295,7 +295,7 @@ export function PipelineResultsPanel({
                 </span>
               </button>
             ) : (
-              <div className="flex min-h-[360px] items-center justify-center bg-zinc-950 text-sm text-zinc-400">
+              <div className="flex h-full items-center justify-center bg-zinc-950 text-sm text-zinc-400">
                 <div className="flex flex-col items-center gap-2 px-4 text-center">
                   <ImageIcon className="size-6" />
                   <span>启动完整任务后，这里会展示当前最终产物。</span>
@@ -332,7 +332,7 @@ export function PipelineResultsPanel({
             </div>
           </section>
 
-          <div className="rounded-md border bg-background p-3">
+          <section aria-label="成果墙" className="min-w-0 rounded-md border bg-background p-3">
             <div className="mb-3 flex items-center justify-between gap-3">
               <div className="flex min-w-0 items-start gap-2">
                 {finalResult?.mode === 'groups' ? (
@@ -421,7 +421,7 @@ export function PipelineResultsPanel({
                 等待结果
               </div>
             )}
-          </div>
+          </section>
         </div>
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
