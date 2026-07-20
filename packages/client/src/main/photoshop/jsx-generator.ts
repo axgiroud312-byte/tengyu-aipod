@@ -28,12 +28,17 @@ export interface PhotoshopTemplateBatchJsxGroup {
   jpg_quality: number
 }
 
+/** How often batch JSX purges Photoshop history caches between groups. */
+export const PHOTOSHOP_BATCH_PURGE_EVERY_GROUPS = 25
+
 export interface PhotoshopTemplateBatchJsxInput {
   task_id: string
   mockup_path: string
   template_name: string
   smart_object_replace_mode?: PhotoshopSmartObjectReplaceMode
   native_slices?: PsdNativeSlice[]
+  /** Purge history caches every N successfully finished groups. 0 disables purge. */
+  purge_every_groups?: number
   groups: PhotoshopTemplateBatchJsxGroup[]
   result_file_path: string
   log_file_path: string
@@ -1033,7 +1038,7 @@ function exportNativeSlices(doc, group, groupResult) {
     appendLog({
       level: 'warn',
       stage: 'native_slice_export_fallback',
-      message: 'PS 原生切片导出数量不符，改用切片边界裁切',
+      message: 'PS 原生切片导出数量不足，已回退切片边界裁切（明显更慢）。请检查模板用户/图层切片是否完整、命名是否稳定',
       group: group.group_index,
       sku_folder: group.sku_folder,
       expected_outputs: CONFIG.native_slices.length,
@@ -1049,7 +1054,7 @@ function exportNativeSlices(doc, group, groupResult) {
       appendLog({
         level: 'warn',
         stage: 'native_slice_export_fallback',
-        message: 'PS 原生切片额外文件无法安全匹配，改用切片边界裁切',
+        message: 'PS 原生切片导出含无法安全匹配的额外文件，已回退切片边界裁切（明显更慢）。请去掉自动切片碎片并稳定切片命名',
         group: group.group_index,
         sku_folder: group.sku_folder,
         expected_outputs: CONFIG.native_slices.length,
@@ -1062,7 +1067,7 @@ function exportNativeSlices(doc, group, groupResult) {
     appendLog({
       level: 'warn',
       stage: 'native_slice_extra_ignored',
-      message: '忽略 PS 原生切片导出的额外碎片',
+      message: '已忽略 PS 原生切片导出的额外碎片（仍走快速路径）。建议清理模板中的自动切片',
       group: group.group_index,
       sku_folder: group.sku_folder,
       expected_outputs: CONFIG.native_slices.length,
@@ -1143,6 +1148,10 @@ function exportOutputs(doc, group, groupResult) {
   const workingDocumentStart = useNativeSlices
     ? 'var workingDocument = baseDocument;'
     : 'var workingDocument = baseDocument.duplicate();'
+  const purgeEveryGroups =
+    typeof input.purge_every_groups === 'number' && Number.isFinite(input.purge_every_groups)
+      ? Math.max(0, Math.floor(input.purge_every_groups))
+      : PHOTOSHOP_BATCH_PURGE_EVERY_GROUPS
   const pristineHistoryState = useNativeSlices
     ? 'var pristineHistoryState = baseDocument.activeHistoryState;'
     : ''
@@ -1156,6 +1165,63 @@ function exportOutputs(doc, group, groupResult) {
     : `try {
           workingDocument.close(SaveOptions.DONOTSAVECHANGES);
         } catch (closeWorkingError) {}`
+  const maybePurgeAfterGroup = useNativeSlices
+    ? `groupsSincePurge += 1;
+        if (CONFIG.purge_every_groups > 0 && groupsSincePurge >= CONFIG.purge_every_groups) {
+          try {
+            baseDocument.activeHistoryState = pristineHistoryState;
+            app.purge(PurgeTarget.HISTORYCACHES);
+            pristineHistoryState = baseDocument.activeHistoryState;
+            appendLog({
+              level: 'info',
+              stage: 'purge_histories',
+              message: '已清理 Photoshop 历史缓存并重新建立模板快照',
+              group: group.group_index,
+              sku_folder: group.sku_folder,
+              purge_every_groups: CONFIG.purge_every_groups,
+              groups_since_purge: groupsSincePurge
+            });
+          } catch (purgeError) {
+            appendLog({
+              level: 'warn',
+              stage: 'purge_histories',
+              message: '清理 Photoshop 历史缓存失败，将继续套版',
+              group: group.group_index,
+              sku_folder: group.sku_folder,
+              error: String(purgeError),
+              purge_every_groups: CONFIG.purge_every_groups,
+              groups_since_purge: groupsSincePurge
+            });
+          }
+          groupsSincePurge = 0;
+        }`
+    : `groupsSincePurge += 1;
+        if (CONFIG.purge_every_groups > 0 && groupsSincePurge >= CONFIG.purge_every_groups) {
+          try {
+            app.purge(PurgeTarget.HISTORYCACHES);
+            appendLog({
+              level: 'info',
+              stage: 'purge_histories',
+              message: '已清理 Photoshop 历史缓存',
+              group: group.group_index,
+              sku_folder: group.sku_folder,
+              purge_every_groups: CONFIG.purge_every_groups,
+              groups_since_purge: groupsSincePurge
+            });
+          } catch (purgeError) {
+            appendLog({
+              level: 'warn',
+              stage: 'purge_histories',
+              message: '清理 Photoshop 历史缓存失败，将继续套版',
+              group: group.group_index,
+              sku_folder: group.sku_folder,
+              error: String(purgeError),
+              purge_every_groups: CONFIG.purge_every_groups,
+              groups_since_purge: groupsSincePurge
+            });
+          }
+          groupsSincePurge = 0;
+        }`
 
   return `var CONFIG = ${jsonString({
     task_id: input.task_id,
@@ -1163,6 +1229,7 @@ function exportOutputs(doc, group, groupResult) {
     template_name: input.template_name,
     smart_object_replace_mode: input.smart_object_replace_mode,
     native_slices: input.native_slices ?? [],
+    purge_every_groups: purgeEveryGroups,
     groups: input.groups,
     result_file_path: input.result_file_path,
     log_file_path: input.log_file_path,
@@ -1817,6 +1884,7 @@ function runBatch() {
   var result = { ok: false, cancelled: false, groups: [], outputs: [] };
   var failed = false;
   var batchStartedAt = new Date().getTime();
+  var groupsSincePurge = 0;
 
   try {
     app.preferences.rulerUnits = Units.PIXELS;
@@ -1881,6 +1949,7 @@ function runBatch() {
           sku_folder: group.sku_folder,
           duration_ms: new Date().getTime() - groupStartedAt
         });
+        ${maybePurgeAfterGroup}
       } catch (groupError) {
         if (isCancellationError(groupError)) {
           result.cancelled = true;

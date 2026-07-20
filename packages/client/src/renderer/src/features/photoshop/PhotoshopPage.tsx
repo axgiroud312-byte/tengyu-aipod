@@ -443,7 +443,13 @@ export function PhotoshopPage() {
         templates.push(template)
       }
       setScannedTemplates(templates)
-      setMessage('模板已扫描，套版执行会沿用这些参数')
+      const slowCount = templates.filter((template) => template.native_slices.length === 0).length
+      const fastCount = templates.length - slowCount
+      setMessage(
+        slowCount > 0
+          ? `模板已扫描：${fastCount} 个可走原生切片快路径，${slowCount} 个无有效切片将明显变慢（请补用户/图层切片后重扫）`
+          : `模板已扫描：${templates.length} 个均可走原生切片快路径`,
+      )
     } catch (error) {
       setMessage(error instanceof Error ? error.message : String(error))
     } finally {
@@ -782,15 +788,24 @@ export function PhotoshopPage() {
               <label className="space-y-2 text-sm font-medium">
                 <span>智能对象替换方式</span>
                 <select
+                  aria-describedby="photoshop-replace-mode-help"
                   className="h-10 w-full rounded-md border px-3"
                   onChange={(event) =>
                     setSmartObjectReplaceMode(event.target.value as typeof smartObjectReplaceMode)
                   }
                   value={smartObjectReplaceMode}
                 >
-                  <option value="replaceContents">直接替换内容，兼容旧模板</option>
-                  <option value="editSmartObject">进入内部替换，适合链接智能对象</option>
+                  <option value="replaceContents">直接替换内容（推荐，最快）</option>
+                  <option value="editSmartObject">进入内部替换（仅链接 SO / 特殊模板）</option>
                 </select>
+                <span
+                  className="block text-xs font-normal leading-5 text-muted-foreground"
+                  id="photoshop-replace-mode-help"
+                >
+                  {smartObjectReplaceMode === 'editSmartObject'
+                    ? '内部替换更慢，仅在 300dpi 链接智能对象等特殊模板使用。'
+                    : '默认直接替换。模板需有用户/图层切片才会走快速导出；无切片会自动回退裁切。'}
+                </span>
               </label>
               <label className="space-y-2 text-sm font-medium">
                 <span>印花适配方式</span>

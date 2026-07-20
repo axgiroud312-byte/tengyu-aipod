@@ -447,6 +447,14 @@ describe('PhotoshopMultiBatchRunner', () => {
       ['C:\\outputs/native/img2/01.jpg', 'C:\\outputs/native/img2/02.jpg'],
     ])
     expect(logs).toContainEqual(
+      expect.objectContaining({
+        stage: 'template_path_profile',
+        template_name: 'native',
+        export_path: 'native_slice',
+        path_tags: ['fast_path_ok'],
+      }),
+    )
+    expect(logs).toContainEqual(
       expect.objectContaining({ stage: 'native_slice_detected', template_name: 'native' }),
     )
     expect(logs).not.toContainEqual(expect.objectContaining({ stage: 'native_slice_fallback' }))
@@ -553,9 +561,17 @@ describe('PhotoshopMultiBatchRunner', () => {
       },
     )
 
+    expect(logs).toContainEqual(
+      expect.objectContaining({
+        stage: 'template_path_profile',
+        template_name: 'legacy',
+        export_path: 'crop_fallback',
+        path_tags: expect.arrayContaining(['slow_export']),
+      }),
+    )
     expect(logs.filter((entry) => entry.stage === 'native_slice_fallback')).toEqual([
       expect.objectContaining({
-        message: '将使用旧模式裁切导出，速度会慢一些',
+        message: expect.stringContaining('将使用旧模式裁切导出，速度会明显变慢'),
         template_name: 'legacy',
       }),
     ])

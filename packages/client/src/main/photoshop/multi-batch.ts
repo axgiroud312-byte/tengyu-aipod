@@ -18,6 +18,7 @@ import type {
   PsdTemplate,
 } from '@tengyu-aipod/shared'
 import {
+  classifyPhotoshopTemplatePath,
   type GroupPhotoshopTasksOptions,
   groupTasks,
   sanitizeTemplateName,
@@ -300,6 +301,23 @@ export class PhotoshopMultiBatchRunner {
           template_name: templateName,
           message: `开始处理模板：${templateName}`,
         })
+        const pathProfile = classifyPhotoshopTemplatePath(template)
+        const pathProfileLog: PhotoshopProgressLogEntry = {
+          ts: Date.now(),
+          level: pathProfile.export_path === 'native_slice' ? 'info' : 'warn',
+          stage: 'template_path_profile',
+          template_name: templateName,
+          message:
+            pathProfile.export_path === 'native_slice'
+              ? `快路径资格：原生切片 ${pathProfile.native_slice_count} 个，智能对象 ${pathProfile.smart_object_count} 个（${pathProfile.tags.join(',') || 'ok'}）`
+              : `慢路径：无有效 PS 原生切片，将回退裁切导出（${pathProfile.tags.join(',') || 'slow_export'}）。建议补用户/图层切片后重扫`,
+          path_tags: pathProfile.tags,
+          export_path: pathProfile.export_path,
+          native_slice_count: pathProfile.native_slice_count,
+          smart_object_count: pathProfile.smart_object_count,
+        }
+        logger?.write(pathProfileLog)
+        await this.emitLog(pathProfileLog)
         const sliceLog: PhotoshopProgressLogEntry =
           template.native_slices.length > 0
             ? {
@@ -307,14 +325,17 @@ export class PhotoshopMultiBatchRunner {
                 level: 'info',
                 stage: 'native_slice_detected',
                 template_name: templateName,
-                message: `检测到 ${template.native_slices.length} 个 PS 原生切片`,
+                message: `检测到 ${template.native_slices.length} 个 PS 原生切片，将走 Save for Web 快速导出`,
+                native_slice_count: template.native_slices.length,
               }
             : {
                 ts: Date.now(),
                 level: 'warn',
                 stage: 'native_slice_fallback',
                 template_name: templateName,
-                message: '将使用旧模式裁切导出，速度会慢一些',
+                message:
+                  '未检测到有效 PS 原生切片（仅认用户/图层切片，自动切片无效）。将使用旧模式裁切导出，速度会明显变慢',
+                native_slice_count: 0,
               }
         logger?.write(sliceLog)
         await this.emitLog(sliceLog)

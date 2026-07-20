@@ -236,7 +236,38 @@ describe('generateTemplateBatchJsx', () => {
     expect(jsx).toContain("stage: 'native_slice_export_fallback'")
     expect(jsx).toContain('sliceDocument.crop([bounds[0], bounds[1], bounds[2], bounds[3]])')
     expect(jsx).toContain('baseDocument.activeHistoryState = pristineHistoryState')
+    expect(jsx).toContain('"purge_every_groups":25')
+    expect(jsx).toContain('app.purge(PurgeTarget.HISTORYCACHES)')
+    expect(jsx).toContain("stage: 'purge_histories'")
+    expect(jsx).toContain('pristineHistoryState = baseDocument.activeHistoryState')
     expect(jsx).not.toContain('baseDocument.duplicate()')
+  })
+
+  it('allows disabling batch history purge via purge_every_groups=0', () => {
+    const jsx = generateTemplateBatchJsx({
+      task_id: 'task-no-purge',
+      mockup_path: 'C:\\templates\\mockup.psd',
+      template_name: 'mockup',
+      purge_every_groups: 0,
+      native_slices: [{ name: 'Front', kind: 'user', bounds: [0, 0, 500, 500] }],
+      result_file_path: 'C:\\tmp\\result.json',
+      log_file_path: 'C:\\tmp\\photoshop-task.log',
+      cancel_file_path: 'C:\\tmp\\cancel.flag',
+      groups: [
+        {
+          group_index: 0,
+          sku_folder: 'sku-1',
+          so_replacements: [{ layer_path: 'SO 1', input_image: 'C:\\prints\\sku-1.png' }],
+          clip_areas: [{ x: 0, y: 0, w: 500, h: 500, is_full: true }],
+          output_paths: ['C:\\outputs\\sku-1\\mockup\\01.jpg'],
+          format: 'jpg',
+          jpg_quality: 10,
+        },
+      ],
+    })
+
+    expect(jsx).toContain('"purge_every_groups":0')
+    expect(jsx).toContain('CONFIG.purge_every_groups > 0 && groupsSincePurge >= CONFIG.purge_every_groups')
   })
 
   it('renders a template-level JSX batch with document duplication, logs, and cancel checks', () => {

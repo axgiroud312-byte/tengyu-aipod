@@ -84,6 +84,29 @@ export interface PsdTemplate {
   text_layers: PsdTextLayer[]
 }
 
+/** Classify whether a scanned template can stay on the fast native-slice export path. */
+export function classifyPhotoshopTemplatePath(
+  template: Pick<PsdTemplate, 'native_slices' | 'smart_objects'>,
+): PhotoshopTemplatePathProfile {
+  const native_slice_count = template.native_slices.length
+  const smart_object_count = template.smart_objects.length
+  const tags: PhotoshopTemplatePathTag[] = []
+  if (smart_object_count === 0) {
+    tags.push('no_smart_object')
+  }
+  if (native_slice_count === 0) {
+    tags.push('slow_export')
+  } else if (smart_object_count > 0) {
+    tags.push('fast_path_ok')
+  }
+  return {
+    export_path: native_slice_count > 0 ? 'native_slice' : 'crop_fallback',
+    tags,
+    native_slice_count,
+    smart_object_count,
+  }
+}
+
 export interface PhotoshopScanTemplateRequest {
   psd_path: string
 }
@@ -128,15 +151,28 @@ export interface PhotoshopJobResult {
   result_file_path?: string
 }
 
+export type PhotoshopTemplatePathTag = 'fast_path_ok' | 'slow_export' | 'no_smart_object'
+
+export type PhotoshopTemplateExportPath = 'native_slice' | 'crop_fallback'
+
+export interface PhotoshopTemplatePathProfile {
+  export_path: PhotoshopTemplateExportPath
+  tags: PhotoshopTemplatePathTag[]
+  native_slice_count: number
+  smart_object_count: number
+}
+
 export type PhotoshopProgressStage =
   | 'task_start'
   | 'template_start'
   | 'template_open'
+  | 'template_path_profile'
   | 'native_slice_detected'
   | 'native_slice_fallback'
   | 'native_slice_export'
   | 'native_slice_export_fallback'
   | 'native_slice_extra_ignored'
+  | 'purge_histories'
   | 'group_start'
   | 'jsx_generate'
   | 'jsx_exec'
@@ -199,6 +235,12 @@ export interface PhotoshopProgressLogEntry {
   output_file?: string
   error?: string
   duration_ms?: number
+  path_tags?: PhotoshopTemplatePathTag[]
+  export_path?: PhotoshopTemplateExportPath
+  native_slice_count?: number
+  smart_object_count?: number
+  purge_every_groups?: number
+  groups_since_purge?: number
 }
 
 export interface PhotoshopPrintAsset {

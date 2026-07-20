@@ -24,6 +24,20 @@ function photoshopStageLabel(stage: PhotoshopProgressStage) {
       return '模板'
     case 'template_open':
       return '打开'
+    case 'template_path_profile':
+      return '路径'
+    case 'native_slice_detected':
+      return '切片'
+    case 'native_slice_fallback':
+      return '切片回退'
+    case 'native_slice_export':
+      return '切片导出'
+    case 'native_slice_export_fallback':
+      return '切片回退'
+    case 'native_slice_extra_ignored':
+      return '切片碎片'
+    case 'purge_histories':
+      return '清理缓存'
     case 'group_start':
       return '分组'
     case 'jsx_generate':
@@ -96,6 +110,21 @@ function photoshopDebugDetailText(entry: PhotoshopProgressLogEntry) {
   }
   if (typeof entry.duration_ms === 'number') {
     parts.push(`耗时=${entry.duration_ms}ms`)
+  }
+  if (entry.export_path) {
+    parts.push(`导出=${entry.export_path}`)
+  }
+  if (entry.path_tags && entry.path_tags.length > 0) {
+    parts.push(`标签=${entry.path_tags.join(',')}`)
+  }
+  if (typeof entry.native_slice_count === 'number') {
+    parts.push(`切片=${entry.native_slice_count}`)
+  }
+  if (typeof entry.smart_object_count === 'number') {
+    parts.push(`SO=${entry.smart_object_count}`)
+  }
+  if (typeof entry.purge_every_groups === 'number') {
+    parts.push(`purge每=${entry.purge_every_groups}组`)
   }
   if (entry.error) {
     parts.push(entry.error)
