@@ -100,6 +100,8 @@ const PHOTOSHOP_MUTEX_TIMEOUT_MS = 10 * 60 * 1000
 const PROGRESS_DETAIL_INTERVAL = 32
 const RESULT_DETAIL_MAX_LATENCY_MS = 50
 const UI_STATE_PERSIST_INTERVAL = 32
+const PIPELINE_CANCELLED_MESSAGE = '完整任务已取消'
+const PIPELINE_CANCELLED_ERROR_KIND = 'pipeline_cancelled'
 const RESULT_SECTION_ORDER: PipelineResultSectionKey[] = [
   IMAGE_PROCESSING_SECTION_KEY,
   'detection_passed',
@@ -191,6 +193,23 @@ type ActivePipelineRun = {
   uiStateError: unknown | null
   uiStateRevision: number
   nextUiStatePersistRevision: number
+}
+
+function isPipelineCancellationError(error: unknown) {
+  return (
+    error instanceof AppErrorClass &&
+    error.code === 'HTTP_4XX' &&
+    (error.details?.kind === PIPELINE_CANCELLED_ERROR_KIND ||
+      error.message === PIPELINE_CANCELLED_MESSAGE)
+  )
+}
+
+function pipelineFailureWasCancellation(active: ActivePipelineRun, error: unknown) {
+  return (
+    active.cancelRequested &&
+    isPipelineCancellationError(error) &&
+    (active.stopError === null || isPipelineCancellationError(active.stopError))
+  )
 }
 
 type PromiseMutexOptions = {
@@ -531,7 +550,22 @@ async function assertPipelinePathInsideWorkbench(
 }
 
 async function pathExists(path: string) {
-  return Boolean(await stat(path).catch(() => null))
+  try {
+    await stat(path)
+    return true
+  } catch (error) {
+    const filesystemCode = readFilesystemErrorCode(error)
+    if (filesystemCode === 'ENOENT' || filesystemCode === 'ENOTDIR') {
+      return false
+    }
+    throw new AppErrorClass(
+      'WORKSPACE_IO_FAILED',
+      '无法检查续跑文件状态，请检查文件权限和状态后重试',
+      false,
+      { path, operation: 'stat', ...(filesystemCode ? { filesystemCode } : {}) },
+      error,
+    )
+  }
 }
 
 function resumeItemMapKey(stepKey: PipelineStepKey, itemKey: string) {
@@ -1472,13 +1506,14 @@ export class PipelineService {
         if (active.interrupted) {
           return this.requireRunDetail(db, runId)
         }
-        const status: PipelineRunStatus = active.cancelRequested ? 'cancelled' : 'failed'
+        const cancelled = pipelineFailureWasCancellation(active, error)
+        const status: PipelineRunStatus = cancelled ? 'cancelled' : 'failed'
         this.appendLog(runId, {
-          level: active.cancelRequested ? 'warn' : 'error',
-          message: active.cancelRequested ? '完整任务已取消' : '完整任务续跑失败',
+          level: cancelled ? 'warn' : 'error',
+          message: cancelled ? PIPELINE_CANCELLED_MESSAGE : '完整任务续跑失败',
           details: { error: appErrorMessage(error) },
         })
-        if (!active.cancelRequested) {
+        if (!cancelled) {
           await this.writePipelineDiagnostic({
             workbenchRoot,
             runId,
@@ -1502,7 +1537,7 @@ export class PipelineService {
           workbenchRoot,
           operation: 'resumeRun',
         })
-        if (!active.cancelRequested) {
+        if (!cancelled) {
           throw error
         }
         if (terminalError) {
@@ -1603,13 +1638,14 @@ export class PipelineService {
         if (active.interrupted) {
           return this.requireRunDetail(db, runId)
         }
-        const status: PipelineRunStatus = active.cancelRequested ? 'cancelled' : 'failed'
+        const cancelled = pipelineFailureWasCancellation(active, error)
+        const status: PipelineRunStatus = cancelled ? 'cancelled' : 'failed'
         this.appendLog(runId, {
-          level: active.cancelRequested ? 'warn' : 'error',
-          message: active.cancelRequested ? '完整任务已取消' : '完整任务失败',
+          level: cancelled ? 'warn' : 'error',
+          message: cancelled ? PIPELINE_CANCELLED_MESSAGE : '完整任务失败',
           details: { error: appErrorMessage(error) },
         })
-        if (!active.cancelRequested) {
+        if (!cancelled) {
           await this.writePipelineDiagnostic({
             workbenchRoot,
             runId,
@@ -1633,7 +1669,7 @@ export class PipelineService {
           workbenchRoot,
           operation: 'runPipeline',
         })
-        if (!active.cancelRequested) {
+        if (!cancelled) {
           throw error
         }
         if (terminalError) {
@@ -2567,7 +2603,9 @@ export class PipelineService {
 
   private assertCanAcceptMoreWork(active: ActivePipelineRun) {
     if (active.cancelRequested) {
-      throw new AppErrorClass('HTTP_4XX', '完整任务已取消', false)
+      throw new AppErrorClass('HTTP_4XX', PIPELINE_CANCELLED_MESSAGE, false, {
+        kind: PIPELINE_CANCELLED_ERROR_KIND,
+      })
     }
     if (active.stopError !== null) {
       throw active.stopError

@@ -212,6 +212,7 @@ const mocks = vi.hoisted(() => ({
   })),
   writeTitlesXlsx: vi.fn(),
   cancelTitleTask: vi.fn(),
+  cancelDetectionTask: vi.fn(),
   requestGenerationCancel: vi.fn(),
   createTaskDir: vi.fn(async (module: string, taskId: string) => {
     const taskDir = join(mocks.workbenchRoot, '.workbench', 'tmp', module, taskId)
@@ -435,7 +436,7 @@ vi.mock('./temp-file-manager', () => ({
 vi.mock('./detection-service', () => ({
   detectionService: {
     runDetectionBatch: mocks.runDetectionBatch,
-    cancelTask: vi.fn(),
+    cancelTask: mocks.cancelDetectionTask,
   },
 }))
 
@@ -751,6 +752,7 @@ describe('PipelineService', () => {
       close: vi.fn(async () => undefined),
     })
     mocks.cancelTitleTask.mockReset()
+    mocks.cancelDetectionTask.mockReset()
     mocks.requestGenerationCancel.mockReset()
     mocks.createTaskDir.mockClear()
     mocks.cleanupTask.mockClear()
@@ -1469,6 +1471,7 @@ describe('PipelineService', () => {
       join(batchDir, '标题.xlsx'),
       new Map(),
       new Map([['TY-BASE-0001', 'Existing title']]),
+      mocks.workbenchRoot,
     )
     const generateSku = vi.fn(async ({ skuCode }: { skuCode: string }) => ({
       skuCode,
@@ -2315,6 +2318,173 @@ describe('PipelineService', () => {
     expect(lastProgress?.logs?.some((log) => log.message === '完整任务已取消')).toBe(true)
   })
 
+  it.each([
+    { label: 'the detection batch reports cancellation', reportCancelled: true },
+    { label: 'the pipeline observes a late cancellation', reportCancelled: false },
+  ])('keeps unstarted detection items interrupted when $label', async ({ reportCancelled }) => {
+    const printFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      `detection-soft-cancel-${reportCancelled ? 'reported' : 'late'}`,
+    )
+    const firstPath = join(printFolder, 'print-1.png')
+    const secondPath = join(printFolder, 'print-2.png')
+    await createPrint(firstPath)
+    await createPrint(secondPath)
+    const detectionStarted = createDeferred<void>()
+    const finishDetection = createDeferred<{
+      taskId: string
+      total: number
+      succeeded: number
+      failed: number
+      skipped: number
+      cancelled?: boolean
+      results: Array<{
+        imagePath: string
+        thumbnailUrl: string
+        artifactId: string
+        printId: string
+        status: 'success'
+        riskScore: number
+        riskLevel: 'pass'
+        reason: string
+        outputPath: string
+        cached: boolean
+      }>
+    }>()
+    mocks.runDetectionBatch.mockImplementationOnce(async () => {
+      detectionStarted.resolve()
+      return finishDetection.promise
+    })
+
+    const runId = `run-detection-soft-cancel-${reportCancelled ? 'reported' : 'late'}`
+    const service = new PipelineService()
+    const runPromise = service.runPipeline(runId, {
+      ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-detection',
+        model: 'qwen3.6-flash',
+        concurrency: 2,
+      },
+      photoshop: { ...baseConfig(printFolder).photoshop, enabled: false, templates: [] },
+      title: { ...baseConfig(printFolder).title, enabled: false },
+    })
+
+    await detectionStarted.promise
+    expect(service.cancelRun(runId)).toBe(true)
+    finishDetection.resolve({
+      taskId: `${runId}-detection`,
+      total: 2,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      ...(reportCancelled ? { cancelled: true } : {}),
+      results: [
+        {
+          imagePath: firstPath,
+          thumbnailUrl: '',
+          artifactId: 'art-detection-soft-cancel-1',
+          printId: 'pri-detection-soft-cancel-1',
+          status: 'success',
+          riskScore: 5,
+          riskLevel: 'pass',
+          reason: '低风险',
+          outputPath: firstPath,
+          cached: false,
+        },
+      ],
+    })
+
+    const detail = await runPromise
+    const detectionItems = detail.items?.filter((item) => item.step_key === 'detection') ?? []
+    expect(mocks.cancelDetectionTask).toHaveBeenCalledOnce()
+    expect(detail.run.status).toBe('cancelled')
+    expect(detail.steps.find((step) => step.step_key === 'detection')?.status).toBe('cancelled')
+    expect(detectionItems.filter((item) => item.status === 'completed')).toHaveLength(1)
+    expect(detectionItems.filter((item) => item.status === 'interrupted')).toHaveLength(1)
+    expect(detectionItems.filter((item) => item.status === 'failed')).toHaveLength(0)
+  })
+
+  it('keeps a fatal detection result failed when cancellation races with completion', async () => {
+    const printFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'fatal-detection-cancel-race',
+    )
+    const printPath = join(printFolder, 'print-1.png')
+    await createPrint(printPath)
+    const detectionStarted = createDeferred<void>()
+    const finishDetection = createDeferred<{
+      taskId: string
+      total: number
+      succeeded: number
+      failed: number
+      skipped: number
+      results: Array<{
+        imagePath: string
+        thumbnailUrl: string
+        status: 'failed'
+        errorCode: string
+        error: string
+        fatal: true
+        appErrorCode: 'BAILIAN_QUOTA_EXCEEDED'
+      }>
+    }>()
+    mocks.runDetectionBatch.mockImplementationOnce(async () => {
+      detectionStarted.resolve()
+      return finishDetection.promise
+    })
+
+    const runId = 'run-fatal-detection-cancel-race'
+    const service = new PipelineService()
+    const runPromise = service.runPipeline(runId, {
+      ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-detection',
+        model: 'qwen3.6-flash',
+        concurrency: 1,
+      },
+      photoshop: { ...baseConfig(printFolder).photoshop, enabled: false, templates: [] },
+      title: { ...baseConfig(printFolder).title, enabled: false },
+    })
+
+    await detectionStarted.promise
+    expect(service.cancelRun(runId)).toBe(true)
+    finishDetection.resolve({
+      taskId: `${runId}-detection`,
+      total: 1,
+      succeeded: 0,
+      failed: 1,
+      skipped: 0,
+      results: [
+        {
+          imagePath: printPath,
+          thumbnailUrl: '',
+          status: 'failed',
+          errorCode: 'llm_failed',
+          error: '阿里云百炼额度不足',
+          fatal: true,
+          appErrorCode: 'BAILIAN_QUOTA_EXCEEDED',
+        },
+      ],
+    })
+
+    await expect(runPromise).rejects.toMatchObject({
+      code: 'BAILIAN_QUOTA_EXCEEDED',
+      message: '阿里云百炼额度不足',
+    })
+    const detail = await service.getRun(runId)
+    expect(detail?.run).toMatchObject({
+      status: 'failed',
+      error_summary: '阿里云百炼额度不足',
+    })
+    expect(detail?.steps.find((step) => step.step_key === 'detection')?.status).toBe('failed')
+  })
+
   it('finalizes unstarted Photoshop groups as interrupted after the active SKU finishes', async () => {
     const printFolder = join(
       mocks.workbenchRoot,
@@ -2527,6 +2697,60 @@ describe('PipelineService', () => {
     })
   })
 
+  it('keeps a fatal resumed source error failed when cancellation races with rejection', async () => {
+    const runId = 'run-resume-fatal-cancel-race'
+    const config: PipelineRunConfig = {
+      ...baseConfig('/unused'),
+      source: {
+        mode: 'txt2img',
+        provider: 'grsai',
+        prompt: { mode: 'manual', prompts: ['flower print'] },
+        grsai: {
+          model: 'gpt-image-2',
+          aspectRatio: '1024x1024',
+        },
+      },
+      matting: { ...baseConfig('/unused').matting, enabled: false },
+      detection: { enabled: false },
+      photoshop: { ...baseConfig('/unused').photoshop, enabled: false, templates: [] },
+      title: { ...baseConfig('/unused').title, enabled: false },
+    }
+    mocks.runTxt2imgBatch.mockRejectedValueOnce(
+      new AppErrorClass('HTTP_5XX', '首次来源调用失败', true),
+    )
+    const service = new PipelineService()
+    await expect(service.runPipeline(runId, config)).rejects.toMatchObject({
+      code: 'HTTP_5XX',
+      message: '首次来源调用失败',
+    })
+
+    const resumedSourceStarted = createDeferred<void>()
+    let rejectResumedSource!: (reason?: unknown) => void
+    const resumedSourceResult = new Promise<GenerationRunResult>((_resolve, reject) => {
+      rejectResumedSource = reject
+    })
+    mocks.runTxt2imgBatch.mockImplementationOnce(async () => {
+      resumedSourceStarted.resolve()
+      return resumedSourceResult
+    })
+
+    const resumePromise = service.resumeRun(runId)
+    await resumedSourceStarted.promise
+    expect(service.cancelRun(runId)).toBe(true)
+    rejectResumedSource(new AppErrorClass('BAILIAN_QUOTA_EXCEEDED', '续跑来源额度不足', false))
+
+    await expect(resumePromise).rejects.toMatchObject({
+      code: 'BAILIAN_QUOTA_EXCEEDED',
+      message: '续跑来源额度不足',
+    })
+    const detail = await service.getRun(runId)
+    expect(detail?.run).toMatchObject({
+      status: 'failed',
+      error_summary: '续跑来源额度不足',
+    })
+    expect(detail?.steps.find((step) => step.step_key === 'source')?.status).toBe('failed')
+  })
+
   it('validates the waiting Photoshop copy folder before resuming', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'ready')
     await createPrint(join(printFolder, 'existing.png'))
@@ -2663,6 +2887,74 @@ describe('PipelineService', () => {
       retryable: false,
     })
     expect(mocks.runComfyuiMattingBatch).not.toHaveBeenCalled()
+  })
+
+  it('preserves non-missing stat errors while validating resume files', async () => {
+    const printFolder = join(
+      mocks.workbenchRoot,
+      WORKBENCH_DIRECTORIES.generation,
+      'resume-stat-error',
+    )
+    const sourcePath = join(printFolder, 'source.png')
+    await createPrint(sourcePath)
+    mocks.runDetectionBatch.mockResolvedValueOnce({
+      taskId: 'run-resume-stat-error-detection',
+      total: 1,
+      succeeded: 1,
+      failed: 0,
+      skipped: 0,
+      results: [
+        {
+          imagePath: sourcePath,
+          thumbnailUrl: '',
+          artifactId: 'art-resume-stat-error',
+          printId: 'pri-resume-stat-error',
+          status: 'success' as const,
+          riskScore: 5,
+          riskLevel: 'pass' as const,
+          reason: '低风险',
+          outputPath: sourcePath,
+          cached: false,
+        },
+      ],
+    })
+
+    const runId = 'run-resume-stat-error'
+    const service = new PipelineService() as ResumeCapablePipelineService
+    await service.runPipeline(runId, {
+      ...baseConfig(printFolder),
+      source: existingPrintSource(printFolder, 'detection'),
+      detection: {
+        enabled: true,
+        skillId: 'infringement-detection',
+        model: 'qwen3.6-flash',
+      },
+      photoshop: { ...baseConfig(printFolder).photoshop, enabled: false, templates: [] },
+      title: { ...baseConfig(printFolder).title, enabled: false },
+    })
+    const invalidPath = `C:\\${'x'.repeat(32_768)}`
+    const db = openWorkbenchDatabase(workbenchDatabasePath(mocks.workbenchRoot))
+    try {
+      db.prepare(
+        "UPDATE pipeline_items SET source_path = ?, output_path = ? WHERE run_id = ? AND step_key = 'source'",
+      ).run(invalidPath, invalidPath, runId)
+    } finally {
+      db.close()
+    }
+    updateRunStatusForTest(runId, 'interrupted')
+
+    await expect(service.resumeRun(runId)).rejects.toMatchObject({
+      code: 'WORKSPACE_IO_FAILED',
+      message: expect.stringContaining('无法检查续跑文件'),
+      retryable: false,
+      details: {
+        path: invalidPath,
+        operation: 'stat',
+        filesystemCode: 'ENAMETOOLONG',
+      },
+      cause: expect.objectContaining({ code: 'ENAMETOOLONG' }),
+    })
+    expect(mocks.runDetectionBatch).toHaveBeenCalledOnce()
   })
 
   it('resumes an interrupted ComfyUI txt2img run without regenerating completed source items', async () => {

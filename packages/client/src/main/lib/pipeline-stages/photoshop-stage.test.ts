@@ -84,6 +84,16 @@ function sourceItems(count = 2): PipelinePrintStreamItem[] {
   }))
 }
 
+function createDeferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((innerResolve, innerReject) => {
+    resolve = innerResolve
+    reject = innerReject
+  })
+  return { promise, reject, resolve }
+}
+
 function batchResult(groups: PhotoshopBatchResult['result_groups']): PhotoshopBatchResult {
   const outputs = groups.flatMap((group) => group.outputs)
   return {
@@ -110,6 +120,7 @@ function batchResult(groups: PhotoshopBatchResult['result_groups']): PhotoshopBa
 function createHarness(
   replaceRange: 'top' | 'topmost' = 'top',
   templates = ['C:\\templates\\shirt.psd'],
+  beforeMutexOperation?: () => Promise<void>,
 ) {
   const db = openSqliteDatabase(':memory:')
   databases.push(db)
@@ -119,6 +130,8 @@ function createHarness(
   config.photoshop.replaceRange = replaceRange
   config.photoshop.templates = templates
   const emitRunningProgress = vi.fn()
+  const assertNotCancelled = vi.fn()
+  const setCurrentCancel = vi.fn()
   const context: PipelineStageRuntimeContext = {
     runId: 'run-photoshop-stage',
     taskName: 'Photoshop stage test',
@@ -140,17 +153,28 @@ function createHarness(
     },
     workbenchRoot: 'C:\\workbench',
     photoshopMutex: {
-      runExclusive: async <T>(operation: () => Promise<T>) => operation(),
+      runExclusive: async <T>(operation: () => Promise<T>) => {
+        await beforeMutexOperation?.()
+        return operation()
+      },
     },
     runBatch,
     upsertPipelineItem,
     updateResultSection: vi.fn(),
     appendLog: vi.fn(),
     emitRunningProgress,
-    setCurrentCancel: vi.fn(),
-    assertNotCancelled: vi.fn(),
+    setCurrentCancel,
+    assertNotCancelled,
   })(context)
-  return { context, emitRunningProgress, runBatch, stage, upsertPipelineItem }
+  return {
+    assertNotCancelled,
+    context,
+    emitRunningProgress,
+    runBatch,
+    setCurrentCancel,
+    stage,
+    upsertPipelineItem,
+  }
 }
 
 async function consumeStage(
@@ -255,6 +279,7 @@ describe('photoshop stage fatal error boundaries', () => {
       harness.context.runId,
       'PS 套版完成',
     )
+    expect(tempFileMocks.cleanupTask).toHaveBeenCalledOnce()
   })
 
   it('does not start another template after a Photoshop batch reports cancellation', async () => {
@@ -292,6 +317,184 @@ describe('photoshop stage fatal error boundaries', () => {
         .filter((status) => status === 'failed'),
     ).toEqual([])
     expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+  })
+
+  it('stops before the next template when cancellation arrives after a completed batch', async () => {
+    const harness = createHarness('topmost', [
+      'C:\\templates\\shirt.psd',
+      'C:\\templates\\hoodie.psd',
+    ])
+    let cancelled = false
+    harness.context.isCancelled = () => cancelled
+    harness.runBatch.mockImplementation(async (prints) => {
+      const result = batchResult(
+        prints.map((print, index) => ({
+          template_id: 'template-1',
+          template_name: 'shirt',
+          group_index: index,
+          sku_folder: print.id,
+          print_ids: [print.id],
+          outputs: [`C:\\output\\shirt\\${print.id}\\01.jpg`],
+          status: 'completed' as const,
+        })),
+      )
+      cancelled = true
+      return result
+    })
+
+    await expect(consumeStage(harness.stage, harness.context)).resolves.toHaveLength(2)
+    expect(harness.runBatch).toHaveBeenCalledTimes(1)
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+  })
+
+  it('keeps a missing group pending when late cancellation lacks a cancelled batch flag', async () => {
+    const harness = createHarness('topmost')
+    let cancelled = false
+    harness.context.isCancelled = () => cancelled
+    harness.runBatch.mockImplementationOnce(async (prints) => {
+      const firstPrint = prints[0]
+      if (!firstPrint) {
+        throw new Error('missing first Photoshop print')
+      }
+      cancelled = true
+      return batchResult([
+        {
+          template_id: 'template-1',
+          template_name: 'shirt',
+          group_index: 0,
+          sku_folder: firstPrint.id,
+          print_ids: [firstPrint.id],
+          outputs: [`C:\\output\\shirt\\${firstPrint.id}\\01.jpg`],
+          status: 'completed',
+        },
+      ])
+    })
+
+    await expect(consumeStage(harness.stage, harness.context)).resolves.toHaveLength(1)
+    const secondItemStatuses = harness.upsertPipelineItem.mock.calls
+      .map(([input]) => input)
+      .filter((input) => input.itemKey.startsWith('print-2:'))
+      .map((input) => input.status)
+    expect(secondItemStatuses).toEqual(['running'])
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+  })
+
+  it('does not fail queued items when cancellation wins while waiting for the Photoshop mutex', async () => {
+    const mutexEntered = createDeferred<void>()
+    const releaseMutex = createDeferred<void>()
+    const harness = createHarness('topmost', undefined, async () => {
+      mutexEntered.resolve()
+      await releaseMutex.promise
+    })
+    let cancelled = false
+    harness.context.isCancelled = () => cancelled
+    harness.assertNotCancelled.mockImplementation(() => {
+      if (cancelled) {
+        throw new AppErrorClass('HTTP_4XX', '完整任务已取消', false)
+      }
+    })
+
+    const resultPromise = consumeStage(harness.stage, harness.context)
+    await mutexEntered.promise
+    cancelled = true
+    releaseMutex.resolve()
+
+    await expect(resultPromise).resolves.toEqual([])
+    expect(harness.runBatch).not.toHaveBeenCalled()
+    expect(
+      harness.upsertPipelineItem.mock.calls
+        .map(([input]) => input.status)
+        .filter((status) => status === 'failed'),
+    ).toEqual([])
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+    expect(tempFileMocks.cleanupTask).toHaveBeenCalledOnce()
+  })
+
+  it('finishes immediately when cancelled before the Photoshop mutex callback starts', async () => {
+    const mutexEntered = createDeferred<void>()
+    const mutexWait = createDeferred<void>()
+    const harness = createHarness('topmost', undefined, async () => {
+      mutexEntered.resolve()
+      await mutexWait.promise
+    })
+    let cancelled = false
+    harness.context.isCancelled = () => cancelled
+
+    const resultPromise = consumeStage(harness.stage, harness.context)
+    await mutexEntered.promise
+    const cancel = harness.setCurrentCancel.mock.calls.at(-1)?.[0]
+    expect(cancel).toBeTypeOf('function')
+
+    cancelled = true
+    await cancel?.()
+
+    const outcome = await Promise.race([
+      resultPromise.then((value) => ({ status: 'resolved' as const, value })),
+      new Promise<{ status: 'timed-out' }>((resolve) => {
+        setTimeout(() => resolve({ status: 'timed-out' }), 100)
+      }),
+    ])
+    expect(outcome).toEqual({ status: 'resolved', value: [] })
+
+    mutexWait.reject(new Error('Photoshop mutex wait timed out'))
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    expect(harness.runBatch).not.toHaveBeenCalled()
+    expect(
+      harness.upsertPipelineItem.mock.calls
+        .map(([input]) => input.status)
+        .filter((status) => status === 'failed'),
+    ).toEqual([])
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+    expect(tempFileMocks.cleanupTask).toHaveBeenCalledOnce()
+  })
+
+  it('finishes immediately when cancellation predates the Photoshop mutex handler', async () => {
+    const createTaskDirEntered = createDeferred<void>()
+    const taskDir = createDeferred<string>()
+    tempFileMocks.createTaskDir.mockImplementationOnce(async () => {
+      createTaskDirEntered.resolve()
+      return taskDir.promise
+    })
+    const mutexWait = createDeferred<void>()
+    const beforeMutexOperation = vi.fn(async () => {
+      await mutexWait.promise
+    })
+    const harness = createHarness('topmost', undefined, beforeMutexOperation)
+    let cancelled = false
+    harness.context.isCancelled = () => cancelled
+    harness.assertNotCancelled.mockImplementation(() => {
+      if (cancelled) {
+        throw new AppErrorClass('HTTP_4XX', '完整任务已取消', false)
+      }
+    })
+
+    const resultPromise = consumeStage(harness.stage, harness.context, sourceItems(1))
+    await createTaskDirEntered.promise
+    expect(harness.setCurrentCancel).not.toHaveBeenCalled()
+
+    cancelled = true
+    taskDir.resolve('C:\\temp\\photoshop-task')
+
+    const outcome = await Promise.race([
+      resultPromise.then((value) => ({ status: 'resolved' as const, value })),
+      new Promise<{ status: 'timed-out' }>((resolve) => {
+        setTimeout(() => resolve({ status: 'timed-out' }), 100)
+      }),
+    ])
+    mutexWait.resolve()
+    await resultPromise
+
+    expect(outcome).toEqual({ status: 'resolved', value: [] })
+    expect(beforeMutexOperation).not.toHaveBeenCalled()
+    expect(harness.runBatch).not.toHaveBeenCalled()
+    expect(
+      harness.upsertPipelineItem.mock.calls
+        .map(([input]) => input.status)
+        .filter((status) => status === 'failed'),
+    ).toEqual([])
+    expect(storeMocks.updatePipelineStepCompletedWithInput).not.toHaveBeenCalled()
+    expect(tempFileMocks.cleanupTask).toHaveBeenCalledOnce()
   })
 
   it('stops after the first waiting-folder EACCES failure', async () => {

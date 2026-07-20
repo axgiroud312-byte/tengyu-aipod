@@ -1,12 +1,13 @@
 import { createHash, randomUUID } from 'node:crypto'
 import type { Dirent } from 'node:fs'
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { basename, join } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import { AppErrorClass, WORKBENCH_DIRECTORIES } from '@tengyu-aipod/shared'
 import { z } from 'zod'
 
 const PENDING_TITLE_WRITES_FOLDER = 'pending-title-writes'
 const PENDING_TITLE_WRITE_VERSION = 1 as const
+const pendingTitleWriteQueues = new Map<string, Promise<void>>()
 
 const pendingTitleWriteSchema = z.object({
   version: z.literal(PENDING_TITLE_WRITE_VERSION),
@@ -29,9 +30,12 @@ export type PendingTitleWrite = z.infer<typeof pendingTitleWriteSchema>
 
 export type PendingTitleWriteRecord = PendingTitleWrite & {
   filePath: string
+  revision: string
 }
 
 type PendingTitleWriteInput = Omit<PendingTitleWrite, 'version' | 'updatedAt'>
+type PendingTitleWriteRemoval = Pick<PendingTitleWriteRecord, 'runId' | 'batchDir'> &
+  Partial<Pick<PendingTitleWriteRecord, 'revision'>>
 
 function safePathSegment(value: string) {
   const sanitized = value.replace(/[^a-zA-Z0-9._-]+/g, '_').replace(/^\.+$/, '')
@@ -51,6 +55,36 @@ function pendingTitleWritePath(workbenchRoot: string, runId: string, batchDir: s
   return join(pendingTitleWritesDirectory(workbenchRoot, runId), `${batchHash}.json`)
 }
 
+function pendingTitleWriteRevision(contents: string) {
+  return createHash('sha256').update(contents).digest('hex')
+}
+
+function pendingTitleWriteLockKey(filePath: string) {
+  const absolutePath = resolve(filePath)
+  return process.platform === 'win32' ? absolutePath.toLowerCase() : absolutePath
+}
+
+async function withPendingTitleWriteLock<T>(filePath: string, operation: () => Promise<T>) {
+  const key = pendingTitleWriteLockKey(filePath)
+  const previous = pendingTitleWriteQueues.get(key) ?? Promise.resolve()
+  let release: () => void = () => undefined
+  const current = new Promise<void>((resolveCurrent) => {
+    release = resolveCurrent
+  })
+  const tail = previous.then(() => current)
+  pendingTitleWriteQueues.set(key, tail)
+
+  await previous
+  try {
+    return await operation()
+  } finally {
+    release()
+    if (pendingTitleWriteQueues.get(key) === tail) {
+      pendingTitleWriteQueues.delete(key)
+    }
+  }
+}
+
 function filesystemErrorCode(error: unknown) {
   if (
     typeof error === 'object' &&
@@ -63,16 +97,30 @@ function filesystemErrorCode(error: unknown) {
   return null
 }
 
-function pendingDirectoryReadError(path: string, error: unknown) {
+function pendingTitleWriteIoError(
+  input: { operation: string; path: string; message: string },
+  error: unknown,
+) {
   const filesystemCode = filesystemErrorCode(error)
   return new AppErrorClass(
     'WORKSPACE_IO_FAILED',
-    `无法读取标题待补写目录，请检查工作区权限和目录状态后重试：${path}`,
+    `${input.message}：${input.path}`,
     false,
+    {
+      operation: input.operation,
+      path: input.path,
+      ...(filesystemCode ? { filesystemCode } : {}),
+    },
+    error,
+  )
+}
+
+function pendingDirectoryReadError(path: string, error: unknown) {
+  return pendingTitleWriteIoError(
     {
       operation: 'listPendingTitleWrites',
       path,
-      ...(filesystemCode ? { filesystemCode } : {}),
+      message: '无法读取标题待补写目录，请检查工作区权限和目录状态后重试',
     },
     error,
   )
@@ -81,33 +129,129 @@ function pendingDirectoryReadError(path: string, error: unknown) {
 export async function savePendingTitleWrite(workbenchRoot: string, input: PendingTitleWriteInput) {
   const filePath = pendingTitleWritePath(workbenchRoot, input.runId, input.batchDir)
   const directory = pendingTitleWritesDirectory(workbenchRoot, input.runId)
-  const value: PendingTitleWrite = {
-    ...input,
-    version: PENDING_TITLE_WRITE_VERSION,
-    updatedAt: Date.now(),
-  }
-  await mkdir(directory, { recursive: true })
-  const temporaryPath = `${filePath}.${randomUUID()}.tmp`
   try {
-    await writeFile(temporaryPath, JSON.stringify(value, null, 2), 'utf8')
-    await rename(temporaryPath, filePath)
-  } finally {
-    await rm(temporaryPath, { force: true })
+    await mkdir(directory, { recursive: true })
+  } catch (error) {
+    throw pendingTitleWriteIoError(
+      {
+        operation: 'createPendingTitleWriteDirectory',
+        path: directory,
+        message: '无法创建标题待补写目录，请检查工作区权限和磁盘空间后重试',
+      },
+      error,
+    )
   }
-  return { ...value, filePath }
+  return withPendingTitleWriteLock(filePath, async () => {
+    const existing = await readPendingRecordIfPresent(filePath)
+    const value: PendingTitleWrite = {
+      ...input,
+      titles: {
+        ...(existing?.titles ?? {}),
+        ...input.titles,
+      },
+      version: PENDING_TITLE_WRITE_VERSION,
+      updatedAt: Date.now(),
+    }
+    const contents = JSON.stringify(value, null, 2)
+    const temporaryPath = `${filePath}.${randomUUID()}.tmp`
+    let operationFailed = false
+    let operationError: unknown
+    try {
+      try {
+        await writeFile(temporaryPath, contents, 'utf8')
+      } catch (error) {
+        throw pendingTitleWriteIoError(
+          {
+            operation: 'writePendingTitleWriteTemporaryFile',
+            path: temporaryPath,
+            message: '无法暂存标题待补写记录，请检查工作区权限和磁盘空间后重试',
+          },
+          error,
+        )
+      }
+      try {
+        await rename(temporaryPath, filePath)
+      } catch (error) {
+        throw pendingTitleWriteIoError(
+          {
+            operation: 'replacePendingTitleWrite',
+            path: filePath,
+            message: '无法保存标题待补写记录，请检查工作区权限和文件占用后重试',
+          },
+          error,
+        )
+      }
+    } catch (error) {
+      operationFailed = true
+      operationError = error
+    }
+    try {
+      await rm(temporaryPath, { force: true })
+    } catch (error) {
+      if (!operationFailed) {
+        operationFailed = true
+        operationError = pendingTitleWriteIoError(
+          {
+            operation: 'cleanupPendingTitleWriteTemporaryFile',
+            path: temporaryPath,
+            message: '无法清理标题待补写临时文件，请检查工作区权限和文件占用后重试',
+          },
+          error,
+        )
+      }
+    }
+    if (operationFailed) {
+      throw operationError
+    }
+    return { ...value, filePath, revision: pendingTitleWriteRevision(contents) }
+  })
 }
 
 export async function removePendingTitleWrite(
   workbenchRoot: string,
-  record: Pick<PendingTitleWriteRecord, 'runId' | 'batchDir'>,
+  record: PendingTitleWriteRemoval,
 ) {
-  await rm(pendingTitleWritePath(workbenchRoot, record.runId, record.batchDir), { force: true })
+  const filePath = pendingTitleWritePath(workbenchRoot, record.runId, record.batchDir)
+  return withPendingTitleWriteLock(filePath, async () => {
+    if (record.revision !== undefined) {
+      const current = await readPendingRecordIfPresent(filePath)
+      if (!current || current.revision !== record.revision) {
+        return
+      }
+    }
+    try {
+      await rm(filePath, { force: true })
+    } catch (error) {
+      throw pendingTitleWriteIoError(
+        {
+          operation: 'removePendingTitleWrite',
+          path: filePath,
+          message: '无法删除标题待补写记录，请检查工作区权限和文件占用后重试',
+        },
+        error,
+      )
+    }
+  })
 }
 
 async function readPendingRecord(filePath: string): Promise<PendingTitleWriteRecord> {
+  let contents: string
   try {
-    const parsed = pendingTitleWriteSchema.parse(JSON.parse(await readFile(filePath, 'utf8')))
-    return { ...parsed, filePath }
+    contents = await readFile(filePath, 'utf8')
+  } catch (error) {
+    throw pendingTitleWriteIoError(
+      {
+        operation: 'readPendingTitleWrite',
+        path: filePath,
+        message: '无法读取标题待补写记录，请检查工作区权限和文件状态后重试',
+      },
+      error,
+    )
+  }
+
+  try {
+    const parsed = pendingTitleWriteSchema.parse(JSON.parse(contents))
+    return { ...parsed, filePath, revision: pendingTitleWriteRevision(contents) }
   } catch (error) {
     throw new AppErrorClass(
       'INVALID_INPUT',
@@ -116,6 +260,21 @@ async function readPendingRecord(filePath: string): Promise<PendingTitleWriteRec
       { filePath },
       error,
     )
+  }
+}
+
+async function readPendingRecordIfPresent(filePath: string) {
+  try {
+    return await readPendingRecord(filePath)
+  } catch (error) {
+    if (
+      error instanceof AppErrorClass &&
+      error.code === 'WORKSPACE_IO_FAILED' &&
+      error.details?.filesystemCode === 'ENOENT'
+    ) {
+      return null
+    }
+    throw error
   }
 }
 

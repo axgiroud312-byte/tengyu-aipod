@@ -242,6 +242,7 @@ export function createDetectionStage(
         }
 
         if (batchResult) {
+          const cancellationObserved = () => batchResult.cancelled === true || context.isCancelled()
           const fatalResult = batchResult.results.find(
             (detectionItem) => detectionItem.status === 'failed' && detectionItem.fatal,
           )
@@ -251,6 +252,9 @@ export function createDetectionStage(
             )
             for (const { item } of indexedItems) {
               const itemResult = resultsByPath.get(item.path)
+              if (!itemResult && cancellationObserved()) {
+                continue
+              }
               if (itemResult && itemResult.status !== 'failed') {
                 continue
               }
@@ -279,6 +283,9 @@ export function createDetectionStage(
             const detectionItem =
               resultIndex >= 0 ? remainingResults.splice(resultIndex, 1)[0] : null
             if (!detectionItem) {
+              if (cancellationObserved()) {
+                continue
+              }
               markFailed(item, '侵权检测未返回结果')
               continue
             }
@@ -346,6 +353,10 @@ export function createDetectionStage(
         dependencies.stats.detectionReview = review
         dependencies.stats.detectionBlock = block
         dependencies.emitRunningProgress(context.runId, '侵权检测流处理中')
+        if (batchResult && (batchResult.cancelled === true || context.isCancelled())) {
+          refreshSections()
+          return
+        }
       }
 
       refreshSections()

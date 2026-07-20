@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { constants } from 'node:fs'
-import { access, mkdir, readdir, rm, stat } from 'node:fs/promises'
+import { access, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, resolve } from 'node:path'
 import {
   type AppError,
@@ -629,8 +629,12 @@ export async function writeTitlesXlsx(
   xlsxPath: string,
   generatedTitles: Map<string, string>,
   existingTitles: Map<string, string>,
+  workbenchRoot: string,
 ) {
   return withTitleXlsxWriteLock(xlsxPath, async () => {
+    const temporaryDirectory = join(workbenchRoot, '.workbench', 'tmp', 'title-xlsx', randomUUID())
+    const temporaryPath = join(temporaryDirectory, basename(xlsxPath))
+    let replacingTarget = false
     try {
       const workbook = new ExcelJS.Workbook()
       const sheet = workbook.addWorksheet('Sheet')
@@ -654,11 +658,16 @@ export async function writeTitlesXlsx(
         sheet.addRow({ sku, title })
       }
 
+      await mkdir(temporaryDirectory, { recursive: true })
+      await workbook.xlsx.writeFile(temporaryPath)
       await mkdir(dirname(xlsxPath), { recursive: true })
-      await workbook.xlsx.writeFile(xlsxPath)
+      replacingTarget = true
+      await rename(temporaryPath, xlsxPath)
     } catch (error) {
-      throw toXlsxWriteError(error)
+      await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => null)
+      throw replacingTarget ? toXlsxWriteError(error) : error
     }
+    await rm(temporaryDirectory, { recursive: true, force: true }).catch(() => null)
   })
 }
 
@@ -1331,7 +1340,12 @@ export class TitleService {
         const cancelled = this.isCancelled(taskId)
         progress.status = cancelled ? 'cancelled' : 'running'
         emitProgress()
-        await writeTitlesXlsx(xlsxPath, generatedTitles, existingTitles)
+        await writeTitlesXlsx(
+          xlsxPath,
+          generatedTitles,
+          existingTitles,
+          workbenchConfig.workbench_root,
+        )
         const emptyResult: TitleBatchResult = {
           taskId,
           xlsxPath,
@@ -1428,7 +1442,12 @@ export class TitleService {
           naturalCompare(left, right),
         ),
       )
-      await writeTitlesXlsx(xlsxPath, orderedGeneratedTitles, existingTitles)
+      await writeTitlesXlsx(
+        xlsxPath,
+        orderedGeneratedTitles,
+        existingTitles,
+        workbenchConfig.workbench_root,
+      )
 
       if (orderedGeneratedTitles.size > 0 && process.env.TENGYU_SKIP_TITLE_DB_REGISTER !== '1') {
         const db = resolved.openDatabase(workbenchConfig.workbench_root)

@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => ({
       _xlsxPath: string,
       _generatedTitles: Map<string, string>,
       _existingTitles: Map<string, string>,
+      _workbenchRoot: string,
     ) => undefined,
   ),
 }))
@@ -43,6 +44,7 @@ const actualTitleFunctions = vi.hoisted(
           xlsxPath: string,
           generatedTitles: Map<string, string>,
           existingTitles: Map<string, string>,
+          workbenchRoot: string,
         ) => Promise<void>)
       | null
   } => ({
@@ -250,6 +252,7 @@ describe('title stage', () => {
         join(batchDir, '标题.xlsx'),
         expectedTitles,
         new Map(),
+        workbenchRoot,
       )
       expect(mocks.registerSkuTitles).toHaveBeenCalledTimes(1)
       expect(mocks.registerSkuTitles).toHaveBeenCalledWith(
@@ -319,7 +322,7 @@ describe('title stage', () => {
         bothWritesReady.resolve()
       }
       await bothWritesReady.promise
-      await actualWriteTitlesXlsx(path, generatedTitles, existingTitles)
+      await actualWriteTitlesXlsx(path, generatedTitles, existingTitles, workbenchRoot)
     })
 
     const db = openSqliteDatabase(':memory:')
@@ -636,6 +639,76 @@ describe('title stage', () => {
     }
   })
 
+  it('preserves generated titles and classifies a non-locking xlsx I/O failure', async () => {
+    const workbenchRoot = await createTestWorkbenchRoot()
+    const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
+    const item: PipelinePrintStreamItem = {
+      itemKey: 'SKU-001',
+      path: join(batchDir, 'SKU-001', '01.jpg'),
+      printId: 'pri-SKU-001',
+      sourceArtifactIds: [],
+    }
+    mocks.scanSkuFolders.mockResolvedValue([
+      { skuCode: 'SKU-001', path: join(batchDir, 'SKU-001') },
+    ])
+    const xlsxPath = join(batchDir, '标题.xlsx')
+    const ioError = Object.assign(new Error('disk I/O failed'), {
+      code: 'EIO',
+      path: xlsxPath,
+    })
+    mocks.writeTitlesXlsx.mockRejectedValueOnce(ioError)
+
+    const db = openSqliteDatabase(':memory:')
+    const context: PipelineStageRuntimeContext = {
+      runId: 'run-title-io-failure',
+      taskName: '标题磁盘错误测试',
+      config: pipelineConfig(workbenchRoot),
+      stepKey: 'title',
+      isCancelled: () => false,
+    }
+    const titleStage = createTitleStage({
+      db,
+      workbenchRoot,
+      stats: emptyStats(),
+      upsertPipelineItem: vi.fn(),
+      appendLog: vi.fn(),
+      emitRunningProgress: vi.fn(),
+      setCurrentCancel: vi.fn(),
+      assertNotCancelled: vi.fn(),
+    })(context)
+    async function* source() {
+      yield item
+    }
+    const consume = async () => {
+      for await (const _output of titleStage(source(), context)) {
+        // The completed title item is preserved before the final xlsx flush.
+      }
+    }
+
+    try {
+      await expect(consume()).rejects.toMatchObject({
+        code: 'WORKSPACE_IO_FAILED',
+        retryable: false,
+        details: expect.objectContaining({
+          kind: 'title_persistence_fatal',
+          batchDir,
+          xlsxPath,
+          filesystemCode: 'EIO',
+        }),
+        cause: ioError,
+      })
+      const pendingWrites = await listPendingTitleWrites(workbenchRoot)
+      expect(pendingWrites).toHaveLength(1)
+      const pending = pendingWrites[0]
+      if (!pending) {
+        throw new Error('expected a pending title write after xlsx I/O failure')
+      }
+      expect(pendingTitleMap(pending)).toEqual(new Map([['SKU-001', 'Base SKU-001']]))
+    } finally {
+      db.close()
+    }
+  })
+
   it('persists locked xlsx writes without failing and retries them on the next title stage', async () => {
     const workbenchRoot = await mkdtemp(join(tmpdir(), 'tengyu-title-pending-'))
     const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
@@ -726,6 +799,93 @@ describe('title stage', () => {
     } finally {
       db.close()
       await rm(workbenchRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('fails a pending title retry on a non-locking xlsx I/O error', async () => {
+    const workbenchRoot = await createTestWorkbenchRoot()
+    const batchDir = join(workbenchRoot, '04-上架工作区', 'shirt')
+    const xlsxPath = join(batchDir, '标题.xlsx')
+    const item: PipelinePrintStreamItem = {
+      itemKey: 'SKU-001',
+      path: join(batchDir, 'SKU-001', '01.jpg'),
+      printId: 'pri-SKU-001',
+      sourceArtifactIds: [],
+    }
+    mocks.scanSkuFolders.mockResolvedValue([
+      { skuCode: 'SKU-001', path: join(batchDir, 'SKU-001') },
+    ])
+    const ioError = Object.assign(new Error('disk I/O failed'), {
+      code: 'EIO',
+      path: xlsxPath,
+    })
+    mocks.writeTitlesXlsx
+      .mockRejectedValueOnce(
+        new AppErrorClass('XLSX_LOCKED', '标题文件被 Excel 占用，请关闭后重试', false),
+      )
+      .mockRejectedValueOnce(ioError)
+
+    const db = openSqliteDatabase(':memory:')
+    const createStage = (context: PipelineStageRuntimeContext) =>
+      createTitleStage({
+        db,
+        workbenchRoot,
+        stats: emptyStats(),
+        upsertPipelineItem: vi.fn(),
+        appendLog: vi.fn(),
+        emitRunningProgress: vi.fn(),
+        setCurrentCancel: vi.fn(),
+        assertNotCancelled: vi.fn(),
+      })(context)
+    const firstContext: PipelineStageRuntimeContext = {
+      runId: 'run-title-pending-io-source',
+      taskName: '标题占用测试',
+      config: pipelineConfig(workbenchRoot),
+      stepKey: 'title',
+      isCancelled: () => false,
+    }
+    async function* firstSource() {
+      yield item
+    }
+    async function* emptySource(): AsyncIterable<PipelinePrintStreamItem> {
+      yield* []
+    }
+
+    try {
+      for await (const _output of createStage(firstContext)(firstSource(), firstContext)) {
+        // The first run leaves a pending sidecar after the workbook lock.
+      }
+      const retryContext: PipelineStageRuntimeContext = {
+        ...firstContext,
+        runId: 'run-title-pending-io-retry',
+        taskName: '标题补写磁盘错误测试',
+      }
+      const consumeRetry = async () => {
+        for await (const _output of createStage(retryContext)(emptySource(), retryContext)) {
+          // Pending-write recovery does not emit pipeline items.
+        }
+      }
+
+      await expect(consumeRetry()).rejects.toMatchObject({
+        code: 'WORKSPACE_IO_FAILED',
+        retryable: false,
+        details: expect.objectContaining({
+          kind: 'title_persistence_fatal',
+          batchDir,
+          xlsxPath,
+          filesystemCode: 'EIO',
+        }),
+        cause: ioError,
+      })
+      const pendingWrites = await listPendingTitleWrites(workbenchRoot)
+      expect(pendingWrites).toHaveLength(1)
+      const pending = pendingWrites[0]
+      if (!pending) {
+        throw new Error('expected the pending title write to remain after retry failure')
+      }
+      expect(pendingTitleMap(pending)).toEqual(new Map([['SKU-001', 'Base SKU-001']]))
+    } finally {
+      db.close()
     }
   })
 })

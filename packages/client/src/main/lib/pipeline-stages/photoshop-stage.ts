@@ -29,6 +29,7 @@ import { readyMicroBatches } from './ready-micro-batches'
 
 const WAITING_PHOTOSHOP_PRINT_FOLDER = '等待套版'
 const MAX_READY_PHOTOSHOP_BATCH_SIZE = 16
+const PHOTOSHOP_MUTEX_WAIT_CANCELLED = Symbol('photoshop-mutex-wait-cancelled')
 const FATAL_PHOTOSHOP_ERROR_CODES: ReadonlySet<string> = new Set([
   'INVALID_INPUT',
   'PS_COM_FAILED',
@@ -400,7 +401,13 @@ export function createPhotoshopStage(
           }
           const taskId = `${context.runId}-photoshop-${firstPrepared.skuCode}-${safePathSegment(templatePath)}`
           let taskDirCreated = false
+          let mutexOperationEntered = false
+          let batchExecutionStarted = false
           let keepTempOnFailure = false
+          let cancelMutexWait: () => void = () => {}
+          const mutexWaitCancellation = new Promise<never>((_, reject) => {
+            cancelMutexWait = () => reject(PHOTOSHOP_MUTEX_WAIT_CANCELLED)
+          })
           try {
             const taskDir = await tempFileManager.createTaskDir('photoshop', taskId)
             taskDirCreated = true
@@ -417,35 +424,46 @@ export function createPhotoshopStage(
                 sourceArtifactIds: item.sourceArtifactIds,
               })
             }
-            dependencies.setCurrentCancel(() =>
-              writeFile(cancelFilePath, String(Date.now()), 'utf8'),
-            )
-            const result = await dependencies.photoshopMutex.runExclusive(async () => {
-              dependencies.assertNotCancelled()
-              return dependencies.runBatch(
-                pending.map(({ prepared }) => ({
-                  id: prepared.skuCode,
-                  file_path: prepared.path,
-                })),
-                [templatePath],
-                {
-                  taskId,
-                  outputRoot: outputRootPath,
-                  outputLayout: 'template_first',
-                  templateNameOverride: templateName,
-                  replaceRange,
-                  smartObjectReplaceMode: config.smartObjectReplaceMode ?? 'replaceContents',
-                  smartObjectInnerFitMode: config.smartObjectInnerFitMode ?? 'fill',
-                  format: config.format ?? 'jpg',
-                  clipMode: config.clipMode ?? 'auto',
-                  skipCompleted: config.skipCompleted ?? true,
-                  maxRetries: config.maxRetries ?? 1,
-                  cancelFilePath,
-                  cancellationMode: 'between_groups',
-                },
-              )
+            dependencies.setCurrentCancel(() => {
+              if (!mutexOperationEntered) {
+                cancelMutexWait()
+              }
+              return writeFile(cancelFilePath, String(Date.now()), 'utf8')
             })
-            cancellationObserved = result.cancelled === true
+            if (context.isCancelled()) {
+              throw PHOTOSHOP_MUTEX_WAIT_CANCELLED
+            }
+            const result = await Promise.race([
+              dependencies.photoshopMutex.runExclusive(async () => {
+                mutexOperationEntered = true
+                dependencies.assertNotCancelled()
+                batchExecutionStarted = true
+                return dependencies.runBatch(
+                  pending.map(({ prepared }) => ({
+                    id: prepared.skuCode,
+                    file_path: prepared.path,
+                  })),
+                  [templatePath],
+                  {
+                    taskId,
+                    outputRoot: outputRootPath,
+                    outputLayout: 'template_first',
+                    templateNameOverride: templateName,
+                    replaceRange,
+                    smartObjectReplaceMode: config.smartObjectReplaceMode ?? 'replaceContents',
+                    smartObjectInnerFitMode: config.smartObjectInnerFitMode ?? 'fill',
+                    format: config.format ?? 'jpg',
+                    clipMode: config.clipMode ?? 'auto',
+                    skipCompleted: config.skipCompleted ?? true,
+                    maxRetries: config.maxRetries ?? 1,
+                    cancelFilePath,
+                    cancellationMode: 'between_groups',
+                  },
+                )
+              }),
+              mutexWaitCancellation,
+            ])
+            cancellationObserved = result.cancelled === true || context.isCancelled()
             const groupsBySku = new Map(
               result.result_groups.map((group) => [group.sku_folder, group]),
             )
@@ -453,7 +471,7 @@ export function createPhotoshopStage(
             for (const { item, prepared } of pending) {
               const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
               const group = groupsBySku.get(prepared.skuCode)
-              if (result.cancelled && !group) {
+              if (cancellationObserved && !group) {
                 continue
               }
               const firstOutputPath = group?.outputs[0]
@@ -531,49 +549,55 @@ export function createPhotoshopStage(
               })
             }
           } catch (error) {
-            keepTempOnFailure = true
-            const fatal = isFatalPhotoshopStageError(error, 'batch-execution')
-            for (const { item, prepared } of pending) {
-              const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
-              failed += 1
-              dependencies.upsertPipelineItem({
-                runId: context.runId,
-                itemKey: stageItemKey,
-                stepKey: 'photoshop',
-                status: 'failed',
-                sourcePath: prepared.path,
-                artifactId: item.artifactId,
-                printId: item.printId,
-                sourceArtifactIds: item.sourceArtifactIds,
-                errorMessage: error instanceof Error ? error.message : String(error),
-                completed: true,
-              })
-              if (!fatal) {
+            if (error === PHOTOSHOP_MUTEX_WAIT_CANCELLED) {
+              cancellationObserved = true
+            } else if (mutexOperationEntered && !batchExecutionStarted && context.isCancelled()) {
+              cancellationObserved = true
+            } else {
+              keepTempOnFailure = true
+              const fatal = isFatalPhotoshopStageError(error, 'batch-execution')
+              for (const { item, prepared } of pending) {
+                const stageItemKey = `${item.itemKey}:${safePathSegment(templatePath)}`
+                failed += 1
+                dependencies.upsertPipelineItem({
+                  runId: context.runId,
+                  itemKey: stageItemKey,
+                  stepKey: 'photoshop',
+                  status: 'failed',
+                  sourcePath: prepared.path,
+                  artifactId: item.artifactId,
+                  printId: item.printId,
+                  sourceArtifactIds: item.sourceArtifactIds,
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                  completed: true,
+                })
+                if (!fatal) {
+                  dependencies.appendLog(context.runId, {
+                    level: 'warn',
+                    step_key: 'photoshop',
+                    message: '单货号套版失败，已跳过',
+                    details: {
+                      itemKey: stageItemKey,
+                      templatePath,
+                      skuCode: prepared.skuCode,
+                      error: error instanceof Error ? error.message : String(error),
+                    },
+                  })
+                }
+              }
+              if (fatal) {
                 dependencies.appendLog(context.runId, {
-                  level: 'warn',
+                  level: 'error',
                   step_key: 'photoshop',
-                  message: '单货号套版失败，已跳过',
+                  message: 'Photoshop 无法继续执行，PS 套版已停止',
                   details: {
-                    itemKey: stageItemKey,
+                    taskId,
                     templatePath,
-                    skuCode: prepared.skuCode,
                     error: error instanceof Error ? error.message : String(error),
                   },
                 })
+                throw error
               }
-            }
-            if (fatal) {
-              dependencies.appendLog(context.runId, {
-                level: 'error',
-                step_key: 'photoshop',
-                message: 'Photoshop 无法继续执行，PS 套版已停止',
-                details: {
-                  taskId,
-                  templatePath,
-                  error: error instanceof Error ? error.message : String(error),
-                },
-              })
-              throw error
             }
           } finally {
             dependencies.setCurrentCancel(null)

@@ -222,7 +222,7 @@ describe('title service utilities', () => {
     ])
     const existing = await readExistingTitles(xlsxPath)
 
-    await writeTitlesXlsx(xlsxPath, new Map([['SKU1', 'New title']]), existing)
+    await writeTitlesXlsx(xlsxPath, new Map([['SKU1', 'New title']]), existing, tempRoot)
 
     await expect(readExistingTitles(xlsxPath)).resolves.toEqual(
       new Map([
@@ -230,6 +230,41 @@ describe('title service utilities', () => {
         ['SKU2', 'Keep title'],
       ]),
     )
+  })
+
+  it('preserves the existing workbook when a replacement write fails after partial output', async () => {
+    const xlsxPath = join(tempRoot, 'titles.xlsx')
+    await createWorkbook(xlsxPath, [['SKU1', 'Original title']])
+    const originalContents = await readFile(xlsxPath)
+    const xlsxPrototype = Object.getPrototypeOf(new ExcelJS.Workbook().xlsx) as {
+      writeFile(path: string): Promise<void>
+    }
+    const ioError = Object.assign(new Error('disk I/O failed'), { code: 'EIO' })
+    let temporaryPath = ''
+    const writeFileSpy = vi
+      .spyOn(xlsxPrototype, 'writeFile')
+      .mockImplementationOnce(async (path: string) => {
+        temporaryPath = path
+        await writeFile(path, 'partial workbook')
+        throw ioError
+      })
+
+    try {
+      await expect(
+        writeTitlesXlsx(
+          xlsxPath,
+          new Map([['SKU1', 'Replacement title']]),
+          new Map([['SKU1', 'Original title']]),
+          tempRoot,
+        ),
+      ).rejects.toBe(ioError)
+      await expect(readFile(xlsxPath)).resolves.toEqual(originalContents)
+      expect(temporaryPath).not.toBe(xlsxPath)
+      expect(temporaryPath.startsWith(join(tempRoot, '.workbench', 'tmp', 'title-xlsx'))).toBe(true)
+      await expect(stat(temporaryPath)).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      writeFileSpy.mockRestore()
+    }
   })
 
   it('falls back to legacy titles.xlsx when 标题.xlsx is missing', async () => {

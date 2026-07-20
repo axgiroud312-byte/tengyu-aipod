@@ -101,6 +101,18 @@ function skuCodeFromProductImage(path: string) {
   return basename(dirname(path))
 }
 
+function localErrorCode(error: unknown) {
+  if (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    typeof error.code === 'string'
+  ) {
+    return error.code
+  }
+  return null
+}
+
 export function createTitleStage(dependencies: TitleStageDependencies): PipelinePrintStageFactory {
   return (context: PipelineStageRuntimeContext) => {
     const config = context.config.title
@@ -165,19 +177,30 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
       return generatedTitles
     }
 
-    const titlePersistenceError = (state: BatchState, message: string, error: unknown) =>
-      new AppErrorClass(
-        error instanceof AppErrorClass ? error.code : 'HTTP_5XX',
+    const titlePersistenceError = (
+      state: Pick<BatchState, 'batchDir' | 'xlsxPath'>,
+      message: string,
+      error: unknown,
+    ) => {
+      const filesystemCode = localErrorCode(error)
+      return new AppErrorClass(
+        error instanceof AppErrorClass
+          ? error.code
+          : filesystemCode
+            ? 'WORKSPACE_IO_FAILED'
+            : 'HTTP_5XX',
         message,
-        error instanceof AppErrorClass ? error.retryable : true,
+        error instanceof AppErrorClass ? error.retryable : !filesystemCode,
         {
           kind: 'title_persistence_fatal',
           batchDir: state.batchDir,
           xlsxPath: state.xlsxPath,
           cause: appErrorMessage(error),
+          ...(filesystemCode ? { filesystemCode } : {}),
         },
         error,
       )
+    }
 
     const persistPendingTitles = async (
       state: BatchState,
@@ -249,7 +272,12 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
     ): Promise<boolean> => {
       const generatedTitles = await buildGeneratedTitles(state)
       try {
-        await writeTitlesXlsx(state.xlsxPath, generatedTitles, state.existingTitles)
+        await writeTitlesXlsx(
+          state.xlsxPath,
+          generatedTitles,
+          state.existingTitles,
+          dependencies.workbenchRoot,
+        )
         await registerGeneratedTitles(state, generatedTitles, session)
         state.lastFlushedTitles = new Map(generatedTitles)
         state.pendingFlush = false
@@ -310,6 +338,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
           })
           return false
         }
+        await persistPendingTitles(state, generatedTitles, session)
         throw titlePersistenceError(state, '标题文件写入失败，已保留暂存结果', mapped)
       }
       return true
@@ -333,7 +362,12 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
         try {
           const titles = pendingTitleMap(pending)
           const existingTitles = await readExistingTitles(pending.xlsxPath)
-          await writeTitlesXlsx(pending.xlsxPath, titles, existingTitles)
+          await writeTitlesXlsx(
+            pending.xlsxPath,
+            titles,
+            existingTitles,
+            dependencies.workbenchRoot,
+          )
           if (process.env.TENGYU_SKIP_TITLE_DB_REGISTER !== '1') {
             registerSkuTitles(dependencies.db, {
               templateBatch: pendingTitleBatchName(pending),
@@ -357,6 +391,10 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
             },
           })
         } catch (error) {
+          const mapped = toXlsxWriteError(error)
+          if (!(mapped instanceof AppErrorClass && mapped.code === 'XLSX_LOCKED')) {
+            throw titlePersistenceError(pending, '标题待补写失败，已保留暂存结果', mapped)
+          }
           dependencies.appendLog(context.runId, {
             level: 'warn',
             step_key: 'title',
@@ -364,7 +402,7 @@ export function createTitleStage(dependencies: TitleStageDependencies): Pipeline
             details: {
               batchDir: pending.batchDir,
               xlsxPath: pending.xlsxPath,
-              error: appErrorMessage(toXlsxWriteError(error)),
+              error: appErrorMessage(mapped),
             },
           })
         }
