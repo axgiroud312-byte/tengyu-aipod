@@ -1760,6 +1760,48 @@ describe('PipelineService', () => {
     expect(detail?.steps.find((step) => step.step_key === 'source')?.status).toBe('failed')
   })
 
+  it('skips untouched downstream stages when AI prompt generation fails', async () => {
+    vi.mocked(generateTxt2imgPrompts).mockRejectedValueOnce(
+      new AppErrorClass('HTTP_4XX', '阿里云百炼 API Key 无效', false),
+    )
+    const service = new PipelineService()
+
+    await expect(
+      service.runPipeline('run-prompt-auth-failure', {
+        ...baseConfig('/unused'),
+        source: {
+          mode: 'txt2img',
+          provider: 'grsai',
+          prompt: {
+            mode: 'ai',
+            requirement: 'one decorative print',
+            count: 1,
+            skillId: 'txt2img-local-print',
+            model: 'qwen3.6-flash',
+          },
+          grsai: { model: 'gpt-image-2', aspectRatio: '1:1' },
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      message: '阿里云百炼 API Key 无效',
+    })
+
+    const detail = await service.getRun('run-prompt-auth-failure')
+    expect(detail?.steps.find((step) => step.step_key === 'source')?.status).toBe('failed')
+    for (const stepKey of ['photoshop', 'title'] as const) {
+      expect(detail?.steps.find((step) => step.step_key === stepKey)).toMatchObject({
+        status: 'skipped',
+        input_count: 0,
+        output_count: 0,
+        started_at: null,
+      })
+    }
+    expect(mocks.runTxt2imgBatch).not.toHaveBeenCalled()
+    expect(mocks.runBatch).not.toHaveBeenCalled()
+    expect(mocks.createTitleProcessingSession).not.toHaveBeenCalled()
+  })
+
   it('stops submitting matting items after a fatal provider failure', async () => {
     const printFolder = join(mocks.workbenchRoot, WORKBENCH_DIRECTORIES.generation, 'fatal-matting')
     await createPrint(join(printFolder, 'first.png'))

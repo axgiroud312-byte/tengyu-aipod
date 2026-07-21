@@ -427,6 +427,50 @@ describe('generation ComfyUI mocked E2E', () => {
     })
   })
 
+  it('continues visible extract numbering through the ComfyUI adapter and artifact write', async () => {
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
+    const outputFolder = join(workbenchRoot, '02-印花工作区', '提取', '111')
+    await createImage(sourcePath, 'source-image')
+    await createImage(join(outputFolder, '222-0001.png'), 'old-output-1')
+    await createImage(join(outputFolder, '222-0145.png'), 'old-output-145')
+    const db = new FakeDb()
+    const workflow = createWorkflow({
+      id: 'extract-numbering-e2e',
+      capability: 'extract',
+      outputNodeId: '90',
+      inputSlots: [
+        { name: 'sourceImage', nodeId: '1', field: 'image' },
+        { name: 'prompt', nodeId: '2', field: 'text' },
+      ],
+    })
+    historyNodeId = '90'
+    historyFilename = 'extract-result.png'
+
+    const result = await runComfyuiExtractBatch(
+      {
+        sourceImagePaths: [sourcePath],
+        workflowId: 'extract-numbering-e2e',
+        prompt: 'extract print',
+        taskId: 'extract-numbering-task',
+        outputTaskName: '111',
+        filenamePrefix: '222',
+        filenameSeparator: '-',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: () => db as unknown as TestDatabase,
+        createComfyuiAdapter: () => createComfyuiAdapter(db, [workflow]),
+      },
+    )
+
+    const expectedPath = join(outputFolder, '222-0146.png')
+    expect(result).toMatchObject({ succeeded: 1, failed: 0, failures: [] })
+    expect(result.images[0]?.localPath).toBe(expectedPath)
+    await expect(readFile(expectedPath, 'utf8')).resolves.toBe('image:extract-result.png')
+    expect(outputArtifact(db, 'extract').file_path).toBe(expectedPath)
+  })
+
   it('runs img2img through Chenyu and ComfyUI, injects inputs, and writes a versioned print output', async () => {
     const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
     await createImage(printPath, 'print-image')

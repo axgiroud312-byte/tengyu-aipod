@@ -1,4 +1,4 @@
-import type { Skill, SkillSummary } from '@tengyu-aipod/shared'
+import { AppErrorClass, type Skill, type SkillSummary } from '@tengyu-aipod/shared'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   PromptGeneratorService,
@@ -555,6 +555,28 @@ describe('PromptGeneratorService', () => {
     ).resolves.toHaveLength(250)
 
     expect(chatCompletion).toHaveBeenCalledTimes(4)
+  })
+
+  it('does not retry a non-retryable prompt chunk error', async () => {
+    const chatCompletion = vi
+      .fn()
+      .mockRejectedValue(new AppErrorClass('HTTP_4XX', '阿里云百炼 API Key 无效', false))
+    const service = new PromptGeneratorService()
+
+    await expect(
+      service.generatePrompts(
+        { skill: skill(), count: 1 },
+        {
+          getSecret: async () => 'sk-test',
+          readConfig: async () => ({}),
+          createBailianAdapter: () => ({ chatCompletion, visionCompletion: vi.fn() }),
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'HTTP_4XX',
+      retryable: false,
+    })
+    expect(chatCompletion).toHaveBeenCalledOnce()
   })
 
   it('throws when prompts cannot be parsed', async () => {

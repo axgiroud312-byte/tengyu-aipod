@@ -1,4 +1,5 @@
-import { stat } from 'node:fs/promises'
+import type { Dirent } from 'node:fs'
+import { readdir, stat } from 'node:fs/promises'
 import { extname } from 'node:path'
 
 export type VisibleImageNamingInput = {
@@ -54,19 +55,67 @@ export function nextVisibleImageName(
   return `${naming.prefix}${naming.separator}${String(input.index + 1).padStart(4, '0')}${normalizedImageExtension(input.ext)}`
 }
 
+export async function nextAvailableVisibleImageIndex(
+  folder: string,
+  input: VisibleImageNamingInput,
+  startIndex = 0,
+) {
+  const naming = normalizedVisibleImageNaming(input)
+  const normalizedStartIndex = Math.max(0, Math.floor(startIndex))
+  if (!naming) {
+    return normalizedStartIndex
+  }
+
+  let entries: Dirent<string>[]
+  try {
+    entries = await readdir(folder, { withFileTypes: true })
+  } catch (error) {
+    if (isMissingPathError(error)) {
+      return normalizedStartIndex
+    }
+    throw error
+  }
+
+  const filenamePrefix = `${naming.prefix}${naming.separator}`.toLowerCase()
+  let nextIndex = normalizedStartIndex
+  for (const entry of entries) {
+    if (!entry.isFile()) {
+      continue
+    }
+    const ext = extname(entry.name)
+    const stem = ext ? entry.name.slice(0, -ext.length) : entry.name
+    if (!stem.toLowerCase().startsWith(filenamePrefix)) {
+      continue
+    }
+    const sequence = stem.slice(filenamePrefix.length)
+    if (!/^\d{4,}$/.test(sequence)) {
+      continue
+    }
+    const value = Number.parseInt(sequence, 10)
+    if (Number.isSafeInteger(value) && value > nextIndex) {
+      nextIndex = value
+    }
+  }
+  return nextIndex
+}
+
 export async function assertTargetDoesNotExist(path: string) {
   try {
     await stat(path)
   } catch (error) {
-    if (
-      error &&
-      typeof error === 'object' &&
-      'code' in error &&
-      (error as { code?: unknown }).code === 'ENOENT'
-    ) {
+    if (isMissingPathError(error)) {
       return
     }
     throw error
   }
   throw new Error(`输出文件已存在，不能覆盖：${path}`)
+}
+
+function isMissingPathError(error: unknown) {
+  return (
+    error !== null &&
+    typeof error === 'object' &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  )
 }

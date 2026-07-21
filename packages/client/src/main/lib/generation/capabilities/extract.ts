@@ -17,6 +17,7 @@ import {
   clampInt,
   comfyuiRunOptions,
   comfyuiSizePx,
+  comfyuiVisibleOutputStartIndex,
   createComfyuiAdapterForRun,
   createGenerationDebugLogger,
   createGenerationDiagnostics,
@@ -405,7 +406,12 @@ export async function runComfyuiExtractBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'extract' })
-      let outputIndex = input.filenameStartIndex ?? 0
+      let outputIndex = await comfyuiVisibleOutputStartIndex(
+        workbenchRoot,
+        'extract',
+        taskId,
+        input,
+      )
       let fatalFailureObserved = false
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {

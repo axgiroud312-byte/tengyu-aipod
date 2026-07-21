@@ -44,7 +44,11 @@ import type { PromptReferenceImage, promptGeneratorService } from '../prompt-gen
 import type { skillCacheManager } from '../skill-cache'
 import type { SqliteDatabase } from '../sqlite'
 import { type TempFileManager, tempFileManager } from '../temp-file-manager'
-import { assertTargetDoesNotExist, nextVisibleImageName } from '../user-visible-filename'
+import {
+  assertTargetDoesNotExist,
+  nextAvailableVisibleImageIndex,
+  nextVisibleImageName,
+} from '../user-visible-filename'
 import {
   openWorkbenchDatabase as openWorkbenchDatabaseFile,
   workbenchDatabasePath,
@@ -541,6 +545,27 @@ export function comfyuiRunOptions(
       generationOutputTaskName(input, taskId),
     ),
   }
+}
+
+export function comfyuiVisibleOutputStartIndex(
+  workbenchRoot: string,
+  capability: GenerationCapability,
+  taskId: string,
+  input: {
+    outputTaskName?: string | undefined
+    filenamePrefix?: string | undefined
+    filenameSeparator?: string | undefined
+    filenameStartIndex?: number | undefined
+  },
+) {
+  return nextAvailableVisibleImageIndex(
+    generationTaskOutputFolder(workbenchRoot, capability, generationOutputTaskName(input, taskId)),
+    {
+      prefix: input.filenamePrefix,
+      separator: input.filenameSeparator,
+    },
+    input.filenameStartIndex,
+  )
 }
 
 export function fileUrl(path: string) {

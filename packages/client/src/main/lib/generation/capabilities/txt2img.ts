@@ -17,6 +17,7 @@ import {
   assertLocalComfyuiWorkflowExists,
   clampInt,
   comfyuiRunOptions,
+  comfyuiVisibleOutputStartIndex,
   createComfyuiAdapterForRun,
   createGenerationDebugLogger,
   createGenerationDiagnostics,
@@ -401,7 +402,12 @@ export async function runComfyuiTxt2imgBatch(
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'txt2img' })
       const width = clampInt(input.width ?? 1024, 256, 4096, 1024)
       const height = clampInt(input.height ?? 1024, 256, 4096, 1024)
-      let outputIndex = input.filenameStartIndex ?? 0
+      let outputIndex = await comfyuiVisibleOutputStartIndex(
+        workbenchRoot,
+        'txt2img',
+        taskId,
+        input,
+      )
       let fatalFailureObserved = false
 
       await Promise.all(

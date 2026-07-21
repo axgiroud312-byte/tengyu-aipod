@@ -611,6 +611,9 @@ export function upsertPipelineStepSkipped(
         status = excluded.status,
         input_count = excluded.input_count,
         output_count = excluded.output_count,
+        output_json = NULL,
+        error_json = NULL,
+        started_at = NULL,
         completed_at = excluded.completed_at,
         updated_at = excluded.updated_at
     `,

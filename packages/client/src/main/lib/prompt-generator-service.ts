@@ -248,7 +248,7 @@ async function retryPromptChunk<T>(operation: () => Promise<T>, retries: number)
     try {
       return await operation()
     } catch (error) {
-      if (attempt >= retries) {
+      if ((error instanceof AppErrorClass && !error.retryable) || attempt >= retries) {
         throw error
       }
       attempt += 1

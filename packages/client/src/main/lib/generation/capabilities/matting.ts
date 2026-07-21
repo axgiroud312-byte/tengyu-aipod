@@ -15,6 +15,7 @@ import {
   comfyuiRunOptions,
   comfyuiSizePx,
   comfyuiSourceArtifactIds,
+  comfyuiVisibleOutputStartIndex,
   createComfyuiAdapterForRun,
   createGenerationDebugLogger,
   createGenerationDiagnostics,
@@ -344,7 +345,12 @@ export async function runComfyuiExtractMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-      let outputIndex = input.filenameStartIndex ?? 0
+      let outputIndex = await comfyuiVisibleOutputStartIndex(
+        workbenchRoot,
+        'matting',
+        taskId,
+        input,
+      )
       let fatalFailureObserved = false
 
       for (const [index, sourceImagePath] of sourceImagePaths.entries()) {
@@ -554,7 +560,12 @@ export async function runComfyuiMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-      let outputIndex = input.filenameStartIndex ?? 0
+      let outputIndex = await comfyuiVisibleOutputStartIndex(
+        workbenchRoot,
+        'matting',
+        taskId,
+        input,
+      )
       let fatalFailureObserved = false
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {
@@ -727,7 +738,12 @@ export async function runMixedMattingBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'matting' })
-      let outputIndex = input.filenameStartIndex ?? 0
+      let outputIndex = await comfyuiVisibleOutputStartIndex(
+        workbenchRoot,
+        'matting',
+        taskId,
+        input,
+      )
       let fatalFailureObserved = false
 
       for (const [index, artifactId] of sourceArtifactIds.entries()) {

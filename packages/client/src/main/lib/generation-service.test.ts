@@ -1076,6 +1076,13 @@ describe('generation comfyui service', () => {
 
   it('advances ComfyUI txt2img visible filename indexes by actual output count', async () => {
     const fakeDb = createFakeDb()
+    const outputFolder = join(
+      workbenchRoot,
+      '02-印花工作区',
+      '文生图',
+      'txt2img-comfy-visible-index',
+    )
+    await createImage(join(outputFolder, 'GYX-0145.png'), 'existing-output')
     const generate = vi
       .fn()
       .mockResolvedValueOnce({
@@ -1115,13 +1122,13 @@ describe('generation comfyui service', () => {
     expect(generate).toHaveBeenNthCalledWith(
       1,
       expect.objectContaining({
-        options: expect.objectContaining({ filenameIndex: 0 }),
+        options: expect.objectContaining({ filenameIndex: 145 }),
       }),
     )
     expect(generate).toHaveBeenNthCalledWith(
       2,
       expect.objectContaining({
-        options: expect.objectContaining({ filenameIndex: 2 }),
+        options: expect.objectContaining({ filenameIndex: 147 }),
       }),
     )
   })
@@ -1516,6 +1523,46 @@ describe('generation comfyui service', () => {
     ])
   })
 
+  it('continues visible numbering before submitting a repeated ComfyUI extract task', async () => {
+    const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
+    const outputFolder = join(workbenchRoot, '02-印花工作区', '提取', '111')
+    await createImage(sourcePath, 'source-image')
+    await createImage(join(outputFolder, '222-0001.png'), 'old-output-1')
+    await createImage(join(outputFolder, '222-0145.png'), 'old-output-145')
+    const generate = vi.fn().mockResolvedValue({
+      status: 'succeeded',
+      images: [{ url: 'file:///result.png', local_path: '/result.png' }],
+    })
+
+    const result = await runComfyuiExtractBatch(
+      {
+        sourceImagePaths: [sourcePath],
+        workflowId: 'extract-v1',
+        taskId: '111',
+        outputTaskName: '111',
+        filenamePrefix: '222',
+        filenameSeparator: '-',
+      },
+      {
+        readConfig: async () => ({ workbench_root: workbenchRoot }),
+        getSecret: async () => 'cy-key',
+        openDatabase: createFakeDb().openDatabase,
+        createComfyuiAdapter: () => ({ generate }),
+      },
+    )
+
+    expect(result).toMatchObject({ succeeded: 1, failed: 0 })
+    expect(generate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        options: expect.objectContaining({
+          filenameIndex: 145,
+          filenamePrefix: '222',
+          filenameSeparator: '-',
+        }),
+      }),
+    )
+  })
+
   it('uses the ComfyUI extract skill prompt when a skill is provided', async () => {
     const sourcePath = join(workbenchRoot, '01-采集工作区', 'sku-a', 'source.png')
     await createImage(sourcePath, 'source-image')
@@ -1812,7 +1859,9 @@ describe('generation comfyui img2img service', () => {
 
   it('runs ComfyUI img2img with selected print artifact lineage', async () => {
     const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
+    const outputFolder = join(workbenchRoot, '02-印花工作区', '图生图', 'img2img-task')
     await createImage(printPath, 'print-image')
+    await createImage(join(outputFolder, 'NEW-0030.png'), 'existing-output')
     const fakeDb = createFakeDb()
     fakeDb.rowsBySql.set('artifacts', [
       {
@@ -1840,6 +1889,8 @@ describe('generation comfyui img2img service', () => {
         workflowId: 'img2img-v1',
         prompt: 'make a new floral print',
         taskId: 'img2img-task',
+        filenamePrefix: 'new',
+        filenameSeparator: '-',
       },
       {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
@@ -1874,6 +1925,7 @@ describe('generation comfyui img2img service', () => {
           taskId: 'img2img-task',
           sourceArtifactIds: ['print-artifact'],
           printId: 'pri_print',
+          filenameIndex: 30,
         }),
       }),
     )
@@ -2374,7 +2426,9 @@ describe('generation comfyui matting service', () => {
 
   it('runs ComfyUI matting with selected print source lineage', async () => {
     const printPath = join(workbenchRoot, '02-印花工作区', '提取', 'print.png')
+    const outputFolder = join(workbenchRoot, '02-印花工作区', '抠图', 'matting-task')
     await createImage(printPath, 'print-image')
+    await createImage(join(outputFolder, 'CUT-0009.png'), 'existing-output')
     const fakeDb = createFakeDb()
     fakeDb.rowsBySql.set('artifacts', [
       {
@@ -2405,6 +2459,8 @@ describe('generation comfyui matting service', () => {
         workflowVersion: '1.0.0',
         prompt: 'remove background',
         taskId: 'matting-task',
+        filenamePrefix: 'cut',
+        filenameSeparator: '-',
       },
       {
         readConfig: async () => ({ workbench_root: workbenchRoot }),
@@ -2440,6 +2496,7 @@ describe('generation comfyui matting service', () => {
           sourceArtifactIds: ['print-artifact'],
           printId: 'pri_print',
           workflowVersion: '1.0.0',
+          filenameIndex: 9,
         }),
       }),
     )

@@ -3448,6 +3448,13 @@ export class PipelineService {
       sourceQueue.end()
       await consumeOutputPromise.catch(() => undefined)
       await stagePipeline.completed
+      const stepRows = pipelineStore.readStepRows(db, runId)
+      for (const stage of stageRegistrations) {
+        const step = stepRows.find((candidate) => candidate.step_key === stage.stepKey)
+        if (step?.status === 'completed' && step.input_count === 0 && step.output_count === 0) {
+          this.recordSkippedStep(db, runId, step.step_key, step.module, step.label, 0)
+        }
+      }
       throw error
     }
   }

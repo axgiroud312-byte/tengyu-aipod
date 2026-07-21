@@ -14,6 +14,7 @@ import {
   comfyuiRunOptions,
   comfyuiSizePx,
   comfyuiSourceArtifactIds,
+  comfyuiVisibleOutputStartIndex,
   createComfyuiAdapterForRun,
   createGenerationDebugLogger,
   createGenerationDiagnostics,
@@ -318,7 +319,12 @@ export async function runComfyuiImg2imgBatch(
         diagnostics,
       )
       const debug = createGenerationDebugLogger(dependencies, { taskId, capability: 'img2img' })
-      let outputIndex = input.filenameStartIndex ?? 0
+      let outputIndex = await comfyuiVisibleOutputStartIndex(
+        workbenchRoot,
+        'img2img',
+        taskId,
+        input,
+      )
       const promptMode = comfyuiImg2imgPromptMode(input)
       let fatalFailureObserved = false
 
